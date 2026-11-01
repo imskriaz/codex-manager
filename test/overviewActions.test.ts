@@ -233,6 +233,7 @@ describe("overview actions", () => {
     expect(css).toMatch(/\.account-count-badges \{[\s\S]*?flex-wrap: nowrap;/);
     expect(css).toMatch(/\.dashboard-account-toolbar \.account-search-control \{[\s\S]*?flex: 1 1 140px;/);
     expect(css).toMatch(/\.dashboard-account-toolbar \.dashboard-view-controls \{[\s\S]*?margin-left: 0;/);
+    expect(css).not.toContain(".dashboard-account-toolbar:has(.account-tag-filter)");
   });
 
   it("keeps reset availability in the compact badge instead of a second quota block", () => {

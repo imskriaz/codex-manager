@@ -493,6 +493,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly stopStorageSubscription: (() => void) | undefined;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
   private readonly browserPush: BrowserPushService;
+  private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean }>();
   private readonly conversationShares: ConversationShares;
   private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
   private readonly hostProofKey = crypto.randomBytes(32);
@@ -532,6 +533,15 @@ export class WebDashboardServer implements vscode.Disposable {
         this.publishSessionLive(message.state);
         return;
       }
+      if (message.type === "dashboard:codex-request-resolved") {
+        for (const [notificationId, action] of this.codexPushActions) {
+          if (action.requestId === message.requestId && action.targetDeviceId === message.deviceId) {
+            this.codexPushActions.delete(notificationId);
+            this.browserPush.dismiss(notificationId);
+          }
+        }
+      }
+      if (message.type === "dashboard:codex-request") this.notifyCodexRequest(message.request);
       const remoteOrigin = message.type === "dashboard:terminal-output" ? message.output.deviceId
         : message.type === "dashboard:terminal-complete" ? message.result.deviceId
           : message.type === "dashboard:codex-request" ? message.request.deviceId
@@ -1134,7 +1144,25 @@ export class WebDashboardServer implements vscode.Disposable {
         } else if (path === "/api/push/unsubscribe" && typeof body["endpoint"] === "string") {
           await this.browserPush.unsubscribe(body["endpoint"], owner, origin);
         } else if (path === "/api/push/action" && typeof body["notificationId"] === "string" && typeof body["action"] === "string") {
-          if (!this.browserPush.takeAction(body["notificationId"], body["action"]) || !resolveMirroredNotification(body["notificationId"], body["action"])) {
+          const notificationId = body["notificationId"], action = body["action"], codexAction = this.codexPushActions.get(notificationId);
+          if (!this.browserPush.takeAction(notificationId, action)) {
+            response.statusCode = 409;
+            this.sendJson(response, { error: "This notification has expired or was already handled. Open the dashboard to review current actions." });
+            return;
+          }
+          this.codexPushActions.delete(notificationId);
+          if (codexAction) {
+            if (codexAction.question ? action !== "Answer" : !["Approve", "Decline", "Review"].includes(action)) throw new Error("This Codex action is invalid.");
+            if (!codexAction.question && action !== "Review") {
+              const result = await this.processClientMessage({ type: "dashboard:action", requestId: `push-${crypto.randomUUID()}`, action: "respondCodexServerRequest", payload: {
+                codexRequestId: codexAction.requestId,
+                codexDecision: action === "Approve" ? "approve" : "decline",
+                ...(codexAction.targetDeviceId ? { targetDeviceId: codexAction.targetDeviceId } : {})
+              } });
+              const failed = result.messages.find((message): message is Extract<DashboardHostMessage, { type: "dashboard:action-result" }> => message.type === "dashboard:action-result" && message.status !== "completed");
+              if (failed) throw new Error(failed.error ?? "Codex did not confirm this response.");
+            }
+          } else if (!resolveMirroredNotification(notificationId, action)) {
             response.statusCode = 409;
             this.sendJson(response, { error: "This notification has expired or was already handled. Open the dashboard to review current actions." });
             return;
@@ -1512,9 +1540,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
 
     if (message.type === "dashboard:ready") {
-      for (const request of [...listPendingCodexAppServerPrompts(), ...this.remoteCodexPrompts.values()]) {
-        messages.push({ type: "dashboard:codex-request", request });
-      }
+      messages.push({ type: "dashboard:codex-requests", requests: [...listPendingCodexAppServerPrompts(), ...this.remoteCodexPrompts.values()] });
       for (const state of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()])
         messages.push({ type: "dashboard:codex-session-live", state });
     }
@@ -1523,7 +1549,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1816,6 +1842,24 @@ export class WebDashboardServer implements vscode.Disposable {
     }
   }
 
+  private notifyCodexRequest(request: Extract<DashboardHostMessage, { type: "dashboard:codex-request" }>["request"]): void {
+    const targetDeviceId = request.deviceId;
+    const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.id}`;
+    const question = request.kind === "question";
+    this.codexPushActions.set(notificationId, { requestId: request.id, ...(targetDeviceId ? { targetDeviceId } : {}), question });
+    while (this.codexPushActions.size > 128) this.codexPushActions.delete(this.codexPushActions.keys().next().value!);
+    const detail = question ? "Codex is waiting for an answer." : "Codex is waiting for approval. Review the request in the dashboard.";
+    this.browserPush.notify({
+      notificationId,
+      level: "warning",
+      title: request.title,
+      systemName: targetDeviceId ? this.peerSessions.get(targetDeviceId)?.deviceName || "Remote system" : os.hostname(),
+      message: question ? `${detail} Open the dashboard to answer.` : request.detail || detail,
+      url: `/workspace/${encodeURIComponent(request.threadId)}${targetDeviceId ? `?device=${encodeURIComponent(targetDeviceId)}` : ""}`,
+      actions: question ? ["Answer"] : request.kind === "permissions" || (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
+    });
+  }
+
   private async notifySessionCompletion(state: DashboardCodexSessionLiveState): Promise<void> {
     const candidate = state.deviceId
       ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId && session.deviceId === state.deviceId)?.title
@@ -1840,6 +1884,7 @@ export class WebDashboardServer implements vscode.Disposable {
           if (socket.readyState !== WebSocket.OPEN) break;
           sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:codex-session-live", state: live } satisfies DashboardHostMessage));
         }
+        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:codex-requests", requests: [...listPendingCodexAppServerPrompts(), ...this.remoteCodexPrompts.values()] } satisfies DashboardHostMessage));
       }
     } catch (error) {
       console.warn("[codexManager] WebSocket snapshot failed", error);
@@ -2642,14 +2687,14 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       if (message.type === "peer:codex-request" && message.request && message.deviceId !== this.deviceId) {
-        if (!this.authenticatedPeerSockets.has(sourceSocket)) return;
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || !message.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket) return;
         const request = { ...message.request, deviceId: message.deviceId };
         this.remoteCodexPrompts.set(request.id, request);
         publishDashboardRealtime({ type: "dashboard:codex-request", request });
         return;
       }
       if (message.type === "peer:codex-request-resolved" && message.requestId && message.deviceId !== this.deviceId) {
-        if (!this.authenticatedPeerSockets.has(sourceSocket)) return;
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || !message.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket) return;
         this.remoteCodexPrompts.delete(message.requestId);
         publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId });
         return;

@@ -98,6 +98,17 @@ describe("browser PWA cache boundary", () => {
     await work;
     expect(worker.self.registration.showNotification).toHaveBeenCalledWith("Worker Two · Build task", expect.objectContaining({ body: "Session failed", data: expect.objectContaining({ title: "Worker Two · Build task" }) }));
   });
+  it("opens a question's owning session and rejects external notification destinations", async () => {
+    const id = "01a04882-d037-7a42-ad24-9afb61901188";
+    for (const destination of [`/workspace/${id}?device=worker`, "https://elsewhere.invalid/workspace/" + id, "//elsewhere.invalid/"]) {
+      const worker = createWorker(async () => new Response("{}"));
+      let work: Promise<unknown> | undefined;
+      const data = { url: destination, notificationId: "question", actions: ["Answer"], createdAt: Date.now() };
+      worker.handlers.get("notificationclick")?.({ action: "Answer", notification: { data, close: vi.fn() }, waitUntil: value => { work = value; } });
+      await work;
+      expect(worker.self.clients.openWindow).toHaveBeenCalledWith(destination.startsWith("/workspace/") ? "https://dashboard.example" + destination : "https://dashboard.example/");
+    }
+  });
   it("returns live assets despite unavailable or full cache storage", async () => {
     const worker = createWorker(async () => new Response("live-css", { headers: { "content-type": "text/css" } }));
     worker.caches.match.mockRejectedValueOnce(new Error("Storage disabled"));

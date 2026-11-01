@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { getCodexSessionReadNotice, readCodexCliSessions, readCodexCliSessionMessages, SESSION_DISCOVERY_RETRY_GAP_MS } from "../src/services/codexSessionResume";
-import { readCodexCliSessionRecoveryMetadata, readCodexCliSessionSummary, readCodexSessionMaintenanceCandidates } from "../src/services/codexSessionResume";
+import { readCodexCliSessionRecoveryMetadata, readCodexCliSessionSummary, readCodexSessionMaintenanceCandidates, resolveRecordedSessionProject } from "../src/services/codexSessionResume";
 import * as fs from "fs/promises";
 vi.mock("fs/promises", { spy: true });
 import { DatabaseSync } from "node:sqlite";
@@ -31,6 +31,17 @@ afterEach(async () => {
 });
 
 describe("session discovery recovery", () => {
+  it("uses native project metadata without waiting for transcript directories", async () => {
+    const db = new DatabaseSync(path.join(root, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads (id TEXT, cwd TEXT)");
+      db.prepare("INSERT INTO threads VALUES (?,?)").run(id, root);
+      const read = vi.spyOn(fs, "readdir");
+      expect(await resolveRecordedSessionProject(id, root)).toBe(root);
+      expect(read.mock.calls.some(([directory]) => String(directory).includes("sessions"))).toBe(false);
+      await expect(resolveRecordedSessionProject(id, path.dirname(root))).rejects.toThrow("different project");
+    } finally { db.close(); }
+  });
   it('shows a later native index rename in both the session list and direct summary', async () => {
     const db = new DatabaseSync(path.join(root, 'state_5.sqlite'));
     try {

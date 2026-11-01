@@ -323,7 +323,8 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
       if (controller.signal.aborted) return;
       try {
         check();
-        const current = await waitWithin<{ status: string; archived?: boolean } | undefined>(plan.preview.tool === "archives" ? readCodexArchiveMaintenanceState(item.id) : readCodexCliSessionSummary(item.sessionId ?? item.id), plan.preview.tool === "archives" ? 20_000 : 6_000, "Running state is unavailable; this item was kept.");
+        const storageOnly = ["archives", "sessions", "large-sessions"].includes(plan.preview.tool) && !item.goalOnly;
+        const current = await waitWithin<{ status: string; archived?: boolean } | undefined>(storageOnly ? readCodexArchiveMaintenanceState(item.id, resolveCodexHome(), plan.preview.tool !== "archives") : readCodexCliSessionSummary(item.sessionId ?? item.id), storageOnly ? 20_000 : 6_000, "Running state is unavailable; this item was kept.");
         check();
         if (!current && !item.snapshot && !item.goalOnly) { state.skipped++; return; }
         if (current?.status === "running") { state.skipped++; return; }
@@ -341,7 +342,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
           if (visited.has(child)) continue;
           visited.add(child); descendants.push(...children.get(child) ?? []);
           if (!selected.has(child)) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is outside this selection.`.slice(0, 300)); return; }
-          const summary = await waitWithin<{ status: string; archived?: boolean } | undefined>(plan.preview.tool === "archives" ? readCodexArchiveMaintenanceState(child) : readCodexCliSessionSummary(child), plan.preview.tool === "archives" ? 20_000 : 6_000, "A child conversation could not be verified; this conversation was kept.");
+          const summary = await waitWithin(readCodexArchiveMaintenanceState(child, resolveCodexHome(), plan.preview.tool !== "archives"), 20_000, "A child conversation could not be verified; this conversation was kept.");
           if (summary && (summary.status !== "idle" || (plan.preview.tool === "archives" && !summary.archived))) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running, unavailable, or no longer archived.`.slice(0, 300)); return; }
         }
         if (item.goalOnly) await clearCodexSessionGoal(item.id);

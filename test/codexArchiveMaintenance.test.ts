@@ -33,6 +33,15 @@ it("checks an archive using native metadata without transcript reads or native r
   expect(await readCodexArchiveMaintenanceState(id)).toEqual({ archived: true, status: "idle" });
   expect(readNativeCodexSessionRunning).not.toHaveBeenCalled();
 });
+it("checks active cleanup rows without transcript discovery and retains held writers", async () => {
+  db.prepare("UPDATE threads SET archived=0 WHERE id=?").run(id);
+  expect(await readCodexArchiveMaintenanceState(id, folder, true)).toEqual({ archived: false, status: "idle" });
+  await mkdir(path.join(folder, "thread-writer-locks"));
+  await writeFile(path.join(folder, "thread-writer-locks", `${id}.lock`), "");
+  mocks.held = true;
+  expect((await readCodexArchiveMaintenanceState(id, folder, true))?.status).toBe("running");
+  expect(readNativeCodexSessionRunning).not.toHaveBeenCalled();
+});
 it("protects a running native owner and an actual writer lock", async () => {
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
   expect((await readCodexArchiveMaintenanceState(id))?.status).toBe("running");

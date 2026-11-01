@@ -411,8 +411,8 @@ async function checkSwitchingLayout(page, width, resetExpanded) {
     assert.ok(Math.abs(reset.y - wait.y) <= 2 && wait.x > reset.x, 'Reset starts beside Wait');
     assert.ok(refresh.y - wait.bottom >= 5 && refresh.y - wait.bottom <= 12, 'Refresh fills the space below Wait');
     assert.ok(Math.abs(resume.y - reload.y) <= 2 && reload.x > resume.x, 'Resume and Reload share the final row');
-    assert.ok(resume.y - reset.bottom >= 5 && resume.y - reset.bottom <= 12, 'Resume follows the expanded reset without an empty row');
-    assert.ok(reload.y - refresh.bottom >= 5 && reload.y - refresh.bottom <= 12, 'Reload follows Refresh without an empty row');
+    const previousRowBottom = Math.max(reset.bottom, refresh.bottom);
+    assert.ok(resume.y - previousRowBottom >= 5 && resume.y - previousRowBottom <= 12, 'The final row follows the taller column without an empty row');
   } else if (width > 560) {
     assert.ok(Math.abs(reset.y - wait.y) <= 2 && Math.abs(refresh.y - resume.y) <= 2, 'Collapsed options use ordinary grid rows');
     assert.ok(refresh.y - reset.bottom <= 8 && reload.y - refresh.bottom <= 8, 'Collapsed reset leaves no reserved space');
@@ -2008,10 +2008,9 @@ try {
     assert.equal(await accountCenter.locator(".cli-account-switch-action").isDisabled(), true, "Duplicate switching is unavailable while its result is pending");
     assert.equal(await accountCenter.getByRole("button", { name: "Settings", exact: true }).isEnabled(), true, "Independent navigation stays available");
     await systemSelect.selectOption("account-offline");
-    await page.getByText('Reconnecting…',{exact:true}).waitFor();
-    assert.equal(await accountCenter.count(),0,'Offline systems show the reconnect screen instead of stale account controls');
+    await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
+    assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'Offline account controls retain the saved view and prohibit switching');
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-    await showAccountRail();await accountTrigger.click();
     await systemSelect.selectOption("account-empty");
     assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
     await accountCenter.getByText("Quota has not been checked yet.", { exact: true }).waitFor();
@@ -2021,9 +2020,9 @@ try {
     assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
     await systemSelect.selectOption("account-remote");
     await page.evaluate(() => { window.__removedAccountPeer=window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-remote');window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
+    assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'A missing system cannot accept switches');
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.push(window.__removedAccountPeer);window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-    await showAccountRail();await accountTrigger.click();
     await systemSelect.selectOption("fixture-local");
     await page.evaluate(() => {
       const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
@@ -2211,7 +2210,7 @@ try {
     if(await showSystems.isVisible()) await showSystems.click();
     assert.equal(await page.locator('.cli-system-count').textContent(),'2','Multiple PCs have a compact count badge');
     await selectSidebarSystem(page, width, 'fixture-remote');
-    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    await page.locator('.cli-session-rail').getByText('The host is offline. This operation was not sent or queued. Reconnect and retry.',{exact:true}).waitFor();
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='fixture-remote').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
     await selectSidebarSystem(page, width, 'fixture-local');
     await page.evaluate(() => {

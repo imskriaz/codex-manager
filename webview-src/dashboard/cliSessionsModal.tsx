@@ -2211,7 +2211,7 @@ function SessionAccountFooter(props: {
   return <footer class="cli-account-footer" ref={rootRef}>
     <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
-      <span class="cli-account-footer-copy"><span><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small>{overall !== undefined ? `${overall}% quota available` : "Manage your accounts"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
+      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small class="cli-account-footer-quota">{footerMetrics.length ? footerMetrics.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
       <ChevronIcon />
     </button>
     {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ width: "360px" }}>

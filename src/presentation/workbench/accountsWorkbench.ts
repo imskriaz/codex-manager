@@ -278,12 +278,12 @@ export class AccountsWorkbench {
     // Let activation and the restored dashboard paint before optional recovery.
     const recoveryTimer = scheduleCodexSessionAutoResume(() => {
       if (this.disposed) return;
-      void measureStep("autoResumeCodexSessions", async () => {
+      return measureStep("autoResumeCodexSessions", async () => {
         try {
           const result = await resumePersistedCodexSessions(this.context);
           const message = formatAutoResumeResult(result);
           if (!message) {
-            return;
+            return result.failed.length > 0;
           }
           void vscode.window.showInformationMessage(message);
           if (result.failed.length) {
@@ -291,13 +291,15 @@ export class AccountsWorkbench {
           } else {
             console.info("[codexManager] automatic session resume complete", message);
           }
+          return result.failed.length > 0;
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           console.warn("[codexManager] auto resume failed", error);
           console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
           void vscode.window.showWarningMessage(`Auto Resume could not restore saved sessions. Recovery was kept. ${detail}`);
+          return true;
         }
-      }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
+      });
     });
     this.context.subscriptions.push(recoveryTimer);
   }

@@ -36,6 +36,10 @@ beforeEach(async () => {
   process.env.CODEX_HOME = home;
   goalOnly = true;
   mocks.open.mockImplementation(async () => ({ request: vi.fn(async (method: string, params: { threadId: string }) => {
+    if (method === "thread/goal/set") {
+      db.prepare("UPDATE thread_goals SET status='active' WHERE thread_id=?").run(params.threadId);
+      return { goal: { status: "active" } };
+    }
     if (method !== "thread/goal/get") throw new Error("Unsupported official mutation");
     const goals = await readCodexSessionGoals(home, [params.threadId]);
     if (!goals) throw new Error("Native goal storage unavailable");
@@ -182,7 +186,8 @@ it.each(["active", "usage_limited", "paused", "none"])("opens the official tab a
     expect(tabs).toHaveLength(1);
     expect(waitForNativeCodexSessionReady).toHaveBeenCalledWith(home, id, expect.any(AbortSignal), 120_000);
     expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
-    expect(mocks.open).not.toHaveBeenCalled();
+    if (status === "paused") expect(db.prepare("SELECT status FROM thread_goals WHERE thread_id=?").get(id)?.status).toBe("active");
+    else expect(mocks.open).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
     expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
   } finally { unsubscribe(); Object.assign(vscode.window, { tabGroups: previousTabs }); }

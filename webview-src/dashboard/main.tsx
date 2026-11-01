@@ -816,6 +816,10 @@ function App() {
         if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
         return;
       }
+      if (message.type === "dashboard:codex-requests") {
+        setCodexRequests(message.requests);
+        return;
+      }
       if (message.type === "dashboard:codex-request") {
         setCodexRequests((current) => current.some((request) => request.id === message.request.id && request.deviceId === message.request.deviceId)
           ? current : [...current, message.request]);
@@ -2399,6 +2403,7 @@ function App() {
               request={activeCodexRequest}
               queuedCount={codexRequests.filter((request) => request !== activeCodexRequest).length}
               busy={isActionPending("respondCodexServerRequest")}
+              connected={!isBrowserDashboard || realtimeConnected}
               error={codexRequestError}
               onRespond={(decision, answers) => {
                 setCodexRequestError(undefined);
@@ -3381,6 +3386,7 @@ function CodexRequestDialog(props: {
   request: DashboardCodexServerRequest;
   queuedCount: number;
   busy: boolean;
+  connected: boolean;
   error?: string;
   onRespond: (decision: "approve" | "decline", answers?: Record<string, string>) => void;
 }) {
@@ -3397,15 +3403,16 @@ function CodexRequestDialog(props: {
       {props.request.detail ? <pre class="codex-request-detail">{props.request.detail}</pre> : null}
       {props.request.questions?.map((question) => <div class="codex-request-question" key={question.id}>
         <label for={`codex-answer-${question.id}`}><span>{question.header || "Question"}</span><strong>{question.question}</strong></label>
-        {question.options?.length ? <select id={`codex-answer-${question.id}`} value={answers[question.id] ?? ""} disabled={props.busy} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))}>
+        {question.options?.length ? <select id={`codex-answer-${question.id}`} value={answers[question.id] ?? ""} disabled={props.busy || !props.connected} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))}>
           <option value="">Choose an answer…</option>
           {question.options.map((option) => <option key={option.label} value={option.label}>{option.label}{option.description ? ` — ${option.description}` : ""}</option>)}
-        </select> : <input id={`codex-answer-${question.id}`} type={question.isSecret ? "password" : "text"} value={answers[question.id] ?? ""} disabled={props.busy} maxLength={8_000} onInput={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))} />}
+        </select> : null}
+        <input id={question.options?.length ? `codex-custom-answer-${question.id}` : `codex-answer-${question.id}`} aria-label={question.options?.length ? `Or type an answer for ${question.header || question.question}` : undefined} placeholder={question.options?.length ? "Or type your own answer…" : undefined} type={question.isSecret ? "password" : "text"} value={answers[question.id] ?? ""} disabled={props.busy || !props.connected} maxLength={8_000} onInput={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))} />
       </div>)}
       {props.error ? <p class="codex-request-error" role="alert">{props.error}</p> : null}
       <div class="codex-request-actions">
-        <button type="button" class="is-secondary" disabled={props.busy} onClick={() => props.onRespond("decline")}>{isQuestion ? "Dismiss question" : "Decline"}</button>
-        <button type="button" class="is-primary" disabled={props.busy || !complete} onClick={() => props.onRespond("approve", answers)}>{props.busy ? "Sending…" : isQuestion ? "Send answer" : "Approve once"}</button>
+        <button type="button" class="is-secondary" disabled={props.busy || !props.connected} onClick={() => props.onRespond("decline")}>{isQuestion ? "Dismiss question" : "Decline"}</button>
+        <button type="button" class="is-primary" disabled={props.busy || !props.connected || !complete} onClick={() => props.onRespond("approve", answers)}>{props.busy ? "Sending…" : isQuestion ? "Send answer" : "Approve once"}</button>
       </div>
     </section>
   </div>;

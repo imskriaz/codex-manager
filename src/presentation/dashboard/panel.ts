@@ -253,9 +253,7 @@ export class DashboardPanelController {
             for (const state of listCodexSessionLiveStates()) {
               void this.panel?.webview.postMessage({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
             }
-            for (const request of listPendingCodexAppServerPrompts()) {
-              void this.panel?.webview.postMessage({ type: "dashboard:codex-request", request } satisfies DashboardHostMessage);
-            }
+            void this.panel?.webview.postMessage({ type: "dashboard:codex-requests", requests: listPendingCodexAppServerPrompts() } satisfies DashboardHostMessage);
           },
           onAction: async (actionMessage) => {
             this.pendingActions++;

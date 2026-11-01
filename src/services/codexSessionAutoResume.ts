@@ -45,20 +45,35 @@ const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
 const restoreControllers = new Set<AbortController>();
 const startupTimers = new Set<ReturnType<typeof setTimeout>>();
+let recoveryCancellation = 0;
 const autoResumeTitles = new WeakMap<object, Array<{ sessionId: string; title: string; status: "opened" | "failed" }>>();
 
 /** Stop optional startup restoration before manual session or account work. */
 export function cancelCodexSessionAutoResume(reason = "Auto Resume was cancelled because the account is changing."): void {
+  recoveryCancellation++;
   for (const timer of startupTimers) clearTimeout(timer);
   startupTimers.clear();
   for (const controller of restoreControllers) controller.abort(new Error(reason));
 }
 
-export function scheduleCodexSessionAutoResume(start: () => void): vscode.Disposable {
-  const timer = setTimeout(() => { startupTimers.delete(timer); start(); }, 1_000);
-  timer.unref?.();
-  startupTimers.add(timer);
-  return { dispose: () => { clearTimeout(timer); startupTimers.delete(timer); } };
+export function scheduleCodexSessionAutoResume(start: () => void | Promise<boolean | void>): vscode.Disposable {
+  const cancellation = recoveryCancellation;
+  let disposed = false, attempts = 0;
+  let timer: ReturnType<typeof setTimeout>;
+  const schedule = (ms: number) => {
+    timer = setTimeout(() => {
+      startupTimers.delete(timer);
+      if (disposed || cancellation !== recoveryCancellation) return;
+      attempts++;
+      void Promise.resolve().then(start).then(retry => {
+        if (retry && attempts < 3 && !disposed && cancellation === recoveryCancellation) schedule(30_000);
+      }).catch(error => console.warn("[codexManager] scheduled Auto Resume failed; recovery retained", error));
+    }, ms);
+    timer.unref?.();
+    startupTimers.add(timer);
+  };
+  schedule(1_000);
+  return { dispose: () => { disposed = true; clearTimeout(timer); startupTimers.delete(timer); } };
 }
 
 // Repeated requests for the same operation join; different operations run in order.

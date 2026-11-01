@@ -81,7 +81,7 @@ const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: 
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
 const observedNativeStops = new Map<string, Promise<boolean>>();
-const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc>; rpcs: Map<string, Promise<CodexAppServerRpc>> }>();
+const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc> }>();
 const appServerTransport = new AsyncLocalStorage<AppServerTransport>();
 
 export function withCodexAppServerTransport<T>(transport: AppServerTransport, task: () => Promise<T>): Promise<T> {
@@ -99,10 +99,15 @@ function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open
 /** Reuse one native process for a bounded cleanup job, never for session turns. */
 export async function withCodexSessionMaintenance<T>(ids: string[], task: () => Promise<T>): Promise<T> {
   ids.forEach(validateSessionId);
-  const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined, rpcs: new Map<string, Promise<CodexAppServerRpc>>() };
+  const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined };
   return maintenanceConnection.run(context, async () => {
+    const store = getSqliteStateStore();
+    if (store) invalidateSessionCatalogue(store, context.home);
     try { return await task(); }
-    finally { await Promise.all([...context.rpcs.values()].map(rpc => rpc.then(value => value.close(), () => undefined))); if (context.rpc) await context.rpc.then(rpc => rpc.close(), () => undefined); }
+    finally {
+      if (context.rpc) await context.rpc.then(rpc => rpc.close(), () => undefined);
+      if (store) invalidateSessionCatalogue(store, context.home);
+    }
   });
 }
 
@@ -493,22 +498,22 @@ export async function readCodexCliSessionSummary(
 }
 
 /** Archived cleanup must work even when the native renderer cannot answer IPC. */
-export async function readCodexArchiveMaintenanceState(sessionId: string, home = resolveCodexHome()): Promise<{ archived: boolean; status: "idle" | "running" | "unknown" } | undefined> {
+export async function readCodexArchiveMaintenanceState(sessionId: string, home = resolveCodexHome(), includeActive = false): Promise<{ archived: boolean; status: "idle" | "running" | "unknown" } | undefined> {
   validateSessionId(sessionId);
   const record = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
   if (!record || record.archived === undefined) {
     const legacy = await readCodexCliSessionSummary(sessionId, home);
     return legacy ? { archived: legacy.archived === true, status: legacy.status } : undefined;
   }
-  if (!record.archived) return { archived: false, status: "running" };
+  if (!record.archived && !includeActive) return { archived: false, status: "running" };
   if (ownsSessionTurn(home, sessionId) || getNativeCodexSessionRunning(home, sessionId) === true)
-    return { archived: true, status: "running" };
+    return { archived: record.archived, status: "running" };
   const lock = path.join(home, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.lstat(lock).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
   if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error("The session writer lock is invalid. This conversation was kept.");
   const running = Boolean(stat && await isWriterLockHeld(lock));
   const current = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
-  return current ? { archived: current.archived === true, status: running || !current.archived ? "running" : "idle" } : undefined;
+  return current ? { archived: current.archived === true, status: running || (!includeActive && !current.archived) ? "running" : "idle" } : undefined;
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -1175,6 +1180,13 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
         observeRunningCodexSession({ ...session, status: "running" });
         return;
       }
+      if (recoverablePaused) {
+        const result = await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", { threadId: session.id, status: "active", origin: "automatic" }, 10_000, signal);
+        if (result.goal?.status !== "active") throw new Error("Codex did not confirm reactivating the interrupted goal. Saved recovery was retained.");
+        signal?.throwIfAborted();
+      }
+      if (resolveCodexHome() !== home || readCodexSessionPreferences(home, [session.id]).get(session.id)?.manualStop)
+        throw new Error("The session was stopped or its Codex home changed before continuation. Saved recovery was retained.");
       if (!await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, turnId => {
         accepted = true;
         nativeTurnStarted(home, session.id, turnId);
@@ -1612,9 +1624,9 @@ export async function deleteCodexCliSession(sessionId: string, options: { archiv
   if (ownsSessionTurn(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
-    const archived = options.archivedOnly || maintenanceConnection.getStore()?.ids.has(sessionId) ? await readCodexArchiveMaintenanceState(sessionId, home) : undefined;
+    const archived = options.archivedOnly || maintenanceConnection.getStore()?.ids.has(sessionId) ? await readCodexArchiveMaintenanceState(sessionId, home, !options.archivedOnly) : undefined;
     if (options.archivedOnly && !archived?.archived) throw new Error("This conversation is no longer archived. It was kept.");
-    if (archived?.archived ? archived.status !== "idle" : await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+    if (archived ? archived.status !== "idle" : await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
     await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
     recentNewSessions.delete(sessionId);
@@ -2385,7 +2397,7 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
     try { return await task(); }
     finally {
       // A native mutation can succeed before its local bookkeeping fails.
-      try { const store = getSqliteStateStore(); if (store) invalidateSessionCatalogue(store, home); }
+      try { const store = getSqliteStateStore(); if (store && !maintenanceConnection.getStore()) invalidateSessionCatalogue(store, home); }
       catch (error) { recordPersistentEvent("warning", "session-list", "Changed history will refresh when storage recovers", undefined, error); }
     }
   });
@@ -2394,8 +2406,8 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
 export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string, requireAvailable = true): Promise<string> {
   validateSessionId(sessionId);
   const home = resolveCodexHome();
-  const recorded = (await readCliSessionMetadata(home, sessionId)).projectPath
-    ?? (await readStateSessionRecords(home, sessionId))[0]?.cwd
+  const recorded = (await readStateSessionRecords(home, sessionId))[0]?.cwd
+    ?? (await readCliSessionMetadata(home, sessionId)).projectPath
     ?? recentNewSessions.get(sessionId)?.summary.projectPath;
   let cwd: string;
   if (recorded) {
@@ -2730,23 +2742,22 @@ function probeCodexCliAvailability(executable: CodexCliExecutable): Promise<bool
 async function runCodexAppServerRequest<T = unknown>(
   method: string,
   params: unknown,
-  timeoutMs = APP_SERVER_REQUEST_TIMEOUT_MS
+  timeoutMs = APP_SERVER_REQUEST_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<T> {
+  signal?.throwIfAborted();
   const maintenance = maintenanceConnection.getStore();
   if (maintenance && ["thread/delete", "thread/unarchive", "thread/goal/clear"].includes(method)) {
     const id = (params as { threadId?: string } | null)?.threadId;
     if (!id || !maintenance.ids.has(id) || maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
-    const cwd = await resolveRecordedSessionProject(id).catch(() => maintenance.home);
-    const rpcKey = path.resolve(cwd);
-    let rpcPromise = maintenance.rpcs.get(rpcKey);
-    if (!rpcPromise) rpcPromise = (async () => {
-      await assertUsableCliProjectPath(cwd);
+    // Storage-only operations need no project tools or transcript discovery.
+    if (!maintenance.rpc) maintenance.rpc = (async () => {
+      await assertUsableCliProjectPath(maintenance.home);
       const executable = await resolveCodexCliExecutable();
       if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
-      return openCodexAppServer(executable, cwd);
+      return openCodexAppServer(executable, maintenance.home);
     })();
-    maintenance.rpcs.set(rpcKey, rpcPromise);
-    const rpc = await rpcPromise;
+    const rpc = await maintenance.rpc;
     if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
     return rpc.request<T>(method, params, timeoutMs);
   }
@@ -2767,9 +2778,11 @@ async function runCodexAppServerRequest<T = unknown>(
     await assertUsableCliProjectPath(cwd);
     recordPersistentEvent("debug", "session-maintenance", "Using Codex storage for an unavailable session project", { sessionRef: toSessionLogRef(sessionId), method });
   }
-  const rpc = await openCodexAppServer(executable, cwd);
-  try { return await rpc.request<T>(method, params, timeoutMs); }
-  finally { rpc.close(); }
+  const rpc = await openCodexAppServer(executable, cwd, signal);
+  const abort = () => rpc.close();
+  signal?.addEventListener("abort", abort, { once: true });
+  try { signal?.throwIfAborted(); return await rpc.request<T>(method, params, timeoutMs); }
+  finally { signal?.removeEventListener("abort", abort); rpc.close(); }
 }
 
 function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {

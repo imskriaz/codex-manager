@@ -381,7 +381,7 @@ describe("native App Server new sessions", () => {
       expect(completed).toHaveBeenCalledOnce();
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
-  it.each(["active", "usage_limited", "paused"])("continues a native-owned %s goal once without a prompt or goal mutation", async status => {
+  it.each(["active", "usage_limited", "paused"])("continues a native-owned %s goal once and reactivates interrupted paused work", async status => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
     await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_failed", turn_id: "interrupted" } }) + "\n");
@@ -393,9 +393,15 @@ describe("native App Server new sessions", () => {
     const completed = vi.fn();
     const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === "dashboard:codex-session-live" && event.state.status === "completed") completed(event.state); });
     seedGoal(status);
+    const rpc = { request: vi.fn(async () => ({ goal: { status: "active" } })), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
     try {
       await resumeCodexSessionGoal({ id, title: "Native goal", status: "idle", interrupted: true, projectPath: root });
-      expect(mocks.open).not.toHaveBeenCalled();
+      if (status === "paused") {
+        expect(rpc.request).toHaveBeenCalledExactlyOnceWith("thread/goal/set", { threadId: id, status: "active", origin: "automatic" }, 10_000);
+        expect(rpc.request.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(startNativeCodexSessionTurn).mock.invocationCallOrder[0]!);
+        expect(rpc.close).toHaveBeenCalledOnce();
+      } else expect(mocks.open).not.toHaveBeenCalled();
       expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(root, id, { threadId: id, input: [], cwd: root }, expect.any(AbortSignal), expect.any(Function));
       await vi.waitFor(() => expect(completed).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, status: "completed" })));
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }

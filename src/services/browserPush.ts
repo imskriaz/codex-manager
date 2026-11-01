@@ -175,7 +175,7 @@ export class BrowserPushService {
           tag: `codex-manager-${key.slice(0, 150)}`,
           notificationId: notice.notificationId,
           actions: notice.actions?.slice(0, 2),
-          url: "/",
+          url: notice.url?.startsWith("/workspace/") ? notice.url : "/",
           createdAt: now
         });
         await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => {

@@ -38,6 +38,7 @@ import {
   readCodexCliSessionMessages,
   renameCodexCliSession,
   setCodexSessionGoalStatus,
+  resumeCodexSessionGoal,
   setCodexSessionAutoResume,
   setCodexSessionQueue,
   startCodexCliSession,
@@ -272,7 +273,7 @@ async function executeDashboardActionMessageInTransport(
     { hostKind: ctx.hostKind ?? "webview" },
     (result) => ({ status: result.status, errorMessage: result.errorMessage })
   );
-  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions"].includes(message.action)) return execute();
+  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "respondCodexServerRequest"].includes(message.action)) return execute();
   if (typeof message.requestId !== "string" || !message.requestId.trim() || message.requestId.length > 256)
     return { status: "failed", errorMessage: "The session request identifier is invalid. Refresh the session and try again." };
   let sessionActionRequests = sessionActionRequestsByContext.get(ctx.context);
@@ -1037,7 +1038,7 @@ async function runDashboardAction(
     case "renameCodexCliSession":
       return handleRenameCodexCliSession(payload?.sessionId, payload?.text);
     case "setCodexSessionGoalStatus":
-      return handleSetCodexSessionGoalStatus(ctx.context, payload);
+      return handleSetCodexSessionGoalStatus(payload);
     case "setCodexSessionAutoResume":
       return handleSetCodexSessionAutoResume(payload);
     case "setCodexSessionQueue":
@@ -2090,18 +2091,24 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
     message: `${opened} conversation${opened === 1 ? "" : "s"} opened in VS Code.${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not open or resume; recovery was kept. ${failures[0]}` : ""}` } };
 }
 
-async function handleSetCodexSessionGoalStatus(context: vscode.ExtensionContext, payload?: DashboardActionPayload) {
+async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload) {
   ensureCliIntegrationEnabled();
   if (!payload?.sessionId || !["active", "paused"].includes(payload.goalStatus ?? "")) throw new Error("Choose a session and Pause or Resume for its goal.");
   const status = payload.goalStatus!;
   const session = await ensureCliSessionIsActive(payload.sessionId);
-  if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "blocked", "usage_limited"].includes(session.goal.status))
+  if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "blocked", "usageLimited", "usage_limited"].includes(session.goal.status))
     throw new Error("This goal cannot be paused or resumed here. Refresh its current state in Codex.");
   await setCodexSessionGoalStatus(session.id, status);
   let notice = { level: "info" as "info" | "warning", message: status === "paused" ? "Goal paused. The current turn can finish." : "Goal resumed." };
   if (status === "active") {
-    const resumed = await handleResumeCodexSessions(context, session.id).catch(error => ({ notice: { level: "warning" as const, message: toFailureMessage(error) } }));
-    notice = { level: resumed.notice.level === "warning" ? "warning" : "info", message: `Goal resumed. ${resumed.notice.message}` };
+    const controller = new AbortController();
+    try {
+      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), 45_000, "Opening this goal timed out.", controller.signal);
+      await resumeCodexSessionGoal({ ...session, goal: { ...session.goal, status } }, controller.signal, "user");
+      notice = { level: "info", message: "Goal resumed and continuation started." };
+    } catch (error) {
+      notice = { level: "warning", message: `The goal was set to active, but continuation was not confirmed: ${toFailureMessage(error)}. Check the session before retrying.` };
+    } finally { controller.abort(); }
   }
   return { cliSession: { ...session, goal: { ...session.goal, status } }, notice };
 }
@@ -2163,10 +2170,8 @@ async function handleArchiveCodexCliSession(sessionId: string | undefined) {
   if (!sessionId) throw new Error("Choose a session first.");
   await ensureCliSessionIsActive(sessionId);
   await archiveCodexCliSession(sessionId);
-  const refreshed = await refreshSessionListAfterMutation();
   return {
-    ...refreshed,
-    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session archived." }
+    notice: { level: "info" as const, message: "Codex session archived." }
   };
 }
 
@@ -2176,10 +2181,8 @@ async function handleUnarchiveCodexCliSession(sessionId: string | undefined) {
   const session = await findCliSession(sessionId);
   if (!session.archived) throw new Error("This session is already active.");
   await unarchiveCodexCliSession(sessionId);
-  const refreshed = await refreshSessionListAfterMutation();
   return {
-    ...refreshed,
-    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session restored to Active." }
+    notice: { level: "info" as const, message: "Codex session restored to Active." }
   };
 }
 
@@ -2188,10 +2191,8 @@ async function handleDeleteCodexCliSession(payload: DashboardActionPayload | und
   if (!payload?.sessionId) throw new Error("Choose a session first.");
   if (payload.confirmed !== true) throw new Error("Confirm permanent deletion, then try again.");
   await deleteCodexCliSession(payload.sessionId);
-  const refreshed = await refreshSessionListAfterMutation();
   return {
-    ...refreshed,
-    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session permanently deleted." }
+    notice: { level: "info" as const, message: "Codex session permanently deleted." }
   };
 }
 

@@ -138,6 +138,24 @@ describe("persistent browser push", () => {
     expect(payload.title).toBe(`${hostname()} · Fix SMS end to end`);
     expect(payload.body).toContain("Session completed");
   });
+  it("pushes Codex approval and question requests with review actions", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never,
+      { verifyRealtimePeerPayload: async () => true, setOnlineDeviceIds: vi.fn() } as never);
+    const host = server as any;
+    host.browserPush = service;
+    host.deviceId = "local-device";
+    host.notifyCodexRequest({ id: "approval", threadId: "thread", kind: "command", title: "Approve command", detail: "Run tests" });
+    await settle();
+    expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ notificationId: expect.stringContaining(":approval"), actions: ["Approve", "Decline"] });
+    send.mockClear();
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    host.notifyCodexRequest({ id: "question", threadId: sessionId, deviceId: "worker", kind: "question", title: "Codex has a question", questions: [{ id: "choice", header: "Choice", question: "Private question text", isSecret: true }] });
+    await settle();
+    expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ notificationId: expect.stringContaining(":question"), actions: ["Answer"], url: `/workspace/${sessionId}?device=worker` });
+    expect(send.mock.calls[0]![1]).not.toContain("Private question text");
+    await server.stop(); server.dispose();
+  });
   it("uses the first recovered title for an auto-resume push", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     service.notify({ level: "info", message: "Auto resume reopened 1 running VS Code Codex session: “Fix SMS end to end”." });

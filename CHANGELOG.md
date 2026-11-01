@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.3
+
+- Answer browser-session questions with suggested choices or custom text, and receive push notifications that open the waiting session. Respond to short approval requests from notifications and review longer requests in the dashboard.
+- Restore pending question and approval prompts after reconnects, keep answer drafts during temporary disconnections, and prevent duplicate responses.
+- Reduce workspace action overhead and resolve recorded project folders without unnecessary transcript discovery.
+- Speed up archive and conversation cleanup with one shared storage connection and metadata-based writer checks, while preserving running conversations and reporting failures.
+- Fix resuming stopped goals and reactivate verified interrupted paused goals before continuing. Retry incomplete startup Auto Resume up to three times, cancelling retries for manual actions.
+- Show both available quota percentages in the compact workspace footer, hide account identity on mobile, and keep saved-account search and tag filters in one row.
+
 ## 1.6.2
 
 - Show cached browser views immediately and refresh them in the background, keeping content and progress visible through reconnects.

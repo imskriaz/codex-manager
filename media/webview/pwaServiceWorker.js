@@ -136,7 +136,7 @@ self.addEventListener("push", (event) => {
     await self.registration.showNotification(title, {
       body, icon: "/assets/icon-192.png", badge: "/assets/icon-192.png",
       tag: typeof payload?.tag === "string" ? payload.tag : "codex-manager-update", actions,
-      data: { title, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
+      data: { title, url: payload?.url, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
     });
   })());
 });
@@ -154,12 +154,16 @@ self.addEventListener("notificationclick", (event) => {
         const response = await fetch("/api/push/action", { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
           headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify({ notificationId: data.notificationId, action: event.action }) });
         if (!response.ok) throw new Error(response.status === 401 ? "Sign in again to act on this notification." : "This action could not be confirmed. Open the dashboard to check its outcome before retrying.");
-        feedback = "Your choice was accepted. Open the dashboard to see the result.";
+        feedback = event.action === "Answer" || event.action === "Review" ? "Opening the request in the dashboard." : "Your choice was accepted. Open the dashboard to see the result.";
       } catch (error) { feedback = error.message || "The host is unavailable. Open the dashboard and retry when connected."; }
       finally { clearTimeout(timer); }
       await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
     }
-    const target = new URL("/", self.location.origin).href;
+    let target = new URL("/", self.location.origin).href;
+    try {
+      const url = new URL(data.url, self.location.origin);
+      if (url.origin === self.location.origin && /^\/workspace\/[a-f0-9-]{36}$/i.test(url.pathname)) target = url.href;
+    } catch { /* Invalid destinations open the dashboard. */ }
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
     if (existing) { await existing.navigate(target); await existing.focus(); }

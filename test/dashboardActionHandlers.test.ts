@@ -151,9 +151,20 @@ describe("manual Codex navigation and recovery", () => {
     const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "explicit-resume-goal", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" } });
     expect(result.status).toBe("completed"); expect(result.payload?.cliSession?.goal?.status).toBe("active");
     expect(open).toHaveBeenCalledOnce(); expect(resume).toHaveBeenCalledOnce();
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id, goal: expect.objectContaining({ status: "active" }) }), expect.any(AbortSignal), "user");
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
     expect(result.payload?.notice).toMatchObject({ level: "info", message: expect.stringContaining("Goal resumed") });
     expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
+  });
+  it("reports a confirmed goal activation separately when continuation is unavailable", async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Stopped goal", status: "idle", goal: { objective: "Finish", status: "paused" } });
+    vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockResolvedValue(undefined);
+    vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    vi.spyOn(sessionEditors, "resumeCodexSessionGoal").mockRejectedValue(new Error("Owner disconnected"));
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "goal-partial", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" } });
+    expect(result).toMatchObject({ status: "completed", payload: { cliSession: { goal: { status: "active" } }, notice: { level: "warning", message: expect.stringContaining("Owner disconnected") } } });
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
   });
   it("reopens running and interrupted parents without closing existing tabs and acknowledges duplicate requests", async () => {
     enableSessions();
@@ -286,15 +297,16 @@ describe("executeDashboardActionMessage", () => {
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
   });
 
-  it("preserves session mutation success when discovery fails afterward", async () => {
+  it("returns session mutation success without waiting for full discovery", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    readCodexCliSessionsMock.mockClear();
     const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "idle", archived: false };
     readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
     archiveSessionMock.mockResolvedValueOnce(undefined);
-    readCodexCliSessionsMock.mockRejectedValueOnce(new Error("discovery unavailable"));
     const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "archiveCodexCliSession", requestId: "archive-discovery-failure", payload: { sessionId: session.id } });
-    expect(result).toMatchObject({ status: "completed", payload: { notice: { level: "warning", message: expect.stringContaining("discovery unavailable") } } });
+    expect(result).toMatchObject({ status: "completed", payload: { notice: { level: "info", message: "Codex session archived." } } });
     expect(archiveSessionMock).toHaveBeenCalledWith(session.id);
+    expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
   });
   it("returns a failed quota action when the command returns a provider error", async () => {
     const ctx = createContext();

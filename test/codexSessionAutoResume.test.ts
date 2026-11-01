@@ -46,6 +46,28 @@ function createContext(initial?: unknown) {
 const readNativeTabs = sessionEditor.readOpenCodexSessionIds;
 const selectNativeSessions = autoResumeSelection.readAutoResumeCodexSessionIds;
 
+it("retries incomplete startup recovery at most three times and cancels retries for manual work", async () => {
+  vi.useFakeTimers();
+  try {
+    const retry = vi.fn(async () => true);
+    const registration = scheduleCodexSessionAutoResume(retry);
+    await vi.advanceTimersByTimeAsync(91_000);
+    expect(retry).toHaveBeenCalledTimes(3);
+    registration.dispose();
+    let finish!: (value: boolean) => void;
+    const pending = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    scheduleCodexSessionAutoResume(pending);
+    await vi.advanceTimersByTimeAsync(1_000);
+    cancelCodexSessionAutoResume(); finish(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pending).toHaveBeenCalledOnce();
+    const success = vi.fn(async () => false);
+    scheduleCodexSessionAutoResume(success);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(success).toHaveBeenCalledOnce();
+  } finally { cancelCodexSessionAutoResume(); vi.useRealTimers(); }
+});
+
 it("does not let a delayed startup resume override a manual account switch or disposed window", async () => {
   vi.useFakeTimers();
   try {

@@ -1219,6 +1219,7 @@ export type DashboardHostMessage =
       result: DashboardWorkspaceTerminalResult;
     }
   | { type: "dashboard:codex-request"; request: DashboardCodexServerRequest }
+  | { type: "dashboard:codex-requests"; requests: DashboardCodexServerRequest[] }
   | { type: "dashboard:codex-session-live"; state: DashboardCodexSessionLiveState }
   | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string }
   | {

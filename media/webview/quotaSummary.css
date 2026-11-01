@@ -13466,6 +13466,10 @@ body.is-dashboard-workspace-route #dashboard-main {
 @media (max-width: 760px) {
   .cli-workspace .cli-account-footer > button { min-height: 44px; padding: 5px 7px; gap: 7px; }
   .cli-workspace .cli-account-footer .cli-account-avatar { width: 26px; height: 26px; }
+  .cli-workspace .cli-account-footer .cli-account-avatar,
+  .cli-workspace .cli-account-footer .cli-account-footer-account { display: none; }
+  .cli-workspace .cli-account-footer > button { grid-template-columns: minmax(0, 1fr) auto; }
+  .cli-workspace .cli-account-footer-quota { font-size: 10px; }
   .cli-account-center-header { padding: 5px 9px 3px; }
   .cli-account-center-header .cli-icon-button { width: 28px; min-height: 28px; }
   .cli-account-current { padding: 3px 10px 8px; gap: 7px; }
@@ -14884,8 +14888,8 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .dashboard-account-toolbar .account-search-control { flex: 1 1 0; width: auto; min-width: 0; height: 40px; min-height: 40px; grid-column: auto; padding-inline: 6px; gap: 3px; }
   .dashboard-account-toolbar .account-search-control input { flex: 1 1 0; min-width: 0; width: 0; font-size: 16px; }
   .dashboard-account-toolbar .account-search-control button { flex: 0 0 28px; width: 28px; height: 36px; }
-  .dashboard-account-toolbar .dashboard-select-control { flex: 0 1 32%; width: auto; min-width: 0; min-height: 40px; }
-  .dashboard-account-toolbar .dashboard-select-control select { width: 100%; min-width: 0; max-width: 130px; min-height: 40px; font-size: 16px; padding-inline: 5px 16px; }
+  .dashboard-account-toolbar .dashboard-select-control { flex: 0 1 27%; width: auto; min-width: 0; max-width: 130px; min-height: 40px; }
+  .dashboard-account-toolbar .dashboard-select-control select { width: 100%; min-width: 0; max-width: none; min-height: 40px; font-size: 16px; padding-inline: 5px 16px; }
   .dashboard-account-toolbar .dashboard-view-controls { flex: 0 0 40px; margin: 0; }
   .dashboard-account-toolbar .dashboard-view-toggle { width: 40px; min-width: 40px; height: 40px; }
   .dashboard-density-compact .saved-title h3, .settings-block-title { font-size: 13px; }
@@ -15933,17 +15937,6 @@ html[data-theme] body .settings-modal .modal-primary-btn { background:var(--acce
 @media(max-width:760px),(hover:none) {
   .cli-workspace .is-dense-tree .cli-session-row.is-grouped { height:32px; min-height:32px; }
   .cli-workspace .is-dense-tree .cli-session-row.is-grouped .cli-session-row-select { min-height:30px; }
-}
-
-@media (max-width: 600px) {
-  .dashboard-account-toolbar:has(.account-tag-filter) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 40px; gap: 4px; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .account-search-control { grid-column: 1 / 4; grid-row: 1; width: auto; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .dashboard-view-controls { grid-column: 4; grid-row: 1; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .dashboard-select-control { max-width: none; width: 100%; min-width: 0; grid-row: 2; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .dashboard-select-control:nth-child(2) { grid-column: 1; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .account-tag-filter { grid-column: 2; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .metric-priority-control { grid-column: 3 / 5; }
-  .dashboard-account-toolbar:has(.account-tag-filter) .dashboard-select-control select { max-width: none; width: 100%; }
 }
 
 .saved-account-tags {
