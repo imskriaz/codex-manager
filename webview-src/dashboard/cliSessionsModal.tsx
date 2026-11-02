@@ -345,7 +345,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const field of fields) dirty.add(field);
     dirtyDraftFields.current.set(draftKey, dirty);
   };
-  const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig);
+  const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession);
   const { model, reasoningEffort, sandboxMode } = settings;
   const updateDraftSettings = (patch: Partial<ComposerDraft>) => {
     markDraftFields(Object.keys(patch) as Array<keyof ComposerDraft>);
@@ -1117,7 +1117,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   <div />
                 </div>
               </section>
-              {showLatestButton ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /></button> : null}</div>
+              {showLatestButton || currentTurnRunning ? <button type="button" class={"cli-scroll-latest" + (currentTurnRunning ? " is-running" : "")} aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}>{currentTurnRunning ? <span class="cli-scroll-dots" aria-hidden="true"><i /><i /><i /></span> : <ChevronIcon />}</button> : null}</div>
               {props.requestPanel}
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
 
@@ -1130,7 +1130,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               ) : composerBlockedByOwner || props.connected === false ? (
                 <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
                   {props.connected === false ? <ShieldIcon /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span class="cli-running-copy"><strong>{props.connected === false ? "Reconnecting" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings" title={`${model ?? 'Default model'} · ${reasoningEffort ?? 'Default effort'} · ${sandboxMode}`}><span class="cli-running-model"> · {selectedModel?.label ?? model ?? "Default"}</span><span> · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full" : sandboxMode === "read-only" ? "RO" : "RW"}</span></small><small class="cli-running-quota-inline"> · <AccountQuota account={props.account} saved={props.connected === false} inline /></small></span>
-                  <span class="cli-running-quota"><AccountQuota account={props.account} saved={props.connected === false} /></span>
                   {legacyDraftWarning}<span class="cli-running-actions">
                     {!props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <IconButton pressed={sessionAutoResume} label={sessionAutoResume ? 'Pause Auto Resume' : 'Enable Auto Resume'} title={sessionAutoResume ? 'Pause Auto Resume for this session' : 'Enable Auto Resume for this session'} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(props.selectedSession!, !sessionAutoResume)}><AutoResumeIcon enabled={sessionAutoResume} goal={!!goal} /></IconButton> : null}
                     <IconButton label="Stop turn" title={props.stopping ? 'Stopping…' : props.selectedSession.canStop ? 'Stop this turn' : 'Stop this turn from its owning Codex window'} disabled={!props.selectedSession.canStop || props.stopping || props.connected === false} onClick={() => props.onStop(props.selectedSession!)}><StopIcon /></IconButton>
@@ -2483,5 +2482,4 @@ function CheckIcon() { return <Icon><path d="m5 12 4 4L19 6" fill="none" stroke=
 function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
-
 

@@ -88,7 +88,9 @@ try {
     let messages = 0;
     if (await row.count()) {
       await row.click();
-      await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages" && event.status === "completed"));
+      await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages"));
+      const opened = await page.evaluate(() => window.__liveEvents.filter(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages").at(-1));
+      assert.equal(opened.status, 'completed', opened.error || 'Existing history must open successfully');
       messages = await page.locator(".cli-conversation .cli-session-message").count();
     }
     assert.equal(await page.locator(".dashboard-notice.is-error").count(), 0, "Opening real chat must not fail automatic workspace inspection");

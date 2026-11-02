@@ -113,7 +113,7 @@
       publishStatus(isRealtimeOpen() ? "live" : "degraded");
       return true;
     })().catch((error) => {
-      publishStatus("unreachable");
+      publishStatus(isRealtimeOpen() ? "live" : "unreachable");
       throw error;
     }).finally(() => { snapshotInFlight = undefined; });
     return snapshotInFlight;
@@ -289,7 +289,7 @@
         });
       } catch (error) {
         console.error("[codex-manager] dashboard refresh", error);
-        if (manual) dispatch({ type: "dashboard:notice", level: "error", message: "Dashboard is still unavailable. Check VS Code and try again." });
+        if (manual) dispatch({ type: "dashboard:notice", level: "error", message: isRealtimeOpen() ? "Snapshot refresh failed. The live connection is available; displayed data may be stale." : "Dashboard is still unavailable. Check VS Code and try again." });
       }
       return;
     }
@@ -352,7 +352,7 @@
       const acceptSnapshot = revision === snapshotRevision;
       payload.messages.forEach(result => { if (result?.type !== "dashboard:snapshot" || acceptSnapshot) dispatch(result); });
     } catch (error) {
-      if (!reachedHost && (awaitingHttpResponse || isBrowserOffline())) publishStatus("unreachable");
+      if (!reachedHost && (awaitingHttpResponse || isBrowserOffline())) publishStatus(isRealtimeOpen() ? "live" : "unreachable");
       console.error("[codex-manager] browser dashboard bridge", error);
       const detail = error?.name === "AbortError"
         ? "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
@@ -372,7 +372,7 @@
       }
       // Action failures already have a request-scoped result. Do not emit a
       // second standalone toast for the same failed action.
-      if (message?.type !== "dashboard:action") dispatch({ type: "dashboard:notice", level: "error", message: detail });
+      if (message?.type !== "dashboard:action" && message?.type !== "dashboard:workspace-presence") dispatch({ type: "dashboard:notice", level: "error", message: detail });
       if (error?.authenticationRequired) requireSignIn();
     } finally {
       if (timer !== undefined) window.clearTimeout?.(timer);

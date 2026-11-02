@@ -156,6 +156,21 @@ describe("persistent browser push", () => {
     expect(send.mock.calls[0]![1]).not.toContain("Private question text");
     await server.stop(); server.dispose();
   });
+  it('includes public questions and suggested answers while routing complex or secret questions to review', async () => {
+    await service.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
+    const host = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: service, deviceId: 'local', codexPushActions: new Map(), peerSessions: new Map() });
+    const question = { id: 'choice', header: 'Choose', question: 'Which approach?', isSecret: false, options: [{ label: 'Small fix', description: '' }, { label: 'Full fix', description: '' }] };
+    for (const scenario of ['short', 'long', 'multiple', 'secret', 'duplicates']) {
+      send.mockClear();
+      const item = { ...question, ...(scenario === 'long' ? { question: 'Long question '.repeat(30) } : {}), ...(scenario === 'secret' ? { isSecret: true } : {}), ...(scenario === 'duplicates' ? { options: [question.options[0], question.options[0]] } : {}) };
+      host.notifyCodexRequest({ id: scenario, threadId: 'session', kind: 'question', title: 'Codex question', questions: scenario === 'multiple' ? [item, { ...item, id: 'second' }] : [item] });
+      await settle();
+      const payload = JSON.parse(send.mock.calls[0]![1]);
+      expect(payload.actions).toEqual(scenario === 'short' ? ['Small fix', 'Full fix'] : ['Answer']);
+      if (scenario === 'short') { expect(payload.body).toContain('Which approach?'); expect(payload.body).toContain('Small fix'); }
+      if (scenario === 'secret') expect(payload.body).not.toContain('Which approach?');
+    }
+  });
   it("uses the first recovered title for an auto-resume push", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     service.notify({ level: "info", message: "Auto resume reopened 1 running VS Code Codex session: “Fix SMS end to end”." });

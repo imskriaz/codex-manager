@@ -470,28 +470,37 @@ export async function readCodexCliSessionRecoveryMetadata(ids: string[], home = 
 export async function readCodexCliSessionSummary(
   sessionId: string,
   codexHome = resolveCodexHome(),
-  requireNativeRuntime = false
+  requireNativeRuntime: boolean | "display" = false
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
   const recent = recentNewSessions.get(sessionId)?.summary;
-  if (!requireNativeRuntime && recent && ownsSessionTurn(codexHome, sessionId)) return recent;
+  if (requireNativeRuntime !== true && recent && ownsSessionTurn(codexHome, sessionId)) return recent;
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
   const indexed = (await readCodexCliSessionIndex(codexHome).catch(error => { if (!state) throw error; return [] as CliSessionIndexEntry[]; })).find(candidate => candidate.id === sessionId);
-  const entry = state ? mergeSessionIndexEntry(state, indexed) : indexed;
+  let entry = state ? mergeSessionIndexEntry(state, indexed) : indexed;
+  if (!entry && requireNativeRuntime === "display" && await findCliSessionTranscript(codexHome, sessionId)) entry = { id: sessionId };
   if (!entry) {
-    if (requireNativeRuntime) throw new Error("Session metadata is unavailable. Saved recovery was retained.");
+    if (requireNativeRuntime === true) throw new Error("Session metadata is unavailable. Saved recovery was retained.");
     const recent = recentNewSessions.get(sessionId)?.summary;
-    return recent ? { ...recent, status: ownsSessionTurn(codexHome, sessionId) ? "running" : "idle", canStop: ownsSessionTurn(codexHome, sessionId) } : (await readCodexCliSessions(codexHome)).find(session => session.id === sessionId);
+    return recent ? { ...recent, status: ownsSessionTurn(codexHome, sessionId) ? "running" : "idle", canStop: ownsSessionTurn(codexHome, sessionId) } : requireNativeRuntime === "display" ? undefined : (await readCodexCliSessions(codexHome)).find(session => session.id === sessionId);
   }
   const transcriptPath = (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
   const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
-  const nativeRunning = requireNativeRuntime && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId) : undefined;
-  const runtimeStatus = requireNativeRuntime ? {
+  const nativeRunning = requireNativeRuntime === true && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId) : getNativeCodexSessionRunning(codexHome, sessionId);
+  const store = requireNativeRuntime === "display" ? getSqliteStateStore() : undefined;
+  let recordedStatus: string | undefined;
+  try { recordedStatus = store ? readSessionStatuses(store, codexHome).get(sessionId) : undefined; }
+  catch (error) { recordPersistentEvent("debug", "session-viewer", "Cached running state unavailable; history remains readable", undefined, error); }
+  const displayStatus = ownsSessionTurn(codexHome, sessionId) || nativeRunning === true ? "running" : nativeRunning === false ? "idle" : recordedStatus;
+  const runtimeStatus: Pick<DashboardCliSessionSummary, "status" | "statusError"> | undefined = requireNativeRuntime === "display" ? {
+    status: displayStatus === "running" || displayStatus === "idle" ? displayStatus : "unknown" as const,
+    statusError: displayStatus !== "running" && displayStatus !== "idle" ? "Running state is being checked. Conversation history remains available." : undefined
+  } : requireNativeRuntime === true ? {
     status: nativeRunning === true ? "running" as const : nativeRunning === false ? "idle" as const : "unknown" as const,
     statusError: nativeRunning === undefined ? "The official Codex runtime is unavailable. Saved recovery was retained." : undefined
   } : undefined;
-  const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath, runtimeStatus);
+  const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath, runtimeStatus, requireNativeRuntime !== "display");
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   const title = reconcileCodexSessionTitles(codexHome, [summary]).get(sessionId) ?? summary.title;
   return { ...summary, title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
@@ -673,13 +682,14 @@ async function toCliSessionSummary(
   entry: CliSessionIndexEntry,
   archived: boolean,
   transcriptPath?: string,
-  knownStatus?: Pick<DashboardCliSessionSummary, "status" | "statusError">
+  knownStatus?: Pick<DashboardCliSessionSummary, "status" | "statusError">,
+  inspectTurn = true
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const state = archived ? { status: "idle" as const } : ownsSessionTurn(codexHome, entry.id) ? { status: "running" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
   const canStop = running && canStopSessionTurn(codexHome, entry.id);
-  const startedAt = archived ? undefined : await readCliRunningSince(transcriptPath);
+  const startedAt = archived ? undefined : inspectTurn ? await readCliRunningSince(transcriptPath) : transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.startedAt : undefined;
   const runningSince = running ? startedAt : undefined;
   const turnMetadata = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath) : undefined;
   const turnState = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.state : undefined;

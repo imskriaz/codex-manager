@@ -91,7 +91,7 @@ const mockHost = `(() => {
     for(const task of projectTasks){task.createdAt=Date.now()-86400000;task.updatedAt=Date.now()-600000;}
     projectTasks.push(...[{title:'Review release notes',stage:'planned'},{title:'Validate API scopes',stage:'planned'},{title:'Polish the mobile workspace',stage:'completed'},{title:'Confirm reconnect recovery',stage:'completed'}].map((task,index)=>({id:'docs-task-'+index,...task,prompt:'Review the project changes',manualStage:task.stage,revision:1,createdAt:Date.now()-86400000,updatedAt:Date.now()-3600000})));
   }
-  if(window.__workspaceUiFixture) { config.models[0].label="GPT-6.1-Sol extended model label"; config.models[0].reasoningEfforts=["medium","high","xhigh"]; config.defaultReasoningEffort="xhigh"; }
+  if(window.__workspaceUiFixture) { config.models[0].label="GPT-6.1-Sol extended model label"; config.models[0].reasoningEfforts=["medium","high","xhigh"]; config.models.push({id:"gpt-alternate",label:"Alternate model",reasoningEfforts:["medium","high"]}); config.defaultReasoningEffort="xhigh"; }
   const uploadFiles = new Map();
   const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
   window.__fillListFixture=()=>{
@@ -349,6 +349,11 @@ const mockHost = `(() => {
         }
         if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if (message.action === 'listCodexCliSessions' && window.__catalogRace) {
+          window.__catalogRace = false;
+          dispatch({ type: 'dashboard:action-result', action: message.action, requestId: 'realtime-model-race', status: 'completed', payload: { cliSessions: sessions, realtimeRevision: 100 } });
+          result.payload.realtimeRevision = 99;
+        }
         if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
         if(message.action==='previewMaintenance' && window.__holdNextMaintenancePreview) {window.__holdNextMaintenancePreview=false;window.__heldMaintenancePreview=result;return;}
@@ -456,7 +461,7 @@ try {
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
-    if(process.argv.includes('--workspace-ui')) await page.addInitScript(()=>{window.__workspaceUiFixture=true;});
+    if(process.argv.includes('--workspace-ui')) await page.addInitScript(()=>{window.__workspaceUiFixture=true;window.__catalogRace=true;});
     if(process.argv.includes('--dark')) await page.addInitScript(()=>{window.__tagTheme='dark';});
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
@@ -1683,7 +1688,7 @@ try {
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
     const inlineQuota = lockedStatus.locator(".cli-running-quota-inline");
     assert.equal(await inlineQuota.isVisible(), width <= 760, "Inline quota appears in the mobile status line");
-    assert.equal(await lockedStatus.locator(":scope > .cli-running-quota").isVisible(), width > 760, "The separate quota meters are desktop-only");
+      assert.equal(await lockedStatus.locator(":scope > .cli-running-quota").count(), 0, "Desktop uses sidebar quota; the status bar has no duplicate meters");
     if (width <= 760) {
       const hasAccount = await page.evaluate(() => window.__uiSnapshot.accounts.length > 0);
       assert.equal((await inlineQuota.innerText()).trim(), hasAccount ? "· 95%/20%" : "· —");

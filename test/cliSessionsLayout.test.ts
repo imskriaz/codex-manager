@@ -113,9 +113,9 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain('<div class="cli-message-region"><section ref={messageViewportRef}');
-    expect(source).toMatch(/<\/section>\s*\{showLatestButton \? <button/);
+    expect(source).toMatch(/<\/section>\s*\{showLatestButton \|\| currentTurnRunning \? <button/);
     expect(css).toContain('.cli-scroll-latest { position: absolute;');
-    expect(css).toMatch(/\.cli-scroll-latest \{[^}]*right: 16px; bottom: 12px;/);
+    expect(css).toMatch(/\.cli-scroll-latest \{[^}]*left: 50%; bottom: 12px; transform: translateX\(-50%\);/);
   });
 
   it("keeps each session title and compact project metadata on one line", () => {
@@ -486,7 +486,7 @@ describe("sessions sidebar layout", () => {
     const panel = readFileSync("src/presentation/dashboard/panel.ts", "utf8");
 
     expect(main).toContain(
-        "if (appliesToSelectedSystem && message.payload?.cliComposerConfig)"
+        'if (message.status === "completed" && appliesToSelectedSystem && message.payload?.cliComposerConfig)'
     );
     expect(main).toContain("classifyCliSessionListResult");
     expect(main).toContain("sessionChanged");

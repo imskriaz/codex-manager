@@ -51,6 +51,17 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('opens saved history without waiting on runtime inspection while leaving an unverified writer locked', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'codex-display-only-')); roots.push(home);
+    await mkdir(path.join(home, 'sessions'));
+    await writeFile(path.join(home, 'session_index.jsonl'), JSON.stringify({ id: sessionId, thread_name: 'Saved chat' }) + '\n');
+    await writeFile(path.join(home, 'sessions', `rollout-${sessionId}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id: sessionId, cwd: home } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockClear().mockImplementationOnce(() => new Promise(() => undefined));
+    expect(await readCodexCliSessionSummary(sessionId, home, 'display')).toMatchObject({ title: 'Saved chat', status: 'unknown', locked: true, projectPath: home });
+    expect(readNativeCodexSessionRunning).not.toHaveBeenCalled();
+    expect(await readCodexCliSessionMessages(sessionId, home)).toEqual([]);
+    vi.mocked(readNativeCodexSessionRunning).mockReset().mockResolvedValue(undefined);
+  });
   it("follows native renamed titles rather than the original prompt or a newer index entry", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "codex-native-title-")); roots.push(home);
     const db = new DatabaseSync(path.join(home, "state_5.sqlite"));

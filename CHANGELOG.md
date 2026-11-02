@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.4-pre.1
+
+- Open existing conversation history without waiting for optional runtime inspection, preserve late model catalogs, and restore the conversation's model and reasoning settings.
+- Keep conversation quota inline on mobile and center the scroll-to-latest control, with running dots that respect reduced motion.
+- Answer short, non-secret single questions with up to two choices directly from push notifications; review longer or private questions in the session.
+- Wait three seconds before showing passive connection warnings, clear recovered offline notices, and prevent stale HTTP failures from overriding a healthy realtime connection.
+
 ## 1.6.4
 
 - Renew claims for accounts current in every live local window, release unused saved-account claims in current-account-only mode, and keep temporary peer disconnects consistent with the ownership lease.

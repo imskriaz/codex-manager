@@ -46,6 +46,20 @@ it("opens questions for review without supplying an automatic answer", async () 
   expect((await respond("prompt", "Answer")).status).toBe(200);
   expect(processMessage).not.toHaveBeenCalled();
 });
+it('routes suggested question answers to their owning PC once and never accepts arbitrary answers', async () => {
+  actions.set('prompt', ['Yes', 'No']);
+  server.codexPushActions.set('prompt', { requestId: 'request', targetDeviceId: 'worker', question: true, answers: { Yes: { choice: 'Yes' }, No: { choice: 'No' } } });
+  expect((await respond('prompt', 'Injected')).status).toBe(409);
+  expect((await respond('prompt', 'Yes')).status).toBe(200);
+  expect(processMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: { codexRequestId: 'request', targetDeviceId: 'worker', codexDecision: 'approve', codexAnswers: { choice: 'Yes' } } }));
+  expect((await respond('prompt', 'No')).status).toBe(409);
+});
+it('reports a missing response acknowledgement as unconfirmed without replaying it', async () => {
+  seed(); processMessage.mockResolvedValueOnce({ messages: [] });
+  const result = await respond('prompt', 'Approve');
+  expect(result.status).toBe(400); expect((await result.json()).error).toContain('did not confirm');
+  expect((await respond('prompt', 'Approve')).status).toBe(409);
+});
 it("requires an active login and surfaces remote disconnects without replaying a response", async () => {
   seed(); authorized = false;
   expect((await respond("prompt", "Approve")).status).toBe(401);

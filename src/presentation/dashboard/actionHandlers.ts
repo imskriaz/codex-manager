@@ -1950,7 +1950,7 @@ async function handleStartCodexCliSession(
 async function handleGetCodexCliSessionMessages(sessionId: string | undefined, requestedProjectPath?: string) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
-  const cliSession = await readCodexCliSessionSummary(sessionId);
+  const cliSession = await readCodexCliSessionSummary(sessionId, undefined, "display");
   if (!cliSession) throw new Error("This Codex session was not found. Refresh the session list and try again.");
   if (
     requestedProjectPath?.trim() &&

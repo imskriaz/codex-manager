@@ -9,6 +9,21 @@ import {
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
+  it('dismisses recovered offline warnings without erasing unconfirmed writes or another system’s outage', () => {
+    vi.useFakeTimers(); const changed = vi.fn(); const controller = createDashboardToastController(changed);
+    controller.show({ level: 'warning', message: 'The browser is offline. This action was not sent; reconnect and try again.' });
+    controller.connectionRestored(); expect(changed).toHaveBeenLastCalledWith(undefined);
+    for (const message of ['Offline saved view. Reconnect to verify the latest state.', 'The host is offline. This operation was not sent or queued. Reconnect and retry.']) {
+      controller.show({ level: 'warning', message });
+      controller.connectionRestored(); expect(changed).toHaveBeenLastCalledWith(undefined);
+    }
+    controller.show({ level: 'error', message: 'Its outcome is unknown; reconnect and verify before retrying.' });
+    controller.connectionRestored(); expect(changed.mock.lastCall?.[0]?.level).toBe('error');
+    controller.show({ level: 'warning', message: 'This system is offline. Reconnect it before switching accounts.' });
+    controller.connectionRestored(); expect(changed.mock.lastCall?.[0]?.message).toContain('This system');
+    controller.connectionRestored(true); expect(changed).toHaveBeenLastCalledWith(undefined);
+    controller.dispose();
+  });
   afterEach(() => {
     vi.useRealTimers();
   });

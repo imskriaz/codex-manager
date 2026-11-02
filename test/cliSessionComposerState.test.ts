@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
+  it('uses existing-session model and effort until the user overrides them, including before the catalog arrives', () => {
+    const session = { model: 'session-model', reasoningEffort: 'high' };
+    const config = { models: [{ id: 'default', label: 'Default', reasoningEfforts: ['medium'] }, { id: 'session-model', label: 'Session', reasoningEfforts: ['medium', 'high'] }], defaultModel: 'default', defaultSandboxMode: 'workspace-write' as const };
+    expect(resolveCliComposerSettings(undefined, undefined, session)).toMatchObject(session);
+    expect(resolveCliComposerSettings(undefined, config, session)).toMatchObject(session);
+    expect(resolveCliComposerSettings({ text: '', attachments: [], model: 'default' }, config, session).model).toBe('default');
+  });
   it("separates devices and new project drafts from existing chats", () => {
     expect(cliComposerDraftKey("pc-a", "chat")).not.toBe(cliComposerDraftKey("pc-b", "chat"));
     expect(cliComposerDraftKey("pc-a", undefined, "D:/work")).not.toBe(cliComposerDraftKey("pc-b", undefined, "D:/work"));

@@ -493,7 +493,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly stopStorageSubscription: (() => void) | undefined;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
   private readonly browserPush: BrowserPushService;
-  private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean }>();
+  private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean; answers?: Record<string, Record<string, string>> }>();
   private readonly conversationShares: ConversationShares;
   private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
   private readonly hostProofKey = crypto.randomBytes(32);
@@ -1152,15 +1152,18 @@ export class WebDashboardServer implements vscode.Disposable {
           }
           this.codexPushActions.delete(notificationId);
           if (codexAction) {
-            if (codexAction.question ? action !== "Answer" : !["Approve", "Decline", "Review"].includes(action)) throw new Error("This Codex action is invalid.");
-            if (!codexAction.question && action !== "Review") {
+            const answers = codexAction.answers && Object.hasOwn(codexAction.answers, action) ? codexAction.answers[action] : undefined;
+            if (codexAction.question ? action !== "Answer" && !answers : !["Approve", "Decline", "Review"].includes(action)) throw new Error("This Codex action is invalid.");
+            if (answers || !codexAction.question && action !== "Review") {
               const result = await this.processClientMessage({ type: "dashboard:action", requestId: `push-${crypto.randomUUID()}`, action: "respondCodexServerRequest", payload: {
                 codexRequestId: codexAction.requestId,
-                codexDecision: action === "Approve" ? "approve" : "decline",
+                codexDecision: answers || action === "Approve" ? "approve" : "decline",
+                ...(answers ? { codexAnswers: answers } : {}),
                 ...(codexAction.targetDeviceId ? { targetDeviceId: codexAction.targetDeviceId } : {})
               } });
               const failed = result.messages.find((message): message is Extract<DashboardHostMessage, { type: "dashboard:action-result" }> => message.type === "dashboard:action-result" && message.status !== "completed");
               if (failed) throw new Error(failed.error ?? "Codex did not confirm this response.");
+              if (!result.messages.some(message => message.type === "dashboard:action-result" && message.status === "completed")) throw new Error("Codex did not confirm this response. Check the request before retrying.");
             }
           } else if (!resolveMirroredNotification(notificationId, action)) {
             response.statusCode = 409;
@@ -1846,7 +1849,12 @@ export class WebDashboardServer implements vscode.Disposable {
     const targetDeviceId = request.deviceId;
     const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.id}`;
     const question = request.kind === "question";
-    this.codexPushActions.set(notificationId, { requestId: request.id, ...(targetDeviceId ? { targetDeviceId } : {}), question });
+    const singleQuestion = question && request.questions?.length === 1 ? request.questions[0] : undefined;
+    const options = singleQuestion && !singleQuestion.isSecret ? singleQuestion.options : undefined;
+    const labels = options?.map(option => option.label);
+    const directChoices = labels && labels.length > 0 && labels.length <= 2 && labels.every(label => label.trim() && label.length <= 48 && !["Answer", "Review"].includes(label)) && new Set(labels).size === labels.length && `${singleQuestion?.question ?? ""} Choices: ${labels.join(" / ")}`.length <= 180;
+    const answers = directChoices && singleQuestion ? Object.fromEntries(labels.map(label => [label, { [singleQuestion.id]: label }])) : undefined;
+    this.codexPushActions.set(notificationId, { requestId: request.id, ...(targetDeviceId ? { targetDeviceId } : {}), question, answers });
     while (this.codexPushActions.size > 128) this.codexPushActions.delete(this.codexPushActions.keys().next().value!);
     const detail = question ? "Codex is waiting for an answer." : "Codex is waiting for approval. Review the request in the dashboard.";
     this.browserPush.notify({
@@ -1854,9 +1862,9 @@ export class WebDashboardServer implements vscode.Disposable {
       level: "warning",
       title: request.title,
       systemName: targetDeviceId ? this.peerSessions.get(targetDeviceId)?.deviceName || "Remote system" : os.hostname(),
-      message: question ? `${detail} Open the dashboard to answer.` : request.detail || detail,
+      message: question ? request.questions?.some(item => item.isSecret) ? `${detail} Open the dashboard to answer privately.` : request.questions?.map(item => `${item.question}${item.options?.length ? " Choices: " + item.options.map(option => option.label).join(" / ") : ""}`).join(" · ") || detail : request.detail || detail,
       url: `/workspace/${encodeURIComponent(request.threadId)}${targetDeviceId ? `?device=${encodeURIComponent(targetDeviceId)}` : ""}`,
-      actions: question ? ["Answer"] : request.kind === "permissions" || (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
+      actions: question ? answers ? Object.keys(answers) : ["Answer"] : request.kind === "permissions" || (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
     });
   }
 

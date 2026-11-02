@@ -267,6 +267,8 @@ Requests forwarded by the owning Codex system appear inside their session. Revie
 
 Answer drafts stay in memory while navigating between sessions or reconnecting; secret answers are not saved to browser storage. An unconfirmed response requires **Check request** before retrying. Closed or expired prompts are removed. Requests that the owning system does not forward must be answered in its Codex window.
 
+Push notifications include the question and suggested answers. A short, non-secret single question with up to two choices can be answered directly from supported notification actions. Longer, private, or multi-part questions open the session for review. Browser and OS support determines which actions appear.
+
 ### Workspace inspector
 
 The header's workspace-tools icon shows or hides the right sidebar. **Env** stays

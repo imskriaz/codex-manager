@@ -406,6 +406,14 @@ function App() {
 
   const [browserHostStage, setBrowserHostStage] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>["stage"]>("connecting");
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
+  const [connectionIssue, setConnectionIssue] = useState<"offline" | "unreachable">();
+  const connectionUnavailable = ["offline", "unreachable", "reconnecting"].includes(browserHostStage);
+  const browserOffline = browserHostStage === "offline";
+  useEffect(() => {
+    if (realtimeConnected || !connectionUnavailable) { setConnectionIssue(undefined); return; }
+    const timer = window.setTimeout(() => setConnectionIssue(browserOffline ? "offline" : "unreachable"), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [realtimeConnected, connectionUnavailable, browserOffline]);
   const showNotice = useCallback(
     (next: DashboardNotice) => {
       noticeControllerRef.current?.show(next);
@@ -801,6 +809,7 @@ function App() {
       }
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
+        if (message.connected) noticeControllerRef.current?.connectionRestored();
         if (!message.connected) {
           liveAuthority.current.clear();
           if ([...messageRequests.current.values()].some((target) => sameCliSessionTarget(target, currentSessionTarget()))) {
@@ -821,6 +830,7 @@ function App() {
       }
       if (message.type === "dashboard:host-status") {
         setBrowserHostStage(message.stage);
+        if (message.stage === "live") noticeControllerRef.current?.connectionRestored();
         if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
         return;
       }
@@ -967,6 +977,12 @@ function App() {
           explicitCliRefreshRef.current,
           requestRevision
         );
+        // Session revisions do not version the separately loaded model catalog.
+        if (message.status === "completed" && appliesToSelectedSystem && message.payload?.cliComposerConfig) {
+          cliCatalogTarget.current = currentListTarget ?? localCacheSystemId ?? "local";
+          setCliComposerConfig(message.payload.cliComposerConfig);
+          if (!result.apply) void writeCliSessionListCache({ sessions: cliSessionsRef.current, composerConfig: message.payload.cliComposerConfig }, ownerDeviceId);
+        }
         if (!result.apply && !result.explicitRefresh) return;
         lastCliRealtimeRevisionRef.current.set(revisionScope, result.nextRealtimeRevision);
         const explicitRefresh = result.explicitRefresh;
@@ -988,13 +1004,6 @@ function App() {
             // owner's catalogue; partial pushes must never confirm deletions.
             if (appliesToSelectedSystem && partialList && realtimeConnected && selectedPeer?.connected)
               requestCliSessions();
-            // Realtime list pushes intentionally omit the heavier composer
-            // catalog. Preserve the last known catalog so the response box does
-            // not disappear while sessions update in the background.
-            if (appliesToSelectedSystem && message.payload?.cliComposerConfig) {
-              cliCatalogTarget.current = currentListTarget ?? localCacheSystemId ?? "local";
-              setCliComposerConfig(message.payload.cliComposerConfig);
-            }
             if (requested) void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig }, listTarget);
             if (!requested && appliesToSelectedSystem && liveSessionListReceived.current)
               void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig }, currentListTarget);
@@ -1629,7 +1638,7 @@ function App() {
           return (lastCliRealtimeRevisionRef.current.get(key) ?? 0) !== cachedRevision
             ? mergeCachedCliSessions(current, restored, targetDeviceId, true) : restored;
         });
-        setCliComposerConfig(cached.composerConfig);
+        setCliComposerConfig(current => current ?? cached.composerConfig);
       }
     });
     return () => { disposed = true; };
@@ -1749,6 +1758,7 @@ function App() {
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
   const selectedPeerOffline = selectedPeer?.connected === false;
+  useEffect(() => { if (selectedPeer?.connected) noticeControllerRef.current?.connectionRestored(true); }, [selectedPeer?.id, selectedPeer?.connected]);
   const hasPendingActions = state.pendingActions.length > 0;
   useEffect(() => {
     if (isBrowserDashboard) return;
@@ -2350,8 +2360,8 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {isBrowserDashboard && !isCliSessionsPath(browserPath) && (browserHostStage === "unreachable" || browserHostStage === "offline")
-        ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
+      {isBrowserDashboard && !realtimeConnected && !isCliSessionsPath(browserPath) && connectionIssue
+        ? createPortal(<BrowserConnectionBanner stage={connectionIssue} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
       {notice
         ? createPortal(

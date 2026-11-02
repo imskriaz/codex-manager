@@ -48,6 +48,12 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
       current = undefined;
       onChange(undefined);
     },
+    connectionRestored(system = false): void {
+      if (!current || !(system ? /^(?:The owning system is offline\.|This system is offline\.|Offline saved view\.)/ : /^(?:The browser is offline\.|The host is offline\. This operation was not sent or queued\.|Offline saved view\.|Dashboard is still unavailable\.|Connection lost while loading)/).test(current.message)) return;
+      clearTimer();
+      current = undefined;
+      onChange(undefined);
+    },
     dispose(): void {
       disposed = true;
       clearTimer();

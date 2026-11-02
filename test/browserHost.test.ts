@@ -3,6 +3,27 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it('keeps a live socket healthy when an older snapshot fails and suppresses passive presence error toasts', async () => {
+    const events: any[] = []; let socket: any; let rejectSnapshot!: (error: Error) => void;
+    class Socket { static OPEN = 1; readyState = 0; listeners = new Map<string, (event?: any) => void>(); constructor() { socket = this; } addEventListener(name: string, listener: (event?: any) => void) { this.listeners.set(name, listener); } close() {} send() {} }
+    const windowMock: any = { dispatchEvent: (event: any) => events.push(event.data), WebSocket: Socket, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { protocol: 'http:', host: 'localhost', hostname: 'localhost' } };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    const fetchMock = vi.fn().mockImplementationOnce(() => new Promise((_, reject) => { rejectSnapshot = reject; })).mockRejectedValue(new Error('Offline'));
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event, fetch: fetchMock, console: { error: vi.fn(), warn: vi.fn() }, JSON, Date, Map, Error, Array });
+    const refresh = windowMock.acquireVsCodeApi().postMessage({ type: 'dashboard:ready' });
+    socket.readyState = 1; socket.listeners.get('open')();
+    rejectSnapshot(new Error('Old HTTP request failed')); await refresh;
+    expect(events.filter(event => event.type === 'dashboard:host-status').at(-1).stage).toBe('live');
+    fetchMock.mockImplementationOnce(() => new Promise((_, reject) => { rejectSnapshot = reject; }));
+    const retry = windowMock.acquireVsCodeApi().postMessage({ type: 'dashboard:retry-connection' });
+    socket.readyState = 1; socket.listeners.get('open')();
+    rejectSnapshot(new Error('Refresh failed')); await retry;
+    expect(events.filter(event => event.type === 'dashboard:notice').at(-1).message).toContain('live connection is available');
+    events.length = 0;
+    socket.readyState = 0;
+    await windowMock.acquireVsCodeApi().postMessage({ type: 'dashboard:workspace-presence', viewing: true });
+    expect(events.filter(event => event.type === 'dashboard:notice')).toEqual([]);
+  });
   it('keeps browser deadlines aligned with selected-account bulk updates and remote refresh-all size', async () => {
     let socket!: Socket;
     class Socket {

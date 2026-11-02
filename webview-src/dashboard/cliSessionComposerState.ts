@@ -1,4 +1,4 @@
-import type { DashboardCliComposerConfig, DashboardCliSandboxMode } from "../../src/domain/dashboard/types";
+import type { DashboardCliComposerConfig, DashboardCliSandboxMode, DashboardCliSessionSummary } from "../../src/domain/dashboard/types";
 import { validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
 
 export type CliComposerDraft = {
@@ -31,14 +31,16 @@ export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | un
   }
 }
 
-export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined) {
-  const model = config?.models.find((option) => option.id === draft?.model)
+export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort">) {
+  const preferredModel = draft?.model ?? session?.model;
+  const preferredEffort = draft?.reasoningEffort ?? session?.reasoningEffort;
+  const model = config?.models.find((option) => option.id === preferredModel)
     ?? config?.models.find((option) => option.id === config.defaultModel) ?? config?.models[0];
-  const reasoningEffort = model?.reasoningEfforts.includes(draft?.reasoningEffort ?? "")
-    ? draft?.reasoningEffort
+  const reasoningEffort = model?.reasoningEfforts.includes(preferredEffort ?? "")
+    ? preferredEffort
     : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
       ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
-  return { model: model?.id ?? (!config?.models.length ? draft?.model ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? draft?.reasoningEffort ?? config?.defaultReasoningEffort : undefined),
+  return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
     sandboxMode: draft?.sandboxMode ?? config?.defaultSandboxMode ?? "workspace-write" as DashboardCliSandboxMode };
 }
 
