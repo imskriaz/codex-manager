@@ -2,6 +2,17 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("mobile dashboard header", () => {
+  it("scales browser typography independently of geometry and applies mobile rules after legacy skins", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const finalRules = css.lastIndexOf("/* Final compact layout rules");
+    expect(finalRules).toBeGreaterThan(css.lastIndexOf("/* Requests stay with their session"));
+    expect(css.slice(finalRules)).toContain('html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.1; }');
+    expect(css).not.toMatch(/\bfont-size\s*:\s*[\d.]+px\b/);
+    expect(css).toContain("font-size: calc(16px * var(--dashboard-text-scale, 1))");
+    expect(css.slice(finalRules)).toContain(".cli-workspace .cli-composer.is-empty { display: grid;");
+    expect(css.slice(finalRules)).toContain(".cli-workspace .cli-account-footer .cli-account-footer-account { display: grid; }");
+  });
+
   it("keeps card plan, reset credit, device and expiry on one line at every width", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(css).toMatch(/\.dashboard-view-cards \.saved-credit-summary\s*\{[^}]*flex-wrap:\s*nowrap;/);
@@ -16,6 +27,8 @@ describe("mobile dashboard header", () => {
     expect(source).toContain("function DashboardMobileActions");
     expect(source).toContain('class="dashboard-mobile-actions"');
     expect(source).toContain('aria-label={menuLabel}');
+    expect(source).toContain('closeMenu(event); props.onDonate()');
+    expect(source).toContain('Donate');
     expect(css).toContain(".dashboard-density-compact .hero");
     expect(css).toContain("flex-direction: row;");
     expect(css).toContain(".dashboard-mobile-actions-menu");

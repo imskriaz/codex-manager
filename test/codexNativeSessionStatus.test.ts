@@ -8,6 +8,8 @@ vi.mock("node:net", () => ({ createConnection: mocks.connect }));
 vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: async (file: string) => file }));
 import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
+import { listPendingCodexAppServerPrompts, respondCodexAppServerPrompt } from "../src/services/codexAppServerPrompts";
+
 class FakeSocket extends EventEmitter {
   writable = true;
   sent: any[] = [];
@@ -364,4 +366,51 @@ it("releases the oldest settled observation when the native subscription cache f
     message(value); expect(await pending).toBe(true);
   }
   expect(socket.sent.some(value => value.params?.conversationId === id && value.params.following === false)).toBe(true);
+});
+
+it.each([
+  ["item/commandExecution/requestApproval", "thread-follower-command-approval-decision", { command: "npm test" }],
+  ["item/fileChange/requestApproval", "thread-follower-file-approval-decision", { fileChanges: { "a.ts": {} } }],
+  ["item/permissions/requestApproval", "thread-follower-permissions-request-approval-response", { permissions: { network: { enabled: true } } }],
+  ["item/tool/requestUserInput", "thread-follower-submit-user-input", { questions: [{ id: "choice", question: "Which?" }] }]
+])("mirrors and answers official native %s requests once", async (method, replyMethod, params) => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize();
+  const value = snapshot("active");
+  Object.assign(value.params.change.conversationState, { requests: [{ id: "native-request", method, params: { threadId: id, ...params } }] });
+  message(value); await reading;
+  const prompt = listPendingCodexAppServerPrompts()[0]!;
+  expect(prompt).toMatchObject({ threadId: id });
+  const responding = respondCodexAppServerPrompt(prompt.id, "approve", { choice: "First" });
+  const duplicate = respondCodexAppServerPrompt(prompt.id, "approve", { choice: "First" });
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  const sent = socket.sent.find(item => item.method === replyMethod);
+  expect(sent).toMatchObject({ targetClientId: "owner", version: 1, params: { conversationId: id, requestId: "native-request" } });
+  message({ type: "response", requestId: sent.requestId, resultType: "success", result: { ok: true } });
+  await Promise.all([responding, duplicate]);
+  expect(socket.sent.filter(item => item.method === replyMethod)).toHaveLength(1);
+  expect(listPendingCodexAppServerPrompts()).toEqual([]);
+});
+it.each(["disconnect", "owner-change", "revision-gap", "request-change"])("invalidates native prompts after %s without answering the old owner", async failure => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize();
+  const value = snapshot("active");
+  const requests = [{ id: "native-request", method: "item/commandExecution/requestApproval", params: { threadId: id, command: "npm test" } }];
+  Object.assign(value.params.change.conversationState, { requests }); message(value); await reading;
+  const prompt = listPendingCodexAppServerPrompts()[0]!;
+  if (failure === "disconnect") socket.destroy();
+  if (failure === "owner-change") message(snapshot("active", 0, "new-owner"));
+  if (failure === "revision-gap") message({ ...snapshot("active"), params: { hostId: "local", conversationId: id, change: { type: "patches", baseRevision: 8, revision: 9, patches: [] } } });
+  if (failure === "request-change") { const updated = snapshot("active", 2); Object.assign(updated.params.change.conversationState, { requests: [{ ...requests[0], params: { threadId: id, command: "other" } }] }); message(updated); }
+  expect(() => respondCodexAppServerPrompt(prompt.id, "approve")).toThrow("no longer active");
+  expect(socket.sent.some(item => item.method === "thread-follower-command-approval-decision")).toBe(false);
+});
+it("keeps an uncertain native prompt response from being sent again", async () => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize();
+  const value = snapshot("active");
+  Object.assign(value.params.change.conversationState, { requests: [{ id: 2, method: "item/commandExecution/requestApproval", params: { threadId: id, command: "npm test" } }] });
+  message(value); await reading;
+  const prompt = listPendingCodexAppServerPrompts()[0]!;
+  const pending = expect(respondCodexAppServerPrompt(prompt.id, "decline")).rejects.toThrow("did not confirm");
+  await vi.advanceTimersByTimeAsync(10_001); await pending;
+  await expect(respondCodexAppServerPrompt(prompt.id, "decline")).rejects.toThrow("did not confirm");
+  expect(socket.sent.filter(item => item.method === "thread-follower-command-approval-decision")).toHaveLength(1);
 });

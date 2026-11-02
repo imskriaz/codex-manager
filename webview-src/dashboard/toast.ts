@@ -24,9 +24,10 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
 
   return {
     show(notice: DashboardNotice): void {
-      if (disposed) {
+      if (disposed || notice.level === "info" && !notice.actions?.length && !notice.actionPrompt) {
         return;
       }
+      if (current?.level === notice.level && current.message === notice.message && current.notificationId === notice.notificationId && current.systemName === notice.systemName) return;
       clearTimer();
       const toast = { ...notice, id: ++nextId };
       current = toast;

@@ -59,3 +59,4 @@ tools/verify-dashboard-modules.mjs
 tools/check-*.mjs
 tools/capture-docs-ui.mjs
 RELEASE-1.4.3-PENDING.md
+vs-mobile/**

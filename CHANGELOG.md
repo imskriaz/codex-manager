@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.5-pre.1
+
+- Compact mobile dashboard branding, sidebar identity, tabs, dialogs and the single-line empty composer; increase browser text by 10% while preserving responsive layouts.
+- Show one send or stop action, clear acknowledged follow-ups without losing newer drafts, and guard repeated submissions.
+- Reuse the session transcript in task activities and agent views, keep compaction status visible, and consolidate command copying.
+- Show context usage beside attachments and a compact account/quota row above the composer, with usage details in Env.
+- Keep informational outcomes inline; restrict push to attention, approvals, questions and errors, with replay and delivery deduplication.
+- Release owned private-server processes and writer handles safely, and surface requests from the official Codex owner.
+
 ## 1.6.4
 
 - Read project folders concurrently, keep readable files when a subtree is slow or unavailable, and show incomplete-list warnings instead of discarding the tree. Preserve confirmed file deletions when refreshing fails.

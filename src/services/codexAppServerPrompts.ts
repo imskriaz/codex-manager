@@ -4,7 +4,10 @@ import { publishDashboardRealtime } from "./dashboardRealtime";
 import type { AppServerRequest, CodexAppServerRpc } from "./codexAppServerRpc";
 
 type PendingPrompt = {
-  rpc: CodexAppServerRpc;
+  rpc?: CodexAppServerRpc;
+  nativeSource?: object;
+  respondNative?: (result: unknown) => Promise<void>;
+  responding?: Promise<void>;
   serverId: string | number;
   method: string;
   params: Record<string, unknown>;
@@ -13,13 +16,15 @@ type PendingPrompt = {
   expiresAt: number;
 };
 
+export class CodexPromptNotSentError extends Error {}
+
 const pendingPrompts = new Map<string, PendingPrompt>();
 const PROMPT_TIMEOUT_MS = 5 * 60_000;
 const MAX_PENDING_PROMPTS = 30;
 
 export function listPendingCodexAppServerPrompts(): DashboardCodexServerRequest[] {
   for (const [id, pending] of pendingPrompts) if (Date.now() >= pending.expiresAt) {
-    try { pending.rpc.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
+    try { pending.rpc?.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
     finishPrompt(id, pending);
   }
   return [...pendingPrompts.values()].map((pending) => pending.request);
@@ -49,7 +54,7 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
     const timer = setTimeout(() => {
       const pending = pendingPrompts.get(request.id);
       if (!pending) return;
-      try { pending.rpc.rejectServerRequest(pending.serverId, "The dashboard prompt timed out without a user answer."); } catch { /* connection closed */ }
+      try { pending.rpc?.rejectServerRequest(pending.serverId, "The dashboard prompt timed out without a user answer."); } catch { /* connection closed */ }
       finishPrompt(request.id, pending);
     }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { rpc, serverId: serverRequest.id, method: serverRequest.method,
@@ -60,7 +65,7 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
     off();
     for (const [id, pending] of pendingPrompts) {
       if (pending.rpc !== rpc) continue;
-      try { pending.rpc.rejectServerRequest(pending.serverId, "The Codex session ended before this prompt was answered."); } catch { /* disconnected */ }
+      try { pending.rpc?.rejectServerRequest(pending.serverId, "The Codex session ended before this prompt was answered."); } catch { /* disconnected */ }
       finishPrompt(id, pending);
     }
   };
@@ -68,10 +73,33 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
   return () => { offDisconnect?.(); cleanup(); };
 }
 
+/** Mirror supported requests from a verified official owner; never answer on expiry or disconnect. */
+export function syncNativeCodexPrompts(source: object, threadId: string, requests: AppServerRequest[], respond: (request: AppServerRequest, result: unknown) => Promise<void>): void {
+  for (const [id, pending] of pendingPrompts) {
+    if (pending.nativeSource !== source) continue;
+    const current = requests.find(request => request.id === pending.serverId);
+    if (!current || current.method !== pending.method || JSON.stringify(current.params) !== JSON.stringify(pending.params)) finishPrompt(id, pending);
+  }
+  for (const serverRequest of requests) {
+    if ([...pendingPrompts.values()].some(pending => pending.nativeSource === source && pending.serverId === serverRequest.id)) continue;
+    if (pendingPrompts.size >= MAX_PENDING_PROMPTS || Buffer.byteLength(JSON.stringify(serverRequest.params ?? {}), "utf8") > 32 * 1024) continue;
+    const request = toDashboardRequest(serverRequest, threadId);
+    if (!request || request.threadId !== threadId) continue;
+    const timer = setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
+    pendingPrompts.set(request.id, { nativeSource: source, respondNative: result => respond(serverRequest, result),
+      serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS });
+    publishDashboardRealtime({ type: "dashboard:codex-request", request });
+  }
+}
+
+export function clearNativeCodexPrompts(source: object): void {
+  for (const [id, pending] of pendingPrompts) if (pending.nativeSource === source) finishPrompt(id, pending);
+}
+
 export function cancelCodexAppServerPrompts(threadId: string): void {
   for (const [id, pending] of pendingPrompts) {
     if (pending.request.threadId !== threadId) continue;
-    try { pending.rpc.rejectServerRequest(pending.serverId, "The user stopped this Codex turn."); } catch { /* disconnected */ }
+    try { pending.rpc?.rejectServerRequest(pending.serverId, "The user stopped this Codex turn."); } catch { /* disconnected */ }
     finishPrompt(id, pending);
   }
 }
@@ -80,7 +108,7 @@ export function respondCodexAppServerPrompt(
   requestId: string,
   decision: "approve" | "decline",
   answers?: Record<string, string>
-): void {
+): void | Promise<void> {
   if (decision !== "approve" && decision !== "decline") throw new Error("Choose Approve or Decline for this Codex request.");
   const pending = pendingPrompts.get(requestId);
   if (!pending) {
@@ -88,19 +116,20 @@ export function respondCodexAppServerPrompt(
     throw new Error("This Codex prompt is no longer active. Refresh the session before continuing.");
   }
   if (Date.now() >= pending.expiresAt) {
-    try { pending.rpc.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
+    try { pending.rpc?.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
     finishPrompt(requestId, pending);
     throw new Error("This Codex prompt expired. Refresh the session before continuing.");
   }
+  if (pending.responding) return pending.responding;
   let response: unknown;
   if (pending.request.kind === "question") {
-    if (decision === "decline") {
-      pending.rpc.rejectServerRequest(pending.serverId, "The user dismissed the question.");
+    if (decision === "decline" && !pending.respondNative) {
+      pending.rpc?.rejectServerRequest(pending.serverId, "The user dismissed the question.");
       finishPrompt(requestId, pending);
       return;
     }
     const result: Record<string, { answers: string[] }> = {};
-    for (const question of pending.request.questions ?? []) {
+    for (const question of decision === "decline" ? [] : pending.request.questions ?? []) {
       const raw = typeof answers?.[question.id] === "string" ? answers[question.id]! : undefined;
       const answer = question.isSecret ? raw : raw?.trim();
       if (!answer) throw new Error(`Answer “${question.header || question.question}” before continuing.`);
@@ -110,8 +139,8 @@ export function respondCodexAppServerPrompt(
     response = { answers: result };
   } else {
     if (pending.method === "item/permissions/requestApproval") {
-      if (decision === "decline") {
-        pending.rpc.rejectServerRequest(pending.serverId, "The user declined additional permissions.");
+      if (decision === "decline" && !pending.respondNative) {
+        pending.rpc?.rejectServerRequest(pending.serverId, "The user declined additional permissions.");
         finishPrompt(requestId, pending);
         return;
       }
@@ -120,7 +149,7 @@ export function respondCodexAppServerPrompt(
       if (Array.isArray(requested) || JSON.stringify(requested).length > 8000) throw new Error("The requested permission details cannot be reviewed safely. Decline this request.");
       const profile = requested as { network?: unknown; fileSystem?: unknown };
       if (Object.keys(profile).some((key) => key !== "network" && key !== "fileSystem")) throw new Error("This permission type is not supported. Decline the request.");
-      response = { permissions: {
+      response = { permissions: decision === "decline" ? {} : {
         ...(profile.network ? { network: profile.network } : {}),
         ...(profile.fileSystem ? { fileSystem: profile.fileSystem } : {})
       }, scope: "turn" };
@@ -129,7 +158,14 @@ export function respondCodexAppServerPrompt(
     response = { decision: legacy ? (decision === "approve" ? "approved" : { denied: { rejection: "The user declined this action." } }) : (decision === "approve" ? "accept" : "decline") };
     }
   }
-  pending.rpc.answerServerRequest(pending.serverId, response);
+  if (pending.respondNative) {
+    pending.responding = pending.respondNative(response).then(() => { finishPrompt(requestId, pending); }, error => {
+      if (error instanceof CodexPromptNotSentError) pending.responding = undefined;
+      throw error;
+    });
+    return pending.responding;
+  }
+  pending.rpc?.answerServerRequest(pending.serverId, response);
   finishPrompt(requestId, pending);
 }
 

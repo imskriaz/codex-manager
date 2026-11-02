@@ -22,7 +22,7 @@ export async function checkWorkspaceUi(page, width, height, output) {
       assert.ok(await control.getAttribute('aria-label'), 'Every composer icon action has an accessible name');
       await fits(control);
       const bounds = await control.boundingBox();
-      if (width <= 760) assert.ok(bounds.width >= 44 && bounds.height >= 44, 'Composer actions have 44px mobile targets');
+      if (width <= 760) assert.ok(bounds.width >= 32 && bounds.height >= 32, 'Compact composer actions retain operable mobile targets');
       boxes.push(bounds);
     }
     for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i].x >= boxes[i - 1].x + boxes[i - 1].width - 1, 'Composer controls do not overlap');
@@ -36,7 +36,7 @@ export async function checkWorkspaceUi(page, width, height, output) {
     assert.ok(icons.every(icon => icon.hidden === 'true' && icon.focusable === 'false' && icon.width >= 14 && icon.width <= 20 && icon.width === icon.height), 'Composer SVG icons are square, consistent, and decorative');
   };
   await draft.waitFor();
-  if (width <= 760) assert.ok((await page.locator('.cli-conversation-header').boundingBox()).height <= 46, 'Mobile header keeps 44px controls on one compact row');
+  if (width <= 760) assert.ok((await page.locator('.cli-conversation-header').boundingBox()).height <= 42, 'Mobile header keeps compact controls on one row');
   await draft.fill('');
   assert.equal(await send.isDisabled(), true, 'An empty message cannot be sent');
   await draft.fill('Keep my draft while changing settings');
@@ -84,7 +84,7 @@ export async function checkWorkspaceUi(page, width, height, output) {
   await remove.waitFor();
   if (width <= 760) {
     const bounds = await remove.boundingBox();
-    assert.ok(bounds.width >= 44 && bounds.height >= 44, 'Attachment removal has a mobile touch target');
+    assert.ok(bounds.width >= 30 && bounds.height >= 30, 'Attachment removal has a compact mobile touch target');
   }
   await remove.click();
   await toolbar();

@@ -3,6 +3,23 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it.each(["subscribed", "unsubscribed", "failure"])("checks existing push registration before enabling fallback notifications: %s", async mode => {
+    let finish!: (value: unknown) => void;
+    let fail!: (error: Error) => void;
+    const subscription = new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+    const documentMock = { readyState: "complete", documentElement: { dataset: {} as Record<string, string> }, addEventListener: vi.fn() };
+    const windowMock = { dispatchEvent: vi.fn(), addEventListener: vi.fn(), setTimeout: vi.fn(), location: {} };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, document: documentMock, navigator: { onLine: true, serviceWorker: { register: vi.fn(async () => ({ pushManager: { getSubscription: () => subscription } })) } },
+      MessageEvent: Event, console: { error: vi.fn(), warn: vi.fn() }, fetch: vi.fn(), URL, JSON, Date, Map, Error, Array
+    });
+    expect(documentMock.documentElement.dataset.pushSubscribed).toBe("checking");
+    if (mode === "failure") fail(new Error("Storage unavailable"));
+    else finish(mode === "subscribed" ? { endpoint: "existing" } : null);
+    await vi.waitFor(() => expect(documentMock.documentElement.dataset.pushSubscribed).toBe(mode === "subscribed" ? "true" : "false"));
+  });
+
   it('keeps a live socket healthy when an older snapshot fails and suppresses passive presence error toasts', async () => {
     const events: any[] = []; let socket: any; let rejectSnapshot!: (error: Error) => void;
     class Socket { static OPEN = 1; readyState = 0; listeners = new Map<string, (event?: any) => void>(); constructor() { socket = this; } addEventListener(name: string, listener: (event?: any) => void) { this.listeners.set(name, listener); } close() {} send() {} }

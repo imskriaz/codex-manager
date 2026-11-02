@@ -23,7 +23,7 @@ describe("saved account card presentation", () => {
   it("keeps overview percentages in the compact metric row instead of the retired gauge overlay", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(styles).toMatch(/\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*position:\s*static/s);
-    expect(styles).toMatch(/@media \(max-width: 600px\)[\s\S]*\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*font-size:\s*14px/s);
+    expect(styles).toMatch(/@media \(max-width: 600px\)[\s\S]*\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*font-size:\s*calc\(14px \* var\(--dashboard-text-scale, 1\)\)/s);
   });
 
   it.each([false, true])(

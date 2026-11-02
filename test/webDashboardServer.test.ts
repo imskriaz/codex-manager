@@ -51,13 +51,16 @@ it("serves lazy module assets and rejects traversal, source maps, and missing ch
   } finally { await removeTestDirectory(directory); }
 });
 
-it("uses local title metadata for completion push and never substitutes an ID or another system's title", async () => {
+it("uses local title metadata for failure push and never substitutes an ID or another system's title", async () => {
   const id = "01a04882-d037-7a42-ad24-9afb61901188";
   const read = vi.spyOn(sessionMetadata, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({ [id]: { title: "Fix startup tabs", updatedAt: Date.now() } });
   const notify = vi.fn();
   const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, peerSessions: new Map([["target", { deviceName: "Worker Two" }]]), getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
-  const state = { sessionId: id, streamId: "stream", status: "completed" };
+  const state = { sessionId: id, streamId: "stream", status: "failed" };
   try {
+    for (const status of ["completed", "cancelled", "running"]) await server.notifySessionCompletion({ ...state, status });
+    expect(notify).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
     await server.notifySessionCompletion(state);
     expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Fix startup tabs", message: expect.stringContaining("Fix startup tabs") }));
     read.mockRejectedValue(new Error("offline"));

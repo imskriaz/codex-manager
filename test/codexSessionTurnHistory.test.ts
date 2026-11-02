@@ -11,6 +11,26 @@ describe("authoritative session turn identifiers", () => {
     ]);
   });
 
+  it("renders native compaction markers once without displaying replacement history", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-compaction-history-"));
+    const id = "01a04882-d037-7a42-ad24-9afb61901199";
+    const file = path.join(home, "sessions", `rollout-${id}.jsonl`);
+    try {
+      await mkdir(path.dirname(file));
+      await writeFile(file, [
+        { type: "turn_context", payload: { turn_id: "turn-1" } },
+        { type: "compacted", payload: { message: "private replacement history" } },
+        { type: "event_msg", payload: { type: "context_compacted" } }
+      ].map(row => JSON.stringify(row)).join("\n") + "\n");
+      const messages = await readCodexCliSessionMessages(id, home);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ kind: "compaction", status: "completed", title: "Context compacted", turnId: "turn-1" });
+      expect(JSON.stringify(messages)).not.toContain("private replacement history");
+      await appendFile(file, JSON.stringify({ type: "event_msg", payload: { type: "context_compacted" } }) + "\n");
+      expect(await readCodexCliSessionMessages(id, home)).toHaveLength(2);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it("retains turn context across incremental JSONL reads without merging identical prompts across turns", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "codex-turn-history-"));
     const id = "01a04882-d037-7a42-ad24-9afb61901199";

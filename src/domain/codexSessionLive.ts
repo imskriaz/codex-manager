@@ -239,14 +239,43 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
       ...(!item.textAttachments?.length && previous.textAttachments?.length ? { textAttachments: previous.textAttachments } : {}),
       ...(!item.images?.length && previous.images?.length ? { images: previous.images } : {}) } : item;
   });
+  // Native transcripts can assign a different ID to the accepted steering echo.
+  const matchedUsers = new Set<string>();
+  for (const [index, item] of messages.entries()) {
+    if (saved.has(item.id) || item.role !== "user" || item.kind && item.kind !== "message" || !live.turnId) continue;
+    const before = messages.slice(0, index).reverse().find(candidate => saved.has(candidate.id));
+    const after = messages.slice(index + 1).find(candidate => saved.has(candidate.id));
+    if (!before && !after) continue;
+    const start = before ? history.findIndex(candidate => candidate.id === before.id) + 1 : 0;
+    const end = after ? history.findIndex(candidate => candidate.id === after.id) : history.length;
+    const echo = history.slice(start, end).find(candidate => candidate.role === "user" && (!candidate.kind || candidate.kind === "message") &&
+      candidate.turnId === live.turnId && !matchedUsers.has(candidate.id) && !messages.some(other => other.id === candidate.id) &&
+      candidate.text === item.text && JSON.stringify(candidate.images ?? []) === JSON.stringify(item.images ?? []) &&
+      (!item.textAttachments?.length || JSON.stringify(candidate.textAttachments ?? []) === JSON.stringify(item.textAttachments)));
+    if (echo) { matchedUsers.add(echo.id); messages[index] = { ...item, id: echo.id, textAttachments: item.textAttachments?.length ? item.textAttachments : echo.textAttachments }; }
+  }
   const exactTurn = live.turnId ? history.findIndex((item) => item.turnId === live.turnId) : -1;
-  const ids = new Set(live.messages.map((item) => item.id));
+  const ids = new Set(messages.map((item) => item.id));
   const exactItem = history.findIndex((item) => ids.has(item.id));
-  // A bounded live snapshot contains only a suffix, not the whole saved turn.
-  if (live.truncated) {
-    const replacements = new Map(messages.map(item => [item.id, item]));
-    const savedIds = new Set(history.map(item => item.id));
-    return [...history.map(item => replacements.get(item.id) ?? item), ...messages.filter(item => !savedIds.has(item.id))];
+  // Keep saved events after a live anchor; a truncated snapshot is only a suffix.
+  if (live.truncated || exactItem >= 0) {
+    const combined = [...history];
+    const combinedIds = new Set(history.map(item => item.id));
+    let nextId: string | undefined;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const item = messages[index]!;
+      const existing = combined.findIndex(candidate => candidate.id === item.id);
+      if (existing >= 0) combined[existing] = item;
+      else {
+        const next = nextId ? combined.findIndex(candidate => candidate.id === nextId) : -1;
+        const previous = next < 0 ? messages.slice(0, index).reverse().find(candidate => combinedIds.has(candidate.id)) : undefined;
+        const position = next >= 0 ? next : previous ? combined.findIndex(candidate => candidate.id === previous.id) + 1 : combined.length;
+        combined.splice(position, 0, item);
+        combinedIds.add(item.id);
+      }
+      nextId = item.id;
+    }
+    return combined;
   }
   let boundary = exactTurn >= 0 ? exactTurn : exactItem;
   if (boundary < 0) {

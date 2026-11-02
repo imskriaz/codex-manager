@@ -490,7 +490,9 @@ describe("native App Server new sessions", () => {
     try {
       await startCodexCliSession({ text: "First prompt", projectPath: root });
       await expect(steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "other", text: "Guide" })).rejects.toThrow(/turn changed/);
+      vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
       await steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "turn-1", text: "Guide" });
+      expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
       expect(rpc.request).toHaveBeenCalledWith("turn/steer", { threadId: id, expectedTurnId: "turn-1", input: [expect.objectContaining({ text: "Guide", type: "text" })] });
       expect(mocks.open).toHaveBeenCalledTimes(1);
       expect(getCodexSessionLiveState(id)?.status).toBe("running");

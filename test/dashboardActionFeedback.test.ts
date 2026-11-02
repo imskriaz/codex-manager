@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { formatSessionReadError, isMissingCliSessionError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it.each(['completed', 'failed', 'cancelled'] as const)('delegates %s send, steer, stop and request feedback exactly once', status => {
+    for (const action of ['startCodexCliSession', 'sendCodexCliSessionMessage', 'steerCodexCliSessionTurn', 'cancelCodexCliSessionTurn', 'respondCodexServerRequest', 'saveWorkspaceFile', 'deleteWorkspaceFile', 'runWorkspaceTerminalCommand'] as const) {
+      expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'one', action, status, error: 'Keep the error in the initiating view', payload: { notice: { level: 'warning', message: 'Attention' } } })).toBeUndefined();
+    }
+  });
   it("shows token refresh outcomes and keeps automatic refreshes quiet", () => {
     const message = { type: 'dashboard:action-result' as const, requestId: 'token', action: 'refreshToken' as const };
     expect(noticeFromActionResult({ ...message, status: 'completed', payload: { notice: { level: 'info', message: 'Account token refreshed.' } } })).toEqual({ level: 'info', message: 'Account token refreshed.' });
@@ -37,7 +42,7 @@ describe("dashboard action feedback", () => {
       expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "sessions", action, status: "failed",
         error: "Session Integration is disabled. Enable it in Settings before opening sessions." })).toBeUndefined();
     }
-    expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "send", action: "sendCodexCliSessionMessage", status: "failed", error: "Session running state could not be verified." })?.level).toBe("error");
+    expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "send", action: "sendCodexCliSessionMessage", status: "failed", error: "Session running state could not be verified." })).toBeUndefined();
   });
   it("keeps startup session failures, warnings and late results out of toasts", () => {
     for (const status of ["failed", "cancelled", "completed"] as const) {
@@ -51,14 +56,14 @@ describe("dashboard action feedback", () => {
   it('evicts only confirmed missing conversations while preserving transient read failures', () => {
     expect(isMissingCliSessionError('This session was not found.')).toBe(true);
     for (const error of ['Permission denied.', 'Session discovery is still pending.', 'Session transcript not found while offline.', 'Session read timed out.']) expect(isMissingCliSessionError(error)).toBe(false);
-    expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'rename', action: 'renameCodexCliSession', status: 'completed', payload: { notice: { level: 'warning', message: 'The session action completed, but the session list could not refresh: Session discovery is still pending.' } } })).toMatchObject({level:'warning',message:expect.stringContaining('session list could not refresh')});
+    expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'rename', action: 'renameCodexCliSession', status: 'completed', payload: { notice: { level: 'warning', message: 'The session action completed, but the session list could not refresh: Session discovery is still pending.' } } })).toBeUndefined();
   });
   it.each(['renameCodexCliSession','archiveCodexCliSession','unarchiveCodexCliSession','deleteCodexCliSession','forkCodexCliSession'] as const)('keeps a confirmed %s refresh warning toast-only and quiet for automatic results', action => {
     const notice={level:'warning' as const,message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};
     const result={type:'dashboard:action-result' as const,requestId:'manual',action,status:'completed' as const,payload:{notice}};
-    expect(noticeFromActionResult(result)).toEqual(notice);
+    expect(noticeFromActionResult(result)).toBeUndefined();
     expect(noticeFromActionResult(result,true)).toBeUndefined();
-    expect(noticeFromActionResult({...result,status:'failed',error:'Mutation failed.'})).toEqual({level:'error',message:'Mutation failed.'});
+    expect(noticeFromActionResult({...result,status:'failed',error:'Mutation failed.'})).toBeUndefined();
   });
   it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();
@@ -144,10 +149,7 @@ describe("dashboard action feedback", () => {
         status: "cancelled",
         error: "Codex stopped this turn before it completed."
       })
-    ).toEqual({
-      level: "warning",
-      message: "Codex stopped this turn before it completed."
-    });
+    ).toBeUndefined();
   });
 
   it("shows a visible terminal state for completed user actions without custom copy", () => {

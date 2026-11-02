@@ -9,6 +9,7 @@ vi.mock("web-push", async (original) => {
 });
 import { BrowserPushService, BrowserPushRegistrationConflictError, validateBrowserPushSubscription } from "../src/services/browserPush";
 import { WebDashboardServer } from '../src/services/webDashboardServer';
+import { publishDashboardRealtime } from "../src/services/dashboardRealtime";
 
 const subscription = (name = "one") => {
   const key = createECDH("prime256v1");
@@ -41,17 +42,33 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("persistent browser push", () => {
+  it("gives mirrored and realtime notices the same source for browser deduplication", async () => {
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never);
+    const socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    const host = server as any;
+    host.webSocketClients.add(socket);
+    host.browserPush = { notify: vi.fn() };
+    try {
+      publishDashboardRealtime({ type: "dashboard:notice", level: "error", message: "Action failed" });
+      host.broadcastRealtimeNotice({ level: "error", message: "Action failed" });
+      expect(socket.send).toHaveBeenCalledTimes(2);
+      const notices = socket.send.mock.calls.map(call => JSON.parse(call[0]));
+      expect(notices[0]).toEqual(notices[1]);
+      expect(notices[0].systemName).toBe(hostname());
+    } finally { host.webSocketClients.clear(); await server.stop(); server.dispose(); }
+  });
+
   it('delivers a remote event through the dashboard host to its registered browser exactly once', async () => {
     await service.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
     const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never,
       { verifyRealtimePeerPayload: async () => true, setOnlineDeviceIds: vi.fn() } as never);
     const host = server as any, socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
     host.browserPush = service; host.peerSocket = socket;
-    const event = { type: 'peer:notice', deviceId: 'remote-pc', eventId: 'remote-switch', sentAt: Date.now(), signature: 'signed', notice: { level: 'info', message: 'Switched account.', systemName: 'Remote PC' } };
+    const event = { type: 'peer:notice', deviceId: 'remote-pc', eventId: 'remote-failure', sentAt: Date.now(), signature: 'signed', notice: { level: 'error', message: 'Switch failed.', systemName: 'Remote PC' } };
     try {
       await host.acceptPeerNotification(event, socket); await host.acceptPeerNotification(event, socket); await settle();
       expect(send).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ title: 'Remote PC · Codex Manager', body: 'Switched account.' });
+      expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ title: 'Remote PC · Codex Manager', body: 'Switch failed.' });
     } finally { await server.stop(); server.dispose(); }
   });
   it("rebinds a proven browser after login and prunes expired conflicts without taking another device", async () => {
@@ -116,12 +133,12 @@ describe("persistent browser push", () => {
     await service.revokeOwner("owner");
     expect(await service.isSubscribed(item.endpoint, "owner", "https://dashboard.example")).toBe(false);
   });
-  it("sends a major reload to all subscribed devices in parallel and exposes a completion barrier", async () => {
+  it("sends an error to all subscribed devices in parallel and exposes a completion barrier", async () => {
     await service.subscribe(subscription(), "one", "https://dashboard.example", password);
     await service.subscribe(subscription("two"), "two", "https://dashboard.example", password);
     const finish: Array<() => void> = [];
     send.mockImplementation(() => new Promise<void>(resolve => finish.push(resolve)));
-    service.notify({ level: "info", message: "Reloading Codex Manager" });
+    service.notify({ level: "error", message: "Codex Manager could not reload" });
     let drained = false;
     void service.flush().then(() => { drained = true; });
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
@@ -132,11 +149,11 @@ describe("persistent browser push", () => {
   });
   it("uses a session title as the browser push title", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
-    service.notify({ level: "info", title: "Fix SMS end to end", message: "Session completed. Open the dashboard to review the turn." });
+    service.notify({ level: "error", title: "Fix SMS end to end", message: "Session failed. Open the dashboard to review the turn." });
     await settle();
     const payload = JSON.parse(send.mock.calls[0]![1]);
     expect(payload.title).toBe(`${hostname()} · Fix SMS end to end`);
-    expect(payload.body).toContain("Session completed");
+    expect(payload.body).toContain("Session failed");
   });
   it("pushes Codex approval and question requests with review actions", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
@@ -171,11 +188,13 @@ describe("persistent browser push", () => {
       if (scenario === 'secret') expect(payload.body).not.toContain('Which approach?');
     }
   });
-  it("uses the first recovered title for an auto-resume push", async () => {
+  it("does not push routine lifecycle or account progress", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     service.notify({ level: "info", message: "Auto resume reopened 1 running VS Code Codex session: “Fix SMS end to end”." });
     await settle();
-    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe(`${hostname()} · Fix SMS end to end`);
+    for (const message of ["Session completed", "Session cancelled", "Reloading Codex Manager", "Switched account", "Quotas refreshed"]) service.notify({ level: "info", message });
+    await settle();
+    expect(send).not.toHaveBeenCalled();
   });
   it("prefixes a remote system without replacing it with the relay host", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
@@ -251,6 +270,36 @@ describe("persistent browser push", () => {
     service.dismiss("prompt");
   });
 
+  it("retains event delivery across reconnects and restarts without hiding another system or request", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    const notice = { level: "warning" as const, notificationId: "approval-1", systemName: "Worker One", message: "Approve command?", actions: ["Approve"] };
+    service.notify(notice);
+    await settle();
+    const restart = new BrowserPushService({ get: async (key: string) => stored.get(key), store: async (key: string, value: string) => { stored.set(key, value); } } as never, async () => password);
+    restart.notify(notice);
+    await restart.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    restart.notify({ ...notice, systemName: "Worker Two" });
+    restart.notify({ ...notice, notificationId: "approval-2" });
+    await restart.flush();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(new Set(send.mock.calls.map(call => JSON.parse(call[1]).eventId)).size).toBe(3);
+  });
+
+  it("retries failed endpoints without repeating delivery to devices that accepted the event", async () => {
+    const first = subscription("first"), second = subscription("second");
+    await service.subscribe(first, "first", "https://dashboard.example", password);
+    await service.subscribe(second, "second", "https://dashboard.example", password);
+    send.mockImplementationOnce(async () => undefined).mockRejectedValueOnce(new Error("offline"));
+    const notice = { level: "error" as const, notificationId: "failure", message: "Session failed" };
+    service.notify(notice);
+    await settle();
+    service.notify(notice);
+    await settle();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[2][0].endpoint).toBe(second.endpoint);
+  });
+
   it("removes expired endpoints, revokes logout/password changes, and keeps network failures retryable", async () => {
     const first = subscription();
     await service.subscribe(first, "device", "https://dashboard.example", password);
@@ -276,7 +325,7 @@ describe("persistent browser push", () => {
     await settle();
     service.notify({ level: "info", message: "Switched to the next account" });
     await settle();
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("renews the same device after login expiry and reports storage and capacity failures", async () => {

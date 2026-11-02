@@ -153,11 +153,11 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByText('Review the workspace and explain the result.', {exact:true}).waitFor();
   const timeline=task.getByRole('region',{name:'Activity timeline',exact:true});
   await timeline.getByText('Timeline review comment',{exact:true}).waitFor();
-  assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),0);
-  assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),0);
-  assert.equal(await timeline.locator('.task-timeline-meta > time').count(),1,'Only recorded timestamps are shown');
+    assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),1,'Thinking uses the same disclosure as sessions');
+    assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),1,'Failed activity is preserved like session history');
+    assert.equal(await timeline.locator('.task-timeline-meta').count(),0,'Messages use shared session metadata');
   assert.ok(await timeline.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Timeline fits narrow panels');
-  assert.ok(await timeline.locator('.is-user .cli-session-message-text').evaluate(el=>Math.abs(el.getBoundingClientRect().left-el.closest('.task-timeline-content').getBoundingClientRect().left)<2),'User messages align with the timeline rail');
+    assert.equal(await timeline.locator('.cli-session-message.is-user').count(),1,'Activity uses the session user bubble');
   await page.screenshot({path:path.join(output,`task-activity-${width}x${height}.png`)});
   await task.locator('.cli-activity > summary').first().click();
   await task.getByText('Script completed', { exact: true }).waitFor();

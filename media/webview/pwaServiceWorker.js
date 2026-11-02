@@ -125,11 +125,27 @@ self.addEventListener("fetch", (event) => {
   })());
 });
 
+const notificationCacheName = "codex-manager-notification-events-v1";
+const recentPushes = new Map();
+let pushDelivery = Promise.resolve();
 self.addEventListener("push", (event) => {
-  event.waitUntil((async () => {
+  pushDelivery = pushDelivery.catch(() => undefined).then(async () => {
     let payload;
-    try { payload = event.data?.json(); } catch { /* Malformed pushes still produce a visible generic notification. */ }
-    const body = typeof payload?.body === "string" ? payload.body.slice(0, 900) : "A major dashboard update is available. Open the app to review it.";
+    try { payload = event.data?.json(); } catch { return; }
+    if (!payload || typeof payload.body !== "string" || payload.level === "info" && !payload.actions?.length) return;
+    const now = Date.now();
+    const dedupeUntil = Number.isFinite(payload.dedupeUntil) ? Math.min(payload.dedupeUntil, now + 86400000) : now + 86400000;
+    if (typeof payload.createdAt === "number" && (now - payload.createdAt > 300000 || payload.createdAt > now + 30000)) return;
+    const eventId = typeof payload.eventId === "string" ? payload.eventId : typeof payload.tag === "string" ? `${payload.tag}:${payload.createdAt ?? ""}` : undefined;
+    for (const [key, until] of recentPushes) if (until <= now) recentPushes.delete(key);
+    if (eventId && recentPushes.has(eventId)) return;
+    const request = eventId ? new Request(`/__push_delivery__/${encodeURIComponent(eventId.slice(0, 256))}`) : undefined;
+    const cache = request ? await caches.open(notificationCacheName).catch(() => undefined) : undefined;
+    if (cache && request) {
+      const previous = await caches.match(request, { cacheName: notificationCacheName }).catch(() => undefined);
+      if (previous && Number(await previous.text().catch(() => "0")) > now) return;
+    }
+    const body = payload.body.slice(0, 900);
     const actions = typeof payload?.notificationId === "string" && Array.isArray(payload?.actions)
       ? payload.actions.filter((action) => typeof action === "string").slice(0, 2).map((title) => ({ action: title, title })) : [];
     const title = typeof payload?.title === "string" && payload.title.trim() ? payload.title.trim().slice(0, 120) : "Codex Manager";
@@ -138,7 +154,17 @@ self.addEventListener("push", (event) => {
       tag: typeof payload?.tag === "string" ? payload.tag : "codex-manager-update", actions,
       data: { title, url: payload?.url, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
     });
-  })());
+    if (eventId) {
+      recentPushes.set(eventId, dedupeUntil);
+      while (recentPushes.size > 256) recentPushes.delete(recentPushes.keys().next().value);
+      if (cache && request) {
+        await cache.put(request, new Response(String(dedupeUntil))).catch(() => undefined);
+        const keys = await cache.keys().catch(() => []);
+        await Promise.all(keys.slice(0, Math.max(0, keys.length - 256)).map(key => cache.delete(key).catch(() => false)));
+      }
+    }
+  });
+  event.waitUntil(pushDelivery);
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -154,10 +180,9 @@ self.addEventListener("notificationclick", (event) => {
         const response = await fetch("/api/push/action", { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
           headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify({ notificationId: data.notificationId, action: event.action }) });
         if (!response.ok) throw new Error(response.status === 401 ? "Sign in again to act on this notification." : "This action could not be confirmed. Open the dashboard to check its outcome before retrying.");
-        feedback = event.action === "Answer" || event.action === "Review" ? "Opening the request in the dashboard." : "Your choice was accepted. Open the dashboard to see the result.";
       } catch (error) { feedback = error.message || "The host is unavailable. Open the dashboard and retry when connected."; }
       finally { clearTimeout(timer); }
-      await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
+      if (feedback) await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
     }
     let target = new URL("/", self.location.origin).href;
     try {

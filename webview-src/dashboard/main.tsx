@@ -332,10 +332,10 @@ function App() {
     return route.deviceId ? route : { ...route, deviceId: selectedCliSessionRef.current?.id === route.id ? selectedCliSessionRef.current.deviceId : undefined };
   };
   const [notice, setNotice] = useState<DashboardToast>();
+  const recentBrowserPushes = useRef(new Map<string, number>());
   const noticeControllerRef = useRef<ReturnType<typeof createDashboardToastController>>();
   noticeControllerRef.current ??= createDashboardToastController(setNotice);
   useEffect(() => () => noticeControllerRef.current?.dispose(), []);
-  const lastBrowserPushKeyRef = useRef<string>();
   const browserPushRef = useRef<Notification>();
   const cancelBrowserPushDismissRef = useRef<() => void>();
   const browserPushGenerationRef = useRef(0);
@@ -355,16 +355,17 @@ function App() {
   }, [closeBrowserPush]);
   const pushBrowserNotification = useCallback(
     (notice: DashboardNotice) => {
-      const major = notice.level !== "info" || Boolean(notice.actions?.length);
-      if (!isBrowserDashboard || !major || typeof Notification === "undefined" || document.documentElement.dataset["pushSubscribed"] === "true") {
+      const major = notice.level !== "info" || Boolean(notice.actions?.length || notice.actionPrompt);
+      if (!isBrowserDashboard || !major || typeof Notification === "undefined" || ["true", "checking"].includes(document.documentElement.dataset["pushSubscribed"] ?? "")) {
         closeBrowserPush();
-        lastBrowserPushKeyRef.current = undefined;
         return;
       }
-      const notificationKey = notice.notificationId ?? `${notice.level}:${notice.message}`;
-      if (lastBrowserPushKeyRef.current === notificationKey) return;
+      const source = notice.systemName?.trim() || selectedPeerId;
+      const notificationKey = JSON.stringify([source, notice.notificationId ?? [notice.level, notice.message.trim().replace(/\s+/g, " ")]]);
+      const now = Date.now();
+      for (const [key, expiresAt] of recentBrowserPushes.current) if (expiresAt <= now) recentBrowserPushes.current.delete(key);
+      if (recentBrowserPushes.current.has(notificationKey)) return;
       closeBrowserPush();
-      lastBrowserPushKeyRef.current = notificationKey;
       const generation = browserPushGenerationRef.current;
       const show = () => {
         if (browserPushGenerationRef.current !== generation || Notification.permission !== "granted") return;
@@ -372,8 +373,10 @@ function App() {
           const systemName = notice.systemName?.trim() || state.snapshot?.connectedPeers?.find(peer => peer.id === selectedPeerId || selectedPeerId === "local" && peer.local)?.name || (selectedPeerId === "local" ? "This system" : "Remote system");
           const notification = new Notification(`${systemName} · Codex Manager`, {
             body: notice.message,
-            tag: `codex-manager-${notice.notificationId ?? notice.level}`
+            tag: `codex-manager-${notificationKey}`
           });
+          recentBrowserPushes.current.set(notificationKey, now + (notice.notificationId ? 24 * 60 * 60_000 : 5 * 60_000));
+          if (recentBrowserPushes.current.size > 256) recentBrowserPushes.current.delete(recentBrowserPushes.current.keys().next().value!);
           browserPushRef.current = notification;
           cancelBrowserPushDismissRef.current = scheduleDashboardToastDismiss(() => {
             if (browserPushRef.current !== notification) return;
@@ -416,6 +419,7 @@ function App() {
   }, [realtimeConnected, connectionUnavailable, browserOffline]);
   const showNotice = useCallback(
     (next: DashboardNotice) => {
+      if (next.level === "info" && !next.actions?.length && !next.actionPrompt) return;
       noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
     },
@@ -474,7 +478,6 @@ function App() {
       }
       if (action === "startCodexCliSession" || action === "sendCodexCliSessionMessage" || action === "steerCodexCliSessionTurn") {
         recordSubmissionResult(requestId, "failed");
-        turnRequests.current.delete(requestId);
         showCliSessionFeedback({
           key: Date.now(),
           level: "warning",
@@ -1224,6 +1227,14 @@ function App() {
       if (message.type === "dashboard:action-result" && message.action === "steerCodexCliSessionTurn") {
         recordSubmissionResult(message.requestId, message.status);
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
+        const target = turnRequests.current.get(message.requestId);
+        turnRequests.current.delete(message.requestId);
+        if (target && !sameCliSessionTarget(target, currentSessionTarget())) {
+          if (message.status !== "completed") {
+            showCliSessionFeedback({ key: Date.now(), level: message.status === "cancelled" ? "warning" : "error", message: message.error ?? "The follow-up could not be confirmed in the original chat." });
+          }
+          return;
+        }
         showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.") });
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
@@ -2539,6 +2550,7 @@ function App() {
                 onSync={handleSyncNow}
                 onSettings={() => dispatch({ type: "open-settings" })}
                 onAbout={() => setAboutOpen(true)}
+                onDonate={() => setDonationOpen(true)}
               />
             </div>
           </div>
@@ -3195,7 +3207,13 @@ function App() {
                 })
               }
               onStart={(input) => sendAction("startCodexCliSession", undefined, { ...input, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
-              onSteer={(input) => selectedCliSession ? sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath }) : undefined}
+              onSteer={(input) => {
+                if (!selectedCliSession) return undefined;
+                const requestId = sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath });
+                if (requestId) turnRequests.current.set(requestId, selectedCliSession);
+                if (turnRequests.current.size > 128) turnRequests.current.delete(turnRequests.current.keys().next().value!);
+                return requestId;
+              }}
               onSend={(input) => {
                 if (!selectedCliSession) return;
                 const requestId = sendAction("sendCodexCliSessionMessage", undefined, {
@@ -3205,6 +3223,7 @@ function App() {
                   ...input
                 });
                 if (requestId) turnRequests.current.set(requestId, selectedCliSession);
+                if (turnRequests.current.size > 128) turnRequests.current.delete(turnRequests.current.keys().next().value!);
                 return requestId;
               }}
               onStop={(session) =>
@@ -3320,6 +3339,7 @@ function DashboardMobileActions(props: {
   onSync: () => void;
   onSettings: () => void;
   onAbout: () => void;
+  onDonate: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLElement>(null), panel = useRef<HTMLDivElement>(null);
@@ -3343,6 +3363,9 @@ function DashboardMobileActions(props: {
         </button>
         <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onAbout(); }}>
           <span aria-hidden="true"><InfoIcon /></span>{props.aboutTitle}
+        </button>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onDonate(); }}>
+          <span aria-hidden="true">♡</span>Donate
         </button>
       </div>
     </details>

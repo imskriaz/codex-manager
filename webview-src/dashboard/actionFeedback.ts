@@ -5,6 +5,12 @@ export function noticeFromActionResult(
   automatic = false
 ): DashboardNotice | undefined {
   if (automatic) return undefined;
+  // These actions own feedback in the initiating workspace or request panel.
+  if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "respondCodexServerRequest",
+    "getWorkspaceEnvironment", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal",
+    "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "listWorkspaceFiles", "commitWorkspaceChanges", "pushWorkspaceBranch",
+    "openNewCodexWebview", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "openCodexCliSession",
+    "renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession"].includes(message.action)) return undefined;
   if (message.action === 'getCodexCliSessionMessages' && message.status === 'failed' && isMissingCliSessionError(message.error ?? '')) return undefined;
   if (message.action === "getDailyUsage" || message.action === "getUsageGraph" || message.action === "listCodexCliSessions") return undefined;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(message.action) &&

@@ -9,6 +9,16 @@ import {
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
+  it('does not repeat a visible failure or replace it with informational progress', () => {
+    const changed = vi.fn(); const controller = createDashboardToastController(changed);
+    controller.show({ level: 'error', message: 'Failed' });
+    controller.show({ level: 'info', message: 'Sending' });
+    controller.show({ level: 'error', message: 'Failed' });
+    expect(changed).toHaveBeenCalledOnce();
+    controller.show({ level: 'info', message: 'Approval needed', actions: ['Review'] });
+    expect(changed).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
   it('dismisses recovered offline warnings without erasing unconfirmed writes or another system’s outage', () => {
     vi.useFakeTimers(); const changed = vi.fn(); const controller = createDashboardToastController(changed);
     controller.show({ level: 'warning', message: 'The browser is offline. This action was not sent; reconnect and try again.' });
@@ -28,12 +38,12 @@ describe("dashboard toast", () => {
     vi.useRealTimers();
   });
 
-  it("shows informational results for three seconds while keeping warnings and failures longer", () => {
+  it("keeps informational outcomes quiet without hiding attention or failures", () => {
     vi.useFakeTimers(); const changed=vi.fn(); const controller=createDashboardToastController(changed);
     controller.show({level:'info',message:'Account token refreshed.'});
     vi.advanceTimersByTime(DASHBOARD_INFO_TOAST_DURATION_MS-1);
-    expect(changed.mock.lastCall?.[0]?.message).toBe('Account token refreshed.');
-    vi.advanceTimersByTime(1); expect(changed).toHaveBeenLastCalledWith(undefined);
+    expect(changed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     for(const level of ['warning','error'] as const) {
       controller.show({level,message:'Check before retrying.'});
       vi.advanceTimersByTime(DASHBOARD_INFO_TOAST_DURATION_MS);
@@ -78,7 +88,7 @@ describe("dashboard toast", () => {
     const onChange = vi.fn<(toast: DashboardToast | undefined) => void>();
     const controller = createDashboardToastController(onChange);
 
-    controller.show({ level: "info", message: "First" });
+    controller.show({ level: "error", message: "First" });
     const first = onChange.mock.lastCall?.[0];
     vi.advanceTimersByTime(1_000);
     controller.show({ level: "warning", message: "Second" });
@@ -100,9 +110,9 @@ describe("dashboard toast", () => {
     const onChange = vi.fn<(toast: DashboardToast | undefined) => void>();
     const controller = createDashboardToastController(onChange);
 
-    controller.show({ level: "info", message: "First" });
+    controller.show({ level: "warning", message: "First" });
     const firstId = onChange.mock.lastCall?.[0]?.id;
-    controller.show({ level: "info", message: "Second" });
+    controller.show({ level: "warning", message: "Second" });
     const secondId = onChange.mock.lastCall?.[0]?.id;
     controller.dismiss(firstId!);
     expect(onChange.mock.lastCall?.[0]?.message).toBe("Second");
@@ -142,7 +152,8 @@ describe("dashboard toast", () => {
   it("closes browser push notifications on replacement, timeout, and reload", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
 
-    expect(main).toMatch(/if \(lastBrowserPushKeyRef\.current === notificationKey\) return;\s+closeBrowserPush\(\)/);
+    expect(main).toContain("recentBrowserPushes.current.has(notificationKey)");
+    expect(main).toContain('notice.systemName');
     expect(main).toContain('window.addEventListener("pagehide", closeBrowserPush)');
     expect(main).toContain("cancelBrowserPushDismissRef.current = scheduleDashboardToastDismiss");
     expect(main).toContain("notification.close()");

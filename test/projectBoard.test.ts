@@ -122,7 +122,7 @@ it('merges bounded live activity and file changes without modifying older histor
     { id: 'edit', kind: 'file-change', text: 'Edited', changes: [{ path: 'src/live.ts', kind: 'update' }] }
   ] });
   const details = await readProjectTaskDetails(root, task.id);
-  expect(details.messages.map(message => message.id)).toEqual(['message','tool','edit']);
+  expect(details.messages.map(message => message.id)).toEqual(['message','edit','tool']);
   expect(details.messages[0]?.text).toBe('Live answer');
   expect((await readProjectTaskDetails(root, task.id, 'files')).files).toMatchObject([{ path: 'src/live.ts' }]);
   expect((await readProjectTaskDetails(root, task.id, 'activities', '100')).messages[0]?.text).toBe('Answer');

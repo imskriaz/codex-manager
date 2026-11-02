@@ -1031,7 +1031,7 @@ async function runDashboardAction(
       return handleCancelCodexCliSessionTurn(payload?.sessionId);
     case "respondCodexServerRequest":
       if (!payload?.codexRequestId || !payload.codexDecision) throw new Error("Choose a Codex prompt response before continuing.");
-      respondCodexAppServerPrompt(payload.codexRequestId, payload.codexDecision, payload.codexAnswers);
+      await respondCodexAppServerPrompt(payload.codexRequestId, payload.codexDecision, payload.codexAnswers);
       return { notice: { level: "info" as const, message: payload.codexDecision === "approve" ? "Response sent to Codex." : "Codex request declined." } };
     case "openCodexCliSession":
       return handleOpenCodexCliSession(payload?.sessionId, ctx.hostKind === "browser" && payload?.openInVsCode !== true);

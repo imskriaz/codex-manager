@@ -1046,8 +1046,7 @@ async function startAppServerSession(options: {
   } finally {
     detachPrompts();
     if (threadId) activeAppServerTurns.delete(threadId);
-    rpc?.close();
-    live.dispose();
+    try { await rpc?.close(); } finally { live.dispose(); }
   }
 }
 
@@ -1098,7 +1097,7 @@ async function sendAppServerSessionMessage(options: {
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
   let detachPrompts: () => void = () => undefined;
-  const abort = () => rpc?.close();
+  const abort = () => { void rpc?.close(); };
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
     rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd, options.signal);
@@ -1112,7 +1111,7 @@ async function sendAppServerSessionMessage(options: {
       if (!await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
       options.signal?.removeEventListener("abort", abort);
       live.dispose(true);
-      activeAppServerTurns.delete(options.sessionId); rpc.close();
+      activeAppServerTurns.delete(options.sessionId); await rpc.close();
       options.onStarted?.();
       await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
       live.finish("completed"); return;
@@ -1139,8 +1138,7 @@ async function sendAppServerSessionMessage(options: {
     options.signal?.removeEventListener("abort", abort);
     detachPrompts();
     activeAppServerTurns.delete(options.sessionId);
-    rpc?.close();
-    live.dispose();
+    try { await rpc?.close(); } finally { live.dispose(); }
   }
   });
 }
@@ -1300,6 +1298,17 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   validateSessionId(options.sessionId);
   const sessionId = options.sessionId.toLowerCase(), home = resolveCodexHome();
   const prepared = prepareChatInput(options.text, options.attachments);
+  const active = activeAppServerTurns.get(sessionId);
+  if (active) {
+    if (!active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
+    if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
+    const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
+      threadId: sessionId, expectedTurnId: options.expectedTurnId,
+      input: appServerChatInput(prepared.text, prepared.attachments)
+    });
+    if (result.turnId !== options.expectedTurnId) throw new Error("Codex did not confirm guidance for the expected turn. Refresh before retrying.");
+    return;
+  }
   const native = ownedNativeTurn(home, sessionId);
   let nativeTurnId = native?.turnId;
   if (!nativeTurnId) nativeTurnId = await observedNativeTurn(home, sessionId);
@@ -1309,14 +1318,7 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
       throw new Error('The native Codex owner is unavailable. Your follow-up was not sent; refresh before retrying.');
     return;
   }
-  const active = activeAppServerTurns.get(sessionId);
-  if (!active || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
-  if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
-  const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
-    threadId: sessionId, expectedTurnId: options.expectedTurnId,
-    input: appServerChatInput(prepared.text, prepared.attachments)
-  });
-  if (result.turnId !== options.expectedTurnId) throw new Error("Codex did not confirm guidance for the expected turn. Refresh before retrying.");
+  throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
 }
 
 function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<string, unknown> {
@@ -1377,7 +1379,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     if (activeAppServer.stop) return activeAppServer.stop;
     suppressRecovery(activeAppServer.turnId);
     activeAppServer.cancelRequested = true;
-    if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
+    if (!activeAppServer.turnId) { void activeAppServer.rpc.close(); return true; }
     recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: appServerTransport.getStore() ?? "stdio" });
     activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(() => {
       cancelCodexAppServerPrompts(sessionId);
@@ -1746,7 +1748,7 @@ export async function readCodexCliSessionMessages(
         const messages = parseCodexAppServerThreadItems(result);
         if (messages.length > 0) return await hydrateSessionImages(messages);
       } finally {
-        rpc.close();
+        await rpc.close();
       }
     } catch (error) {
       recordPersistentEvent("error", "session-viewer", "App-server thread read unavailable", { sessionRef: toSessionLogRef(sessionId), reason: error instanceof Error ? error.message : String(error) });
@@ -2805,10 +2807,10 @@ async function runCodexAppServerRequest<T = unknown>(
     recordPersistentEvent("debug", "session-maintenance", "Using Codex storage for an unavailable session project", { sessionRef: toSessionLogRef(sessionId), method });
   }
   const rpc = await openCodexAppServer(executable, cwd, signal);
-  const abort = () => rpc.close();
+  const abort = () => { void rpc.close(); };
   signal?.addEventListener("abort", abort, { once: true });
   try { signal?.throwIfAborted(); return await rpc.request<T>(method, params, timeoutMs); }
-  finally { signal?.removeEventListener("abort", abort); rpc.close(); }
+  finally { signal?.removeEventListener("abort", abort); await rpc.close(); }
 }
 
 function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {
@@ -3518,7 +3520,7 @@ function parseCliTranscriptLines(raw: string, startingSequence: number, turnCont
   for (const [line] of raw.matchAll(/[^\n]+/g)) {
     const message = parseTaggedCliSessionMessage(line, sequence, turnContext);
     if (!message) continue;
-    if (mergeCliTranscriptMessage(messages, message)) sequence += 1;
+    if (mergeCliTranscriptMessage(messages, message) || message.kind === "compaction") sequence += 1;
   }
   return { messages, nextSequence: sequence };
 }
@@ -3556,11 +3558,16 @@ function mergeCliTranscriptMessage(
             (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call")
         )
       : -1;
+  // Official rollouts persist the replacement history immediately before its event.
+  if (existingIndex < 0 && message.kind === "compaction" && message.id.startsWith("context-compacted-") &&
+    messages.at(-1)?.kind === "compaction" && messages.at(-1)?.id.startsWith("compacted-") && messages.at(-1)?.turnId === message.turnId)
+    existingIndex = messages.length - 1;
   if (
     existingIndex < 0 &&
     message.kind &&
     message.kind !== "message" &&
     message.kind !== "reasoning" &&
+    message.kind !== "compaction" &&
     message.kind !== "tool-call"
   ) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 2); index -= 1) {
@@ -3608,7 +3615,7 @@ function mergeCliTranscriptMessage(
       ? {
           ...message,
           ...existing,
-          id: existing.id,
+          id: message.kind === "compaction" ? message.id : existing.id,
           status: terminalStatus,
           result: message.result ?? existing.result,
           debug: existing.debug ?? message.debug,
@@ -3618,7 +3625,7 @@ function mergeCliTranscriptMessage(
       : {
           ...existing,
           ...message,
-          id: existing.id,
+          id: message.kind === "compaction" ? message.id : existing.id,
           ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
           ...(images.length ? { images: images.slice(0, 20) } : {})
         };
@@ -3639,6 +3646,10 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
     const eventPayload = value.type === "event_msg" ? value.payload : undefined;
     const eventType = value.type === "event_msg" ? eventPayload?.["type"] : value.type;
+    if (eventType === "context_compacted" || value.type === "compacted") {
+      return { id: `${value.type === "compacted" ? "compacted" : "context-compacted"}-${sequence}`, kind: "compaction", title: "Context compacted",
+        text: "Codex condensed earlier context to continue working.", status: "completed", timestamp };
+    }
     if (["error", "task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventType)) && isCodexCapacityInterruption(JSON.stringify(eventPayload ?? value))) {
       return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: "Selected model is at capacity. Try a different model, then retry.", status: "failed", timestamp };
     }
@@ -3871,6 +3882,7 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       imageView: "imageView",
       ContextCompaction: "contextCompaction",
       contextCompaction: "contextCompaction",
+      context_compaction: "contextCompaction",
       UserMessage: "userMessage",
       userMessage: "userMessage",
       user_message: "userMessage",

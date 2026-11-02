@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { projectTaskActivity } from '../src/domain/projectTaskActivity';
 import type { DashboardCliSessionMessage } from '../src/domain/dashboard/types';
 
-it('keeps meaningful task activity without thinking, compaction, empty events or failed attempts', () => {
+it('keeps session parity including thinking, compaction and failures while omitting empty events', () => {
   const messages: DashboardCliSessionMessage[] = [
     { id: 'prompt', text: 'Build this', role: 'user' },
     { id: 'think', text: 'Thinking', kind: 'reasoning' },
@@ -18,7 +18,7 @@ it('keeps meaningful task activity without thinking, compaction, empty events or
     { id: 'reply', text: 'Finished', role: 'assistant' },
   ];
   const original = structuredClone(messages);
-  expect(projectTaskActivity(messages, []).map(event => event.message?.id)).toEqual(['prompt', 'done', 'legacy', 'running', 'issue', 'attachment', 'reply']);
+  expect(projectTaskActivity(messages, []).map(event => event.message?.id)).toEqual(['prompt', 'think', 'compact', 'failed', 'declined', 'interrupted', 'exit', 'done', 'legacy', 'running', 'issue', 'attachment', 'reply']);
   expect(messages).toEqual(original);
 });
 

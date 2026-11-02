@@ -9,12 +9,39 @@ import { CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 
 function child() {
   const process = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+  process.kill.mockImplementation(() => { process.emit("exit", 0); return true; });
   mocks.spawn.mockReturnValue(process);
   return process;
 }
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it("terminates only the spawned Windows child tree before closing its wrapper", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const processChild = Object.assign(child(), { pid: 12345 });
+    const killer = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    mocks.spawn.mockReturnValueOnce(processChild).mockReturnValueOnce(killer);
+    try {
+      const opening = CodexAppServerRpc.open({ command: "node", prefixArgs: ["codex.js"] }, process.cwd());
+      processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+      const rpc = await opening;
+      const closing = rpc.close();
+      expect(mocks.spawn).toHaveBeenLastCalledWith("taskkill", ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      expect(processChild.kill).not.toHaveBeenCalled();
+      processChild.emit("exit", 0); killer.emit("exit", 0); await closing;
+      await rpc.close(); expect(mocks.spawn).toHaveBeenCalledTimes(2);
+      expect(processChild.stdin.destroyed).toBe(true);
+    } finally { Object.defineProperty(process, "platform", platform); }
+  });
+  it("never targets an exited child PID for process-tree cleanup", async () => {
+    const processChild = Object.assign(child(), { pid: 12345 });
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    processChild.emit("exit", 0); processChild.emit("close", 0);
+    await rpc.close(); expect(mocks.spawn).toHaveBeenCalledOnce(); expect(processChild.kill).not.toHaveBeenCalled();
+  });
   it("initializes the WebSocket transport and rejects pending reads on disconnect", async () => {
     const processChild = child();
     let server: WebSocketServer | undefined;

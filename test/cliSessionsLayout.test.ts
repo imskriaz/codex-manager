@@ -188,7 +188,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('name="reasoning-effort"');
     expect(source).toContain('aria-label="Reasoning"');
     expect(source).toContain("activitySummary(messages)");
-    expect(source).toContain('class="cli-turn-change-bar"');
+    expect(source).not.toContain('class="cli-turn-change-bar"');
     expect(css).toContain(".cli-activity-summary");
     expect(source).toContain('name="sandbox-mode"');
     expect(source).toContain('aria-label="Access mode"');
@@ -436,8 +436,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("WorkspaceReviewsView");
     expect(source).toContain('class="cli-context-tab-scroll"');
     expect(source).toContain('aria-selected={props.activeTab === tab}');
-    expect(source).toContain('title="Cut selected code to the clipboard"');
-    expect(editor).toContain('navigator.clipboard.writeText(view.state.sliceDoc(selection.from, selection.to))');
+    expect(source).not.toContain('title="Cut selected code to the clipboard"');
+    expect(editor).not.toContain('onCutReady');
     expect(source).toContain("onTab={selectContextTab}");
     expect(source).toContain("if (filePath) props.onReadFile(filePath, toolProjectPath)");
     expect(source).toContain("target.scrollLeft += event.deltaY");

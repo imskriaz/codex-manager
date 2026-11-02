@@ -45,10 +45,13 @@ export class CodexAppServerRpc {
   private transportError?: Error;
   private stderr = "";
   private readonly transport: AppServerTransport;
+  private childExited = false;
+  private teardown?: Promise<void>;
 
   private constructor(child: ChildProcessWithoutNullStreams, transport: AppServerTransport) {
     this.child = child;
     this.transport = transport;
+    child.once("exit", () => { this.childExited = true; });
     child.on("error", (error) => this.fail(error));
     child.stdin.on("error", (error) => this.fail(error));
     child.stdout.on("error", (error) => this.fail(error));
@@ -66,10 +69,11 @@ export class CodexAppServerRpc {
       env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
       windowsHide: true,
       shell: executable.shell,
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const client = new CodexAppServerRpc(child, transport);
-    const abort = () => client.close();
+    const abort = () => { void client.close(); };
     signal?.addEventListener("abort", abort, { once: true });
     child.stderr.on("data", (chunk: Buffer | string) => {
       client.stderr = `${client.stderr}${chunk.toString()}`.slice(-2048);
@@ -84,7 +88,7 @@ export class CodexAppServerRpc {
       client.send({ method: "initialized", params: {} });
       return client;
     } catch (error) {
-      client.close();
+      await client.close();
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -107,10 +111,11 @@ export class CodexAppServerRpc {
       env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
       windowsHide: true,
       shell: executable.shell,
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const client = new CodexAppServerRpc(child, "websocket");
-    const abort = () => client.close();
+    const abort = () => { void client.close(); };
     signal?.addEventListener("abort", abort, { once: true });
     child.stdout.resume();
     try {
@@ -159,7 +164,7 @@ export class CodexAppServerRpc {
         client.send({ method: "initialized", params: {} });
         return client;
     } catch (error) {
-      client.close();
+      await client.close();
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -269,9 +274,9 @@ export class CodexAppServerRpc {
     }
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.fail(new Error("Codex app-server connection closed."));
+  close(): Promise<void> {
+    if (!this.closed) this.fail(new Error("Codex app-server connection closed."));
+    return this.teardown ?? Promise.resolve();
   }
 
   private send(message: unknown): void {
@@ -343,6 +348,45 @@ export class CodexAppServerRpc {
     this.lineBuffer = "";
     if (this.socket?.readyState === WebSocket.CONNECTING) this.socket.terminate();
     else this.socket?.close();
-    this.child.kill();
+    this.teardown = this.terminateOwnedChild();
+    void this.teardown.catch(() => undefined);
   }
+
+  private terminateOwnedChild(): Promise<void> {
+    const child = this.child;
+    if (this.childExited || child.exitCode != null || child.signalCode != null) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let treeStopped = process.platform !== "win32" || !child.pid;
+      let failure: Error | undefined;
+      const finish = () => {
+        if (!this.childExited || !treeStopped) return;
+        clearTimeout(timer); child.off("exit", finish);
+        child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+        if (failure) reject(failure); else resolve();
+      };
+      const kill = () => { if (this.childExited) return; try { child.kill("SIGKILL"); } catch { /* Already exited. */ } };
+      const timer = setTimeout(() => {
+        failure = new Error("Codex Manager could not confirm its private app-server process stopped. Refresh before starting another writer.");
+        treeStopped = true; kill(); this.childExited = true; finish();
+      }, 3_000);
+      timer.unref(); child.once("exit", finish);
+      // A Node or shell shim can own a Codex grandchild holding the writer handle.
+      if (!treeStopped) {
+        const failed = () => {
+          failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
+          treeStopped = true; kill(); finish();
+        };
+        try {
+          const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+          killer.once("error", failed);
+          killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; finish(); } });
+          killer.unref();
+        } catch { failed(); }
+      } else {
+        if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* Direct child fallback. */ } }
+        kill();
+      }
+    });
+  }
+
 }

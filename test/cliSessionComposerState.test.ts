@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { acknowledgeCliComposerDraft, cliComposerDraftKey, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
+import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
+  it('acknowledges only a newly observed user message in the expected turn', () => {
+    const draft = { text: 'Follow up', attachments: [] };
+    const echo = { id: 'new', role: 'user' as const, text: 'Follow up', turnId: 'turn' };
+    expect(isCliSubmissionEcho(echo, draft, new Set(['old']), 'turn')).toBe(true);
+    for (const patch of [{ id: 'old' }, { role: 'assistant' as const }, { text: 'Other prompt' }, { turnId: 'other' }, { kind: 'command' as const }, { images: [{ src: 'data:image/png;base64,AA==' }] }]) {
+      expect(isCliSubmissionEcho({ ...echo, ...patch }, draft, new Set(['old']), 'turn')).toBe(false);
+    }
+    const attachment = { id: 'note', name: 'note.txt', kind: 'text' as const, mimeType: 'text/plain', size: 4, data: 'test' };
+    expect(isCliSubmissionEcho({ ...echo, textAttachments: [{ name: 'note.txt', text: 'test' }] }, { ...draft, attachments: [attachment] }, new Set(), 'turn')).toBe(true);
+    expect(isCliSubmissionEcho(echo, { ...draft, attachments: [attachment] }, new Set(), 'turn')).toBe(false);
+  });
+  it('uses reported context tokens, clamps the ring, and leaves missing usage unknown', () => {
+    expect(cliContextUsage({ total: 250, contextWindow: 1000 })).toEqual({ used: 250, limit: 1000, percent: 25 });
+    expect(cliContextUsage({ total: 0, contextWindow: 1000 })?.percent).toBe(0);
+    expect(cliContextUsage({ total: 2000, contextWindow: 1000 })?.percent).toBe(100);
+    for (const usage of [undefined, {}, { total: 1 }, { total: -1, contextWindow: 100 }, { total: 1, contextWindow: 0 }, { total: NaN, contextWindow: 10 }]) expect(cliContextUsage(usage)).toBeUndefined();
+  });
   it('uses existing-session model and effort until the user overrides them, including before the catalog arrives', () => {
     const session = { model: 'session-model', reasoningEffort: 'high' };
     const config = { models: [{ id: 'default', label: 'Default', reasoningEfforts: ['medium'] }, { id: 'session-model', label: 'Session', reasoningEfforts: ['medium', 'high'] }], defaultModel: 'default', defaultSandboxMode: 'workspace-write' as const };

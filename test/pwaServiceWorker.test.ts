@@ -4,17 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 
 type WorkerEvent = { data?: { json(): unknown }; action?: string; notification?: { data: any; close(): void }; waitUntil?: (work: Promise<unknown>) => void; request?: { method: string; mode: string; url: string }; respondWith?: (response: Promise<Response>) => void };
 
-function createWorker(fetchMock: (request: { url: string }) => Promise<Response>) {
+function createWorker(fetchMock: (request: { url: string }) => Promise<Response>, entries = new Map<string, Response>()) {
   const origin = "https://dashboard.example";
   const handlers = new Map<string, (event: WorkerEvent) => void>();
-  const entries = new Map<string, Response>();
   const key = (request: string | { url: string }): string => new URL(typeof request === "string" ? request : request.url, origin).href;
   const caches = {
-    open: vi.fn(async () => ({ put: async (request: { url: string }, response: Response) => { entries.set(key(request), response); } })),
+    open: vi.fn(async () => ({
+      put: async (request: { url: string }, response: Response) => { entries.set(key(request), response); },
+      keys: async () => [...entries.keys()].filter(url => url.includes("/__push_delivery__/")).map(url => ({ url })),
+      delete: async (request: { url: string }) => entries.delete(key(request))
+    })),
     match: vi.fn(async (request: string | { url: string }, options?: { ignoreSearch?: boolean }) => {
       const url = key(request);
       if (options?.ignoreSearch) return [...entries].find(([cached]) => new URL(cached).pathname === new URL(url).pathname)?.[1];
-      return entries.get(url);
+      return entries.get(url)?.clone();
     }),
     keys: vi.fn(async () => ["codex-manager-static-test"]),
     delete: vi.fn(async () => true)
@@ -98,6 +101,44 @@ describe("browser PWA cache boundary", () => {
     await work;
     expect(worker.self.registration.showNotification).toHaveBeenCalledWith("Worker Two · Build task", expect.objectContaining({ body: "Session failed", data: expect.objectContaining({ title: "Worker Two · Build task" }) }));
   });
+
+  it("deduplicates concurrent delivery and worker restarts while preserving distinct requests", async () => {
+    const fetchMock = async () => new Response("{}");
+    const worker = createWorker(fetchMock);
+    const payload = { eventId: "source-one-request-one", level: "warning", body: "Codex needs approval", createdAt: Date.now() };
+    const deliver = (target: ReturnType<typeof createWorker>, data: unknown) => {
+      let work: Promise<unknown> | undefined;
+      target.handlers.get("push")?.({ data: { json: () => data }, waitUntil: value => { work = value; } });
+      return work;
+    };
+    await Promise.all([deliver(worker, payload), deliver(worker, payload)]);
+    expect(worker.self.registration.showNotification).toHaveBeenCalledTimes(1);
+    const restarted = createWorker(fetchMock, worker.entries);
+    await deliver(restarted, payload);
+    expect(restarted.self.registration.showNotification).not.toHaveBeenCalled();
+    await deliver(restarted, { ...payload, eventId: "source-one-request-two" });
+    await deliver(restarted, { ...payload, eventId: "source-two-request-one" });
+    expect(restarted.self.registration.showNotification).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores routine, stale, and malformed pushes and survives unavailable receipt storage", async () => {
+    const worker = createWorker(async () => new Response("{}"));
+    const deliver = async (payload: unknown) => {
+      let work: Promise<unknown> | undefined;
+      worker.handlers.get("push")?.({ data: { json: () => payload }, waitUntil: value => { work = value; } });
+      await work;
+    };
+    await deliver({ body: "Session completed", level: "info" });
+    await deliver({ body: "Approval expired", level: "warning", createdAt: Date.now() - 300001 });
+    await deliver({ body: "Clock skew", level: "error", createdAt: Date.now() + 60000 });
+    await deliver(null);
+    expect(worker.self.registration.showNotification).not.toHaveBeenCalled();
+    worker.caches.open.mockRejectedValue(new Error("Storage full"));
+    const request = { eventId: "approval", body: "Review request", level: "warning" };
+    await deliver(request);
+    await deliver(request);
+    expect(worker.self.registration.showNotification).toHaveBeenCalledTimes(1);
+  });
   it("opens a question's owning session and rejects external notification destinations", async () => {
     const id = "01a04882-d037-7a42-ad24-9afb61901188";
     for (const destination of [`/workspace/${id}?device=worker`, "https://elsewhere.invalid/workspace/" + id, "//elsewhere.invalid/"]) {
@@ -129,7 +170,7 @@ describe("browser PWA cache boundary", () => {
     worker.handlers.get("notificationclick")?.({ action: "Switch", notification: { data: payload, close: vi.fn() }, waitUntil: (promise) => { work = promise; } });
     await work;
     expect(fetchMock).toHaveBeenCalledWith("/api/push/action", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ notificationId: "notice", action: "Switch" }) }));
-    expect(worker.self.registration.showNotification).toHaveBeenLastCalledWith("Codex Manager", expect.objectContaining({ body: expect.stringContaining("accepted") }));
+    expect(worker.self.registration.showNotification).toHaveBeenCalledTimes(1);
     expect(worker.self.clients.openWindow).toHaveBeenCalledWith("https://dashboard.example/");
   });
 

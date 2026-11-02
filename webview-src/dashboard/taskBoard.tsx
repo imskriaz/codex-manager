@@ -14,7 +14,7 @@ import { projectTaskStages, sessionTaskStage, taskSessionAgents, PROJECT_SHARE_F
 import { readBrowserCache, writeBrowserCache, listBrowserOutbox, deleteBrowserCache } from './cliSessionCache';
 import { handleTabKeyDown, ModalShell, TaskDetailPanel } from './primitives';
 import { ShareAccessReview, ShareLinkField } from './shareControls';
-import { AgentWorkspace, SessionMessage, TurnCopyButton } from './cliSessionsModal';
+import { AgentWorkspace, SessionMessage, SessionTranscript, TurnCopyButton } from './cliSessionsModal';
 import { cliSessionTargetKey } from './cliSessionRoute';
 import type { SendAction } from './hookTypes';
 import { renderRefreshIcon, renderSyncIcon } from './icons';
@@ -611,14 +611,16 @@ function TaskAttachmentLinks({ files, onOpen }: { files?: ProjectAttachment[]; o
 }
 function TaskActivityTimeline({ messages, comments, loading, onFeedback, onAttachment }: { messages: ProjectTaskDetails['messages']; comments: ProjectBoard['comments']; loading: boolean; onAttachment?: (ownerId: string, upload: ProjectAttachment) => void; onFeedback: (notice: DashboardNotice) => void }) {
   const activity = projectTaskActivity(messages, comments);
+  const groups: Array<{ id: string; messages: ProjectTaskDetails['messages']; comment?: ProjectBoard['comments'][number] }> = [];
+  for (const item of activity) {
+    const previous = groups.at(-1);
+    if (item.comment) groups.push({ id: item.id, messages: [], comment: item.comment });
+    else if (previous && !previous.comment) previous.messages.push(item.message);
+    else groups.push({ id: item.id, messages: [item.message] });
+  }
   return <section class="task-timeline" aria-label="Activity timeline">
     <header class="task-timeline-heading"><strong>Activity</strong><small>{activity.length} {activity.length === 1 ? 'event' : 'events'}</small></header>
-    <ol>{activity.map(item => <li key={item.id} class={`task-timeline-event is-${item.comment ? 'comment' : item.message.kind ?? 'message'}`}>
-      <span class="task-timeline-marker" aria-hidden="true" />
-      <div class="task-timeline-content"><div class="task-timeline-meta"><strong>{item.label}</strong>{item.comment ? <small>Comment</small> : item.message.status === 'inProgress' ? <small>In progress</small> : null}{item.timestamp ? <time dateTime={item.timestamp} title={new Date(item.timestamp).toLocaleString()}>{new Date(item.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time> : null}</div>
-        {item.comment ? <><p class="task-timeline-comment">{item.comment.text}</p>{onAttachment ? <TaskAttachmentLinks files={item.comment.attachments} onOpen={file => onAttachment(item.comment!.id, file)} /> : null}</> : <SessionMessage message={item.message} onActionFeedback={onFeedback} />}
-      </div>
-    </li>)}</ol>
+    <div class="cli-session-messages">{groups.map(group => group.comment ? <article key={group.id} class="task-activity"><small>{group.comment.author} · Comment</small><p>{group.comment.text}</p>{onAttachment ? <TaskAttachmentLinks files={group.comment.attachments} onOpen={file => onAttachment(group.comment!.id, file)} /> : null}</article> : <SessionTranscript key={group.id} messages={group.messages} running={messages.some(message => message.status === 'inProgress')} onActionFeedback={onFeedback} />)}</div>
     {!activity.length && !loading ? <p class="task-board-empty">No relevant activity on this history page.</p> : null}
   </section>;
 }

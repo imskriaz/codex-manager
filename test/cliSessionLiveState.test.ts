@@ -12,6 +12,17 @@ describe("shared browser/native live turn reconciliation", () => {
     expect(combineCliLiveMessages(history, snapshot({ truncated: true, messages: [message("latest", "Updated", "turn")] })).map(item => item.text)).toEqual(["Do work", "Earlier activity", "Updated"]);
     expect(combineCliLiveMessages(history.slice(0, 2), snapshot({ truncated: true, messages: [message("latest", "Updated", "turn")] }))).toHaveLength(3);
   });
+  it.each([false, true])("keeps steering echoes before subsequent saved work (truncated %s)", truncated => {
+    const history = [message("prompt", "Do work", "turn", "user"), message("before", "Before steering", "turn"), message("stored-follow-up", "Also test", "turn", "user"), message("after", "Tests started", "turn")];
+    const live = snapshot({ truncated, messages: [message("before", "Before steering", "turn"), message("live-follow-up", "Also test", "turn", "user")] });
+    expect(combineCliLiveMessages(history, live).map(item => item.id)).toEqual(["prompt", "before", "stored-follow-up", "after"]);
+    expect(combineCliLiveMessages([history[0]!, history[1]!, history[3]!], live).map(item => item.id)).toEqual(["prompt", "before", "live-follow-up", "after"]);
+  });
+  it("keeps identical steering messages as separate chronological inputs", () => {
+    const history = [message("before", "Before", "turn"), message("first", "Again", "turn", "user"), message("middle", "Working", "turn"), message("second", "Again", "turn", "user"), message("after", "After", "turn")];
+    const live = snapshot({ truncated: true, messages: [message("before", "Before", "turn"), message("live-first", "Again", "turn", "user"), message("middle", "Working", "turn"), message("live-second", "Again", "turn", "user")] });
+    expect(combineCliLiveMessages(history, live).map(item => item.id)).toEqual(history.map(item => item.id));
+  });
   it("keeps failed turns resumable and clears recovery when running or completed", () => {
     const row = { id: "chat", title: "Task", status: "idle" as const, interrupted: true, runningSince: 10 };
     const reconcile = (status: DashboardCodexSessionLiveState["status"]) => reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status }) });

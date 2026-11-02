@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.6.4",
+  "version": "1.6.5-pre.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -85,7 +85,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",

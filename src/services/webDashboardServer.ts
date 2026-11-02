@@ -559,7 +559,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       if (message.type === 'dashboard:terminal-output' || message.type === 'dashboard:terminal-complete') this.relayTerminalEvent(message);
       if (this.webSocketClients.size === 0 || message.type === "dashboard:snapshot") return;
-      const serialized = JSON.stringify(message);
+      const serialized = JSON.stringify(message.type === "dashboard:notice" && !message.systemName ? { ...message, systemName: os.hostname() } : message);
       for (const socket of this.webSocketClients) {
         sendDashboardSocketMessage(socket, serialized);
       }
@@ -1827,7 +1827,7 @@ export class WebDashboardServer implements vscode.Disposable {
       while (this.remoteSessionLive.size > 30 || Buffer.byteLength(JSON.stringify([...this.remoteSessionLive.values()])) > 4 * 1024 * 1024)
         this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);
     }
-    if (["completed", "failed", "cancelled"].includes(state.status)) void this.notifySessionCompletion(state);
+    if (state.status === "failed") void this.notifySessionCompletion(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       sendDashboardSocketMessage(socket, message);
@@ -1847,7 +1847,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private notifyCodexRequest(request: Extract<DashboardHostMessage, { type: "dashboard:codex-request" }>["request"]): void {
     const targetDeviceId = request.deviceId;
-    const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.id}`;
+    const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${request.id}`;
     const question = request.kind === "question";
     const singleQuestion = question && request.questions?.length === 1 ? request.questions[0] : undefined;
     const options = singleQuestion && !singleQuestion.isSecret ? singleQuestion.options : undefined;
@@ -1869,16 +1869,18 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async notifySessionCompletion(state: DashboardCodexSessionLiveState): Promise<void> {
+    if (state.status !== "failed") return;
     const candidate = state.deviceId
       ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId && session.deviceId === state.deviceId)?.title
       : (await waitWithin(readCodexCliSessionRecoveryMetadata([state.sessionId]), 2_000, "Session title unavailable.").catch(() => ({} as Record<string, { title?: string }>)))[state.sessionId]?.title;
     const title = candidate?.trim() && candidate !== state.sessionId && candidate !== `Codex session ${state.sessionId.slice(0, 8)}` ? candidate : "Codex conversation";
     this.browserPush.notify({
-      notificationId: state.streamId,
+      notificationId: `session-failed:${state.deviceId ?? this.deviceId}:${state.sessionId}:${state.streamId}`,
       title,
       systemName: state.deviceId ? this.peerSessions.get(state.deviceId)?.deviceName || "Remote system" : os.hostname(),
-      level: state.status === "failed" ? "error" : "info",
-      message: `Session ${state.status}. Open the dashboard to review “${title}”.`
+      level: "error",
+      message: `Session failed. Open the dashboard to review “${title}”.`,
+      url: `/workspace/${encodeURIComponent(state.sessionId)}${state.deviceId ? `?device=${encodeURIComponent(state.deviceId)}` : ""}`
     });
   }
 
@@ -2177,8 +2179,9 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerNotification(notice: MirroredNotification): Promise<void> {
+    if (notice.level === 'info') return;
     if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
-    const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ?? crypto.randomUUID(), sentAt: Date.now(),
+    const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ? crypto.createHash('sha256').update(notice.notificationId).digest('hex') : crypto.createHash('sha256').update(JSON.stringify([notice.level, notice.title, notice.message, notice.systemName])).digest('hex'), sentAt: Date.now(),
       notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName } };
     const revision = this.peerConnectionRevision;
     const signature = await waitWithin(Promise.resolve(this.encryptedSync?.signRealtimePeerPayload(peerNotificationPayload(unsigned))), 2000, 'Remote notification signing timed out.');

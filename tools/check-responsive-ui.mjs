@@ -1,4 +1,6 @@
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
+import { checkSteerUi } from './check-steer-ui.mjs';
+import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
@@ -341,6 +343,7 @@ const mockHost = `(() => {
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__fixtureTerminals||[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__fileTreeFixture || (window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0},{path:'src/other.ts',name:'other.ts',type:'file',depth:0}]:[]),workspaceFilesWarning:window.__fileTreeWarning,...(window.__fileTreeWarning?{notice:{level:'warning',message:window.__fileTreeWarning}}:{})};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
+        else if(message.action === 'steerCodexCliSessionTurn') payload = {};
         else error = 'Simulated action failure. Your draft is preserved.';
         if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
         if(window.__docsFixture && payload){
@@ -350,6 +353,7 @@ const mockHost = `(() => {
         }
         if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'steerCodexCliSessionTurn' && window.__holdNextSteer) {window.__holdNextSteer=false;window.__heldSteerResult=result;return;}
         if (message.action === 'listCodexCliSessions' && window.__catalogRace) {
           window.__catalogRace = false;
           dispatch({ type: 'dashboard:action-result', action: message.action, requestId: 'realtime-model-race', status: 'completed', payload: { cliSessions: sessions, realtimeRevision: 100 } });
@@ -446,7 +450,7 @@ const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWS
 const results = [];
 try {
   const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
-  for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes('--docs') ? [[1440,900],[390,844]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
+  for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes('--mobile-polish') ? [[320,667],[360,800],[390,844],[760,1024],[1440,1000]] : process.argv.includes('--docs') ? [[1440,900],[390,844]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
     if (width === 320) await context.addInitScript(() => {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
@@ -488,6 +492,18 @@ try {
       await page.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--steer')) {
+      await checkSteerUi(page, { origin, parentId });
+      assert.deepEqual(errors, [], 'Steering has no browser runtime errors');
+      results.push({ width, height, checks: 'Steering sends once, clears on echo, restores uncertainty, preserves newer drafts and chronological replies' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--mobile-polish')) {
+      await checkMobilePolishUi(page, { origin, width, height, output, parentId });
+      assert.deepEqual(errors, [], 'Compact UI has no browser runtime errors');
+      results.push({ width, height, checks: '10% typography, dashboard logo/version, sidebar identity/system, empty one-line composer, context meter, usage row, files, tabs and dialogs' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--requests')) {
       await page.goto(origin + '/workspace/' + parentId);
@@ -1011,10 +1027,10 @@ try {
         if(await hide.isVisible()) await hide.click();
         const toggle=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
         await toggle.waitFor({state:'visible'});
-        const bounds=await toggle.boundingBox(), bar=await page.locator(header).boundingBox(), image=await toggle.locator('img').boundingBox();
+        const bounds=await toggle.boundingBox(), bar=await page.locator(header).boundingBox(), image=await toggle.locator('svg').boundingBox();
         assert.equal(await toggle.evaluate(element=>getComputedStyle(element).position),'static',`${name} logo stays in its header`);
-        assert.equal(Math.round(bounds.width),28,`${name} toggle has a consistent width`);
-        assert.equal(Math.round(bounds.height),28,`${name} toggle has a consistent height`);
+        assert.equal(Math.round(bounds.width),width<=760?32:28,`${name} toggle has a consistent width`);
+        assert.equal(Math.round(bounds.height),width<=760?32:28,`${name} toggle has a consistent height`);
         assert.ok(Math.abs(image.x+image.width/2-bounds.x-bounds.width/2)<=1 && Math.abs(image.y+image.height/2-bounds.y-bounds.height/2)<=1,`${name} logo is centered in its control`);
         assert.ok(bounds.x>=bar.x && bounds.x+bounds.width<=bar.x+bar.width && bounds.y>=bar.y && bounds.y+bounds.height<=bar.y+bar.height,`${name} logo fits inside its header`);
         if(width<=760) positions.push(bounds.x);
@@ -1722,19 +1738,21 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 3 } } })));
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 0, "A stale running snapshot cannot revive a completed spinner");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 4, status: 'completed', tokenUsage: { input: 40740, cachedInput: 0, output: 99, reasoningOutput: 72, total: 40839, contextWindow: 475000 }, rateLimits: { primary: { usedPercent: 32, resetsAt: 1793445000 }, secondary: { usedPercent: 60, resetsAt: 1793790000 } } } } })));
-    const turnUsage = page.locator('.cli-turn-usage');
+    await page.getByRole('button', {name:'View usage',exact:true}).click();
+    const turnUsage = page.locator('.cli-inspector-view .cli-turn-usage');
     await turnUsage.locator(':scope > summary').click();
     assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
     assert.ok((await turnUsage.locator('.cli-activity-body').boundingBox()).height < 190,'Expanded usage stays compact');
     assert.ok(await turnUsage.locator('.cli-usage-grid > span').evaluateAll(items => items.every(item => { const label = item.querySelector('b').getBoundingClientRect(), value = item.querySelector('strong').getBoundingClientRect(); return Math.abs((label.top+label.bottom-value.top-value.bottom)/2)<1; })),'Usage labels and values share one code-style line');
     await turnUsage.locator(':scope > summary').click();
+    await page.getByRole('button', {name:'Hide workspace tools',exact:true}).click();
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).waitFor();
     if (width <= 760) {
       assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
       const header = await page.locator(".cli-conversation-header").boundingBox();
-      assert.ok(header.height <= 46, `Mobile session header fits one row with 44px controls (${header.height}px)`);
+      assert.ok(header.height <= 42, `Mobile session header fits one compact row (${header.height}px)`);
       assert.equal(await page.locator(".cli-mobile-back").count(), 0, "Sidebar icon replaces duplicate Sessions button");
       assert.equal(await page.locator(".cli-conversation-actions > button:not(.cli-inspector-toggle):visible").count(), 0, "Secondary actions live in the mobile menu");
       const title = await page.locator(".cli-conversation-title h1").boundingBox();
@@ -2215,7 +2233,7 @@ try {
     const railToggle=page.locator('.cli-rail-toggle');
     if(await railToggle.getAttribute('aria-expanded')==='true') assert.ok(await page.locator('.cli-rail-brand img').isVisible(),'Expanded rail shows its logo in its header');
     else assert.equal(await page.locator('#dashboard-sidebar-toggle-slot .cli-rail-toggle svg[aria-hidden="true"][focusable="false"]').count(),1,'Collapsed sidebar control uses its accessible SVG icon inside the content header');
-    assert.equal(await page.locator(".hero .brand-logo").isVisible(), false, "No duplicate dashboard logo");
+    assert.equal(await page.locator(".hero .brand-logo").isVisible(), width <= 760, "Mobile dashboard retains its brand logo beside navigation");
     if (width <= 760) {
       assert.ok(await page.locator(".hero").evaluate(element => parseFloat(getComputedStyle(element).paddingTop) <= 4), "Small dashboards have no empty top spacer");
       assert.ok(dashboardHero.y <= 12, "Header starts near the top edge");

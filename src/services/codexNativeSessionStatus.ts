@@ -6,9 +6,13 @@ import { randomUUID } from "node:crypto";
 import { recordNativeSessionStatus } from "./sessionRecording";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { waitWithin } from "../utils/concurrency";
+import type { AppServerRequest } from "./codexAppServerRpc";
+import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
 
 type Observation = {
   home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; usedAt: number;
+  prompts?: AppServerRequest[];
+  promptResponses?: Map<string, Promise<void>>;
   waiters: Set<(running: boolean | undefined) => void>;
 };
 const observations = new Map<string, Observation>();
@@ -48,7 +52,7 @@ type NativeMessage = {
   result?: { clientId?: unknown; result?: { turn?: { id?: unknown }; turnId?: unknown }; ok?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
   params?: { status?: unknown; clientId?: unknown; hostId?: unknown; conversationId?: unknown;
     change?: { type?: unknown; revision?: unknown; baseRevision?: unknown; patches?: unknown;
-      conversationState?: { id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown } } };
+      conversationState?: { id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown; requests?: unknown } } };
 };
 function receive(message: NativeMessage): void {
   if (message.type === "client-discovery-request") {
@@ -70,6 +74,7 @@ function receive(message: NativeMessage): void {
   if (message.type !== "broadcast") return;
   if (message.method === "client-status-changed" && message.params?.status === "disconnected") {
     for (const entry of observations.values()) if (entry.owner === message.params.clientId) {
+      clearNativeCodexPrompts(entry); entry.prompts = undefined;
       entry.owner = undefined; entry.revision = undefined; settle(entry, undefined); follow(entry, true);
     }
     return;
@@ -85,12 +90,17 @@ function receive(message: NativeMessage): void {
       const relative = path.relative(entry.canonicalHome, path.resolve(normalizeNativePath(state.rolloutPath)));
       if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
       if (entry.owner === message.sourceClientId && entry.revision !== undefined && change.revision <= entry.revision) continue;
+      if (entry.owner !== message.sourceClientId) { clearNativeCodexPrompts(entry); entry.promptResponses = undefined; }
       entry.owner = message.sourceClientId; entry.revision = change.revision;
+      entry.prompts = readNativePrompts(state.requests, entry.id);
+      for (const key of entry.promptResponses?.keys() ?? []) if (!entry.prompts.some(request => JSON.stringify(request) === key)) entry.promptResponses?.delete(key);
+      syncPrompts(entry);
       entry.ready = ["idle", "active"].includes(String((state.threadRuntimeStatus as { type?: unknown } | undefined)?.type));
       settle(entry, runtimeRunning(state.threadRuntimeStatus));
     } else if (change.type === "patches" && entry.owner === message.sourceClientId) {
       if (entry.revision !== undefined && change.revision <= entry.revision) continue;
       if (entry.revision !== change.baseRevision || !Array.isArray(change.patches)) {
+        clearNativeCodexPrompts(entry); entry.prompts = undefined;
         entry.revision = undefined; settle(entry, undefined); follow(entry, false); follow(entry, true); continue;
       }
       entry.revision = change.revision;
@@ -98,7 +108,14 @@ function receive(message: NativeMessage): void {
         if (!value || typeof value !== "object") continue;
         const patch = value as { path?: unknown; op?: unknown; value?: unknown };
         if (!Array.isArray(patch.path)) continue;
-        if (!patch.path.length) { entry.revision = undefined; settle(entry, undefined); follow(entry, false); follow(entry, true); break; }
+        if (!patch.path.length) { clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.revision = undefined; settle(entry, undefined); follow(entry, false); follow(entry, true); break; }
+        if (patch.path[0] === "requests") {
+          if (!applyPromptPatch(entry, patch)) {
+            clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.revision = undefined;
+            follow(entry, false); follow(entry, true); break;
+          }
+          syncPrompts(entry);
+        }
         if (patch.path[0] === "threadRuntimeStatus") {
           if (patch.path.length === 1) {
             entry.ready = patch.op !== "remove" && ["idle", "active"].includes(String((patch.value as { type?: unknown } | undefined)?.type));
@@ -159,7 +176,7 @@ export function disposeNativeCodexSessionStatus(): void {
   const old = socket; socket = undefined; clientId = "initializing-client";
   for (const request of requests.values()) { request.cleanup(); request.reject(new Error("The Codex owner disconnected. The request outcome is unconfirmed; check the conversation before retrying.")); }
   requests.clear();
-  for (const entry of observations.values()) settle(entry, undefined);
+  for (const entry of observations.values()) { clearNativeCodexPrompts(entry); settle(entry, undefined); }
   observations.clear(); old?.destroy();
 }
 
@@ -249,14 +266,15 @@ export async function steerNativeCodexSessionTurn(home: string, id: string, expe
   return true;
 }
 
-async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn" | 'thread-follower-steer-turn', params: Record<string, unknown>, signal?: AbortSignal): Promise<NativeMessage | undefined> {
+async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn" | 'thread-follower-steer-turn' | NativePromptMethod, params: Record<string, unknown>, signal?: AbortSignal, verify?: () => boolean, onSent?: () => void): Promise<NativeMessage | undefined> {
   const running = await readNativeCodexSessionRunning(home, id, signal);
   signal?.throwIfAborted();
   const entry = observations.get(`${path.resolve(home)}:${id}`);
   if (!entry?.owner || running === undefined || !socket?.writable) return undefined;
   const canonicalHome = await waitWithin(fs.realpath(home), 1000, "Codex storage did not respond.", signal);
-  if (path.resolve(normalizeNativePath(canonicalHome)) !== entry.canonicalHome) { entry.owner = undefined; settle(entry, undefined); return undefined; }
+  if (path.resolve(normalizeNativePath(canonicalHome)) !== entry.canonicalHome) { clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.owner = undefined; settle(entry, undefined); return undefined; }
   if (!entry.owner || entry.running === undefined || !socket?.writable) return undefined;
+  if (verify && !verify()) throw new Error("The Codex request or owner changed. Refresh before responding.");
   if (method === "thread-follower-start-turn" && !entry.ready) throw new Error("The Codex conversation is still loading. Wait for it to finish, then retry.");
   if (method === "thread-follower-start-turn" && entry.running) throw new Error("Codex is already working in this session. Refresh before sending another message.");
   if (method === 'thread-follower-steer-turn' && (!entry.ready || !entry.running)) throw new Error('The active Codex turn finished or is unavailable. Your follow-up was not sent; refresh before retrying.');
@@ -271,11 +289,68 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
-      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" ? 2 : method === 'thread-follower-steer-turn' ? 1 : 4,
+      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" ? 2 : method === 'thread-follower-interrupt-turn' ? 4 : 1,
         targetClientId: entry.owner, timeoutMs: 10_000,
         params });
+      onSent?.();
     } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
   });
+}
+
+type NativePromptMethod = "thread-follower-command-approval-decision" | "thread-follower-file-approval-decision" | "thread-follower-permissions-request-approval-response" | "thread-follower-submit-user-input";
+const nativePromptMethods: Record<string, NativePromptMethod> = {
+  "item/commandExecution/requestApproval": "thread-follower-command-approval-decision",
+  "item/fileChange/requestApproval": "thread-follower-file-approval-decision",
+  "item/permissions/requestApproval": "thread-follower-permissions-request-approval-response",
+  "item/tool/requestUserInput": "thread-follower-submit-user-input"
+};
+function readNativePrompts(value: unknown, threadId: string): AppServerRequest[] {
+  if (!Array.isArray(value) || value.length > 64) return [];
+  return value.filter((value): value is AppServerRequest => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const request = value as Record<string, unknown>;
+    const id = request["id"], method = request["method"], params = request["params"];
+    return (typeof id === "string" && id.length <= 256 || typeof id === "number" && Number.isSafeInteger(id))
+      && typeof method === "string" && Object.hasOwn(nativePromptMethods, method)
+      && !!params && typeof params === "object" && !Array.isArray(params)
+      && (params as Record<string, unknown>)["threadId"] === threadId;
+  });
+}
+function syncPrompts(entry: Observation): void {
+  const owner = entry.owner, revision = entry.revision;
+  syncNativeCodexPrompts(entry, entry.id, entry.prompts ?? [], (request, result) => {
+    const key = JSON.stringify(request);
+    const previous = entry.promptResponses?.get(key);
+    if (previous) return previous;
+    let sent = false;
+    const responding = (async () => {
+    const verify = () => observations.get(`${entry.home}:${entry.id}`) === entry && entry.owner === owner &&
+      revision !== undefined && entry.revision !== undefined && entry.revision >= revision &&
+      entry.prompts?.some(current => JSON.stringify(current) === JSON.stringify(request)) === true;
+    if (!verify()) throw new Error("The Codex request or owner changed. Refresh before responding.");
+    const method = nativePromptMethods[request.method]!;
+    const response = result as { decision?: unknown };
+    const reply = await requestNativeOwner(entry.home, entry.id, method, {
+      conversationId: entry.id, requestId: request.id,
+      ...(method.endsWith("-decision") ? { decision: response.decision } : { response: result })
+    }, undefined, verify, () => { sent = true; });
+    if (!reply || reply.result?.ok !== true) throw new Error("Codex did not confirm this answer. Check the original conversation before retrying.");
+    })().catch(error => {
+      if (!sent) { entry.promptResponses?.delete(key); throw new CodexPromptNotSentError(error instanceof Error ? error.message : String(error)); }
+      throw error;
+    });
+    (entry.promptResponses ??= new Map()).set(key, responding);
+    return responding;
+  });
+}
+function applyPromptPatch(entry: Observation, patch: { path?: unknown; op?: unknown; value?: unknown }): boolean {
+  const path = patch.path as unknown[];
+  if (path.length === 1) {
+    if (patch.op !== "remove" && !Array.isArray(patch.value)) return false;
+    entry.prompts = readNativePrompts(patch.op === "remove" ? [] : patch.value, entry.id); return true;
+  }
+  // Nested patches require a fresh snapshot: filtered request indexes cannot be trusted.
+  return false;
 }
 
 /** Read native runtime state across windows; retained writer handles are not running turns. */
@@ -295,7 +370,7 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
         const oldest = [...observations].filter(([key, value]) => !value.waiters.size && !readinessWaiters.has(key))
           .sort((a, b) => Number(a[1].running === true)-Number(b[1].running === true) || a[1].usedAt-b[1].usedAt)[0];
         if (!oldest) return undefined;
-        follow(oldest[1], false); observations.delete(oldest[0]);
+        clearNativeCodexPrompts(oldest[1]); follow(oldest[1], false); observations.delete(oldest[0]);
       }
       entry = { home: path.resolve(home), canonicalHome: path.resolve(normalizeNativePath(canonicalHome)), id, usedAt: Date.now(), waiters: new Set() }; observations.set(key, entry);
     }

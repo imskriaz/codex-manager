@@ -1,4 +1,4 @@
-import type { DashboardCliComposerConfig, DashboardCliSandboxMode, DashboardCliSessionSummary } from "../../src/domain/dashboard/types";
+import type { DashboardCliComposerConfig, DashboardCliSandboxMode, DashboardCliSessionSummary, DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../../src/domain/dashboard/types";
 import { validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
 
 export type CliComposerDraft = {
@@ -9,6 +9,19 @@ export type CliComposerDraft = {
   sandboxMode?: DashboardCliSandboxMode;
 };
 export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string };
+
+/** An existing running marker alone does not acknowledge a follow-up. */
+export function isCliSubmissionEcho(message: DashboardCliSessionMessage, submitted: CliComposerDraft, seenIds: Set<string>, turnId?: string): boolean {
+  if (seenIds.has(message.id) || message.role !== "user" || (message.kind && message.kind !== "message") || (turnId && message.turnId && message.turnId !== turnId)) return false;
+  return message.text.trim() === submitted.text.trim()
+    && JSON.stringify(message.textAttachments ?? []) === JSON.stringify(submitted.attachments.filter(file => file.kind === "text").map(file => ({ name: file.name, text: file.data })))
+    && (message.images?.length ?? 0) === submitted.attachments.filter(file => file.kind === "image").length;
+}
+
+export function cliContextUsage(usage: DashboardCodexSessionLiveState["tokenUsage"]) {
+  if (typeof usage?.total !== "number" || !Number.isFinite(usage.total) || usage.total < 0 || typeof usage.contextWindow !== "number" || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
+  return { used: usage.total, limit: usage.contextWindow, percent: Math.min(100, Math.round(usage.total / usage.contextWindow * 100)) };
+}
 
 export function cliComposerDraftKey(deviceId: string | undefined, sessionId: string | undefined, projectPath?: string): string {
   return JSON.stringify([deviceId ?? "local", sessionId ? "session" : "new", sessionId ?? projectPath?.trim() ?? ""]);

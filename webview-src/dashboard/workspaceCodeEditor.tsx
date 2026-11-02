@@ -17,7 +17,7 @@ import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 
-export default function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; onChange: (value: string) => void; onSave: () => void; onCutReady?: (cut: (() => Promise<boolean>) | undefined) => void; onSelectionChange?: (canCut: boolean) => void }) {
+export default function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; onChange: (value: string) => void; onSave: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
   const editable = useRef(new Compartment());
@@ -25,18 +25,6 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
   const onSaveRef = useRef(props.onSave);
   onChangeRef.current = props.onChange;
   onSaveRef.current = props.onSave;
-  const cutSelection = async (): Promise<boolean> => {
-    const view = viewRef.current;
-    const selection = view?.state.selection.main;
-    if (!view || !selection || selection.empty) return false;
-    try {
-      await navigator.clipboard.writeText(view.state.sliceDoc(selection.from, selection.to));
-    } catch {
-      return false;
-    }
-    view.dispatch({ changes: { from: selection.from, to: selection.to } });
-    return true;
-  };
   useEffect(() => {
     if (!containerRef.current) return;
     const view = new EditorView({
@@ -52,7 +40,6 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
           keymap.of([indentWithTab, { key: "Mod-s", preventDefault: true, run: () => { onSaveRef.current(); return true; } }]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString());
-            if (update.selectionSet || update.focusChanged) props.onSelectionChange?.(!update.state.selection.main.empty);
           }),
           EditorView.theme({
             "&": { height: "100%", backgroundColor: "var(--bg-base)", color: "var(--text-primary)" },
@@ -66,8 +53,7 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
       })
     });
     viewRef.current = view;
-    props.onCutReady?.(cutSelection);
-    return () => { view.destroy(); viewRef.current = undefined; props.onCutReady?.(undefined); props.onSelectionChange?.(false); };
+    return () => { view.destroy(); viewRef.current = undefined; };
   }, [props.path, props.language]);
   useEffect(() => {
     viewRef.current?.dispatch({ effects: editable.current.reconfigure(EditorView.editable.of(!props.disabled)) });
