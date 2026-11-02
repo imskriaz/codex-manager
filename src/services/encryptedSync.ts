@@ -335,7 +335,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const records = await waitWithin(this.repo.listAccounts(), 500, "Current account discovery is still pending.", signal);
       const active = records.find((account) => account.isActive);
       const activeAccountIds = new Set(await waitWithin(readCrossWindowActiveAccountIds(), 500, "Other window account discovery is still pending.", signal));
-      if (this.isCurrentAccountOnly()) {
+      const currentOnly = this.isCurrentAccountOnly();
+      if (currentOnly) {
         if (active) activeAccountIds.add(active.id);
       } else {
         for (const account of records) if (account.enabled !== false) activeAccountIds.add(account.id);
@@ -358,8 +359,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
         else if (claim.currentOnly && !this.isCurrentAccountOnly() && activeAccountIds.has(claim.accountId)) await requestClaim("acquire", claim.accountId);
       }
       if (failures.length) throw new Error([...new Set(failures)].join(" "));
-      if (active && !this.disposed && this.isCurrentAccountOnly() && this.preparedCurrentClaims.size === 0) {
-        await this.requestCurrentClaim("acquire", active.id, undefined, signal);
+      if (!this.disposed && currentOnly && this.isCurrentAccountOnly()) {
+        // Renew every live window's account, including ones absent from this home.
+        for (const accountId of activeAccountIds) {
+          if (this.disposed || !this.isCurrentAccountOnly()) break;
+          if (this.preparedCurrentClaims.has(accountId)) continue;
+          await requestClaim("acquire", accountId);
+        }
+        if (failures.length) throw new Error([...new Set(failures)].join(" "));
       }
     } finally { this.currentClaimRefreshInFlight = false; }
   }
@@ -2134,6 +2141,7 @@ export function getSyncedAccountLeases(now = Date.now()): SyncedAccountLeaseView
       isCurrentDevice: entry.deviceId === visibleEnablementDeviceId,
       online:
         entry.deviceId === visibleEnablementDeviceId ||
+        (entry.currentOnly && (entry.lastSyncedAt === undefined || isSyncAccountEnablementActive(entry, now))) ||
         (visibleOnlineDeviceIds === undefined
           ? entry.lastSyncedAt === undefined
             ? undefined

@@ -7,8 +7,12 @@ export function getAccountQuotaMetrics(account?: Pick<DashboardAccountViewModel,
     .map(metric => ({ ...metric, value: Math.max(0, Math.min(100, Math.round(metric.percentage!))) }));
 }
 
-export function AccountQuota({ account, saved = false }: { account?: DashboardAccountViewModel; saved?: boolean }) {
+export function AccountQuota({ account, saved = false, inline = false }: { account?: DashboardAccountViewModel; saved?: boolean; inline?: boolean }) {
   const metrics = getAccountQuotaMetrics(account);
+  if (inline) {
+    const label = metrics.length ? (saved || account?.hasQuotaError ? "Saved quota: " : "Current account quota: ") + metrics.map(metric => metric.label + " " + metric.value + "%").join(", ") : "Quota unavailable";
+    return <span class="cli-quota-inline" role="group" aria-label={label} title={label}>{metrics.length ? metrics.map(metric => metric.value + "%").join("/") : "—"}</span>;
+  }
   return <span class="cli-quota-summary" role="group" aria-label="Current account quota">
     <span class="cli-quota-meters">
       {metrics.length ? metrics.map(metric => <span class="cli-quota-meter" key={metric.key}>

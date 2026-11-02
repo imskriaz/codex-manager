@@ -27,12 +27,12 @@ describe("saved account card presentation", () => {
   });
 
   it.each([false, true])(
-    "offers existing reauthorization for auth and refresh failures (dismissed: %s)",
+    "offers reauthorization only for credential failures (dismissed: %s)",
     (dismissedHealth) => {
-      for (const healthKind of ["reauthorize", "refresh_failed"] as const) {
+      for (const healthKind of ["reauthorize"] as const) {
         expect(resolvePrimaryAccountControl({ healthKind, dismissedHealth })).toBe("reauthorize");
       }
-      for (const healthKind of ["healthy", "expiring", "quota", "disabled"] as const) {
+      for (const healthKind of ["healthy", "expiring", "refresh_failed", "quota", "disabled"] as const) {
         expect(resolvePrimaryAccountControl({ healthKind, dismissedHealth })).toBe("enablement");
       }
     }

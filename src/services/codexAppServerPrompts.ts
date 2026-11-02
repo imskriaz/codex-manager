@@ -101,7 +101,8 @@ export function respondCodexAppServerPrompt(
     }
     const result: Record<string, { answers: string[] }> = {};
     for (const question of pending.request.questions ?? []) {
-      const answer = typeof answers?.[question.id] === "string" ? answers[question.id]!.trim() : undefined;
+      const raw = typeof answers?.[question.id] === "string" ? answers[question.id]! : undefined;
+      const answer = question.isSecret ? raw : raw?.trim();
       if (!answer) throw new Error(`Answer “${question.header || question.question}” before continuing.`);
       if (answer.length > 8_000) throw new Error("Keep each answer under 8,000 characters.");
       result[question.id] = { answers: [answer] };

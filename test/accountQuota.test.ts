@@ -5,6 +5,31 @@ import { AccountQuota, getAccountQuotaMetrics } from '../webview-src/dashboard/a
 const metric = (key: string, percentage?: number, visible = true): DashboardMetricViewModel => ({ key, label: key, percentage, visible });
 
 describe('compact account quota', () => {
+  it.each([
+    { name: "two windows", metrics: [metric("5h", 95), metric("Weekly", 20)], expected: "95%/20%" },
+    { name: "one available window", metrics: [metric("5h"), metric("Weekly", 20)], expected: "20%" },
+    { name: "zero quota", metrics: [metric("5h", 0)], expected: "0%" },
+    { name: "missing quota", metrics: [], expected: "—" },
+    { name: "invalid quota", metrics: [metric("hidden", 30, false), metric("5h", NaN), metric("Weekly", Infinity)], expected: "—" },
+    { name: "bounded and rounded quota", metrics: [metric("5h", 101), metric("Weekly", 19.6)], expected: "100%/20%" }
+  ])("renders $name as inline percentages without meter rows", ({ metrics, expected }) => {
+    const view = AccountQuota({ account: { metrics } as DashboardAccountViewModel, inline: true });
+    expect(view.props.children).toBe(expected);
+    expect(view.props.class).toBe("cli-quota-inline");
+    expect(view.props.role).toBe("group");
+    expect(view.props.title).toEqual(metrics.some(item => item.visible && Number.isFinite(item.percentage)) ? expect.stringContaining("quota: ") : "Quota unavailable");
+  });
+
+  it("labels offline and stale inline values without adding visible saved-quota text", () => {
+    const account = { metrics: [metric("5h", 95), metric("Weekly", 20)] } as DashboardAccountViewModel;
+    for (const view of [AccountQuota({ account, saved: true, inline: true }), AccountQuota({ account: { ...account, hasQuotaError: true }, inline: true })]) {
+      expect(view.props.children).toBe("95%/20%");
+      expect(view.props["aria-label"]).toBe("Saved quota: 5h 95%, Weekly 20%");
+      expect(view.props.title).toBe(view.props["aria-label"]);
+    }
+    expect(AccountQuota({ inline: true, saved: true }).props["aria-label"]).toBe("Quota unavailable");
+  });
+
   it('keeps two available windows, including zero, without inventing missing quota', () => {
     expect(getAccountQuotaMetrics({ metrics: [metric('5h', 0), metric('Weekly', 73.6)] }).map(item => [item.label, item.value])).toEqual([['5h', 0], ['Weekly', 74]]);
     expect(getAccountQuotaMetrics({ metrics: [metric('5h'), metric('Weekly', 25)] }).map(item => item.value)).toEqual([25]);

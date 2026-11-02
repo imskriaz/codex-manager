@@ -116,4 +116,48 @@ describe("Codex app-server dashboard prompts", () => {
       expect(fake.answerServerRequest).not.toHaveBeenCalled();
     } finally { detach(); unsubscribe(); }
   });
+
+  it("grants only the requested network and filesystem permissions for the current turn", () => {
+    const fake = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, "permissions");
+    const permissions = { network: { enabled: true }, fileSystem: { read: ["/project/input"], write: ["/project/output"] } };
+    try {
+      fake.emit({ id: 12, method: "item/permissions/requestApproval", params: { threadId: "permissions", permissions } });
+      const request = listPendingCodexAppServerPrompts()[0]!;
+      expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      respondCodexAppServerPrompt(request.id, "approve");
+      expect(fake.answerServerRequest).toHaveBeenCalledExactlyOnceWith(12, { permissions, scope: "turn" });
+      expect(listPendingCodexAppServerPrompts()).toEqual([]);
+    } finally { detach(); }
+  });
+
+  it("preserves secret answer whitespace and validates all questions before sending any response", () => {
+    const fake = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, "answers");
+    try {
+      fake.emit({ id: 13, method: "item/tool/requestUserInput", params: { threadId: "answers", questions: [
+        { id: "layout", header: "Layout", question: "Which layout?", isSecret: false },
+        { id: "secret", header: "Secret", question: "Secret?", isSecret: true }
+      ] } });
+      const request = listPendingCodexAppServerPrompts()[0]!;
+      expect(() => respondCodexAppServerPrompt(request.id, "approve", { layout: "Compact" })).toThrow(/Answer/);
+      expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      respondCodexAppServerPrompt(request.id, "approve", { layout: " Compact ", secret: "  private value  " });
+      expect(fake.answerServerRequest).toHaveBeenCalledExactlyOnceWith(13, { answers: { layout: { answers: ["Compact"] }, secret: { answers: ["  private value  "] } } });
+    } finally { detach(); }
+  });
+
+  it("keeps unsupported permission grants pending for a visible decline instead of accepting them", () => {
+    const fake = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, "unsupported");
+    try {
+      fake.emit({ id: 14, method: "item/permissions/requestApproval", params: { threadId: "unsupported", permissions: { unknownScope: true } } });
+      const request = listPendingCodexAppServerPrompts()[0]!;
+      expect(() => respondCodexAppServerPrompt(request.id, "approve")).toThrow(/not supported/);
+      expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+      respondCodexAppServerPrompt(request.id, "decline");
+      expect(fake.rejectServerRequest).toHaveBeenCalledWith(14, expect.stringContaining("declined"));
+    } finally { detach(); }
+  });
 });

@@ -1,6 +1,6 @@
 import { needsTokenRefresh } from "../../auth/oauth";
 import { CodexManagerAccountRecord, CodexTokens } from "../../core/types";
-import { getQuotaIssueKind } from "../../utils/quotaIssue";
+import { getQuotaIssueKind, isCredentialRejection } from "../../utils/quotaIssue";
 import type { AccountAutomationState, TokenAutomationSnapshot } from "../../presentation/workbench/tokenAutomationState";
 
 export type AccountHealthKind = "healthy" | "expiring" | "refresh_failed" | "reauthorize" | "disabled" | "quota";
@@ -27,7 +27,7 @@ export function resolveAccountHealth(
   }
 
   const automationError = automationState?.lastError;
-  if (quotaIssueKind === "auth" || isAuthLikeMessage(automationError)) {
+  if (quotaIssueKind === "auth" || isCredentialRejection(automationError)) {
     return {
       kind: "reauthorize",
       issueKey: buildIssueKey("reauthorize", account.quotaError?.code, account.quotaError?.message, automationError),
@@ -60,7 +60,7 @@ export function resolveAccountHealth(
   }
 
   if (tokens?.accessToken && tokens.idToken && needsTokenRefresh(tokens, automation.skewSeconds || 600)) {
-    if (!tokens.refreshToken?.trim()) {
+    if (!tokens.refreshToken?.trim() && needsTokenRefresh(tokens, 0)) {
       return {
         kind: "reauthorize",
         issueKey: buildIssueKey("reauthorize", undefined, tokens.accountId ?? account.accountId),
@@ -90,24 +90,6 @@ export function getAccountAutomationState(
   accountId: string
 ): AccountAutomationState | undefined {
   return automation.accounts[accountId];
-}
-
-function isAuthLikeMessage(message?: string): boolean {
-  if (!message) {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("401") ||
-    normalized.includes("unauthorized") ||
-    normalized.includes("token expired") ||
-    normalized.includes("token invalid") ||
-    normalized.includes("refresh token") ||
-    normalized.includes("invalid_grant") ||
-    normalized.includes("oauth") ||
-    normalized.includes("authorization")
-  );
 }
 
 function buildIssueKey(kind: AccountHealthKind, ...parts: Array<string | undefined>): string {

@@ -58,7 +58,8 @@ describe("buildDashboardState token recovery", () => {
     };
 
     const snapshot = buildDashboardState(repo as never, settingsStore as never, "logo");
-    await expect(snapshot).resolves.toMatchObject({ accounts: [{ id: "slow-refresh" }] });
+    await expect(snapshot).resolves.toMatchObject({ accounts: [{ id: "slow-refresh", healthKind: "expiring" }] });
+    expect((await buildDashboardState(repo as never, settingsStore as never, "logo")).accounts[0]?.healthKind).toBe("expiring");
     expect(refreshTokensMock).toHaveBeenCalledOnce();
 
     finish({ idToken: "id-2", accessToken: "access-2", refreshToken: "refresh-2" });
@@ -85,7 +86,7 @@ describe("buildDashboardState token recovery", () => {
     try {
       const work = buildDashboardState(repo as never, settings as never, "logo");
       await vi.advanceTimersByTimeAsync(500);
-      expect((await work).accounts[0]).toMatchObject({ id: "slow-credentials", healthKind: "refresh_failed", healthMessage: expect.stringContaining("still loading") });
+      expect((await work).accounts[0]).toMatchObject({ id: "slow-credentials", healthKind: "expiring", healthMessage: expect.stringContaining("still loading") });
       expect((await buildDashboardState(repo as never, settings as never, "logo")).accounts[0]?.healthKind).toBe("healthy");
     } finally { vi.useRealTimers(); }
   });

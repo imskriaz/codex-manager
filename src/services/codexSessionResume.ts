@@ -78,8 +78,8 @@ const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
 const recentNewSessions = new Map<string, { summary: DashboardCliSessionSummary; text: string }>();
 const newSessionFailures = new Map<string, Error>();
 const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
-const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
-const nativeTurnObservers = new Map<string, Promise<void>>();
+const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean>; cancelled?: boolean }>();
+const nativeTurnObservers = new Map<string, { turnId?: string; cancelled?: boolean }>();
 const observedNativeStops = new Map<string, Promise<boolean>>();
 const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc> }>();
 const appServerTransport = new AsyncLocalStorage<AppServerTransport>();
@@ -260,7 +260,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
     }
     if (row.archived) return decorated;
     const native = getNativeCodexSessionRunning(home,row.id);
-    const current = native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
+    const current = ownsSessionTurn(home, row.id) ? "running" : native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
     if (current === undefined && (!stale || row.status !== "running")) return decorated;
     const status = current === "starting" ? "unknown" : current ?? "unknown";
     if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
@@ -588,7 +588,7 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
     .filter((sessionId) => SESSION_ID_PATTERN.test(sessionId))
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
   const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
-    ? [...activeAppServerTurns.keys()] : [];
+    ? [...activeAppServerTurns.keys(), ...[...activeNativeTurns].filter(([, turn]) => turn.home === path.resolve(codexHome)).map(([id]) => id)] : [];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, requestedIds ? new Set(requestedIds) : undefined, signal);
   const stateRecords = await readStateSessionRecords(codexHome);
   const sessionIds = requestedIds ? [...new Set(requestedIds)] : [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
@@ -676,7 +676,7 @@ async function toCliSessionSummary(
   knownStatus?: Pick<DashboardCliSessionSummary, "status" | "statusError">
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
-  const state = archived ? { status: "idle" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
+  const state = archived ? { status: "idle" as const } : ownsSessionTurn(codexHome, entry.id) ? { status: "running" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
   const canStop = running && canStopSessionTurn(codexHome, entry.id);
   const startedAt = archived ? undefined : await readCliRunningSince(transcriptPath);
@@ -1211,7 +1211,8 @@ export function observeRunningCodexSession(session: DashboardCliSessionSummary):
     recordPersistentEvent("warning", "session-resume", "Restored native turn monitoring capacity reached", { sessionRef: toSessionLogRef(session.id), title: session.title });
     return;
   }
-  const work = (async () => {
+  const observer: { turnId?: string; cancelled?: boolean } = {};
+  void (async () => {
     const transcript = await findCliSessionTranscript(home, session.id);
     const startedAt = Date.now(), deadline = startedAt + 5_000;
     for (;;) {
@@ -1221,6 +1222,7 @@ export function observeRunningCodexSession(session: DashboardCliSessionSummary):
       if (current?.turnId && (state === "active" || (current.startedAt !== undefined &&
           (current.startedAt === session.runningSince || current.startedAt >= startedAt)))) {
         const turnId = current.turnId, streamId = randomUUID();
+        observer.turnId = turnId;
         publishNativeTurnState(home, session.id, "running", turnId, streamId);
         await waitForNativeSessionTurn(session.id, transcript, undefined, turnId, home, streamId);
         return;
@@ -1231,16 +1233,22 @@ export function observeRunningCodexSession(session: DashboardCliSessionSummary):
   })().catch(error => {
     if (!(error instanceof CodexCliTurnCancelledError)) recordPersistentEvent("warning", "session-resume", "Restored native turn ended without confirmed completion", { sessionRef: toSessionLogRef(session.id), title: session.title }, error);
   })
-    .finally(() => { if (nativeTurnObservers.get(key) === work) nativeTurnObservers.delete(key); });
-  nativeTurnObservers.set(key, work);
+    .finally(() => { if (nativeTurnObservers.get(key) === observer) nativeTurnObservers.delete(key); });
+  nativeTurnObservers.set(key, observer);
 }
 
 async function waitForNativeSessionTurn(sessionId: string, transcript: string | undefined, previous: string | undefined, expectedTurnId?: string, home = resolveCodexHome(), streamId?: string): Promise<void> {
   const startedAt = Date.now(), deadline = startedAt + CLI_TURN_TIMEOUT_MS;
   let status: "completed" | "cancelled" | "failed" | "disconnected" = "disconnected";
   let failure: unknown;
+  const owned = ownedNativeTurn(home, sessionId);
+  const observer = nativeTurnObservers.get(`${home}:${sessionId}`);
   try {
     while (Date.now() < deadline) {
+      if ((owned && owned.turnId === expectedTurnId && owned.cancelled) || (observer && observer.turnId === expectedTurnId && observer.cancelled)) {
+        status = "cancelled";
+        throw new CodexCliTurnCancelledError();
+      }
       const state = await readRecentTranscriptTurnState(transcript);
       const turn = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
       if (turn && turn !== previous) {
@@ -1258,12 +1266,13 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
   } finally {
     recordPersistentEvent(status === "completed" || status === "cancelled" ? "info" : "warning", "session-turn", "Official native turn observation ended", {
       sessionRef: toSessionLogRef(sessionId), turnRef: expectedTurnId ? toSessionLogRef(expectedTurnId) : undefined,
-      status, completionConfirmed: status === "completed", durationMs: Date.now() - startedAt, source: "official-transcript"
+      status, completionConfirmed: status === "completed", durationMs: Date.now() - startedAt,
+      source: owned?.cancelled || observer?.cancelled ? "official-native-stop" : "official-transcript"
     }, failure);
-    const owned = ownedNativeTurn(home, sessionId);
-    if (!streamId || (transcript && cliTranscriptTurnStateCache.get(transcript)?.turnId === expectedTurnId))
+    const newerNativeActivity = (owned?.cancelled || observer?.cancelled) && getNativeCodexSessionRunning(home, sessionId) === true;
+    if (!newerNativeActivity && (streamId ? transcript && cliTranscriptTurnStateCache.get(transcript)?.turnId === expectedTurnId : ownedNativeTurn(home, sessionId) === owned))
       publishNativeTurnState(home, sessionId, status, expectedTurnId, streamId);
-    if (!streamId && owned && (!expectedTurnId || owned.turnId === expectedTurnId)) activeNativeTurns.delete(sessionId);
+    if (!streamId && owned && ownedNativeTurn(home, sessionId) === owned && (!expectedTurnId || owned.turnId === expectedTurnId)) activeNativeTurns.delete(sessionId);
   }
 }
 
@@ -1310,6 +1319,13 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   validateSessionId(sessionId);
   sessionId = sessionId.toLowerCase();
   const home = resolveCodexHome();
+  const stopped = (turnId: string) => {
+    const owned = ownedNativeTurn(home, sessionId);
+    const observer = nativeTurnObservers.get(`${home}:${sessionId}`);
+    if (owned?.turnId === turnId) owned.cancelled = true;
+    else if (observer?.turnId === turnId) observer.cancelled = true;
+    else if (!owned && !observer && getNativeCodexSessionRunning(home, sessionId) !== true) publishNativeTurnState(home, sessionId, "cancelled", turnId);
+  };
   const suppressRecovery = (turnId?: string) => {
     try { markCodexSessionManualStop(home, sessionId, turnId); }
     catch (error) {
@@ -1323,11 +1339,11 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
       suppressRecovery(native.turnId);
       const details = { sessionRef: toSessionLogRef(sessionId), turnRef: toSessionLogRef(native.turnId), actor: "manager", origin: "user", goalPauseRequested: true, transport: "official-native" };
       recordPersistentEvent("info", "session-stop", "Official Stop requested", details);
-      native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).then(confirmed => {
+      native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId, () => stopped(native.turnId)).then(confirmed => {
         recordPersistentEvent(confirmed ? "info" : "warning", "session-stop", confirmed ? "Official Stop confirmed" : "Official Stop not accepted", details);
         return confirmed;
       }).catch(error => {
-        recordPersistentEvent("warning", "session-stop", "Official Stop unconfirmed", details, error);
+        recordPersistentEvent("warning", "session-stop", native.cancelled ? "Official Stop confirmed with warning" : "Official Stop unconfirmed", details, error);
         throw error;
       }).finally(() => { native.stop = undefined; });
     }
@@ -1339,7 +1355,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     const existing = observedNativeStops.get(key);
     if (existing) return existing;
     suppressRecovery(observedTurnId);
-    const stop = cancelNativeCodexSessionTurn(home, sessionId, observedTurnId).then(confirmed => {
+    const stop = cancelNativeCodexSessionTurn(home, sessionId, observedTurnId, () => stopped(observedTurnId)).then(confirmed => {
       recordPersistentEvent(confirmed ? "info" : "warning", "session-stop", confirmed ? "Observed native Stop confirmed" : "Observed native Stop not accepted", { sessionRef: toSessionLogRef(sessionId), turnRef: toSessionLogRef(observedTurnId), transport: "official-native" });
       return confirmed;
     }).finally(() => { if (observedNativeStops.get(key) === stop) observedNativeStops.delete(key); });

@@ -16,7 +16,7 @@ It is an independent, community project. It is not an official OpenAI product.
 | Switching and automation | Switch manually or by quota thresholds, wait for every running session before switching, resume eligible conversations, and keep automatic switching safe when inspection is unavailable. |
 | Sessions and goals | See all running parent sessions across projects and PCs, keep list order stable, inspect transcripts, view native goals above the composer, start/stop/fork turns, and continue from another VS Code window. |
 | Remote dashboard | Open the password-protected dashboard from any desktop or mobile browser through HTTPS and Cloudflare Tunnel. Live WebSocket updates, PC labels, session counts, account claims, and remote actions stay in one interface. |
-| Sync and claims | Authenticate peer connections, sync encrypted account state, reserve only the current account on a PC, and show which PC owns a claim. VS Code Settings Sync remains the durable fallback. |
+| Sync and claims | Authenticate peer connections, sync encrypted account state, reserve accounts current in live windows on a PC, and show which PC owns a claim. Other saved accounts remain free in current-account-only mode. VS Code Settings Sync remains the durable fallback. |
 | Notifications and PWA | Receive major switches, reloads, failures, and completed sessions with the source system name; send a delivery test; install the dashboard as a PWA; and recover to an offline shell while the host is unavailable. |
 | Sharing and workspace | Create expiring read-only conversation links with the workspace transcript and full tool activity, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
 | Project task management | Plan ideas and tasks, use Board, List, Gantt, and Calendar views, group session subtasks under top-level custom tasks, create prompted session subtasks, inspect recorded running time, follow live activity, review conversation files and recorded changes, and share a project with feature permissions and optional embedding. |
@@ -260,6 +260,12 @@ Manual account switching and ownership renewal do not request session inspection
 
 Browser Share creates an explicit read-only snapshot link. Anyone with its token can view the conversation messages without signing in; it grants no dashboard access. Links expire after 30 days. Create a replacement or use **Revoke shared link** to invalidate the previous link. The session-share endpoint can refresh available saved messages. Project sharing below provides separate feature permissions and optional submissions.
 
+
+### Session approvals and questions
+
+Requests forwarded by the owning Codex system appear inside their session. Review command, file, or permission details, then choose **Approve once** or **Decline**. Questions support suggested choices, custom answers, and secret inputs. No response is sent automatically.
+
+Answer drafts stay in memory while navigating between sessions or reconnecting; secret answers are not saved to browser storage. An unconfirmed response requires **Check request** before retrying. Closed or expired prompts are removed. Requests that the owning system does not forward must be answered in its Codex window.
 
 ### Workspace inspector
 

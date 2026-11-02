@@ -247,11 +247,12 @@ describe("native App Server new sessions", () => {
     } finally { unsubscribe(); log.mockRestore(); }
   });
 
-  it("stops a browser-initiated native turn once and reports its actual cancellation", async () => {
+  it.each(["journal", "missing-journal", "goal-pause-failure"])("releases a stopped native turn without depending on its journal (%s)", async scenario => {
     const log = vi.spyOn(diagnostics, "recordPersistentEvent");
     const cancelled = vi.fn();
     const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === "dashboard:codex-session-live" && event.state.status === "cancelled") cancelled(event.state); });
     await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Owned native task" }) + "\n");
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
     await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
@@ -262,15 +263,18 @@ describe("native App Server new sessions", () => {
     });
     let stopped!: () => void;
     const stopping = new Promise<void>(resolve => { stopped = resolve; });
-    vi.mocked(cancelNativeCodexSessionTurn).mockImplementationOnce(async () => {
+    vi.mocked(cancelNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, onStopped) => {
       await stopping;
-      await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", turn_id: "owned-native-turn" } }) + "\n");
+      if (scenario === "journal") await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", turn_id: "owned-native-turn" } }) + "\n");
+      onStopped?.();
+      if (scenario === "goal-pause-failure") throw new Error("The turn stopped, but its goal could not pause: storage full");
       return true;
     });
     const accepted = vi.fn();
     const sending = expect(sendCodexCliSessionMessage({ sessionId: id, text: "Continue", onStarted: accepted })).rejects.toThrow("stopped");
     try {
       await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+      expect(await readCodexCliSessionSummary(id)).toMatchObject({ locked: true, status: "running" });
       await expect(steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'another-turn',text:'Follow up'})).rejects.toThrow('turn changed');
       vi.mocked(steerNativeCodexSessionTurn).mockResolvedValueOnce(true);
       await steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'owned-native-turn',text:'Follow up',projectPath:root});
@@ -279,16 +283,18 @@ describe("native App Server new sessions", () => {
       await expect(steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'owned-native-turn',text:'Do not retry'})).rejects.toThrow('unconfirmed');
       expect(steerNativeCodexSessionTurn).toHaveBeenCalledTimes(2);
       const first = cancelCodexCliSessionTurn(id), second = cancelCodexCliSessionTurn(id);
+      const results = scenario === "goal-pause-failure" ? Promise.all([expect(first).rejects.toThrow("goal could not pause"), expect(second).rejects.toThrow("goal could not pause")]) : Promise.all([expect(first).resolves.toBe(true), expect(second).resolves.toBe(true)]);
       await vi.waitFor(() => expect(cancelNativeCodexSessionTurn).toHaveBeenCalledOnce());
       expect(readCodexSessionPreferences(root, [id]).get(id)?.manualStop).toBe(true);
       stopped();
-      expect(await first).toBe(true); expect(await second).toBe(true); await sending;
-      expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, "owned-native-turn");
+      await results; await sending;
+      expect(await readCodexCliSessionSummary(id)).toMatchObject({ locked: false, status: "idle" });
+      expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, "owned-native-turn", expect.any(Function));
       expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, turnId: "owned-native-turn", status: "cancelled" }));
       expect(await cancelCodexCliSessionTurn(id)).toBe(false);
       expect(mocks.open).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalledWith("info", "session-turn", "Official native turn accepted", expect.objectContaining({ turnRef: expect.any(String), transport: "official-native" }));
-      expect(log).toHaveBeenCalledWith("info", "session-stop", "Official Stop confirmed", expect.objectContaining({ origin: "user", actor: "manager", goalPauseRequested: true }));
+      if (scenario !== "goal-pause-failure") expect(log).toHaveBeenCalledWith("info", "session-stop", "Official Stop confirmed", expect.objectContaining({ origin: "user", actor: "manager", goalPauseRequested: true }));
     } finally { stopped(); unsubscribe(); log.mockRestore(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); vi.mocked(cancelNativeCodexSessionTurn).mockReset().mockResolvedValue(false); }
   });
 
@@ -308,14 +314,15 @@ describe("native App Server new sessions", () => {
         observeRunningCodexSession({ id, title: 'Restored task', status: 'running' });
         await vi.waitFor(() => expect(updates).toContain('running'));
       }
-      vi.mocked(cancelNativeCodexSessionTurn).mockImplementationOnce(async () => {
+      vi.mocked(cancelNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, onStopped) => {
         await appendFile(transcript, event('turn_aborted'));
         vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
         vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+        onStopped?.();
         return true;
       });
       expect(await cancelCodexCliSessionTurn(id)).toBe(true);
-      expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, 'restored-stop');
+      expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, 'restored-stop', expect.any(Function));
       if (observed) await vi.waitFor(() => expect(updates).toContain('cancelled'));
       expect(await readCodexCliSessionSummary(id)).toMatchObject({ status: 'idle', locked: false, canStop: false });
       expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();

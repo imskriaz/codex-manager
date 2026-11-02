@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountClaimAuthority, type AccountClaimRequest } from "../src/services/accountClaimAuthority";
 import { createSyncAccountEnablement } from "../src/services/syncEnablementRegistry";
 
@@ -12,6 +12,7 @@ beforeEach(async () => {
   file = path.join(directory, "claims.json");
 });
 afterEach(async () => {
+  vi.useRealTimers();
   await rm(directory, { recursive: true, force: true });
 });
 const acquire = (deviceId: string, token = `${deviceId}-token`): AccountClaimRequest => ({
@@ -25,6 +26,19 @@ const acquire = (deviceId: string, token = `${deviceId}-token`): AccountClaimReq
 });
 
 describe("shared current-account claim authority", () => {
+  it("renews an active owner's lease before expiry and keeps its release token", async () => {
+    const authority = new AccountClaimAuthority(file);
+    const first = await authority.request(acquire("PC A"));
+    const start = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => start + 31_000);
+    try {
+      const renewed = await authority.request(acquire("PC A", "new-request-token"));
+      expect(renewed.claim).toMatchObject({ enabled: true, claimToken: first.claim!.claimToken, lastSyncedAt: start + 31_000 });
+      expect(renewed.claim!.revision).toBeGreaterThan(first.claim!.revision);
+      vi.mocked(Date.now).mockReturnValue(start + 30 * 60_000 + 1);
+      expect(await authority.request(acquire("PC B"))).toMatchObject({ ok: false });
+    } finally { vi.mocked(Date.now).mockRestore(); }
+  });
   it("grants one owner under concurrent acquisition and preserves it across reboot", async () => {
     const authority = new AccountClaimAuthority(file);
     const results = await Promise.all([authority.request(acquire("PC A")), authority.request(acquire("PC B"))]);

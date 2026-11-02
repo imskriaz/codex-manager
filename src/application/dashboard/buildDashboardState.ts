@@ -53,7 +53,7 @@ import { waitWithin } from "../../utils/concurrency";
 // transient provider failure permanently disable recovery.
 const DASHBOARD_REFRESH_RETRY_COOLDOWN_MS = 60_000;
 const DASHBOARD_TOKEN_REFRESH_WAIT_MS = 500;
-const dashboardRefreshAttempts = new Map<string, { refreshToken: string; attemptedAt: number }>();
+const dashboardRefreshAttempts = new Map<string, { refreshToken: string; attemptedAt: number; pending?: boolean }>();
 
 export async function buildDashboardState(
   repo: AccountsRepository,
@@ -81,6 +81,7 @@ export async function buildDashboardState(
   const queuedSwitch = resolveDashboardQueuedSwitch(accounts, getQueuedAccountSwitch());
   const leasesByAccountId = new Map(getSyncedAccountLeases().map((lease) => [lease.accountId, lease]));
   const pendingEnablementAccountIds = new Set(getPendingEnablementAccountIds());
+  const credentialReadHealth = new Map<string, { kind: "expiring" | "refresh_failed"; issueKey: string; message: string }>();
   const tokenEntries = await Promise.all(
     accounts.map(async (account) => {
       let tokens: CodexTokens | undefined;
@@ -90,7 +91,9 @@ export async function buildDashboardState(
         // not make every snapshot wait on Secret Storage.
         tokens = await waitWithin(repo.getTokens(account.id), 500, "Stored credentials are still loading; retry when storage responds");
       } catch (error) {
-        markTokenAutomationRefreshFailure(account.id, `Stored credentials could not be read: ${toDashboardRefreshFailureMessage(error)}`);
+        const message = `Stored credentials could not be read: ${toDashboardRefreshFailureMessage(error)}`;
+        const pending = error instanceof Error && error.message === "Stored credentials are still loading; retry when storage responds";
+        credentialReadHealth.set(account.id, { kind: pending ? "expiring" : "refresh_failed", issueKey: "credentials-unavailable", message });
         return [account.id, undefined] as const;
       }
       const tokenNeedsRefresh = Boolean(tokens && needsTokenRefresh(tokens, 0));
@@ -106,21 +109,21 @@ export async function buildDashboardState(
         const canAttempt =
           !previousAttempt ||
           previousAttempt.refreshToken !== refreshToken ||
-          Date.now() - previousAttempt.attemptedAt >= DASHBOARD_REFRESH_RETRY_COOLDOWN_MS;
+          (!previousAttempt.pending && Date.now() - previousAttempt.attemptedAt >= DASHBOARD_REFRESH_RETRY_COOLDOWN_MS);
         if (canAttempt) {
-          dashboardRefreshAttempts.set(account.id, { refreshToken, attemptedAt: Date.now() });
-          const refreshTask = refreshDashboardAccountToken(repo, account, tokens.accountId);
+          const attempt = { refreshToken, attemptedAt: Date.now(), pending: true };
+          dashboardRefreshAttempts.set(account.id, attempt);
+          const refreshTask = refreshDashboardAccountToken(repo, account, tokens.accountId).finally(() => { attempt.pending = false; });
           void refreshTask.catch(() => undefined);
           try {
             // Keep the first render responsive. The refresh promise continues
             // in the background and invalidates the repository cache on success.
             tokens = await waitWithin(refreshTask, DASHBOARD_TOKEN_REFRESH_WAIT_MS, "Token refresh is still loading");
-          } catch (error) {
-            if (error instanceof Error && error.message === "Token refresh is still loading") {
-              markTokenAutomationRefreshFailure(account.id, error.message);
-            }
-          }
+          } catch { /* The refresh records actual failures; a render timeout is not a failure. */ }
         }
+        if (dashboardRefreshAttempts.get(account.id)?.pending) credentialReadHealth.set(account.id, {
+          kind: "expiring", issueKey: "token-refresh-pending", message: "Token refresh is still loading"
+        });
       }
       return [account.id, tokens] as const;
     })
@@ -130,7 +133,8 @@ export async function buildDashboardState(
   const accountViewStateById = new Map(
     accounts.map((account) => {
       const tokens = tokensByAccountId.get(account.id);
-      const health = resolveAccountHealth(account, tokens, tokenAutomation);
+      const resolvedHealth = resolveAccountHealth(account, tokens, tokenAutomation);
+      const health = resolvedHealth.kind === "disabled" ? resolvedHealth : credentialReadHealth.get(account.id) ?? resolvedHealth;
       return [
         account.id,
         {
@@ -138,7 +142,7 @@ export async function buildDashboardState(
           health,
           dismissedHealth: isHealthDismissed(account, health),
           automationState: getAccountAutomationState(tokenAutomation, account.id),
-          healthPriority: getHealthPriority(health)
+          healthPriority: credentialReadHealth.get(account.id)?.kind === "expiring" ? 0 : getHealthPriority(health)
         }
       ] as const;
     })
@@ -208,6 +212,7 @@ async function refreshDashboardAccountToken(
 }
 
 function toDashboardRefreshFailureMessage(error: unknown): string {
+  if (error instanceof Error && "statusCode" in error && error.statusCode === 401) return `${error.message} (HTTP 401)`;
   return error instanceof Error ? error.message : String(error);
 }
 

@@ -7,7 +7,7 @@ import * as windowAccounts from "../src/services/windowAccountMode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fetchMock = vi.hoisted(() => vi.fn());
 vi.mock("undici", async (original) => ({ ...(await original<typeof import("undici")>()), fetch: fetchMock }));
-import { EncryptedSyncManager } from "../src/services/encryptedSync";
+import { EncryptedSyncManager, getSyncedAccountLeases } from "../src/services/encryptedSync";
 import { AccountClaimAuthority } from "../src/services/accountClaimAuthority";
 import { createSyncAccountEnablement } from "../src/services/syncEnablementRegistry";
 import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive } from "../src/utils/crossWindowOperations";
@@ -86,6 +86,33 @@ afterEach(async () => {
 });
 
 describe("current account only sync", () => {
+  it("claims all live-window accounts, releases saved accounts, and renews even with no active account here", async () => {
+    const windows = vi.spyOn(windowAccounts, "readCrossWindowActiveAccountIds").mockResolvedValue(["other-window"]);
+    await reconcile();
+    expect(manager.getRealtimeEnablementRegistry().filter(entry => entry.enabled).map(entry => entry.accountId)).toEqual(["other-window", "previous"]);
+    active = "";
+    await reconcile();
+    expect(manager.getRealtimeEnablementRegistry().filter(entry => entry.enabled).map(entry => entry.accountId)).toEqual(["other-window"]);
+    windows.mockResolvedValue([]);
+    await reconcile();
+    expect(manager.getRealtimeEnablementRegistry().every(entry => !entry.enabled)).toBe(true);
+  });
+  it("keeps claims when other-window discovery fails and retries once storage recovers", async () => {
+    const windows = vi.spyOn(windowAccounts, "readCrossWindowActiveAccountIds").mockRejectedValueOnce(new Error("registry corrupt"));
+    await expect(reconcile()).rejects.toThrow("registry corrupt");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(manager.getRealtimeEnablementRegistry().filter(entry => entry.enabled)).toHaveLength(2);
+    windows.mockResolvedValue([]);
+    await reconcile();
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === "next")?.enabled).toBe(false);
+  });
+  it("keeps a leased foreign account visibly claimed through a temporary peer disconnect", async () => {
+    const foreign = { ...createSyncAccountEnablement({ accountId: "next", deviceId: "remote", deviceName: "Remote PC", enabled: true, lastSyncedAt: Date.now() }), currentOnly: true };
+    await manager.applyRealtimeEnablementRegistry([foreign]);
+    manager.setOnlineDeviceIds([]);
+    expect(getSyncedAccountLeases().find(entry => entry.accountId === "next")).toMatchObject({ online: true, isCurrentDevice: false });
+    await expect(manager.prepareAccountSwitch("next")).rejects.toThrow("Remote PC");
+  });
   it("retries a lost release reply before claiming the new current account", async () => {
     await reconcile();
     active = "next";

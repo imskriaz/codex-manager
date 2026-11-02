@@ -1,3 +1,6 @@
+import { codexPromptKey } from "./codexSessionPrompts";
+import { useCodexSessionPrompts } from "./codexSessionPromptHook";
+import { CodexSessionRequest } from "./codexSessionRequest";
 import { useAnchoredPopover } from './anchoredPopover';
 import { SessionQueueControl } from './sessionQueueControl';
 import { SystemLogConsole } from "./systemLogConsole";
@@ -13,7 +16,6 @@ import type {
   DashboardActionName,
   DashboardActionPayload,
   DashboardCliComposerConfig,
-  DashboardCodexServerRequest,
   DashboardCodexSessionLiveState,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
@@ -79,7 +81,7 @@ import { createDashboardToastController, scheduleDashboardToastDismiss, type Das
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { DonationDetails } from "./donationDetails";
-import { ModalShell, useModalAccessibility } from "./primitives";
+import { ModalShell } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedback";
@@ -307,8 +309,7 @@ function App() {
   const [cliSessionsError, setCliSessionsError] = useState<string>();
   const [cliSessionMessagesError, setCliSessionMessagesError] = useState<string>();
   const [cliComposerConfig, setCliComposerConfig] = useState<DashboardCliComposerConfig>();
-  const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
-  const [codexRequestError, setCodexRequestError] = useState<string>();
+  const codexPromptTimeoutRef = useRef<(requestId: string) => void>();
   const [workspaceEnvironment, setWorkspaceEnvironment] = useState<DashboardWorkspaceEnvironment>();
   const [terminalActivity, dispatchTerminalActivity] = useReducer(reduceWorkspaceTerminalActivity, emptyWorkspaceTerminalActivity);
   const terminalResults = terminalActivity.results;
@@ -420,6 +421,7 @@ function App() {
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
       sessionActionRequests.current.delete(requestId);
+      if (action === "respondCodexServerRequest") codexPromptTimeoutRef.current?.(requestId);
       if (['generateApiToken','listApiTokens','revokeApiToken'].includes(action) && [apiRequests.current.list,apiRequests.current.mutation].includes(requestId)) {
         setApiError('The host did not confirm this request. Refresh the token list before retrying.');
         if (action !== 'listApiTokens') { apiUncertainRef.current=true; setApiUncertain(true); }
@@ -517,6 +519,12 @@ function App() {
       }
     } : undefined
   );
+  const codexPrompts = useCodexSessionPrompts({
+    target: currentSessionTarget(), browser: isBrowserDashboard,
+    connected: !isBrowserDashboard || (realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage)),
+    peers: state.snapshot?.connectedPeers, sendAction, onNotice: showNotice
+  });
+  codexPromptTimeoutRef.current = codexPrompts.timeout;
   const sendApiRequest = (action: 'generateApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
     const mutation=action!=='listApiTokens';
     if (mutation && (apiRequests.current.mutation || apiUncertainRef.current)) return;
@@ -815,25 +823,6 @@ function App() {
         setBrowserHostStage(message.stage);
         if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
         return;
-      }
-      if (message.type === "dashboard:codex-requests") {
-        setCodexRequests(message.requests);
-        return;
-      }
-      if (message.type === "dashboard:codex-request") {
-        setCodexRequests((current) => current.some((request) => request.id === message.request.id && request.deviceId === message.request.deviceId)
-          ? current : [...current, message.request]);
-        setCodexRequestError(undefined);
-        return;
-      }
-      if (message.type === "dashboard:codex-request-resolved") {
-        setCodexRequests((current) => current.filter((request) => request.id !== message.requestId || request.deviceId !== message.deviceId));
-        setCodexRequestError(undefined);
-        return;
-      }
-      if (message.type === "dashboard:action-result" && message.action === "respondCodexServerRequest") {
-        setCodexRequestError(message.status === "completed" ? undefined : (message.error ?? "Codex could not receive this response. Try again or refresh the session."));
-        if (message.status !== "completed") showCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Codex could not receive this response. Try again or refresh the session." });
       }
       if (message.type === 'dashboard:action-result' && ['generateApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {
         const list=message.action==='listApiTokens', key=list?'list':'mutation';
@@ -2290,13 +2279,8 @@ function App() {
     sendAction("completeOnboarding");
   };
 
-  const currentRequestTarget = currentSessionTarget();
-  const activeCodexRequest = codexRequests.find((request) =>
-    sameCliSessionTarget({ id: request.threadId, deviceId: request.deviceId }, currentRequestTarget)
-  );
-  const backgroundCodexRequest = codexRequests.find((request) =>
-    !sameCliSessionTarget({ id: request.threadId, deviceId: request.deviceId }, currentRequestTarget)
-  );
+  const activeCodexRequest = codexPrompts.active?.request;
+  const backgroundCodexRequest = codexPrompts.background?.request;
   const reviewBackgroundCodexRequest = (): void => {
     if (!backgroundCodexRequest) return;
     const session = cliSessionsRef.current.find((candidate) =>
@@ -2304,10 +2288,16 @@ function App() {
     );
     if (session) {
       selectCliSession(session);
-    } else if (isBrowserDashboard) {
-      navigateDashboardPath(buildCliSessionPath({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }), setBrowserPath);
+    } else {
+      selectCliSession({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId, remote: Boolean(backgroundCodexRequest.deviceId), title: "Session awaiting input", status: "unknown", projectPath: backgroundCodexRequest.cwd });
     }
   };
+
+  const codexRequestView = codexPrompts.active ? <CodexSessionRequest
+    key={codexPromptKey(codexPrompts.active.request)} entry={codexPrompts.active} inline={isBrowserDashboard} queuedCount={codexPrompts.entries.length - 1}
+    connected={codexPrompts.connectedTo(codexPrompts.active)} checking={codexPrompts.checking}
+    onCheck={() => codexPrompts.active && codexPrompts.check(codexPromptKey(codexPrompts.active.request))} onAnswer={codexPrompts.answer} onRespond={codexPrompts.respond}
+  /> : undefined;
 
   const handleAutoSwitchLock = (lockMinutes: number): void => {
     if (!overviewAccount) {
@@ -2387,7 +2377,7 @@ function App() {
             document.body
           )
         : null}
-      {backgroundCodexRequest
+      {backgroundCodexRequest && !activeCodexRequest
         ? createPortal(
             <div class="codex-request-background" role="alert">
               <span>Codex is waiting for input in another session.</span>
@@ -2396,28 +2386,7 @@ function App() {
             document.body
           )
         : null}
-      {activeCodexRequest
-        ? createPortal(
-            <CodexRequestDialog
-              key={`${activeCodexRequest.deviceId ?? "local"}:${activeCodexRequest.id}`}
-              request={activeCodexRequest}
-              queuedCount={codexRequests.filter((request) => request !== activeCodexRequest).length}
-              busy={isActionPending("respondCodexServerRequest")}
-              connected={!isBrowserDashboard || realtimeConnected}
-              error={codexRequestError}
-              onRespond={(decision, answers) => {
-                setCodexRequestError(undefined);
-                sendAction("respondCodexServerRequest", undefined, {
-                  codexRequestId: activeCodexRequest.id,
-                  codexDecision: decision,
-                  codexAnswers: answers,
-                  targetDeviceId: activeCodexRequest.deviceId
-                });
-              }}
-            />,
-            document.body
-          )
-        : null}
+      {!isBrowserDashboard && codexRequestView ? createPortal(codexRequestView, document.body) : null}
       <main
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
@@ -3049,6 +3018,7 @@ function App() {
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
+              requestPanel={codexRequestView}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
@@ -3379,42 +3349,6 @@ function BrowserConnectionRecovery(props: { stage: "unreachable" | "offline"; on
     <h1>{props.stage === "offline" ? "Your browser is offline." : "The dashboard host is unavailable."}</h1>
     <p>Keep VS Code and the Codex Manager extension running to see live sessions and account data. This app never stores that data in its offline cache.</p>
     <button type="button" onClick={props.onRetry}>Try connecting again</button>
-  </div>;
-}
-
-function CodexRequestDialog(props: {
-  request: DashboardCodexServerRequest;
-  queuedCount: number;
-  busy: boolean;
-  connected: boolean;
-  error?: string;
-  onRespond: (decision: "approve" | "decline", answers?: Record<string, string>) => void;
-}) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const accessibility = useModalAccessibility(true, () => undefined);
-  const isQuestion = props.request.kind === "question";
-  const complete = !isQuestion || (props.request.questions ?? []).every((question) => Boolean(answers[question.id]?.trim()));
-  return <div class="codex-request-backdrop" role="presentation" onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
-    <section ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} tabIndex={-1} class="codex-request-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-request-title" aria-describedby="codex-request-description">
-      <div class="codex-request-eyebrow"><span class="codex-request-pulse" /> Codex needs your input{props.queuedCount > 0 ? ` · ${props.queuedCount} more waiting` : ""}</div>
-      <h2 id="codex-request-title">{props.request.title}</h2>
-      <p id="codex-request-description">{isQuestion ? "Answer to let Codex continue this turn." : "Review this request before Codex continues. Approval applies to this request only."}</p>
-      {props.request.cwd ? <div class="codex-request-cwd" title={props.request.cwd}>Project · {props.request.cwd}</div> : null}
-      {props.request.detail ? <pre class="codex-request-detail">{props.request.detail}</pre> : null}
-      {props.request.questions?.map((question) => <div class="codex-request-question" key={question.id}>
-        <label for={`codex-answer-${question.id}`}><span>{question.header || "Question"}</span><strong>{question.question}</strong></label>
-        {question.options?.length ? <select id={`codex-answer-${question.id}`} value={answers[question.id] ?? ""} disabled={props.busy || !props.connected} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))}>
-          <option value="">Choose an answer…</option>
-          {question.options.map((option) => <option key={option.label} value={option.label}>{option.label}{option.description ? ` — ${option.description}` : ""}</option>)}
-        </select> : null}
-        <input id={question.options?.length ? `codex-custom-answer-${question.id}` : `codex-answer-${question.id}`} aria-label={question.options?.length ? `Or type an answer for ${question.header || question.question}` : undefined} placeholder={question.options?.length ? "Or type your own answer…" : undefined} type={question.isSecret ? "password" : "text"} value={answers[question.id] ?? ""} disabled={props.busy || !props.connected} maxLength={8_000} onInput={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))} />
-      </div>)}
-      {props.error ? <p class="codex-request-error" role="alert">{props.error}</p> : null}
-      <div class="codex-request-actions">
-        <button type="button" class="is-secondary" disabled={props.busy || !props.connected} onClick={() => props.onRespond("decline")}>{isQuestion ? "Dismiss question" : "Decline"}</button>
-        <button type="button" class="is-primary" disabled={props.busy || !props.connected || !complete} onClick={() => props.onRespond("approve", answers)}>{props.busy ? "Sending…" : isQuestion ? "Send answer" : "Approve once"}</button>
-      </div>
-    </section>
   </div>;
 }
 

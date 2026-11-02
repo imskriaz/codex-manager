@@ -1,0 +1,115 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DashboardHostMessage, DashboardCodexServerRequest } from "../src/domain/dashboard/types";
+import { codexPromptKey } from "../webview-src/dashboard/codexSessionPrompts";
+
+const harness = vi.hoisted(() => ({ slots: [] as any[], cursor: 0, effects: [] as Array<() => void>, cleanups: [] as Array<() => void>, post: vi.fn() }));
+vi.mock("preact/hooks", () => ({
+  useState: (initial: unknown) => {
+    const index = harness.cursor++;
+    harness.slots[index] ??= { value: initial };
+    return [harness.slots[index].value, (next: unknown) => { harness.slots[index].value = typeof next === "function" ? next(harness.slots[index].value) : next; }];
+  },
+  useRef: (initial: unknown) => {
+    const index = harness.cursor++;
+    return harness.slots[index] ??= { current: initial };
+  },
+  useCallback: (callback: unknown) => {
+    const index = harness.cursor++;
+    return harness.slots[index] ??= callback;
+  },
+  useEffect: (setup: () => (() => void)) => {
+    const index = harness.cursor++;
+    if (harness.slots[index]) return;
+    harness.slots[index] = true;
+    harness.effects.push(() => { harness.cleanups.push(setup()); });
+  }
+}));
+vi.mock("../webview-src/dashboard/host", () => ({ postMessageToHost: harness.post }));
+import { useCodexSessionPrompts } from "../webview-src/dashboard/codexSessionPromptHook";
+
+const request = (deviceId = "worker"): DashboardCodexServerRequest => ({ id: "question", threadId: "thread", deviceId, kind: "question", title: "Layout", questions: [{ id: "choice", header: "Choice", question: "Which layout?", isSecret: false }] });
+let listener: ((event: MessageEvent<DashboardHostMessage>) => void) | undefined;
+const send = vi.fn(), notice = vi.fn();
+let options: Parameters<typeof useCodexSessionPrompts>[0];
+const render = (patch: Partial<typeof options> = {}) => {
+  options = { ...options, ...patch };
+  harness.cursor = 0;
+  const result = useCodexSessionPrompts(options);
+  harness.effects.splice(0).forEach(effect => effect());
+  return result;
+};
+const emit = (data: DashboardHostMessage) => listener?.({ data } as MessageEvent<DashboardHostMessage>);
+beforeEach(() => {
+  harness.slots = []; harness.cursor = 0; harness.effects = []; harness.cleanups = []; harness.post.mockReset();
+  send.mockReset().mockImplementation(() => "response" + send.mock.calls.length);
+  notice.mockReset(); listener = undefined;
+  options = { target: { id: "thread", deviceId: "worker" }, browser: true, connected: true,
+    peers: [{ id: "host", connected: true, local: true }, { id: "worker", connected: true }, { id: "other", connected: true }], sendAction: send, onNotice: notice };
+  vi.stubGlobal("window", {
+    addEventListener: (_: string, callback: typeof listener) => { listener = callback; },
+    removeEventListener: () => { listener = undefined; },
+    setTimeout: (callback: () => void, ms: number) => setTimeout(callback, ms),
+    clearTimeout: (id: ReturnType<typeof setTimeout>) => clearTimeout(id)
+  });
+});
+afterEach(() => { harness.cleanups.forEach(cleanup => cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe("session request routing and recovery", () => {
+  it("routes an explicit answer to its owner exactly once and keeps it after failure", () => {
+    render(); emit({ type: "dashboard:codex-request", request: request() });
+    const key = codexPromptKey(request());
+    let hook = render(); hook.answer(key, "choice", "Compact");
+    hook = render(); hook.respond(key, "approve"); hook.respond(key, "approve");
+    expect(send).toHaveBeenCalledExactlyOnceWith("respondCodexServerRequest", undefined, { codexRequestId: "question", codexDecision: "approve", codexAnswers: { choice: "Compact" }, targetDeviceId: "worker" });
+    emit({ type: "dashboard:action-result", requestId: "response1", action: "respondCodexServerRequest", status: "failed", error: "Connection lost" });
+    hook = render();
+    expect(hook.active).toMatchObject({ answers: { choice: "Compact" }, error: "Connection lost", responseId: undefined });
+    hook = render({ connected: false }); hook.answer(key, "choice", "Offline draft"); hook.respond(key, "approve");
+    expect(send).toHaveBeenCalledTimes(1);
+    hook = render({ connected: true });
+    expect(hook.active?.answers.choice).toBe("Offline draft");
+    expect(notice).toHaveBeenCalledWith(expect.objectContaining({ level: "warning" }));
+  });
+  it("isolates matching request IDs and answer drafts across session navigation", () => {
+    render(); emit({ type: "dashboard:codex-requests", requests: [request(), request("other")] });
+    let hook = render(); hook.answer(codexPromptKey(request()), "choice", "Private draft");
+    hook = render({ target: { id: "thread", deviceId: "other" } });
+    expect(hook.active?.answers).toEqual({});
+    hook = render({ target: { id: "thread", deviceId: "worker" } });
+    expect(hook.active?.answers.choice).toBe("Private draft");
+    emit({ type: "dashboard:codex-request-resolved", requestId: "question", deviceId: "other" });
+    expect(render().active?.answers.choice).toBe("Private draft");
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("requires verification after an unconfirmed send and bounds failed checks", () => {
+    vi.useFakeTimers(); render(); emit({ type: "dashboard:codex-request", request: request() });
+    const key = codexPromptKey(request());
+    let hook = render(); hook.answer(key, "choice", "Compact");
+    hook = render(); hook.respond(key, "approve"); hook.timeout("response1");
+    hook = render(); hook.respond(key, "approve");
+    expect(send).toHaveBeenCalledTimes(1);
+    hook.check(key); expect(harness.post).toHaveBeenCalledExactlyOnceWith({ type: "dashboard:ready" });
+    vi.advanceTimersByTime(15_000);
+    expect(render().active?.error).toContain("could not be verified");
+    emit({ type: "dashboard:codex-requests", requests: [request()] });
+    hook = render(); expect(hook.active?.uncertain).toBe(false);
+    expect(hook.active?.answers.choice).toBe("Compact");
+    expect(send).toHaveBeenCalledTimes(1);
+    hook.respond(key, "approve");
+    expect(send).toHaveBeenCalledTimes(2);
+    emit({ type: "dashboard:action-result", requestId: "response2", action: "respondCodexServerRequest", status: "completed" });
+    expect(render().active).toBeUndefined();
+    expect(notice).toHaveBeenCalledWith({ level: "info", message: "Response sent to Codex." });
+  });
+  it("recognizes local device aliases and prevents responses to offline or missing peers", () => {
+    render({ target: { id: "thread" } });
+    emit({ type: "dashboard:codex-requests", requests: [request("host")] });
+    let hook = render(); expect(hook.active?.request.deviceId).toBe("host");
+    expect(hook.connectedTo(hook.active!)).toBe(true);
+    emit({ type: "dashboard:codex-requests", requests: [request()] });
+    hook = render({ target: { id: "thread", deviceId: "worker" }, peers: [{ id: "worker", connected: false }] });
+    expect(hook.connectedTo(hook.active!)).toBe(false);
+    hook.respond(codexPromptKey(request()), "decline"); expect(send).not.toHaveBeenCalled();
+    hook = render({ peers: [] }); expect(hook.connectedTo(hook.active!)).toBe(false);
+  });
+});

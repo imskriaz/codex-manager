@@ -104,7 +104,7 @@ export class AccountClaimAuthority {
               current.revision >= observedRevision &&
               current.claimToken &&
               current.lastSyncedAt !== undefined &&
-              Date.now() - current.lastSyncedAt < 30 * 60_000
+              Date.now() - current.lastSyncedAt < 30_000
             ) {
               return { requestId: request.requestId, ok: true, claim: current, acquired: false };
             }

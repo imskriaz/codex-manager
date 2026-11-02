@@ -64,7 +64,8 @@ it.each([undefined, null, "", " ", 42, "x".repeat(257)])("does not acknowledge a
 
 it.each(["confirmed", "changed", "goal-pause", "timeout", "disconnect"])("stops only the accepted native turn and preserves an unconfirmed outcome (%s)", async outcome => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
-  const pending = cancelNativeCodexSessionTurn(home, id, "native-turn");
+  const stopped = vi.fn();
+  const pending = cancelNativeCodexSessionTurn(home, id, "native-turn", stopped);
   const result = outcome === "confirmed" ? expect(pending).resolves.toBe(true) : expect(pending).rejects.toThrow();
   for (let i = 0; i < 50; i++) await Promise.resolve();
   const sent = socket.sent.find(value => value.method === "thread-follower-interrupt-turn");
@@ -73,7 +74,22 @@ it.each(["confirmed", "changed", "goal-pause", "timeout", "disconnect"])("stops 
   else if (outcome === "disconnect") socket.destroy();
   else message({ type: "response", requestId: sent.requestId, resultType: "success", result: { ok: true, interruptedTurnId: outcome === "changed" ? "new-turn" : "native-turn", ...(outcome === "goal-pause" ? { goalPauseError: "Storage unavailable" } : {}) } });
   await result;
+  expect(stopped).toHaveBeenCalledTimes(outcome === "confirmed" || outcome === "goal-pause" ? 1 : 0);
+  if (outcome === "confirmed" || outcome === "goal-pause") expect(getNativeCodexSessionRunning(home, id)).toBe(false);
+  if (outcome === "changed" || outcome === "timeout") expect(getNativeCodexSessionRunning(home, id)).toBe(true);
   expect(socket.sent.filter(value => value.method === "thread-follower-interrupt-turn")).toHaveLength(1);
+});
+it.each(["same-owner", "new-owner"])("does not overwrite newer runtime activity when an older Stop replies (%s)", async scenario => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
+  const pending = cancelNativeCodexSessionTurn(home, id, "old-turn");
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  const sent = socket.sent.find(value => value.method === "thread-follower-interrupt-turn");
+  const newer = snapshot("active", 2);
+  if (scenario === "new-owner") newer.sourceClientId = "another-owner";
+  message(newer);
+  message({ type: "response", requestId: sent.requestId, resultType: "success", result: { ok: true, interruptedTurnId: "old-turn" } });
+  expect(await pending).toBe(true);
+  expect(getNativeCodexSessionRunning(home, id)).toBe(true);
 });
 it("waits for a loaded conversation instead of treating a published notLoaded tab as ready", async () => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("notLoaded")); await reading;

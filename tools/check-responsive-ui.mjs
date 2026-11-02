@@ -1,3 +1,4 @@
+import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
@@ -6,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { Script } from "node:vm";
+import { checkWorkspaceUi } from './check-workspace-ui.mjs';
 import { checkInspectorUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
@@ -89,6 +91,7 @@ const mockHost = `(() => {
     for(const task of projectTasks){task.createdAt=Date.now()-86400000;task.updatedAt=Date.now()-600000;}
     projectTasks.push(...[{title:'Review release notes',stage:'planned'},{title:'Validate API scopes',stage:'planned'},{title:'Polish the mobile workspace',stage:'completed'},{title:'Confirm reconnect recovery',stage:'completed'}].map((task,index)=>({id:'docs-task-'+index,...task,prompt:'Review the project changes',manualStage:task.stage,revision:1,createdAt:Date.now()-86400000,updatedAt:Date.now()-3600000})));
   }
+  if(window.__workspaceUiFixture) { config.models[0].label="GPT-6.1-Sol extended model label"; config.models[0].reasoningEfforts=["medium","high","xhigh"]; config.defaultReasoningEffort="xhigh"; }
   const uploadFiles = new Map();
   const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
   window.__fillListFixture=()=>{
@@ -129,6 +132,7 @@ const mockHost = `(() => {
       if(message.type === 'dashboard:ready') {
         dispatch({type:'dashboard:snapshot',state});
         dispatch({type:'dashboard:connection',connected:true});
+        dispatch({type:'dashboard:codex-requests',requests:window.__uiCodexRequests || []});
       } else if(message.type === 'dashboard:workspace-presence' && message.viewing) {
         dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:setting') {
@@ -138,7 +142,15 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
-        if(message.action==='refreshToken') {if(window.__failTokenRefresh) error='Refresh token was revoked. Reauthorize this account.';else payload={notice:{level:'info',message:'Account token refreshed.'}};}
+        if(message.action==='respondCodexServerRequest') {
+          if(window.__failNextCodexReply) {window.__failNextCodexReply=false;error='Simulated response connection failure. Your answer is kept.';}
+          else {
+            window.__uiCodexRequests=(window.__uiCodexRequests||[]).filter(item=>item.id!==message.payload.codexRequestId || item.deviceId!==message.payload.targetDeviceId);
+            dispatch({type:'dashboard:codex-request-resolved',requestId:message.payload.codexRequestId,deviceId:message.payload.targetDeviceId});
+            payload={notice:{level:'info',message:'Response sent to Codex.'}};
+          }
+        }
+        else if(message.action==='refreshToken') {if(window.__failTokenRefresh) error='Refresh token was revoked. Reauthorize this account.';else payload={notice:{level:'info',message:'Account token refreshed.'}};}
         else if(message.action==='setAccountTags') {
           const account=(message.payload.targetDeviceId?state.peerAccounts?.[message.payload.targetDeviceId]:state.accounts)?.find(account=>account.id===message.accountId);
           if(window.__failTagSave) {window.__failTagSave=false;error='Storage full. Your draft is kept.';}
@@ -444,6 +456,7 @@ try {
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
+    if(process.argv.includes('--workspace-ui')) await page.addInitScript(()=>{window.__workspaceUiFixture=true;});
     if(process.argv.includes('--dark')) await page.addInitScript(()=>{window.__tagTheme='dark';});
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
@@ -468,6 +481,22 @@ try {
       await page.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--requests')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await page.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor();
+      await checkSessionRequestsUi(page, width, height, output, parentId, runningId);
+      assert.deepEqual(errors, [], 'Session approval and question browser errors');
+      results.push({width,height,checks:'session approvals, choices, custom and secret answers, navigation, failure, offline, reconnect, duplicates'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--workspace-ui')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await checkWorkspaceUi(page, width, height, output);
+      assert.deepEqual(errors, [], 'Workspace UI has no browser runtime errors');
+      results.push({ width, height, checks: 'workspace icons, mobile composer, settings, attachments, focus, short viewport' });
+      await context.close();
+      continue;
     }
     if (process.argv.includes('--composer')) {
       await page.goto(`${origin}/workspace/${parentId}`);
@@ -1283,7 +1312,7 @@ try {
       await warning.getByRole('button',{name:'Reset usage',exact:true}).click();
       const reset=page.getByRole('dialog',{name:'Reset your usage?',exact:true});
       await reset.waitFor();
-      await reset.getByRole('button',{name:'Cancel',exact:true}).click();
+      await reset.getByRole('button',{name:snapshot.copy.closeModal,exact:true}).click();
       assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='consumeResetCredit').length),resetsBefore,'Cancelling a reset from the warning consumes no credit');
       await page.evaluate(() => { window.__uiSnapshot.peerAccounts['warning-remote'][0].runningDeviceName='Another PC'; window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}})); });
       await warn('warning-remote');
@@ -1641,17 +1670,33 @@ try {
     assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).opacity), "0", "Hover replaces the spinner with the compact actions trigger");
     assert.equal(await status.locator(".cli-session-row-menu-wrap > button").count(), 1, "Running status keeps its actions in the same slot");
     await page.mouse.move(width - 2, height - 2);
+    await page.evaluate(() => {
+      const state = window.__uiSnapshot;
+      const account = state.accounts.find(item => item.id === state.currentAccountId) ?? state.accounts[0];
+      if (account) {
+        account.metrics = [{ key: "hourly", label: "5h", percentage: 95, visible: true }, { key: "weekly", label: "Weekly", percentage: 20, visible: true }];
+        window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state } }));
+      }
+    });
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere", { exact: true }).waitFor();
-    assert.equal(await page.locator('.cli-composer-unavailable .cli-running-quota').count(), 1, 'Running elsewhere retains current account quota beside the turn settings');
-    assert.ok(await page.locator('.cli-running-quota').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Running quota fits the status bar');
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
+    const inlineQuota = lockedStatus.locator(".cli-running-quota-inline");
+    assert.equal(await inlineQuota.isVisible(), width <= 760, "Inline quota appears in the mobile status line");
+    assert.equal(await lockedStatus.locator(":scope > .cli-running-quota").isVisible(), width > 760, "The separate quota meters are desktop-only");
+    if (width <= 760) {
+      const hasAccount = await page.evaluate(() => window.__uiSnapshot.accounts.length > 0);
+      assert.equal((await inlineQuota.innerText()).trim(), hasAccount ? "· 95%/20%" : "· —");
+      const quotaBounds = await inlineQuota.boundingBox(), statusBounds = await lockedStatus.boundingBox();
+      assert.ok(quotaBounds.x >= statusBounds.x && quotaBounds.x + quotaBounds.width <= statusBounds.x + statusBounds.width, "Inline quota remains visible on narrow screens");
+      assert.ok(quotaBounds.y >= statusBounds.y && quotaBounds.y + quotaBounds.height <= statusBounds.y + statusBounds.height, "Quota stays inside the single status row");
+    }
     await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).click();
     await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).waitFor();
     await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).click();
     await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).waitFor();
     assert.equal(await lockedStatus.getByRole('button',{name:'Stop turn',exact:true}).isEnabled(),true,'An owned remote turn exposes Stop');
-    assert.ok((await lockedStatus.boundingBox()).height <= (width <= 760 ? 68 : 34), "Session status keeps quota visible in one desktop row or two compact mobile rows");
+    assert.ok((await lockedStatus.boundingBox()).height <= (width <= 760 ? 40 : 34), "Session status keeps quota in one compact row on every viewport");
     assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
     await page.evaluate(({ sessionId }) => {
       const live = { sessionId, streamId: "ui-check-stream", sequence: 1, updatedAt: Date.now(), status: "running", messages: [] };
@@ -1675,7 +1720,7 @@ try {
     if (width <= 760) {
       assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
       const header = await page.locator(".cli-conversation-header").boundingBox();
-      assert.ok(header.height <= 44, `Mobile session header fits one row (${header.height}px)`);
+      assert.ok(header.height <= 46, `Mobile session header fits one row with 44px controls (${header.height}px)`);
       assert.equal(await page.locator(".cli-mobile-back").count(), 0, "Sidebar icon replaces duplicate Sessions button");
       assert.equal(await page.locator(".cli-conversation-actions > button:not(.cli-inspector-toggle):visible").count(), 0, "Secondary actions live in the mobile menu");
       const title = await page.locator(".cli-conversation-title h1").boundingBox();
@@ -2155,7 +2200,7 @@ try {
     assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-context-toggle").count(), 0, "Dashboard has only its relevant left floating button");
     const railToggle=page.locator('.cli-rail-toggle');
     if(await railToggle.getAttribute('aria-expanded')==='true') assert.ok(await page.locator('.cli-rail-brand img').isVisible(),'Expanded rail shows its logo in its header');
-    else assert.equal(await page.locator('#dashboard-sidebar-toggle-slot .cli-rail-toggle img').count(),1,'Collapsed rail logo sits inside the content header');
+    else assert.equal(await page.locator('#dashboard-sidebar-toggle-slot .cli-rail-toggle svg[aria-hidden="true"][focusable="false"]').count(),1,'Collapsed sidebar control uses its accessible SVG icon inside the content header');
     assert.equal(await page.locator(".hero .brand-logo").isVisible(), false, "No duplicate dashboard logo");
     if (width <= 760) {
       assert.ok(await page.locator(".hero").evaluate(element => parseFloat(getComputedStyle(element).paddingTop) <= 4), "Small dashboards have no empty top spacer");

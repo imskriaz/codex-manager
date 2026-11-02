@@ -222,11 +222,17 @@ export async function startNativeCodexSessionTurn(home: string, id: string, turn
 }
 
 /** Only the exact turn accepted from this caller may be interrupted. */
-export async function cancelNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string): Promise<boolean> {
+export async function cancelNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, onStopped?: () => void): Promise<boolean> {
   if (!expectedTurnId || expectedTurnId.length > 256) throw new Error("The turn to stop could not be verified. Refresh before retrying.");
+  await readNativeCodexSessionRunning(home, id);
+  const entry = observations.get(`${path.resolve(home)}:${id}`);
+  const owner = entry?.owner, revision = entry?.revision;
   const reply = await requestNativeOwner(home, id, "thread-follower-interrupt-turn", { conversationId: id, mode: "user-stop", expectedTurnId });
   if (!reply) return false;
   if (reply.result?.ok !== true || reply.result.interruptedTurnId !== expectedTurnId) throw new Error("Codex did not confirm stopping this turn. It may have changed; refresh before retrying.");
+  // A late acknowledgement must never overwrite a newer owner's runtime state.
+  if (entry && observations.get(`${path.resolve(home)}:${id}`) === entry && entry.owner === owner && entry.revision === revision) settle(entry, false);
+  onStopped?.();
   if (typeof reply.result.goalPauseError === "string" && reply.result.goalPauseError) throw new Error(`The turn stopped, but its goal could not pause: ${reply.result.goalPauseError}`);
   return true;
 }

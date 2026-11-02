@@ -430,6 +430,7 @@ export function ToolIcon(props: {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      focusable="false"
     >
       <path d={paths[props.kind]} />
     </svg>
