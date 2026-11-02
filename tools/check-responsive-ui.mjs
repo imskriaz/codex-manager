@@ -469,6 +469,71 @@ try {
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
     }
+    if (process.argv.includes('--composer')) {
+      await page.goto(`${origin}/workspace/${parentId}`);
+      const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
+      await composer.waitFor();
+      const waitForStoredDraft = (text, count) => page.waitForFunction(({ sessionId, text, count }) => new Promise(resolve => {
+        const request = indexedDB.open('codex-manager-cache');
+        request.onsuccess = () => {
+          const read = request.result.transaction('cli-sessions').objectStore('cli-sessions').getAll();
+          read.onsuccess = () => { request.result.close(); resolve(read.result.some(row => row.key.startsWith('composer:') && row.key.includes(sessionId) && row.value.text === text && row.value.attachments.length === count)); };
+        };
+      }), { sessionId: parentId, text, count });
+      for (const scenario of ['unchanged', 'cancelled', 'edited', 'identical-edit', 'storage-full']) {
+        const text = `Submitted ${scenario}`;
+        await composer.fill(text);
+        await page.locator('.cli-composer input[type="file"]').setInputFiles({ name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep until confirmed') });
+        await page.getByRole('button', { name: 'Remove note.txt', exact: true }).waitFor();
+        await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });
+        await page.getByRole('button', { name: 'Send message', exact: true }).click();
+        await page.waitForFunction(() => window.__heldSendResult);
+        assert.equal(await composer.inputValue(), '', 'Send immediately clears the message');
+        assert.equal(await page.locator('.cli-attachment-list').count(), 0, 'Send immediately clears attachments');
+        await page.evaluate(scenario => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, status: scenario === 'cancelled' ? 'cancelled' : 'failed', error: 'Connection closed before confirmation. Verify before retrying.' } })), scenario);
+        await page.waitForFunction(text => document.querySelector('textarea[name="codex-message"]')?.value === text, text);
+        assert.equal(await page.getByRole('button', { name: 'Remove note.txt', exact: true }).count(), 1, 'Unconfirmed sends restore attachments');
+        const edited = scenario === 'edited' || scenario === 'identical-edit';
+        const expected = scenario === 'edited' ? 'Keep this newer draft' : text;
+        if (edited) await composer.fill(expected);
+        if (scenario === 'storage-full' && width !== 320) {
+          await waitForStoredDraft(text, 1);
+          await page.evaluate(() => {
+            window.__composerTransaction = IDBDatabase.prototype.transaction;
+            IDBDatabase.prototype.transaction = function(stores, mode, ...rest) {
+              if (mode === 'readwrite') throw new DOMException('Storage full', 'QuotaExceededError');
+              return window.__composerTransaction.call(this, stores, mode, ...rest);
+            };
+          });
+        }
+        await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult })));
+        await page.waitForFunction(text => document.querySelector('textarea[name="codex-message"]')?.value === text, edited ? expected : '');
+        assert.equal(await page.locator('.cli-attachment-list').count(), edited ? 1 : 0, 'A late success clears only an unchanged restored draft');
+        if (scenario === 'storage-full' && width !== 320) {
+          await page.locator('.dashboard-notice').filter({ hasText: /Browser storage could not (clear the saved draft|save your draft)/ }).waitFor();
+          await page.evaluate(() => { IDBDatabase.prototype.transaction = window.__composerTransaction; });
+        }
+        await page.evaluate(() => {
+          window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult }));
+          window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, status: 'failed', error: 'Duplicate failure' } }));
+        });
+        assert.equal(await composer.inputValue(), edited ? expected : '', 'Duplicate results do not resurrect or overwrite the draft');
+        if (!edited && scenario !== 'storage-full' && width !== 320) await waitForStoredDraft('', 0);
+        if (scenario === 'unchanged' && width !== 320) {
+          await page.reload();
+          await composer.waitFor();
+          assert.equal(await composer.inputValue(), '', 'A confirmed sent draft stays cleared after reopening');
+        }
+        await composer.fill('Clear fixture draft');
+        await composer.fill('');
+        if (edited) await page.getByRole('button', { name: 'Remove note.txt', exact: true }).click();
+        if (width !== 320) await waitForStoredDraft('', 0);
+      }
+      assert.deepEqual(errors, [], 'Composer recovery has no browser errors');
+      await page.screenshot({ path: path.join(output, `composer-confirmed-${width}.png`) });
+      results.push({ width, height, checks: 'Immediate clear, unconfirmed recovery, late completion, newer and identical edits, duplicate results, storage-full warning, durable clear and reopen' });
+      await context.close(); continue;
+    }
     if (process.argv.includes('--auto-resume')) {
       const openSettings = async () => {
         if (width <= 760) {

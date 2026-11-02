@@ -322,7 +322,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [search, setSearch] = useState("");
 
   const [attachmentReading, setAttachmentReading] = useState(false);
-  const submittedDrafts = useRef(new Map<string, ComposerDraft & { key: string }>());
+  const submittedDrafts = useRef(new Map<string, ComposerDraft & { key: string; failedDraft?: ComposerDraft }>());
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
@@ -419,12 +419,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const [key, value] of Object.entries(composerDrafts)) {
       if (!draftReadyKeys.has(key) || scheduledDrafts.current.get(key) === value) continue;
       scheduledDrafts.current.set(key, value);
-      const pending = [...submittedDrafts.current.values()].reverse().find(submitted => submitted.key === key);
+      const pending = [...submittedDrafts.current.values()].reverse().find(submitted => submitted.key === key && !submitted.failedDraft);
       const durable = pending && !value.text && !value.attachments.length ? { ...value, text: pending.text, attachments: pending.attachments } : value;
       void writeCliComposerDraft(key, durable).then((saved) => {
-        if (!saved && (durable.text || durable.attachments.length) && !draftStorageWarned.current) {
+        if (!saved && !draftStorageWarned.current) {
           draftStorageWarned.current = true;
-          reportLocalFeedback({ level: 'warning', message: 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.' });
+          reportLocalFeedback({ level: 'warning', message: durable.text || durable.attachments.length
+            ? 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.'
+            : 'Browser storage could not clear the saved draft. It may reappear after reopening.' });
         }
       });
     }
@@ -468,13 +470,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       }
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
-      submittedDrafts.current.delete(result.requestId);
+      // Retain unconfirmed sends for late success without discarding newer edits.
+      if (result.status === "completed") submittedDrafts.current.delete(result.requestId);
+      else if (submitted.failedDraft) continue;
       setComposerDrafts((current) => {
         const draft = current[submitted.key];
         if (!draft) return current;
-        return { ...current, [submitted.key]: result.status === "completed"
-          ? { ...draft }
-          : restoreFailedCliComposerDraft(draft, submitted) };
+        const next = result.status === "completed"
+          ? submitted.failedDraft === draft ? acknowledgeCliComposerDraft(draft, submitted) : { ...draft }
+          : restoreFailedCliComposerDraft(draft, submitted);
+        if (result.status !== "completed") submitted.failedDraft = next;
+        return { ...current, [submitted.key]: next };
       });
     }
   }, [props.submissionResults]);
@@ -860,6 +866,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return;
     }
     submittedDrafts.current.set(requestId, submitted);
+    for (const [id, previous] of submittedDrafts.current) {
+      if (submittedDrafts.current.size <= 128) break;
+      if (previous.failedDraft) submittedDrafts.current.delete(id);
+    }
     // Keep the submitted draft durable until the host confirms completion.
     reportLocalFeedback({ level: "info", message: canSteer ? "Sending your follow-up to the running turn…" : props.selectedSession ? "Codex is working on your request…" : "Starting a new Codex chat…" });
   };
