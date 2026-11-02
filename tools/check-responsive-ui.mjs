@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { Script } from "node:vm";
-import { checkWorkspaceUi } from './check-workspace-ui.mjs';
+import { checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
 import { checkInspectorUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
@@ -81,6 +81,7 @@ const mockHost = `(() => {
   const sessions = ${JSON.stringify(sessions)};
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
+  if(window.__scrollFixture) { for(const session of sessions.filter(item=>item.id===sessions[0].id)) Object.assign(session,{status:'running',locked:true}); messages.push({id:'scroll-overflow',kind:'message',role:'assistant',text:Array(80).fill('Scroll fixture line').join(String.fromCharCode(10,10))}); }
   if(location.search.includes('closed-project')) { sessions[0].projectPath = 'D:/closed-worktree'; sessions[0].title = 'Closed worktree task'; }
   const taskSessions = [], taskComments = [{id:'timeline-comment',taskId:'session:'+${JSON.stringify(parentId)},author:'Reviewer',text:'Timeline review comment',createdAt:1792497600000}], projectTasks = [
     {id:'release-group',title:'Release work',prompt:'Prepare the release',stage:'planned',manualStage:'planned',revision:1,createdAt:Date.now()-7200000,updatedAt:Date.now()-600000},
@@ -110,7 +111,7 @@ const mockHost = `(() => {
   let logCleared = false;
   const toolJobs = new Map();
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data:structuredClone(data)}));
-  window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
+  window.__uiActions = []; window.__uiSessions = sessions; window.__uiMessages = messages; window.__uiSnapshot = state; window.__uiSettingResults = [];
   if(window.__tagFixture) { if(state.accounts[0]) state.accounts[0].enabled=true; try { const saved=JSON.parse(localStorage.getItem('fixture-account-tags')||'{}'); for(const account of state.accounts) if(saved[account.id]) account.tags=saved[account.id]; } catch {} }
   if(window.__tagTheme) state.settings.dashboardTheme=window.__tagTheme;
   if(window.__usageFixture) {
@@ -461,7 +462,8 @@ try {
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
-    if(process.argv.includes('--workspace-ui')) await page.addInitScript(()=>{window.__workspaceUiFixture=true;window.__catalogRace=true;});
+    if(process.argv.includes('--workspace-ui') || process.argv.includes('--scroll-ui')) await page.addInitScript(()=>{window.__workspaceUiFixture=true;window.__catalogRace=true;});
+    if(process.argv.includes('--scroll-ui')) await page.addInitScript(()=>{window.__scrollFixture=true;});
     if(process.argv.includes('--dark')) await page.addInitScript(()=>{window.__tagTheme='dark';});
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
@@ -495,11 +497,12 @@ try {
       results.push({width,height,checks:'session approvals, choices, custom and secret answers, navigation, failure, offline, reconnect, duplicates'});
       await context.close(); continue;
     }
-    if (process.argv.includes('--workspace-ui')) {
+    if (process.argv.includes('--workspace-ui') || process.argv.includes('--scroll-ui')) {
       await page.goto(origin + '/workspace/' + parentId);
-      await checkWorkspaceUi(page, width, height, output);
+      if (process.argv.includes('--scroll-ui')) await checkScrollUi(page, width, height, output);
+      else await checkWorkspaceUi(page, width, height, output);
       assert.deepEqual(errors, [], 'Workspace UI has no browser runtime errors');
-      results.push({ width, height, checks: 'workspace icons, mobile composer, settings, attachments, focus, short viewport' });
+      results.push({ width, height, checks: process.argv.includes('--scroll-ui') ? 'scroll hover and focus, actual animation, reduced motion, running and completed turns, bottom visibility, short history, reconnect toasts' : 'workspace icons, mobile composer, settings, attachments, focus, short viewport' });
       await context.close();
       continue;
     }

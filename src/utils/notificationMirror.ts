@@ -2,6 +2,7 @@ import * as crypto from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 import * as vscode from "vscode";
 import type { DashboardActionPrompt } from "../domain/dashboard/types";
+import { publishDashboardRealtime } from "../services/dashboardRealtime";
 
 export type MirroredNotificationLevel = "info" | "warning" | "error";
 
@@ -68,10 +69,8 @@ const promptContext = new AsyncLocalStorage<DashboardActionPrompt>();
 export function withMirroredActionPrompt<T>(prompt: DashboardActionPrompt, show: () => T): T {
   return promptContext.run(prompt, show);
 }
-const TRANSIENT_NOTICE_DURATION_MS = 10_000;
 let installed = false;
 let transientNoticeUsers = 0;
-let activeStatusMessage: vscode.Disposable | undefined;
 let pendingNativeChoices = 0;
 let latestChoiceGeneration = 0;
 let originals: {
@@ -91,7 +90,7 @@ export function subscribeToVscodeNotifications(listener: NotificationListener): 
   };
 }
 
-/** Show passive extension notices discreetly; actionable prompts remain native. */
+/** Route passive extension notices to dashboard toasts; actionable prompts remain native. */
 export function enableTransientVscodeNotices(): vscode.Disposable {
   transientNoticeUsers += 1;
   install();
@@ -102,15 +101,13 @@ export function enableTransientVscodeNotices(): vscode.Disposable {
       disposed = true;
       transientNoticeUsers -= 1;
       if (transientNoticeUsers === 0) {
-        activeStatusMessage?.dispose();
-        activeStatusMessage = undefined;
         if (listeners.size === 0) uninstall();
       }
     }
   };
 }
 
-/** Command Palette warnings can be the only visible failure result. */
+/** Command Palette feedback can be the only visible action result. */
 export function runWithNativeCommandWarnings<T>(task: () => T): T {
   return commandNotificationContext.run(true, task);
 }
@@ -151,8 +148,6 @@ function uninstall(): void {
   originals = undefined;
   installed = false;
   pendingResponses.clear();
-  activeStatusMessage?.dispose();
-  activeStatusMessage = undefined;
 }
 
 function wrap(level: MirroredNotificationLevel, original: NotificationMethod): NotificationMethod {
@@ -162,6 +157,7 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
     const actions = extractActions(args);
     if (!message) return original.apply(vscode.window, args);
 
+    if (args.length === 1) publishDashboardRealtime({ type: "dashboard:notice", level, message });
     const notificationId = listeners.size > 0 && actions.length > 0 ? crypto.randomUUID() : undefined;
     if (listeners.size) {
       const actionPrompt = promptContext.getStore();
@@ -175,28 +171,8 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
       }
     }
 
-    // VS Code does not expose a handle for closing native message pop-ups. A
-    // status-bar message can be replaced and disposed without clearing notices
-    // from VS Code itself or from other extensions.
     const compactArgs = args.length && typeof args[0] === "string" ? [message, ...args.slice(1)] : args;
-    if (transientNoticeUsers && level !== "error" && args.length === 1 &&
-        !(level === "warning" && commandNotificationContext.getStore())) {
-      try {
-        activeStatusMessage?.dispose();
-        activeStatusMessage = vscode.window.setStatusBarMessage(
-          `${level === "warning" ? "$(warning)" : "$(info)"} ${message}`,
-          TRANSIENT_NOTICE_DURATION_MS
-        );
-        return Promise.resolve(undefined);
-      } catch (error) {
-        console.warn("[codexManager] transient notice failed; using native notification", error);
-      }
-    }
-
-    if (transientNoticeUsers) {
-      activeStatusMessage?.dispose();
-      activeStatusMessage = undefined;
-    }
+    if (transientNoticeUsers && args.length === 1 && !commandNotificationContext.getStore()) return Promise.resolve(undefined);
 
     const nativeResult = actions.length && transientNoticeUsers
       ? showLatestNativeChoice(original, compactArgs)

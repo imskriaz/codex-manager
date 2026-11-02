@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
+import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import {
   enableTransientVscodeNotices,
   compactNotificationMessage,
@@ -83,34 +84,40 @@ describe("VS Code notification mirror", () => {
     } finally { resolution.dispose(); subscription.dispose(); }
   });
 
-  it("replaces passive notices and clears the last one on extension shutdown", async () => {
+  it("routes passive notices to dashboard toasts without status-bar or native notifications", async () => {
     const nativeInfo = vi.mocked(vscode.window.showInformationMessage);
     const nativeWarning = vi.mocked(vscode.window.showWarningMessage);
-    const first = { dispose: vi.fn() };
-    const second = { dispose: vi.fn() };
-    vi.mocked(vscode.window.setStatusBarMessage).mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const nativeError = vi.mocked(vscode.window.showErrorMessage);
+    const notices = vi.fn(), mirrored = vi.fn();
+    const stop = subscribeDashboardRealtime(notices);
+    const subscription = subscribeToVscodeNotifications(mirrored);
     const quietNotices = enableTransientVscodeNotices();
 
     await expect(vscode.window.showInformationMessage("Quota refreshed.")).resolves.toBeUndefined();
     await expect(vscode.window.showWarningMessage("Quota is low.")).resolves.toBeUndefined();
+    await expect(vscode.window.showErrorMessage("Refresh failed.")).resolves.toBeUndefined();
 
     expect(nativeInfo).not.toHaveBeenCalled();
     expect(nativeWarning).not.toHaveBeenCalled();
-    expect(first.dispose).toHaveBeenCalledOnce();
-    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(1, "$(info) Quota refreshed.", 10_000);
-    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(2, "$(warning) Quota is low.", 10_000);
-
+    expect(nativeError).not.toHaveBeenCalled();
+    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+    expect(notices.mock.calls.map(([notice]) => notice)).toEqual([
+      { type: 'dashboard:notice', level: 'info', message: 'Quota refreshed.' },
+      { type: 'dashboard:notice', level: 'warning', message: 'Quota is low.' },
+      { type: 'dashboard:notice', level: 'error', message: 'Refresh failed.' }
+    ]);
+    expect(mirrored).toHaveBeenCalledTimes(3);
     quietNotices.dispose();
-    expect(second.dispose).toHaveBeenCalledOnce();
+    stop(); subscription.dispose();
   });
 
-  it("keeps actionable and error notifications native", async () => {
+  it("keeps actionable notifications native and surfaces Command Palette errors", async () => {
     const nativeInfo = vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce("Reload" as never);
     const nativeError = vi.mocked(vscode.window.showErrorMessage).mockResolvedValueOnce(undefined);
     const quietNotices = enableTransientVscodeNotices();
 
     await expect(vscode.window.showInformationMessage("Reload now?", "Reload", "Later")).resolves.toBe("Reload");
-    await vscode.window.showErrorMessage("Refresh failed.");
+    await runWithNativeCommandWarnings(() => vscode.window.showErrorMessage("Refresh failed."));
 
     expect(nativeInfo).toHaveBeenCalledWith("Reload now?", "Reload", "Later");
     expect(nativeError).toHaveBeenCalledWith("Refresh failed.");
@@ -118,10 +125,7 @@ describe("VS Code notification mirror", () => {
     quietNotices.dispose();
   });
 
-  it("keeps Command Palette warnings native and clears an earlier passive notice", async () => {
-    const status = { dispose: vi.fn() };
-    const commandSuccess = { dispose: vi.fn() };
-    vi.mocked(vscode.window.setStatusBarMessage).mockReturnValueOnce(status).mockReturnValueOnce(commandSuccess);
+  it("keeps Command Palette feedback visible without using the status bar", async () => {
     const nativeWarning = vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
     const nativeInfo = vi.mocked(vscode.window.showInformationMessage);
     const quietNotices = enableTransientVscodeNotices();
@@ -129,12 +133,11 @@ describe("VS Code notification mirror", () => {
     await vscode.window.showInformationMessage("Ready.");
     await runWithNativeCommandWarnings(() => vscode.window.showWarningMessage("Refresh failed."));
 
-    expect(status.dispose).toHaveBeenCalledOnce();
     expect(nativeWarning).toHaveBeenCalledWith("Refresh failed.");
     await runWithNativeCommandWarnings(() => vscode.window.showInformationMessage("Refresh complete."));
-    expect(nativeInfo).not.toHaveBeenCalled();
+    expect(nativeInfo).toHaveBeenCalledExactlyOnceWith('Refresh complete.');
+    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
     quietNotices.dispose();
-    expect(commandSuccess.dispose).toHaveBeenCalledOnce();
   });
 
   it("replaces an unanswered native choice when a newer choice arrives", async () => {

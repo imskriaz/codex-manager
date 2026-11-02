@@ -113,9 +113,11 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain('<div class="cli-message-region"><section ref={messageViewportRef}');
-    expect(source).toMatch(/<\/section>\s*\{showLatestButton \|\| currentTurnRunning \? <button/);
+    expect(source).toMatch(/<\/section>\s*\{showLatestButton \? <button/);
     expect(css).toContain('.cli-scroll-latest { position: absolute;');
     expect(css).toMatch(/\.cli-scroll-latest \{[^}]*left: 50%; bottom: 12px; transform: translateX\(-50%\);/);
+    expect(css).toContain('.cli-workspace .cli-scroll-latest {');
+    expect(css).toMatch(/@keyframes cli-scroll-pulse \{[^\n]*translateY\(1px\)[^\n]*translateY\(-2px\)/);
   });
 
   it("keeps each session title and compact project metadata on one line", () => {

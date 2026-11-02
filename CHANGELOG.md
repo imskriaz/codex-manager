@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.4-pre.2
+
+- Route passive extension notices to dashboard toasts instead of VS Code's status bar, retaining Command Palette feedback and actionable prompts.
+- Keep the centered scroll-to-latest button stationary on hover and focus, and hide it at the bottom even while a session is running.
+- Make running dots visibly bounce while the button is shown, retaining static dots for reduced motion.
+
 ## 1.6.4-pre.1
 
 - Open existing conversation history without waiting for optional runtime inspection, preserve late model catalogs, and restore the conversation's model and reasoning settings.

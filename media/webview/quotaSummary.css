@@ -12889,14 +12889,14 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-message-region { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 .cli-message-region > .cli-message-viewport { width: 100%; height: 100%; box-sizing: border-box; }
 .cli-workspace .cli-message-viewport { position: relative; overflow-y: auto; }
-.cli-scroll-latest { position: absolute; z-index: 5; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--border-default); border-radius: 50%; background: var(--bg-elevated, var(--bg-surface)); color: var(--text-secondary); box-shadow: 0 3px 10px rgb(0 0 0 / 12%); cursor: pointer; }
+.cli-workspace .cli-scroll-latest { position: absolute; z-index: 5; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--border-default); border-radius: 50%; background: var(--bg-elevated, var(--bg-surface)); color: var(--text-secondary); box-shadow: 0 3px 10px rgb(0 0 0 / 12%); cursor: pointer; }
 .cli-scroll-dots { display: flex; gap: 3px; }
-.cli-scroll-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: cli-scroll-pulse 1.2s ease-in-out infinite; }
+.cli-scroll-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: cli-scroll-pulse 1.2s ease-in-out infinite; }
 .cli-scroll-dots i:nth-child(2) { animation-delay: .15s; }
 .cli-scroll-dots i:nth-child(3) { animation-delay: .3s; }
-@keyframes cli-scroll-pulse { 0%,80%,100% { opacity: .35; } 40% { opacity: 1; } }
+@keyframes cli-scroll-pulse { 0%,80%,100% { opacity: .4; transform: translateY(1px); } 40% { opacity: 1; transform: translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .cli-scroll-dots i { animation: none; } }
-@media (pointer: coarse) { .cli-scroll-latest { width: 44px; height: 44px; } }
+@media (pointer: coarse) { .cli-workspace .cli-scroll-latest { width: 44px; height: 44px; } }
 .cli-scroll-latest svg { width: 13px; height: 13px; transform: rotate(180deg); color: var(--accent); }
 .cli-scroll-latest:hover, .cli-scroll-latest:focus-visible { background: var(--bg-hover); }
 .cli-context-empty-start { align-self: center; justify-self: center; gap: 5px; max-width: 220px; }

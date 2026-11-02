@@ -96,22 +96,70 @@ export async function checkWorkspaceUi(page, width, height, output) {
   await page.screenshot({ path: path.join(output, 'workspace-composer-' + width + '.png') });
   const actions = await page.evaluate(() => window.__uiActions.filter(action => ['sendCodexCliSessionMessage', 'startCodexCliSession'].includes(action.action)));
   assert.deepEqual(actions, [], 'Changing settings and attachments never submits a turn');
-  await page.evaluate(() => {
-    for (const session of window.__uiSessions.filter(item => item.id === window.__uiSessions[0].id)) {
-      session.status = 'running'; session.locked = true; session.updatedAt = new Date().toISOString();
-    }
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', requestId: 'realtime-scroll', action: 'listCodexCliSessions', status: 'completed', payload: { cliSessions: window.__uiSessions, realtimeRevision: 101 } } }));
-  });
+}
+
+export async function checkScrollUi(page, width, height, output) {
+  await page.locator('.cli-conversation.has-session').waitFor();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const latest = page.getByRole('button', { name: 'Scroll to latest message', exact: true });
+  const viewport = page.locator('.cli-message-viewport');
+  await page.getByText('Scroll fixture line', { exact: false }).first().waitFor();
+  await page.waitForFunction(() => document.querySelector('.cli-message-viewport')?.getAttribute('aria-busy') === 'false');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await viewport.evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+  await page.waitForFunction(() => !document.querySelector('.cli-scroll-latest'));
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await latest.count(), 0, 'Running sessions hide the scroll control while following the bottom');
+  await viewport.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
   await latest.waitFor();
   const latestBox = await latest.boundingBox(), regionBox = await page.locator('.cli-message-region').boundingBox();
+  if (width <= 760) assert.ok(latestBox.width >= 44 && latestBox.height >= 44, 'Scroll control retains its mobile touch target');
   assert.ok(Math.abs(latestBox.x + latestBox.width / 2 - regionBox.x - regionBox.width / 2) <= 2, 'Scroll control is centered over the conversation');
   assert.equal(await latest.locator('.cli-scroll-dots i').count(), 3);
   assert.equal(await latest.locator('i').first().evaluate(el => getComputedStyle(el).animationName), 'none', 'Reduced motion disables the running animation');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   assert.equal(await latest.locator('i').first().evaluate(el => getComputedStyle(el).animationName), 'cli-scroll-pulse');
+  const frames = await latest.locator('i').first().evaluate(el => {
+    const animation = el.getAnimations()[0];
+    animation.pause(); animation.currentTime = 0; const first = getComputedStyle(el).transform;
+    animation.currentTime = 480; const middle = getComputedStyle(el).transform;
+    animation.play(); return [first, middle];
+  });
+  assert.notEqual(frames[0], frames[1], 'Running dots visibly move rather than only declaring an animation');
+  await latest.hover();
+  await page.waitForTimeout(150);
+  const hovered = await latest.boundingBox();
+  assert.ok(Math.abs(hovered.x - latestBox.x) < 1 && Math.abs(hovered.y - latestBox.y) < 1, 'Hover preserves the scroll control position');
+  await latest.focus();
+  const focused = await latest.boundingBox();
+  assert.ok(Math.abs(focused.x - latestBox.x) < 1 && Math.abs(focused.y - latestBox.y) < 1, 'Focus preserves the scroll control position');
   await page.screenshot({ path: path.join(output, 'workspace-scroll-running-' + width + '.png') });
   await latest.click();
+  await latest.waitFor({ state: 'detached' });
+  assert.ok(await viewport.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop <= 16), 'Clicking scroll reaches the bottom and hides the control while still running');
+  await viewport.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+  await latest.waitFor();
+  await page.evaluate(() => {
+    for (const session of window.__uiSessions.filter(item => item.id === window.__uiSessions[0].id)) {
+      session.status = 'idle'; session.locked = false; session.updatedAt = new Date(Date.now() + 1_000).toISOString();
+    }
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', requestId: 'realtime-scroll-done', action: 'listCodexCliSessions', status: 'completed', payload: { cliSessions: window.__uiSessions, realtimeRevision: 102 } } }));
+  });
+  await page.locator('.cli-completed-work > summary').last().click();
+  await viewport.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+  await latest.locator('svg').waitFor();
+  assert.equal(await latest.locator('i').count(), 0, 'Completed turns return to the scroll arrow');
+  await latest.click();
+  await latest.waitFor({ state: 'detached' });
+  await page.evaluate(() => {
+    window.__uiMessages.splice(0, window.__uiMessages.length, { id: 'short-scroll', kind: 'message', role: 'assistant', text: 'Short scroll fixture' });
+    const shortSession = window.__uiSessions.find(item => item.status === 'running' && !item.parentSessionId);
+    history.pushState(null, '', '/workspace/' + shortSession.id);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await page.getByText('Short scroll fixture', { exact: true }).waitFor();
+  assert.ok(await viewport.evaluate(el => el.scrollHeight <= el.clientHeight + 2), 'Short running history fits the viewport');
+  assert.equal(await latest.count(), 0, 'Short running history needs no scroll control');
   await page.goto(new URL('/', page.url()).href);
   await page.locator('#dashboard-main').waitFor();
   const connection = async connected => page.evaluate(connected => {
