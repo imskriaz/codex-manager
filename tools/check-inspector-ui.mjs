@@ -2,6 +2,27 @@ import { assertFlyoutNear } from './check-lists-api-ui.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+export async function checkReviewsUi(page, { origin, parentId, width, output }) {
+  await page.goto(`${origin}/workspace/${parentId}`);
+  await page.getByRole('textbox', {name:'Message Codex',exact:true}).waitFor();
+  const show = page.getByRole('button', {name:'Show workspace tools',exact:true});
+  if (await show.isVisible()) await show.click();
+  await page.getByRole('button', {name:'Add workspace tool',exact:true}).click();
+  await page.getByRole('menuitem', {name:'Reviews',exact:true}).click();
+  await page.getByText('Review changes', {exact:true}).waitFor();
+  const row = page.locator('.cli-review-file-list > button').first();
+  await row.waitFor();
+  await page.screenshot({path:path.join(output,`workspace-reviews-${width}.png`),animations:'disabled'});
+  await row.focus(); await page.keyboard.press('Enter');
+  await page.getByRole('table', {name:/Changes in/}).waitFor();
+  await page.getByRole('columnheader', {name:'Before',exact:true}).waitFor();
+  await page.getByRole('columnheader', {name:'After',exact:true}).waitFor();
+  assert.ok(await page.locator('.cli-review-detail').evaluate(element => element.scrollWidth <= element.clientWidth + 1),'Review content stays inside its panel');
+  await page.screenshot({path:path.join(output,`workspace-review-detail-${width}.png`),animations:'disabled'});
+  await page.getByRole('button', {name:'Open in Files',exact:true}).click();
+  await page.locator('.cli-file-editor .cm-content').waitFor();
+}
+
 // Called only by the intercepted responsive harness; every mutation stays in its fixture.
 export async function checkInspectorUi(page, { origin, parentId, width, output }) {
   const exact = name => ({ name, exact: true });
@@ -94,6 +115,7 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   assert.equal(await page.evaluate(() => window.__uiActions.some(action => action.action === 'readWorkspaceFile' && action.payload?.filePath === 'untracked/')), false);
   await tool('Git');
   await tool('Files');
+  await checkFileTreePolish(page, { width, output });
   const contextFile = page.locator('.cli-file-tree button').filter({ hasText: 'app.ts' });
   await contextFile.click({ button: 'right' });
   await assertFlyoutNear(page, contextFile, page.locator('.cli-file-context-menu'));
@@ -279,8 +301,11 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('link', exact('Source file')).click();
   await page.waitForFunction(() => !!window.__heldWorkspaceFileResult);
-  await page.locator('.cli-file-editor .cm-content').waitFor();
-  assert.equal(await page.locator('.cli-file-editor .cm-content').getAttribute('contenteditable'), 'true', 'A reopened browser hydrates its file cache without waiting for the held host read');
+  if (width === 320) await page.getByText('Opening file…', {exact:true}).waitFor();
+  else {
+    await page.locator('.cli-file-editor .cm-content').waitFor();
+    assert.equal(await page.locator('.cli-file-editor .cm-content').getAttribute('contenteditable'), 'true', 'A reopened browser hydrates its file cache without waiting for the held host read');
+  }
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldWorkspaceFileResult) })));
   await page.locator('.cli-file-editor .cm-content').waitFor();
   assert.equal(await page.getByRole('link',exact('Source file')).getAttribute('target'),null);
@@ -313,4 +338,35 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await page.screenshot({ path: path.join(output, `project-sidebar-dark-${width}.png`), animations: 'disabled' });
   }
+}
+
+async function checkFileTreePolish(page, { width, output }) {
+  await page.evaluate(() => {
+    window.__fileTreeFixture = [
+      {path:'src',name:'src',type:'directory',depth:0},
+      {path:'src/app.ts',name:'app.ts',type:'file',depth:1},
+      {path:'very-long-project-documentation-and-release-notes-for-the-current-workspace.md',name:'very-long-project-documentation-and-release-notes-for-the-current-workspace.md',type:'file',depth:0}
+    ];
+    window.__fileTreeWarning = 'Some folders are unavailable. Readable files are shown; refresh to retry.';
+  });
+  const refresh = page.getByRole('button', {name:'Refresh files',exact:true});
+  await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh files"]')?.disabled);
+  await refresh.click();
+  const folder = page.locator('.cli-file-tree > button[title="src"]');
+  await folder.waitFor();
+  assert.equal(await folder.getAttribute('aria-expanded'), 'false', 'Folders start collapsed without briefly painting every descendant');
+  assert.equal(await page.locator('.cli-file-tree > button[title="src/app.ts"]').count(), 0);
+  await page.locator('.cli-inspector-notice.is-warning').filter({hasText:'Some folders are unavailable'}).waitFor();
+  await folder.click();
+  assert.equal(await folder.getAttribute('aria-expanded'), 'true');
+  await page.locator('.cli-file-tree > button[title="src/app.ts"]').waitFor();
+  if (width <= 760) assert.ok((await folder.boundingBox()).height >= 44, 'File rows remain easy to tap');
+  const before = await folder.boundingBox(); await folder.hover(); const after = await folder.boundingBox();
+  assert.ok(Math.abs(before.x-after.x)<1 && Math.abs(before.y-after.y)<1, 'Hover does not displace file rows');
+  assert.ok(await page.locator('.cli-file-tree').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Long filenames stay within the explorer');
+  await page.screenshot({path:path.join(output,`workspace-files-polish-${width}.png`),animations:'disabled'});
+  await page.evaluate(() => { delete window.__fileTreeFixture; delete window.__fileTreeWarning; });
+  await refresh.click();
+  await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh files"]')?.disabled);
+  assert.equal(await page.locator('.cli-inspector-notice.is-warning').count(),0,'A complete refresh clears the partial-list warning');
 }

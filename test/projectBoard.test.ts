@@ -21,7 +21,7 @@ vi.mock('../src/services/codexSessionResume', () => ({
 }));
 vi.mock('../src/services/workspaceTools', () => ({
   resolveWorkspaceProjectPathAsync: vi.fn(async (project: string) => project),
-  listWorkspaceFiles: vi.fn(async () => [{ path: 'src/app.ts', type: 'file' }]),
+  listWorkspaceFiles: vi.fn(async () => ({ files: [{ path: 'src/app.ts', type: 'file' }] })),
   readWorkspaceFile: vi.fn(async () => ({ path: 'src/app.ts', content: 'Source code' })),
   readWorkspaceEnvironment: vi.fn(async () => ({ isGitRepository: true, changes: 1 })),
   readWorkspaceGitHistory: vi.fn(async () => [{ hash: 'abcdef', author: 'Owner', date: '2026-10-20', subject: 'Change' }])

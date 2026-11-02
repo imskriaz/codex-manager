@@ -47,7 +47,7 @@ export function scopeApiResults(token: DashboardApiToken, messages: DashboardHos
     if (message.type !== 'dashboard:action-result' || !message.payload) return message;
     const input = message.payload;
     const payload: DashboardActionResultPayload = {};
-    for (const key of ['notice','projectBoard','projectTaskDetails','projectShare','cliSessionMessages','cliSessionLive','workspaceEnvironment','workspaceFiles','workspaceFile','deletedWorkspaceFilePath'] as const) {
+    for (const key of ['notice','projectBoard','projectTaskDetails','projectShare','cliSessionMessages','cliSessionLive','workspaceEnvironment','workspaceFiles','workspaceFilesWarning','workspaceFile','deletedWorkspaceFilePath'] as const) {
       if (input[key] !== undefined) Object.assign(payload, { [key]: input[key] });
     }
     if (input.cliSessions) payload.cliSessions = input.cliSessions.filter(owns);

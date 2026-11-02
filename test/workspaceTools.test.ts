@@ -127,7 +127,7 @@ describe("workspace tools", () => {
       await writeFile(join(project, "proof.txt"), "native project");
       const native = `\\\\?\\${project}`;
       expect(resolveWorkspaceProjectPath(native)).toBe(project);
-      expect((await listWorkspaceFiles(native)).map(file => file.path)).toContain("proof.txt");
+      expect((await listWorkspaceFiles(native)).files.map(file => file.path)).toContain("proof.txt");
       expect((await readWorkspaceFile(native, "proof.txt")).content).toBe("native project");
     } finally { await removeTestDirectory(project); }
   });
@@ -460,7 +460,7 @@ describe("workspace tools", () => {
       await writeFile(join(projectPath, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB", "base64"));
       await writeFile(join(projectPath, "sample.mp3"), Buffer.from("media"));
       await writeFile(join(projectPath, "sample.mp4"), Buffer.from("media"));
-      const entries = await listWorkspaceFiles(projectPath);
+      const { files: entries } = await listWorkspaceFiles(projectPath);
       expect(entries).toEqual(expect.arrayContaining([
         expect.objectContaining({ path: "src", type: "directory" }),
         expect.objectContaining({ path: "src/app.ts", type: "file" })
@@ -498,7 +498,7 @@ describe("workspace tools", () => {
     try {
       await writeFile(join(projectPath, "proof.txt"), "async project\n");
       await expect(resolveWorkspaceProjectPathAsync(projectPath)).resolves.toBe(projectPath);
-      await expect(listWorkspaceFiles(projectPath)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ path: "proof.txt", type: "file" })]));
+      await expect(listWorkspaceFiles(projectPath)).resolves.toMatchObject({ files: expect.arrayContaining([expect.objectContaining({ path: "proof.txt", type: "file" })]) });
       await expect(readWorkspaceFile(projectPath, "proof.txt")).resolves.toMatchObject({ content: "async project\n" });
     } finally {
       Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: previous });

@@ -367,7 +367,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;');
     expect(source).toContain('onOpenFile={(filePath) => props.onAdd("files", filePath)}');
     expect(source).toContain('currentPath ? "cli-files-workbench is-detail" : "cli-files-workbench is-list"');
-    expect(source).toContain('{currentPath ? null : <div class="cli-file-tree">');
+    expect(source).toContain('{currentPath ? null : <div class="cli-file-tree" aria-busy={props.loading}>');
     expect(source).toContain('if (props.activePath) return <div class="cli-reviews-view is-detail">');
     expect(css).toContain(".cli-files-workbench.is-detail");
     expect(css).toContain(".cli-review-detail");

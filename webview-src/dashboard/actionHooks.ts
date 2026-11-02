@@ -32,7 +32,7 @@ export function useDashboardActions(
         latestReads.current.delete(mutation.fileKey); latestReads.current.delete(mutation.treeKey);
         if (result.payload?.workspaceFile) void writeBrowserCache(mutation.fileKey, { workspaceFile: result.payload.workspaceFile });
         else void deleteBrowserCache(mutation.fileKey);
-        if (result.payload?.workspaceFiles) void writeBrowserCache(mutation.treeKey, { workspaceFiles: result.payload.workspaceFiles });
+        if (result.payload?.workspaceFiles) void writeBrowserCache(mutation.treeKey, { workspaceFiles: result.payload.workspaceFiles, workspaceFilesWarning: result.payload.workspaceFilesWarning });
         else void deleteBrowserCache(mutation.treeKey);
       }
       const key = readRequests.current.get(result.requestId); if (!key) return;

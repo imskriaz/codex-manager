@@ -269,6 +269,19 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it.each(["browser", "webview"] as const)("returns partial file lists and their warning to the initiating %s", async hostKind => {
+    const files = [{ path: "root.txt", name: "root.txt", type: "file" as const, depth: 0 }];
+    vi.spyOn(workspaceTools, "listWorkspaceFiles").mockResolvedValue({ files, warning: "Some folders are unavailable. Refresh to retry." });
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind }, { type: "dashboard:action", action: "listWorkspaceFiles", requestId: `partial-files-${hostKind}`, payload: { projectPath: process.cwd() } });
+    expect(result).toMatchObject({ status: "completed", payload: { workspaceFiles: files, workspaceFilesWarning: expect.stringContaining("Some folders"), notice: { level: "warning" } } });
+  });
+  it("keeps deletion confirmed when refreshing the project tree fails", async () => {
+    vi.spyOn(workspaceTools, "deleteWorkspaceFile").mockResolvedValue("removed.txt");
+    vi.spyOn(workspaceTools, "listWorkspaceFiles").mockRejectedValue(new Error("Drive disconnected"));
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "deleteWorkspaceFile", requestId: "delete-refresh-failure", payload: { projectPath: process.cwd(), filePath: "removed.txt" } });
+    expect(result).toMatchObject({ status: "completed", payload: { deletedWorkspaceFilePath: "removed.txt", notice: { level: "warning", message: expect.stringContaining("Deleted removed.txt") } } });
+    expect(result.payload?.workspaceFiles).toBeUndefined();
+  });
   it("returns browser downloads to their initiating browser without a VS Code save dialog", async () => {
     const dialog = vi.fn(); Object.assign(vscode.window, { showSaveDialog: dialog });
     const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", action: "downloadJsonFile", requestId: "browser-download", payload: { filename: "backup.json", text: "{}" } });

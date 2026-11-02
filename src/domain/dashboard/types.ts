@@ -1134,6 +1134,7 @@ export interface DashboardActionResultPayload {
   cliComposerConfig?: DashboardCliComposerConfig;
   workspaceEnvironment?: DashboardWorkspaceEnvironment;
   workspaceFiles?: DashboardWorkspaceFileEntry[];
+  workspaceFilesWarning?: string;
   workspaceFile?: DashboardWorkspaceFile;
   workspaceTerminals?: DashboardWorkspaceTerminalInfo[];
   workspaceTerminal?: DashboardWorkspaceTerminalInfo;

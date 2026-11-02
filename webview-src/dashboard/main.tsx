@@ -514,7 +514,10 @@ function App() {
     isBrowserDashboard ? (action, payload, requestId) => {
       const scope = workspaceRequests.current.get(requestId);
       if (scope && scope.scope === workspaceScopeRef.current && scope.generation === workspaceGeneration.current && latestWorkspaceRequests.current.get(scope.family) === requestId) {
-        if (action === 'listWorkspaceFiles' && payload.workspaceFiles) setWorkspaceFiles(current => current.length ? current : payload.workspaceFiles!);
+        if (action === 'listWorkspaceFiles' && payload.workspaceFiles) {
+          setWorkspaceFiles(current => current.length ? current : payload.workspaceFiles!);
+          if (payload.workspaceFilesWarning) setWorkspaceReadErrors(current => ({ ...current, 'listWorkspaceFiles:': payload.workspaceFilesWarning! }));
+        }
         if (action === 'readWorkspaceFile' && payload.workspaceFile) {
           const file = payload.workspaceFile;
           setWorkspaceFilesByPath(current => current[file.path] ? current : { ...current, [file.path]: file });
@@ -1343,7 +1346,10 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "listWorkspaceFiles") {
-        if (message.status === "completed") setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
+        if (message.status === "completed") {
+          setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
+          setWorkspaceReadErrors(current => { const next = { ...current }; if (message.payload?.workspaceFilesWarning) next['listWorkspaceFiles:'] = message.payload.workspaceFilesWarning; else delete next['listWorkspaceFiles:']; return next; });
+        }
         else
           showCliSessionFeedback({
             key: Date.now(),
@@ -1353,7 +1359,12 @@ function App() {
       }
       if (message.type === "dashboard:action-result" && message.action === "deleteWorkspaceFile") {
         if (message.status === "completed") {
-          setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
+          setWorkspaceFiles(current => message.payload?.workspaceFiles ?? current.filter(file => file.path !== message.payload?.deletedWorkspaceFilePath));
+          setWorkspaceReadErrors(current => {
+            const next = { ...current }, warning = message.payload?.workspaceFilesWarning ?? (!message.payload?.workspaceFiles ? message.payload?.notice?.message : undefined);
+            if (warning) next['listWorkspaceFiles:'] = warning; else delete next['listWorkspaceFiles:'];
+            return next;
+          });
           if (message.payload?.deletedWorkspaceFilePath)
             setWorkspaceFilesByPath((current) => {
               const next = { ...current };
@@ -1362,7 +1373,7 @@ function App() {
             });
           showCliSessionFeedback({
             key: Date.now(),
-            level: "info",
+            level: message.payload?.notice?.level ?? "info",
             message: message.payload?.notice?.message ?? "File deleted."
           });
           requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);

@@ -276,7 +276,7 @@ export default function WorkspaceTerminal(props: {
               New shared terminal
             </button>
             {current ? (
-              <button type="button" onClick={() => props.onFocus(current.id)}>
+              <button type="button" disabled={!props.connected} onClick={() => props.onFocus(current.id)}>
                 Open native terminal
               </button>
             ) : null}

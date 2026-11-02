@@ -17,7 +17,7 @@ import type {
   DashboardWorkspaceTerminalResult
 } from "../domain/dashboard/types";
 import { publishDashboardRealtime } from "./dashboardRealtime";
-import { waitWithin } from "../utils/concurrency";
+import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { sharedTerminalInfo, findSharedTerminal, disposeSharedTerminals } from './workspaceTerminalPty';
@@ -202,42 +202,62 @@ export async function readWorkspaceEnvironment(projectPath: string | undefined, 
   return { ...environment, branchDiff: diff.stdout, branchDiffBase: reference === "@{upstream}" ? environment.upstream ?? reference : reference || "empty tree", branchDiffTruncated: Buffer.byteLength(diff.stdout, "utf8") >= MAX_OUTPUT_BYTES };
 }
 
-export async function listWorkspaceFiles(projectPath: string | undefined): Promise<DashboardWorkspaceFileEntry[]> {
+export async function listWorkspaceFiles(projectPath: string | undefined): Promise<{ files: DashboardWorkspaceFileEntry[]; warning?: string }> {
   const root = await resolveWorkspaceProjectPathAsync(projectPath);
-  const entries: DashboardWorkspaceFileEntry[] = [];
+  const folders = new Map<string, DashboardWorkspaceFileEntry[]>();
+  const pending: Array<{ directory: string; depth: number }> = [];
   const deadline = Date.now() + WORKSPACE_READ_TIMEOUT_MS;
-  let cancelled = false;
-  const visit = async (directory: string, depth: number): Promise<void> => {
-    if (cancelled || entries.length >= MAX_TREE_ENTRIES) return;
-    const children = await workspaceReadBeforeDeadline(
-      fs.readdir(directory, { withFileTypes: true }),
-      deadline,
-      "The workspace file list took too long to read. Try again after the other app finishes writing."
-    );
+  let count = 0, incomplete = false, limited = false;
+  let firstFailure: string | undefined;
+  const visit = async ({ directory, depth }: { directory: string; depth: number }): Promise<void> => {
+    if (count >= MAX_TREE_ENTRIES) { limited = true; return; }
+    if (Date.now() >= deadline && directory !== root) { incomplete = true; return; }
+    let children;
+    try {
+      children = await workspaceReadBeforeDeadline(fs.readdir(directory, { withFileTypes: true }), deadline,
+        "The project folder did not respond. Check access or reconnect the drive, then refresh files.");
+    } catch (error) {
+      if (directory === root) throw error;
+      incomplete = true;
+      firstFailure ??= `${path.relative(root, directory)}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
+      return;
+    }
     children.sort((left, right) => {
       if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
       return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     });
+    const entries: DashboardWorkspaceFileEntry[] = [];
+    folders.set(directory, entries);
     for (const child of children) {
-      if (cancelled || entries.length >= MAX_TREE_ENTRIES) break;
       if (child.isSymbolicLink() || (child.isDirectory() && HIDDEN_TREE_DIRECTORIES.has(child.name))) continue;
+      if (!child.isDirectory() && !child.isFile()) continue;
+      if (count >= MAX_TREE_ENTRIES) { limited = true; break; }
       const absolute = path.join(directory, child.name);
       const relative = path.relative(root, absolute).replace(/\\/g, "/");
+      count++;
       if (child.isDirectory()) {
         entries.push({ path: relative, name: child.name, type: "directory", depth });
-        await visit(absolute, depth + 1);
+        pending.push({ directory: absolute, depth: depth + 1 });
       } else if (child.isFile()) {
         entries.push({ path: relative, name: child.name, type: "file", depth });
       }
     }
   };
-  try {
-    await visit(root, 0);
-  } catch (error) {
-    cancelled = true;
-    throw error;
+  await visit({ directory: root, depth: 0 });
+  // Read sibling folders together so a large or busy subtree cannot hide the root files.
+  await runWithConcurrencyLimit(pending, 8, visit);
+  const files: DashboardWorkspaceFileEntry[] = [], stack = [...(folders.get(root) ?? [])].reverse();
+  while (stack.length) {
+    const entry = stack.pop()!;
+    files.push(entry);
+    if (entry.type === "directory") {
+      const children = folders.get(path.join(root, entry.path)) ?? [];
+      for (let index = children.length - 1; index >= 0; index--) stack.push(children[index]!);
+    }
   }
-  return entries;
+  return { files, ...(limited || incomplete ? { warning: limited
+    ? "Showing the first 5,000 project entries. Open the project in VS Code to browse the full tree."
+    : `Some folders could not be read in time or are unavailable. Readable files are shown; refresh to retry.${firstFailure ? ` ${firstFailure}` : ""}` } : {}) };
 }
 
 export async function readWorkspaceFile(

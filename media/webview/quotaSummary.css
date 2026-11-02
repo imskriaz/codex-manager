@@ -4,7 +4,7 @@
 }
 .workspace-tool-toolbar, .workspace-terminal-caption, .workspace-list-heading,
 .workspace-github-header, .workspace-file-group > header, .workspace-history > header {
-  display:flex; align-items:center; gap:4px; min-width:0; padding:5px 8px; border-bottom:1px solid var(--border-default);
+  display:flex; align-items:center; gap:6px; min-width:0; padding:5px 8px; border-bottom:1px solid var(--border-default);
 }
 .workspace-tool-toolbar > strong, .workspace-terminal-caption > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .workspace-tool-toolbar > select { flex:1; min-width:0; max-width:100%; }
@@ -20,7 +20,7 @@
 .workspace-tool-toolbar > button, .workspace-terminal-caption > button { width:26px; height:26px; padding:4px; flex:0 0 26px; border-color:transparent; background:transparent; }
 .workspace-tool-meta { color:var(--muted); white-space:nowrap; font-size:11px; }
 .workspace-tool-tabs { display:flex; flex:0 0 auto; gap:2px; overflow-x:auto; border-bottom:1px solid var(--border-default); padding:3px 6px; scrollbar-width:thin; }
-.workspace-tool-tabs > button { flex:1 0 auto; white-space:nowrap; padding:4px 6px; border-color:transparent; background:transparent; font-size:11px; min-height:27px; }
+.workspace-tool-tabs > button { flex:1 0 auto; white-space:nowrap; padding:5px 7px; border-color:transparent; background:transparent; font-size:12px; min-height:30px; }
 .workspace-tool-tabs > button[aria-selected="true"] { color:var(--accent, #3b82f6); background:color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent); border-color:color-mix(in srgb, var(--accent, #3b82f6) 25%, transparent); }
 .workspace-tool-menu { position:relative; flex:0 0 auto; }
 .workspace-tool-menu > summary { display:flex; align-items:center; justify-content:center; width:26px; height:26px; list-style:none; border-radius:5px; cursor:pointer; }
@@ -65,9 +65,9 @@
 .workspace-file-group > header button { padding:3px; min-height:23px; border-color:transparent; }
 .workspace-git-file { display:flex; gap:3px; align-items:center; min-width:0; padding:2px 7px; }
 .workspace-git-file > button:not(.workspace-file-name) { width:23px; min-height:23px; padding:3px; border-color:transparent; background:transparent; }
-.workspace-git-file .workspace-file-name { justify-content:flex-start; flex:1; min-width:0; border-color:transparent; background:transparent; padding:4px 1px; }
-.workspace-file-name > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.workspace-file-name small { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.workspace-git-file .workspace-file-name { display:grid; justify-content:stretch; justify-items:start; gap:2px; flex:1; min-width:0; border-color:transparent; background:transparent; padding:5px 1px; text-align:left; }
+.workspace-file-name > span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-name small { max-width:100%; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
 .workspace-git-file > code { font-size:11px; color:var(--muted); width:12px; text-align:center; }
 .workspace-empty-inline { padding:6px 9px; margin:0; font-size:11px; color:var(--muted); }
 .workspace-list-heading { justify-content:space-between; }
@@ -99,7 +99,7 @@
 .workspace-diff-modal.settings-modal, .workspace-github-detail.settings-modal { width:min(980px, calc(100vw - 24px)); }
 .workspace-diff-modal .workspace-dialog-fields { max-height:65dvh; overflow:auto; }
 .workspace-github-actions { display:flex; flex-wrap:wrap; gap:6px; }
-.workspace-github-detail-meta { display:flex; gap:10px; color:var(--muted); font-size:11px; }
+.workspace-github-detail-meta { display:flex; flex-wrap:wrap; gap:5px 10px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
 .workspace-github-timeline { max-height:52dvh; overflow:auto; }
 .workspace-github-body, .workspace-github-timeline article p { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
 .workspace-github-timeline article { border-top:1px solid var(--border-default); padding:12px 0; }
@@ -1085,19 +1085,21 @@ html[data-theme="auto"] body.vscode-light .settings-theme-option.active {
 .cli-files-workbench.is-detail { grid-template-rows: minmax(0, 1fr); }
 .cli-file-tree { overflow: auto; padding: 4px; border-bottom: 1px solid var(--border-default); }
 .cli-file-tree > header { position: sticky; top: -4px; z-index: 2; display: flex; align-items: center; justify-content: space-between; min-height: 31px; padding: 3px 5px; background: var(--bg-elevated); }
-.cli-file-tree > button { display: flex; align-items: center; gap: 5px; width: 100%; min-height: 25px; padding: 3px 5px 3px calc(5px + var(--tree-depth) * 12px); border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 11px; text-align: left; }
+.cli-file-tree > button { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 4px 6px 4px calc(6px + min(var(--tree-depth), 8) * 12px); border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; text-align: left; content-visibility: auto; contain-intrinsic-size: auto 28px; }
 .cli-file-tree > button:hover,
 .cli-file-tree > button.is-selected { background: var(--bg-hover); color: var(--text-primary); }
 .cli-file-tree > button svg { flex: 0 0 auto; width: 13px; height: 13px; }
-.cli-file-tree > button:not(.is-directory) { padding-left: calc(18px + var(--tree-depth) * 12px); }
+.cli-file-tree > button:not(.is-directory) { padding-left: calc(20px + min(var(--tree-depth), 8) * 12px); }
+.cli-file-tree > button.is-directory > svg:first-child { transform: rotate(-90deg); }
+.cli-file-tree > button.is-directory[aria-expanded="true"] > svg:first-child { transform: none; }
 .cli-file-tree > button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cli-file-editor { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-.cli-file-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 36px; padding: 4px 7px; border-bottom: 1px solid var(--border-default); }
+.cli-file-editor > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; min-height: 36px; padding: 5px 8px; border-bottom: 1px solid var(--border-default); }
 .cli-file-editor > header span { min-width: 0; }
 .cli-file-editor > header strong,
 .cli-file-editor > header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cli-file-editor > header strong { font-size: 10px; }
-.cli-file-editor > header small { color: var(--text-muted); font-size: 9px; }
+.cli-file-editor > header strong { font-size: 12px; }
+.cli-file-editor > header small { color: var(--text-muted); font-size: 11px; }
 .cli-file-editor > header button { min-height: 27px; padding: 3px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--accent); color: var(--accent-contrast, #fff); }
 .cli-file-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .cli-file-actions button:first-child:not(:last-child) { background: transparent; color: var(--text-secondary); }
@@ -15377,6 +15379,11 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-workspace .cli-context-tab-scroll > span:first-child { position:sticky; left:0; z-index:1; background:var(--bg-elevated); border-right:1px solid var(--border-default); }
 .cli-workspace .cli-context-tab-scroll > span:first-child.is-active { background:color-mix(in srgb,var(--accent) 14%,var(--bg-elevated)); }
 .cli-workspace .cli-context-tab-scroll > span:focus-within > button + button { opacity:1; }
+.cli-workspace :is(.workspace-git,.workspace-terminal,.cli-file-tree,.cli-file-editor,.cli-agent-workspace,.cli-context-tabbar,.cli-reviews-view) button:hover:not(:disabled) { transform:none; }
+.cli-workspace :is(.workspace-git,.workspace-terminal,.cli-files-workbench,.cli-agent-workspace,.cli-reviews-view) :is(button,select) { touch-action:manipulation; }
+.cli-workspace :is(.workspace-tool-meta,.workspace-git-file > code,.cli-file-editor small) { font-variant-numeric:tabular-nums; }
+.cli-workspace .cli-file-actions { display:flex; flex:none; align-items:center; gap:5px; margin-left:auto; }
+.cli-workspace :is(.cli-context-loading,.cli-context-empty) { overflow-wrap:anywhere; }
 .cli-workspace .cli-conversation-actions > .cli-inspector-toggle { display:inline-flex; align-items:center; justify-content:center; }
 .cli-workspace .cli-inspector-toggle[aria-expanded="true"] { background:color-mix(in srgb,var(--accent) 14%,var(--bg-elevated)); color:var(--accent); }
 .cli-terminal-new-menu { position:relative; flex:0 0 auto; }
@@ -15393,6 +15400,15 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .cli-inspector-body button:not(.cli-icon-button),.cli-terminal-new-menu > summary,.cli-terminal-new-menu button { min-height:40px; }
   .cli-workspace .cli-context-tab-scroll > span > button { min-height:36px; }
   .cli-workspace .cli-context-add { min-width:36px; min-height:36px; }
+  .cli-workspace :is(.workspace-tool-toolbar > button,.workspace-tool-menu > button) { width:44px; height:44px; min-height:44px; flex-basis:44px; padding:0; }
+  .cli-workspace .workspace-tool-toolbar > select { min-height:44px; }
+  .cli-workspace :is(.workspace-tool-tabs,.workspace-file-group > header,.workspace-branch-row,.workspace-stash-row,.workspace-list-heading,.workspace-history footer,.workspace-terminal-find,.cli-file-editor > header) button { min-height:44px; }
+  .cli-workspace .workspace-git-file > button:not(.workspace-file-name) { width:44px; min-height:44px; flex:0 0 44px; padding:8px; }
+  .cli-workspace .cli-file-tree > button { min-height:44px; contain-intrinsic-size:auto 44px; }
+  .cli-workspace .cli-context-tab-scroll > span > button { min-height:44px; }
+  .cli-workspace .cli-context-tab-scroll > span > button + button { width:44px; opacity:1; }
+  .cli-workspace :is(.workspace-terminal,.workspace-git,.workspace-action-modal) :is(input,select,textarea) { font-size:16px; }
+  .cli-workspace .cli-agent-workspace > header > button { min-height:44px; }
 }
 .cli-terminal-new-menu { position:relative; flex:none; }
 .cli-terminal-new-menu summary { list-style:none; cursor:pointer; padding:5px 7px; border:1px solid var(--border-muted); border-radius:6px; color:var(--text); font-size:10px; white-space:nowrap; }

@@ -1,26 +1,20 @@
 # Changelog
 
-## 1.6.4-pre.2
+## 1.6.4
 
+- Read project folders concurrently, keep readable files when a subtree is slow or unavailable, and show incomplete-list warnings instead of discarding the tree. Preserve confirmed file deletions when refreshing fails.
+- Polish workspace tool tabs, distinguish Git and Agents icons, reflect folder expansion, and improve file-path readability, mobile touch targets, and empty states.
 - Route passive extension notices to dashboard toasts instead of VS Code's status bar, retaining Command Palette feedback and actionable prompts.
 - Keep the centered scroll-to-latest button stationary on hover and focus, and hide it at the bottom even while a session is running.
 - Make running dots visibly bounce while the button is shown, retaining static dots for reduced motion.
-
-## 1.6.4-pre.1
-
 - Open existing conversation history without waiting for optional runtime inspection, preserve late model catalogs, and restore the conversation's model and reasoning settings.
-- Keep conversation quota inline on mobile and center the scroll-to-latest control, with running dots that respect reduced motion.
 - Answer short, non-secret single questions with up to two choices directly from push notifications; review longer or private questions in the session.
 - Wait three seconds before showing passive connection warnings, clear recovered offline notices, and prevent stale HTTP failures from overriding a healthy realtime connection.
-
-## 1.6.4
-
 - Renew claims for accounts current in every live local window, release unused saved-account claims in current-account-only mode, and keep temporary peer disconnects consistent with the ownership lease.
 - Stop showing account reauthorization for temporary OAuth, credential-storage, or refresh delays; retain genuine credential rejection and missing-token warnings.
 - Release Manager-owned native turns after exact Stop confirmation even when the transcript lags, update native status immediately, and preserve newer owners and goal-pause failures.
 - Preserve exact secret question answers, including surrounding whitespace.
 - Show session permission approvals and question answers in a compact session panel, retain answer drafts across navigation and reconnects, and report unconfirmed responses before retrying.
-
 - Keep mobile running-session quota inline with the model, reasoning, and access settings as percentages, without a second quota row.
 - Consolidate workspace message settings so model, reasoning, and access remain readable on small screens.
 - Keep message settings above the composer and within the visible viewport while resizing, and restore keyboard focus when dismissed.

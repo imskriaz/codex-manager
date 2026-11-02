@@ -1059,8 +1059,10 @@ async function runDashboardAction(
       return { workspaceGit: await workspaceGit(payload?.projectPath, payload?.gitRequest, payload?.confirmed === true) };
     case 'workspaceGitHub':
       return { workspaceGitHub: await workspaceGitHub(payload?.projectPath, payload?.githubRequest, payload?.confirmed === true) };
-    case "listWorkspaceFiles":
-      return { workspaceFiles: await listWorkspaceFiles(payload?.projectPath) };
+    case "listWorkspaceFiles": {
+      const result = await listWorkspaceFiles(payload?.projectPath);
+      return { workspaceFiles: result.files, workspaceFilesWarning: result.warning, ...(result.warning ? { notice: { level: "warning" as const, message: result.warning } } : {}) };
+    }
     case "readWorkspaceFile":
       if (payload?.filePath?.startsWith('@manager-attachment/')) {
         if (!payload.taskId) throw new Error('Choose the task that owns this attachment.');
@@ -1079,11 +1081,14 @@ async function runDashboardAction(
       };
     case "deleteWorkspaceFile": {
       const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath);
-      return {
-        deletedWorkspaceFilePath: deletedPath,
-        workspaceFiles: await listWorkspaceFiles(payload?.projectPath),
-        notice: { level: "info" as const, message: `Deleted ${deletedPath}.` }
-      };
+      try {
+        const result = await listWorkspaceFiles(payload?.projectPath);
+        return { deletedWorkspaceFilePath: deletedPath, workspaceFiles: result.files, workspaceFilesWarning: result.warning,
+          notice: { level: result.warning ? "warning" as const : "info" as const, message: `Deleted ${deletedPath}.${result.warning ? ` ${result.warning}` : ""}` } };
+      } catch (error) {
+        return { deletedWorkspaceFilePath: deletedPath, notice: { level: "warning" as const,
+          message: `Deleted ${deletedPath}, but the file list could not refresh: ${error instanceof Error ? error.message : String(error)}` } };
+      }
     }
     case "listWorkspaceTerminals":
       return { workspaceTerminals: listWorkspaceTerminals(), ...readWorkspaceTerminalActivity() };

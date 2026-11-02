@@ -292,10 +292,10 @@ export function WorkspaceGit(props: {
         <WorkspaceGitHub {...props} />
       ) : (
         <div class="workspace-tool-scroll">
-          {!state && view !== "changes" ? (
+          {!state || !environment?.isGitRepository ? (
             <div class="workspace-tool-empty">
               <ToolIcon kind="branch" />
-              <strong>{busy ? "Reading repository…" : "Repository unavailable"}</strong>
+              <strong>{busy ? "Reading repository…" : state ? "No Git repository" : "Repository unavailable"}</strong>
               <p>Select a Git project, or refresh when its folder is available.</p>
             </div>
           ) : view === "changes" ? (

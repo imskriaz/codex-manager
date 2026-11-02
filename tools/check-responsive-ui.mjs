@@ -8,7 +8,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { Script } from "node:vm";
 import { checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
-import { checkInspectorUi } from "./check-inspector-ui.mjs";
+import { checkInspectorUi, checkReviewsUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { prepareDocsSnapshot, captureDocsScreenshots } from './capture-docs-ui.mjs';
@@ -339,7 +339,7 @@ const mockHost = `(() => {
           }
         }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__fixtureTerminals||[]};
-        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0},{path:'src/other.ts',name:'other.ts',type:'file',depth:0}]:[]};
+        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__fileTreeFixture || (window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0},{path:'src/other.ts',name:'other.ts',type:'file',depth:0}]:[]),workspaceFilesWarning:window.__fileTreeWarning,...(window.__fileTreeWarning?{notice:{level:'warning',message:window.__fileTreeWarning}}:{})};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
@@ -1169,6 +1169,12 @@ try {
       await checkMaintenanceUi(page, {origin,width,height,output});
       assert.deepEqual(errors, [], 'Maintenance browser runtime errors');
       results.push({width,height,checks:'Event-driven progress, no hidden polling, source/revision guards, missing acknowledgement, cancellation, reconnect/restart, explicit search'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--reviews-ui')) {
+      await checkReviewsUi(page, {origin,parentId,width,height,output});
+      assert.deepEqual(errors, [], 'Review browser runtime errors');
+      results.push({width,height,checks:'Review list, keyboard opening, before/after comparison, file navigation, bounded layout'});
       await context.close(); continue;
     }
     if (process.argv.includes('--inspector')) {
