@@ -10,7 +10,7 @@ describe("mobile dashboard header", () => {
     expect(css).not.toMatch(/\bfont-size\s*:\s*[\d.]+px\b/);
     expect(css).toContain("font-size: calc(16px * var(--dashboard-text-scale, 1))");
     expect(css.slice(finalRules)).toContain(".cli-workspace .cli-composer.is-empty { display: grid;");
-    expect(css.slice(finalRules)).toContain(".cli-workspace .cli-account-footer .cli-account-footer-account { display: grid; }");
+    expect(css.slice(finalRules)).toContain(".cli-workspace .cli-account-footer .cli-account-footer-account { display: flex;");
   });
 
   it("keeps card plan, reset credit, device and expiry on one line at every width", () => {

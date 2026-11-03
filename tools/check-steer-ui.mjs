@@ -5,6 +5,9 @@ export async function checkSteerUi(page, { origin, parentId }) {
   const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });
   await input.waitFor();
   await page.evaluate(sessionId => {
+    const session = window.__uiSessions.find(item => item.id === sessionId);
+    Object.assign(session, { status: 'running', steerTurnId: 'turn-fixture' });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-steer-owner', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
     window.__steerState = { sessionId, streamId: 'steer-fixture', sequence: 1, turnId: 'turn-fixture', status: 'running', updatedAt: Date.now() + 1000, messages: [] };
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
   }, parentId);
@@ -12,7 +15,7 @@ export async function checkSteerUi(page, { origin, parentId }) {
   assert.equal(await page.locator('.cli-send-button:visible, .cli-stop-button:visible').count(), 1, 'An empty running composer shows only Stop');
   await input.fill('First steering message');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } })));
-  const send = page.getByRole('button', { name: 'Send follow-up', exact: true });
+  const send = page.locator('.cli-send-button');
   await send.waitFor();
   assert.equal(await page.locator('.cli-send-button:visible, .cli-stop-button:visible').count(), 1, 'Text replaces Stop with a single Send control');
   await page.evaluate(() => { window.__holdNextSteer = true; });
@@ -52,4 +55,59 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.locator('.cli-session-message-text').filter({ hasText: 'Working on the follow-up' }).waitFor();
   const messages = (await page.locator('.cli-session-message-text').allTextContents()).map(text => text.trim());
   assert.ok(messages.indexOf('Working on the follow-up') > messages.indexOf('My next draft'), 'Subsequent output follows the steering message');
+  await page.evaluate(sessionId => {
+    window.__composerNode = document.querySelector('textarea[name="codex-message"]');
+    const session = window.__uiSessions.find(item => item.id === sessionId);
+    Object.assign(session, { status: 'running', locked: true, steerTurnId: 'native-follow-up', runningBy: 'another Codex process', updatedAt: new Date(Date.now()+2000).toISOString() });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-native-owner', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  }, parentId);
+  await input.fill('Native owner guidance');
+  await page.locator('.cli-composer input[type=file]').setInputFiles({name:'guidance.txt',mimeType:'text/plain',buffer:Buffer.from('Keep this attachment through reconnect')});
+  await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
+  await send.waitFor();
+  assert.equal(await page.locator('.cli-composer-unavailable:visible').count(), 0, 'A verified main Codex turn uses the composer');
+  assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Switching to native steering keeps the same input');
+  for (const status of ['unknown', 'running', 'unknown', 'running']) {
+    await page.evaluate(({sessionId,status}) => {
+      const session = window.__uiSessions.find(item => item.id === sessionId);
+      Object.assign(session, { status, steerTurnId: status === 'unknown' ? undefined : 'native-follow-up', updatedAt: new Date(Date.now()-10000).toISOString() });
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-status-refresh', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+    }, {sessionId:parentId,status});
+    await page.waitForFunction(status => status === 'unknown'
+      ? document.querySelector('.cli-composer-state')?.textContent === 'Checking running state'
+      : !document.querySelector('.cli-composer-state'), status);
+    assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Status refresh never unmounts the composer');
+    assert.equal(await input.inputValue(), 'Native owner guidance', 'Status refresh preserves typed guidance');
+    await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
+    if(status==='unknown') {
+      assert.equal(await send.isDisabled(),true,'Unknown ownership disables sending');
+      const before=await page.evaluate(()=>window.__uiActions.filter(a=>['steerCodexCliSessionTurn','sendCodexCliSessionMessage','startCodexCliSession'].includes(a.action)).length);
+      await input.press('Control+Enter');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(a=>['steerCodexCliSessionTurn','sendCodexCliSessionMessage','startCodexCliSession'].includes(a.action)).length),before,'Enter cannot bypass unverified ownership');
+    }
+  }
+  for (const connected of [false,true]) {
+    await page.evaluate(connected => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } })), connected);
+    await page.waitForFunction(connected => connected
+      ? !document.querySelector('.cli-composer-state')
+      : document.querySelector('.cli-composer-state')?.textContent === 'Reconnecting', connected);
+    assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Reconnect preserves the composer node');
+    assert.equal(await input.inputValue(), 'Native owner guidance');
+    await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
+    if(!connected){
+      assert.equal(await send.isDisabled(),true,'Offline sending stays disabled');
+      const before=await page.evaluate(()=>window.__uiActions.length);
+      await input.press('Control+Enter');
+      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline Enter sends nothing');
+    }
+  }
+  await page.evaluate(() => { window.__holdNextSteer=true; window.__heldSteerResult=undefined; });
+  await send.click();
+  await page.waitForFunction(() => !!window.__heldSteerResult);
+  const nativeRequest = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').at(-1));
+  assert.equal(nativeRequest.payload.expectedTurnId, 'native-follow-up', 'Native guidance carries the verified turn for preflight');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSteerResult })));
+  await page.getByRole('button', {name:'Stop',exact:true}).waitFor();
+  assert.equal(await page.locator('.cli-send-button:visible,.cli-stop-button:visible').count(),1,'Accepted guidance returns to a single Stop action');
+
 }

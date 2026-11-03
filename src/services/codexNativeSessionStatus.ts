@@ -10,7 +10,7 @@ import type { AppServerRequest } from "./codexAppServerRpc";
 import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
 
 type Observation = {
-  home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; usedAt: number;
+  home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number;
   prompts?: AppServerRequest[];
   promptResponses?: Map<string, Promise<void>>;
   waiters: Set<(running: boolean | undefined) => void>;
@@ -38,6 +38,7 @@ function follow(entry: Observation, following: boolean): void {
 }
 function settle(entry: Observation, running: boolean | undefined): void {
   entry.running = running;
+  if (running !== true) entry.turnId = undefined;
   if (running === undefined) entry.ready = undefined;
   recordNativeSessionStatus(entry.home,entry.id,running);
   for (const resolve of entry.waiters) resolve(running);
@@ -47,12 +48,33 @@ function runtimeRunning(value: unknown): boolean | undefined {
   const type = value && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
   return type === "active" ? true : type === "idle" || type === "notLoaded" || type === "systemError" ? false : undefined;
 }
+type NativeConversationState = {
+  id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown; requests?: unknown;
+  turns?: unknown; turnHistory?: { kind?: unknown; history?: { entitiesByKey?: unknown; islands?: Array<{ newerBoundary?: { status?: unknown }; entries?: Array<{ value?: unknown }> }> } };
+};
+
+function activeNativeTurnId(state: NativeConversationState): string | undefined {
+  let turns = state.turns;
+  if (state.turnHistory?.kind === "canonical") {
+    const history = state.turnHistory.history;
+    const island = Array.isArray(history?.islands) ? history.islands.at(-1) : undefined;
+    if (island?.newerBoundary?.status !== "exhausted" || !Array.isArray(island.entries) ||
+        !history?.entitiesByKey || typeof history.entitiesByKey !== "object" || Array.isArray(history.entitiesByKey)) return undefined;
+    const entities = history.entitiesByKey as Record<string, unknown>;
+    turns = island.entries.map(entry => typeof entry?.value === "string" && Object.hasOwn(entities, entry.value) ? entities[entry.value] : undefined);
+    if ((turns as unknown[]).some(turn => turn === undefined)) return undefined;
+  }
+  if (!Array.isArray(turns)) return undefined;
+  const turn = turns.at(-1) as { status?: unknown; turnId?: unknown } | null;
+  return turn?.status === "inProgress" && typeof turn.turnId === "string" && turn.turnId.trim() && turn.turnId.length <= 256 ? turn.turnId : undefined;
+}
+
 type NativeMessage = {
   type?: unknown; method?: unknown; version?: unknown; sourceClientId?: unknown; requestId?: string; resultType?: string; error?: unknown;
   result?: { clientId?: unknown; result?: { turn?: { id?: unknown }; turnId?: unknown }; ok?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
   params?: { status?: unknown; clientId?: unknown; hostId?: unknown; conversationId?: unknown;
     change?: { type?: unknown; revision?: unknown; baseRevision?: unknown; patches?: unknown;
-      conversationState?: { id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown; requests?: unknown } } };
+      conversationState?: NativeConversationState } };
 };
 function receive(message: NativeMessage): void {
   if (message.type === "client-discovery-request") {
@@ -72,6 +94,7 @@ function receive(message: NativeMessage): void {
     return;
   }
   if (message.type !== "broadcast") return;
+  if (message.method === "ipc-connection-reset") { disposeNativeCodexSessionStatus(); return; }
   if (message.method === "client-status-changed" && message.params?.status === "disconnected") {
     for (const entry of observations.values()) if (entry.owner === message.params.clientId) {
       clearNativeCodexPrompts(entry); entry.prompts = undefined;
@@ -89,9 +112,10 @@ function receive(message: NativeMessage): void {
       if (state?.id !== entry.id || typeof state.rolloutPath !== "string") continue;
       const relative = path.relative(entry.canonicalHome, path.resolve(normalizeNativePath(state.rolloutPath)));
       if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
-      if (entry.owner === message.sourceClientId && entry.revision !== undefined && change.revision <= entry.revision) continue;
+      if (entry.owner === message.sourceClientId && entry.revision !== undefined && (change.revision < entry.revision || change.revision === entry.revision && !entry.needsTurnSnapshot)) continue;
       if (entry.owner !== message.sourceClientId) { clearNativeCodexPrompts(entry); entry.promptResponses = undefined; }
       entry.owner = message.sourceClientId; entry.revision = change.revision;
+      entry.turnId = activeNativeTurnId(state); entry.needsTurnSnapshot = false;
       entry.prompts = readNativePrompts(state.requests, entry.id);
       for (const key of entry.promptResponses?.keys() ?? []) if (!entry.prompts.some(request => JSON.stringify(request) === key)) entry.promptResponses?.delete(key);
       syncPrompts(entry);
@@ -109,6 +133,13 @@ function receive(message: NativeMessage): void {
         const patch = value as { path?: unknown; op?: unknown; value?: unknown };
         if (!Array.isArray(patch.path)) continue;
         if (!patch.path.length) { clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.revision = undefined; settle(entry, undefined); follow(entry, false); follow(entry, true); break; }
+        if (patch.path[0] === "id" || patch.path[0] === "rolloutPath") {
+          clearNativeCodexPrompts(entry); entry.owner = undefined; entry.revision = undefined; settle(entry, undefined); follow(entry, true); break;
+        }
+        if (patch.path[0] === "turns" && (patch.path.length <= 2 || ["turnId", "status"].includes(String(patch.path[2]))) ||
+            patch.path[0] === "turnHistory" && !(patch.path[1] === "history" && patch.path[2] === "entitiesByKey" && patch.path.length > 4 && !["turnId", "status"].includes(String(patch.path[4])))) {
+          entry.turnId = undefined;
+        }
         if (patch.path[0] === "requests") {
           if (!applyPromptPatch(entry, patch)) {
             clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.revision = undefined;
@@ -126,8 +157,14 @@ function receive(message: NativeMessage): void {
           }
         }
       }
+      if (entry.running === true && !entry.turnId && !entry.needsTurnSnapshot) { entry.needsTurnSnapshot = true; follow(entry, true); }
     }
   }
+}
+
+export function getNativeCodexSessionTurnId(home: string, id: string): string | undefined {
+  const entry = socket?.writable ? observations.get(`${path.resolve(home)}:${id}`) : undefined;
+  return entry?.owner && entry.revision !== undefined && entry.ready && entry.running === true ? entry.turnId : undefined;
 }
 
 export function getNativeCodexSessionRunning(home: string, id: string): boolean | undefined {
@@ -256,13 +293,20 @@ export async function cancelNativeCodexSessionTurn(home: string, id: string, exp
 
 export async function steerNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, input: unknown[], cwd: string): Promise<boolean> {
   if (!expectedTurnId.trim() || expectedTurnId.length > 256) throw new Error('The active turn could not be verified. Refresh before steering.');
+  await readNativeCodexSessionRunning(home, id);
+  const key = `${path.resolve(home)}:${id}`, entry = observations.get(key), owner = entry?.owner, revision = connectionRevision;
+  if (!entry?.ready || !entry.running) throw new Error('The active Codex turn finished or is unavailable. Your follow-up was not sent; refresh before retrying.');
+  if (getNativeCodexSessionTurnId(home, id) !== expectedTurnId) throw new Error('The active Codex turn changed or could not be verified. Your follow-up was not sent; refresh before retrying.');
   const messageId = randomUUID();
   const reply = await requestNativeOwner(home, id, 'thread-follower-steer-turn', {
     conversationId: id, input, clientUserMessageId: messageId,
     restoreMessage: { id: messageId, cwd, context: { workspaceRoots: [cwd] } }
-  });
+  }, undefined, () => observations.get(key) === entry && connectionRevision === revision && entry.owner === owner && getNativeCodexSessionTurnId(home, id) === expectedTurnId);
   if (!reply) return false;
-  if (reply.result?.result?.turnId !== expectedTurnId) throw new Error('Codex did not confirm guidance for the expected turn. The outcome is unconfirmed; refresh before retrying.');
+  // Native follower v1 may hand guidance to a newer turn; a valid acceptance must not be replayed.
+  const acceptedTurnId = reply.result?.result?.turnId;
+  if (typeof acceptedTurnId !== "string" || !acceptedTurnId.trim() || acceptedTurnId.length > 256)
+    throw new Error('Codex did not confirm guidance. The outcome is unconfirmed; check the conversation before retrying.');
   return true;
 }
 

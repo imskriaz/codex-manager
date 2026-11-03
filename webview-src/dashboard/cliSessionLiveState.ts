@@ -7,7 +7,8 @@ export { isCliTurnActive } from "../../src/domain/codexSessionState";
 
 export function isCliLiveStateCurrent(session: DashboardCliSessionSummary | undefined, live: DashboardCodexSessionLiveState | undefined): boolean {
   return Boolean(session && live && sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId }) &&
-    !(Date.parse(session.updatedAt ?? "") > live.updatedAt));
+    (!session.steerTurnId || session.steerTurnId === live.turnId) &&
+    (session.status === "running" && !!session.steerTurnId && session.steerTurnId === live.turnId || !(Date.parse(session.updatedAt ?? "") > live.updatedAt)));
 }
 
 /** Keep a delayed session-index refresh from reviving a completed live turn. */
@@ -26,7 +27,7 @@ export function reconcileCliSessionStatus(
   // A later index update can describe a new turn started outside this host.
   if (!live || !isCliLiveStateCurrent(session, live)) return session;
   if (isCliTurnActive(live)) return { ...session, status: "running", interrupted: false };
-  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed" };
+  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed" };
   return session;
 }
 

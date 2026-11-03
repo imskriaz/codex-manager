@@ -113,6 +113,10 @@ const WORKSPACE_TERMINAL_ID = "workspace-terminal";
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true, typographer: true });
 const validateMarkdownLink = markdownRenderer.validateLink.bind(markdownRenderer);
 markdownRenderer.validateLink = href => validateMarkdownLink(href) || workspaceFileFromLink(href) !== undefined;
+markdownRenderer.renderer.rules["table_open"] = (tokens, index, options, _env, renderer) =>
+  '<div class="cli-table-scroll" role="region" aria-label="Scrollable table" tabindex="0">' + renderer.renderToken(tokens, index, options);
+markdownRenderer.renderer.rules["table_close"] = (tokens, index, options, _env, renderer) =>
+  renderer.renderToken(tokens, index, options) + "</div>";
 const renderMarkdownFence = markdownRenderer.renderer.rules["fence"]!;
 markdownRenderer.renderer.rules["fence"] = (tokens, index, options, env, renderer) =>
   `<div class="cli-markdown-code-block"><button type="button" class="cli-code-copy" aria-label="Copy code">Copy code</button>${renderMarkdownFence(tokens, index, options, env, renderer)}</div>`;
@@ -667,9 +671,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     : ["low", "medium", "high", "xhigh"];
   const selectedArchived = props.selectedSession?.archived === true;
   const ownedLiveTurn = isCliLiveStateCurrent(props.selectedSession, props.liveState) && isCliTurnActive(props.liveState);
-  const canSteer = Boolean(ownedLiveTurn && props.connected !== false && props.liveState?.status === "running" && props.liveState.turnId && props.onSteer);
-  const composerBlockedByOwner = Boolean((isCodexSessionRunning(props.selectedSession)) && !props.sending && !ownedLiveTurn);
-  const sessionAutoResume = props.autoResumeEnabled ? props.selectedSession?.autoResumeEnabled !== false : props.selectedSession?.autoResumeEnabled === true;
+  const steeringTurnId = props.selectedSession?.status === "running" ? props.selectedSession.steerTurnId : undefined;
+  const canSteer = Boolean(steeringTurnId && props.connected !== false && !props.stopping && props.onSteer);
+  const composerBlockedByOwner = Boolean((isCodexSessionRunning(props.selectedSession)) && !props.sending && !ownedLiveTurn && !canSteer);
   const hasInProgressActivity = props.messages.some((message) => message.status === "inProgress");
   const projects = props.composerConfig?.projects ?? [];
   const composerProjects = useMemo(() => {
@@ -691,6 +695,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     else reportLocalFeedback({ level: "warning", message: "No user prompt is available to retry." });
   };
   const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || isCodexSessionRunning(props.selectedSession));
+  const turnChanges = useMemo(() => summarizeTurnChanges(props.messages, steeringTurnId ?? (isCliLiveStateCurrent(props.selectedSession, props.liveState) ? props.liveState?.turnId : undefined)), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const showWorking = currentTurnRunning && !hasInProgressActivity;
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
@@ -851,7 +856,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
 
   const submit = (): void => {
-    if (submittingDrafts.current.has(draftKey) || (currentTurnRunning && !canSteer) || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
+    if (submittingDrafts.current.has(draftKey) || (currentTurnRunning && !canSteer) || props.selectedSession?.status === "unknown" || props.stopping || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
     const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
     const text = current.text.trim(), uploads = current.attachments;
     if (!text && !uploads.length) {
@@ -861,7 +866,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     try { prepareChatInput(text, uploads); }
     catch (error) { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
     const clearedDraft = acknowledgeCliComposerDraft(current, current);
-    const submitted = { ...current, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? props.liveState?.turnId : undefined };
+    const submitted = { ...current, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
     submittingDrafts.current.set(draftKey, "sending");
     markDraftFields(['text', 'attachments']);
     composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: clearedDraft };
@@ -870,8 +875,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     try {
     if (!props.selectedSession) {
       requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
-    } else if (canSteer && props.liveState?.turnId) {
-      requestId = props.onSteer?.({ text, attachments: uploads, expectedTurnId: props.liveState.turnId });
+    } else if (canSteer && steeringTurnId) {
+      requestId = props.onSteer?.({ text, attachments: uploads, expectedTurnId: steeringTurnId });
     } else {
       requestId = props.onSend({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
     }
@@ -1136,22 +1141,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               </section>
               {showLatestButton ? <button type="button" class={"cli-scroll-latest" + (currentTurnRunning ? " is-running" : "")} aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}>{currentTurnRunning ? <span class="cli-scroll-dots" aria-hidden="true"><i /><i /><i /></span> : <ChevronIcon />}</button> : null}</div>
               {props.requestPanel}
-              <TurnUsageStrip account={props.account} privacyMode={props.privacyMode} saved={props.connected === false} onOpen={() => openContextTab('env')} />
+              <TurnUsageStrip account={props.account} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} onOpenChanges={() => openContextTab('reviews')} onOpen={() => openContextTab('env')} />
 
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session"><QueueIcon /></span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
-              ) : props.selectedSession.status === "unknown" ? (
-                <div class="cli-workspace-feedback is-warning" role="status"><ShieldIcon /><span>Running state unavailable. {props.selectedSession.statusError} Your draft is saved; refresh before sending.</span><button type="button" onClick={props.onRefreshMessages} disabled={props.messagesLoading}>Retry</button></div>
-              ) : composerBlockedByOwner || props.connected === false ? (
-                <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
-                  {props.connected === false ? <ShieldIcon /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span class="cli-running-copy"><strong>{props.connected === false ? "Reconnecting" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings" title={`${model ?? 'Default model'} · ${reasoningEffort ?? 'Default effort'} · ${sandboxMode}`}><span class="cli-running-model"> · {selectedModel?.label ?? model ?? "Default"}</span><span> · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full" : sandboxMode === "read-only" ? "RO" : "RW"}</span></small><small class="cli-running-quota-inline"> · <AccountQuota account={props.account} saved={props.connected === false} inline /></small></span>
-                  {legacyDraftWarning}<span class="cli-running-actions">
-                    {!props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <IconButton pressed={sessionAutoResume} label={sessionAutoResume ? 'Pause Auto Resume' : 'Enable Auto Resume'} title={sessionAutoResume ? 'Pause Auto Resume for this session' : 'Enable Auto Resume for this session'} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(props.selectedSession!, !sessionAutoResume)}><AutoResumeIcon enabled={sessionAutoResume} goal={!!goal} /></IconButton> : null}
-                    <IconButton label="Stop turn" title={props.stopping ? 'Stopping…' : props.selectedSession.canStop ? 'Stop this turn' : 'Stop this turn from its owning Codex window'} disabled={!props.selectedSession.canStop || props.stopping || props.connected === false} onClick={() => props.onStop(props.selectedSession!)}><StopIcon /></IconButton>
-                  </span>
-                </div>
               ) : (
                 <Composer
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
@@ -1167,7 +1162,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   sending={currentTurnRunning}
                   tokenUsage={props.liveState?.tokenUsage}
                   canSteer={canSteer}
-                  submitDisabled={!props.connected || !draftReadyKeys.has(draftKey) || props.steering}
+                  submitDisabled={props.stopping || props.connected === false || !draftReadyKeys.has(draftKey) || props.steering || currentTurnRunning && !canSteer || props.selectedSession.status === "unknown"}
+                  stopDisabled={props.connected === false || !ownedLiveTurn && !props.selectedSession.canStop}
+                  unavailableReason={props.connected === false ? "Reconnecting" : props.selectedSession.status === "unknown" ? "Checking running state" : composerBlockedByOwner ? "Steering unavailable for this turn" : undefined}
                   stopping={props.stopping}
                   onDraft={setDraft}
                   onModel={(nextModel) => {
@@ -1185,7 +1182,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   onStop={() => props.selectedSession && props.onStop(props.selectedSession)}
                 />
               )}
-              {!composerBlockedByOwner && props.connected !== false ? legacyDraftWarning : null}
+              {props.selectedSession.status === "unknown" && props.selectedSession.statusError ? <div class="cli-workspace-feedback is-warning" role="alert"><span>{props.selectedSession.statusError}</span><button type="button" onClick={props.onRefreshMessages} disabled={props.messagesLoading}>Retry</button></div> : null}
+              {legacyDraftWarning}
             </>
           ) : newChatProject !== undefined ? (
             <>
@@ -1345,7 +1343,7 @@ function Composer(props: {
   draft: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
-  canSteer?: boolean; submitDisabled?: boolean; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
+  canSteer?: boolean; submitDisabled?: boolean; stopDisabled?: boolean; unavailableReason?: string; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
   composerHeight: number;
   onDraft: (value: string) => void; onModel: (value: string) => void; onReasoning: (value: string) => void;
   onSandbox: (value: DashboardCliSandboxMode) => void; onProject: (value: string) => void; onSubmit: () => void; onStop: () => void;
@@ -1419,7 +1417,8 @@ function Composer(props: {
           <label><span>Access</span><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
         </div> : null}
       </div>
-      {props.sending && !(props.canSteer && (props.draft.trim().length > 0 || props.attachments.length > 0)) ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}>{props.stopping ? <span class="cli-live-spinner" aria-hidden="true" /> : <StopIcon />}<span class="cli-stop-label">{props.stopping ? "Stopping" : "Stop"}</span></button> : null}{!props.sending || (props.canSteer && (props.draft.trim().length > 0 || props.attachments.length > 0)) ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
+      {props.sending && !(props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="button" class="cli-stop-button" disabled={props.stopping || props.stopDisabled} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}>{props.stopping ? <span class="cli-live-spinner" aria-hidden="true" /> : <StopIcon />}<span class="cli-stop-label">{props.stopping ? "Stopping" : "Stop"}</span></button> : null}{!props.sending || (props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
+    {props.unavailableReason ? <small class="cli-composer-state" role="status">{props.unavailableReason}</small> : null}
   </form></>;
 }
 
@@ -1445,10 +1444,10 @@ function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState }) 
   </div>;
 }
 
-export function TurnUsageStrip({ account, privacyMode, saved, onOpen }: { account?: DashboardAccountViewModel; privacyMode: boolean; saved?: boolean; onOpen: () => void }) {
+export function TurnUsageStrip({ account, privacyMode, saved, changedFiles, onOpenChanges, onOpen }: { account?: DashboardAccountViewModel; privacyMode: boolean; saved?: boolean; changedFiles?: number; onOpenChanges: () => void; onOpen: () => void }) {
   const metrics = getAccountQuotaMetrics(account);
   const name = getSensitiveDisplayValue(account?.email || account?.displayName, privacyMode, 'email', 'No active account');
-  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and turn usage"><span class="cli-turn-account" title={name}>{name}</span><span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span><button type="button" onClick={onOpen}>View usage</button></div>;
+  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and turn usage"><span class="cli-turn-account" title={name}>{name}</span><span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span><span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span></button> : null}<button type="button" onClick={onOpen}>View usage</button></span></div>;
 }
 
 export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onRetryPrompt?: () => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
@@ -1746,9 +1745,12 @@ export function groupCompletedTurns(items: ConsolidatedSessionItem[], running: b
 }
 
 export function summarizeTurnChanges(messages: DashboardCliSessionMessage[], turnId?: string) {
-  const matched = turnId ? messages.findIndex((message) => message.turnId === turnId) : -1;
-  const turnStart = matched >= 0 ? matched : messages.length - 1 - [...messages].reverse().findIndex((message) => message.role === "user" && (!message.kind || message.kind === "message"));
-  const summary = activitySummary(messages.slice(turnStart >= messages.length ? 0 : Math.max(0, turnStart)));
+  const promptOffset = [...messages].reverse().findIndex(message => message.role === "user" && (!message.kind || message.kind === "message"));
+  const prompt = promptOffset < 0 ? -1 : messages.length - 1 - promptOffset;
+  const activeTurnId = turnId ?? messages[prompt]?.turnId;
+  const matched = activeTurnId ? messages.findIndex(message => message.turnId === activeTurnId) : -1;
+  if (activeTurnId && matched < 0) return undefined;
+  const summary = activitySummary(messages.slice(Math.max(0, matched >= 0 ? matched : prompt)));
   return summary?.files ? summary : undefined;
 }
 
@@ -2265,7 +2267,7 @@ function SessionAccountFooter(props: {
   return <footer class="cli-account-footer" ref={rootRef}>
     <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
-      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}<small class="cli-account-footer-type" title={props.account?.authProviderLabel || props.account?.accountStructureLabel}>{props.account?.authProviderLabel || props.account?.accountStructureLabel || "Account"}</small></span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!peer.connected} /></span></span>
+      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!peer.connected} /></span></span>
       <ChevronIcon />
     </button>
     {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ width: "320px" }}>

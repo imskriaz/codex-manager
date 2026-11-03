@@ -1,3 +1,4 @@
+import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
 import { checkSteerUi } from './check-steer-ui.mjs';
 import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
@@ -190,7 +191,7 @@ const mockHost = `(() => {
         }
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
-          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:[...messages,{id:'thinking',kind:'reasoning',text:'Hidden private thinking'},{id:'failed-tool',kind:'tool-call',status:'failed',text:'Hidden failed attempt'},{id:'empty',kind:'message',text:''}],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:['changes','overview'].includes(message.payload.taskView)?{projectName:'demo',projectPath:'D:/demo',branch:'main',isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:[...messages,{id:'thinking',kind:'reasoning',status:'inProgress',text:'Hidden private thinking'},{id:'failed-tool',kind:'tool-call',status:'failed',text:'Hidden failed attempt'},{id:'empty',kind:'message',text:''}],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:['changes','overview'].includes(message.payload.taskView)?{projectName:'demo',projectPath:'D:/demo',branch:'main',isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
           if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
@@ -493,6 +494,13 @@ try {
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
     }
+    if (process.argv.includes('--wide-content')) {
+      await checkWideContentUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, []);
+      results.push({width,height,checks:'Wide shared transcript tables preserve columns, keyboard access and local scrolling'});
+      await context.close();
+      continue;
+    }
     if (process.argv.includes('--steer')) {
       await checkSteerUi(page, { origin, parentId });
       assert.deepEqual(errors, [], 'Steering has no browser runtime errors');
@@ -500,7 +508,7 @@ try {
       await context.close(); continue;
     }
     if (process.argv.includes('--mobile-polish')) {
-      await checkMobilePolishUi(page, { origin, width, height, output, parentId });
+      await checkMobilePolishUi(page, { origin, width, height, output, parentId, runningId });
       assert.deepEqual(errors, [], 'Compact UI has no browser runtime errors');
       results.push({ width, height, checks: '10% typography, dashboard logo/version, sidebar identity/system, empty one-line composer, context meter, usage row, files, tabs and dialogs' });
       await context.close(); continue;
@@ -849,9 +857,7 @@ try {
       const refresh=async()=>{await page.locator('.saved-card-container').first().getByRole('button',{name:'More account actions',exact:true}).click();await page.getByRole('button',{name:'Refresh token now',exact:true}).click();};
       await refresh();
       const toast=page.locator('.dashboard-notice').filter({hasText:'Account token refreshed.'});
-      await toast.waitFor();
-      await page.waitForTimeout(3200);
-      assert.equal(await toast.count(),0,'Info toast dismisses after three seconds');
+      assert.equal(await toast.count(),0,'Routine success adds no information toast');
       await page.evaluate(()=>{window.__failTokenRefresh=true;});
       await refresh();
       const failure=page.getByRole('alert').filter({hasText:'Refresh token was revoked. Reauthorize this account.'});
@@ -860,7 +866,7 @@ try {
       assert.equal(await failure.count(),1,'Errors remain visible longer than info');
       await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
       assert.deepEqual(errors,[],'Feedback UI runtime errors');
-      results.push({width,height,checks:'Token refresh success, 3s info timeout, preserved actionable failure and dismissal'});
+      results.push({width,height,checks:'Quiet token refresh success, preserved actionable failure and dismissal'});
       await context.close();continue;
     }
     if (process.argv.includes('--usage')) {
@@ -1467,8 +1473,7 @@ try {
       await sessionActions.focus(); await page.keyboard.press('Enter');
       await page.getByRole('menuitem',{name:'Open in Codex',exact:true}).click();
       await page.waitForFunction(id=>window.__uiActions.some(action=>action.action==='openCodexCliSession'&&action.payload.sessionId===id),parentId);
-      await page.locator('.dashboard-notice').filter({hasText:'Opened in VS Code.'}).waitFor();
-      await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Opened in VS Code.'}).count(),0,'Opening Codex stays quiet');
       await sessionActions.click();
       const sessionShare = page.getByRole('menuitem', { name: 'Share', exact: true });
       assert.equal(await sessionShare.locator('svg').count(), 1);
@@ -1673,8 +1678,8 @@ try {
     await page.getByRole("menu", { name: "Actions for Archived task", exact: true }).getByRole("menuitem", { name: "Delete", exact: true }).click();
     await deletion.waitFor();
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
+    await deletion.waitFor({state:'hidden'});
+    assert.equal(await page.getByText("Session deletion cancelled.", { exact: true }).count(),0,'Closing the delete dialog confirms cancellation without an information toast');
     await page.getByRole("button", { name: "Collapse demo", exact: true }).click();
 
     await page.getByRole("button", { name: "Show active sessions (2)", exact: true }).waitFor();
@@ -1709,25 +1714,12 @@ try {
       }
     });
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
-    await page.getByText("Running elsewhere", { exact: true }).waitFor();
-    const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
-    const inlineQuota = lockedStatus.locator(".cli-running-quota-inline");
-    assert.equal(await inlineQuota.isVisible(), width <= 760, "Inline quota appears in the mobile status line");
-      assert.equal(await lockedStatus.locator(":scope > .cli-running-quota").count(), 0, "Desktop uses sidebar quota; the status bar has no duplicate meters");
-    if (width <= 760) {
-      const hasAccount = await page.evaluate(() => window.__uiSnapshot.accounts.length > 0);
-      assert.equal((await inlineQuota.innerText()).trim(), hasAccount ? "· 95%/20%" : "· —");
-      const quotaBounds = await inlineQuota.boundingBox(), statusBounds = await lockedStatus.boundingBox();
-      assert.ok(quotaBounds.x >= statusBounds.x && quotaBounds.x + quotaBounds.width <= statusBounds.x + statusBounds.width, "Inline quota remains visible on narrow screens");
-      assert.ok(quotaBounds.y >= statusBounds.y && quotaBounds.y + quotaBounds.height <= statusBounds.y + statusBounds.height, "Quota stays inside the single status row");
-    }
-    await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).click();
-    await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).waitFor();
-    await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).click();
-    await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).waitFor();
-    assert.equal(await lockedStatus.getByRole('button',{name:'Stop turn',exact:true}).isEnabled(),true,'An owned remote turn exposes Stop');
-    assert.ok((await lockedStatus.boundingBox()).height <= (width <= 760 ? 40 : 34), "Session status keeps quota in one compact row on every viewport");
-    assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
+    const runningComposer = page.locator('.cli-composer');
+    await runningComposer.getByRole('textbox', {name:'Message Codex',exact:true}).waitFor();
+    assert.equal(await page.locator('.cli-conversation > .cli-composer-unavailable').count(),0,'Running state retains the composer');
+    assert.equal(await runningComposer.locator('.cli-running-quota-inline,.cli-running-quota').count(),0,'Composer has no duplicate quota');
+    assert.equal(await page.locator('.cli-turn-usage-strip .cli-turn-quota').isVisible(),true,'Quota remains above the composer');
+    assert.equal(await runningComposer.getByRole('button',{name:'Stop',exact:true}).isEnabled(),true,'Native owner still exposes Stop');
     await page.evaluate(({ sessionId }) => {
       const live = { sessionId, streamId: "ui-check-stream", sequence: 1, updatedAt: Date.now(), status: "running", messages: [] };
       window.__spinnerLive = live;
@@ -1742,7 +1734,8 @@ try {
     const turnUsage = page.locator('.cli-inspector-view .cli-turn-usage');
     await turnUsage.locator(':scope > summary').click();
     assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
-    assert.ok((await turnUsage.locator('.cli-activity-body').boundingBox()).height < 190,'Expanded usage stays compact');
+    const textScale = await page.evaluate(() => Number(getComputedStyle(document.documentElement).getPropertyValue('--dashboard-text-scale')) || 1);
+    assert.ok((await turnUsage.locator('.cli-activity-body').boundingBox()).height < 190 * textScale,'Expanded usage stays compact at the configured text scale');
     assert.ok(await turnUsage.locator('.cli-usage-grid > span').evaluateAll(items => items.every(item => { const label = item.querySelector('b').getBoundingClientRect(), value = item.querySelector('strong').getBoundingClientRect(); return Math.abs((label.top+label.bottom-value.top-value.bottom)/2)<1; })),'Usage labels and values share one code-style line');
     await turnUsage.locator(':scope > summary').click();
     await page.getByRole('button', {name:'Hide workspace tools',exact:true}).click();
@@ -1782,7 +1775,7 @@ try {
     const goalBounds = await page.locator(".cli-goal-strip").boundingBox();
     assert.ok(goalBounds.height <= (width <= 760 ? 38 : 32), 'Goal strip stays one compact row');
     const pauseBounds = await page.getByRole('button', { name: 'Pause goal', exact: true }).boundingBox();
-    assert.ok(pauseBounds.width <= (width <= 760 ? 32 : 24) && pauseBounds.height <= (width <= 760 ? 32 : 24), 'Pause control does not inflate the goal strip');
+    assert.ok(pauseBounds.width <= (width <= 760 ? 33 : 25) && pauseBounds.height <= (width <= 760 ? 33 : 25), 'Pause control stays compact within pixel rounding: '+JSON.stringify(pauseBounds));
     const composerBounds = await page.locator(".cli-composer").boundingBox();
     assert.ok(goalBounds.y >= 0 && goalBounds.y + goalBounds.height <= height && goalBounds.y + goalBounds.height <= composerBounds.y + 1, "Goal is visible above composer on every viewport");
     const imageTrigger = page.getByRole("button", { name: "Preview Attachment preview", exact: true });
@@ -1824,7 +1817,7 @@ try {
     const shellOutput = command.locator(".cli-code-surface pre");
     assert.ok(await shellOutput.evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight > element.clientHeight), "Shell output scrolls in both directions");
     const fileChange = page.locator(".cli-file-change-list > details").first();
-    await fileChange.locator(":scope > summary").click();
+    await fileChange.locator(":scope > summary > span").click();
     assert.equal(await fileChange.locator(".cli-diff-line.is-added").count(), 1);
     assert.equal(await fileChange.locator(".cli-diff-line.is-removed").count(), 1);
     assert.ok((await fileChange.locator(":scope > summary").boundingBox()).height <= 34, "File changes stay one compact row");
@@ -2046,8 +2039,7 @@ try {
     await composer.fill("Keep this new draft");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
     const completionToast=page.locator('.dashboard-notice').filter({hasText:'Codex completed the turn in the original chat.'});
-    await completionToast.waitFor();
-    await completionToast.waitFor({state:'hidden',timeout:5000});
+    assert.equal(await completionToast.count(),0,'A completed turn adds no information toast');
     assert.equal(new URL(page.url()).pathname, "/workspace", "A completed turn cannot pull the user back to its conversation");
     assert.equal(await composer.inputValue(), "Keep this new draft");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -2065,7 +2057,7 @@ try {
     const activeChatUrl = page.url();
     await composer.fill("Keep the currently selected chat");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldArchiveResult })));
-    await page.locator(".dashboard-notice").filter({hasText:"Original chat archived."}).waitFor();
+    assert.equal(await page.locator(".dashboard-notice").filter({hasText:"Original chat archived."}).count(),0,'Archiving adds no information toast');
     assert.equal(page.url(), activeChatUrl, "A delayed archive must not navigate away from another selected chat");
     assert.equal(await composer.inputValue(), "Keep the currently selected chat");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
@@ -2140,7 +2132,7 @@ try {
     await accountSearch.fill("");
     assert.equal(await accountCenter.getByRole("button", { name: "Switch to dis***com", exact: true }).count(), 0, "Disabled accounts are omitted from switching choices");
     assert.ok(await accountCenter.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; }), "The account center fits every viewport");
-    if (width <= 760) assert.equal(await accountCenter.locator('input[type="search"]').evaluate(element => getComputedStyle(element).fontSize), "16px", "Mobile account search avoids automatic iOS zoom");
+    if (width <= 760) assert.ok(await accountCenter.locator('input[type="search"]').evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile account search avoids automatic iOS zoom at the configured text scale");
     assert.ok(await accountCenter.evaluate(element => element.scrollWidth <= element.clientWidth), "The account center has no horizontal overflow");
     await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
     if (width <= 760) {
@@ -2339,7 +2331,7 @@ try {
     await retrySessions.click();
     await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).waitFor();
     assert.equal(await page.locator('.cli-sessions-list-status').count(),0,'Refreshing never adds a persistent status row');
-    await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+    assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'A successful session refresh adds no information toast');
     if (!await page.locator('.cli-sessions-popover').count()) await page.locator('#cliSessionsButton').click();
     await page.evaluate(() => {
       window.__uiSessions.splice(0, window.__uiSessions.length);
@@ -2436,7 +2428,7 @@ try {
       const controlBounds = await page.locator(".dashboard-account-toolbar > :visible").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
       assert.ok(controlBounds.every(bounds => bounds.x >= 0 && bounds.x + bounds.width <= width + 1), "Account controls fit the phone viewport");
       assert.ok((await page.locator(".dashboard-account-toolbar").boundingBox()).height <= 84, "Search and filters use at most two compact rows on phones");
-      assert.equal(await searchInput.evaluate(element => getComputedStyle(element).fontSize), "16px", "Mobile search avoids iOS zoom");
+      assert.ok(await searchInput.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile search avoids iOS zoom at the configured text scale");
     }
 
     await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector(".account-count-badges > button")?.textContent.trim() === "Total 0");

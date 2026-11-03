@@ -87,3 +87,14 @@ describe("shared browser/native live turn reconciliation", () => {
     expect(combineCliLiveMessages(history, live).map((item) => item.id)).toEqual(["old-user", "old-answer", "new-user"]);
   });
 });
+
+it("keeps the same verified turn steerable across newer catalogue timestamps", () => {
+  const row = { id: "chat", title: "Task", status: "running" as const, steerTurnId: "turn", updatedAt: new Date(5000).toISOString() };
+  const live = snapshot({ updatedAt: 1000 });
+  expect(isCliLiveStateCurrent(row, live)).toBe(true);
+  expect(isCliLiveStateCurrent({ ...row, steerTurnId: "new-turn" }, live)).toBe(false);
+  expect(isCliLiveStateCurrent({ ...row, status: "idle", steerTurnId: undefined }, live)).toBe(false);
+  expect(isCliLiveStateCurrent({ ...row, deviceId: "other" }, live)).toBe(false);
+  const finished = reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: "completed" }) });
+  expect(finished).toMatchObject({ status: "idle", steerTurnId: undefined });
+});

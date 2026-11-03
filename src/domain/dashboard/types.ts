@@ -769,6 +769,8 @@ export interface DashboardCliSessionSummary {
   locked?: boolean;
   /** Whether this Codex Manager process owns the running turn and can stop it. */
   canStop?: boolean;
+  /** Exact active turn reachable through the private connection or verified native owner. */
+  steerTurnId?: string;
   remote?: boolean;
   subAgent?: boolean;
   parentSessionId?: string;

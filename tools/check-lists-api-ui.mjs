@@ -25,6 +25,8 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiList })));
     await list.getByRole('cell', { name: 'First creation', exact: true }).waitFor();
     assert.equal(await list.locator('tbody tr').count(), 3, 'Stale listing cannot erase confirmed creation');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'API columns never widen the page');
+    if(width<=760) assert.ok(await list.locator('.api-table-scroll').evaluate(element=>element.scrollWidth>element.clientWidth), 'API columns scroll instead of squeezing');
     await list.getByRole('button', { name: 'Refresh', exact: true }).click();
     await page.waitForFunction(() => window.__uiActions.filter(action => action.action === 'listApiTokens').length >= 2);
     await list.getByRole('button', { name: '+ Create token', exact: true }).click();

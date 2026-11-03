@@ -2,11 +2,11 @@ import { EventEmitter } from "node:events";
 import * as path from "node:path";
 import * as os from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn() }));
+const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), realpath: vi.fn() }));
 vi.unmock("../src/services/codexNativeSessionStatus");
 vi.mock("node:net", () => ({ createConnection: mocks.connect }));
-vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: async (file: string) => file }));
-import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: mocks.realpath }));
+import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 import { listPendingCodexAppServerPrompts, respondCodexAppServerPrompt } from "../src/services/codexAppServerPrompts";
 
@@ -21,7 +21,7 @@ class FakeSocket extends EventEmitter {
 it.each(['confirmed','changed','timeout','disconnect'])('steers a running native turn once and reports %s outcomes',async outcome=>{
   const reading=readNativeCodexSessionRunning(home,id);await initialize();message(snapshot('active'));await reading;
   const pending=steerNativeCodexSessionTurn(home,id,'native-turn',[{type:'text',text:'Follow up'}],home);
-  const result=outcome==='confirmed'?expect(pending).resolves.toBe(true):expect(pending).rejects.toThrow();
+  const result=outcome==='confirmed'||outcome==='changed'?expect(pending).resolves.toBe(true):expect(pending).rejects.toThrow();
   for(let i=0;i<50;i++)await Promise.resolve();
   const sent=socket.sent.find(value=>value.method==='thread-follower-steer-turn');
   expect(sent).toMatchObject({version:1,targetClientId:'owner',params:{conversationId:id,input:[{type:'text',text:'Follow up'}],restoreMessage:{cwd:home,context:{workspaceRoots:[home]}}}});
@@ -259,7 +259,7 @@ function frame(value: unknown) {
 function message(value: unknown) { socket.emit("data", frame(value)); }
 function snapshot(type: string, revision = 1, source = "owner", rolloutPath = path.join(home, "sessions", "turn.jsonl")) {
   return { type: "broadcast", version: 11, sourceClientId: source, method: "thread-stream-state-changed", params: {
-    hostId: "local", conversationId: id, change: { type: "snapshot", revision, conversationState: { id, rolloutPath, threadRuntimeStatus: { type } } }
+    hostId: "local", conversationId: id, change: { type: "snapshot", revision, conversationState: { id, rolloutPath, threadRuntimeStatus: { type }, turns: type === "active" ? [{ turnId: "native-turn", status: "inProgress" }] : [] } }
   } };
 }
 async function initialize() {
@@ -270,6 +270,7 @@ async function initialize() {
 beforeEach(() => {
   vi.useFakeTimers();
   socket = new FakeSocket(); mocks.connect.mockReset().mockReturnValue(socket);
+  mocks.realpath.mockReset().mockImplementation(async (file: string) => file);
   mocks.lstat.mockReset().mockImplementation(async (file: string) => ({ uid: 1000, mode: 0o700, isSocket: () => file.endsWith(".sock"), isDirectory: () => !file.endsWith(".sock") }));
   Object.defineProperty(process, "getuid", { configurable: true, value: () => 1000 });
 });
@@ -413,4 +414,91 @@ it("keeps an uncertain native prompt response from being sent again", async () =
   await vi.advanceTimersByTimeAsync(10_001); await pending;
   await expect(respondCodexAppServerPrompt(prompt.id, "decline")).rejects.toThrow("did not confirm");
   expect(socket.sent.filter(item => item.method === "thread-follower-command-approval-decision")).toHaveLength(1);
+});
+
+it.each(["legacy", "canonical", "canonical-orphan", "canonical-partial", "canonical-terminal", "canonical-missing-newest-id", "missing", "completed-newest", "missing-newest-id", "null-newest", "invalid"])("derives native steering proof from the current owner snapshot (%s)", async scenario => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize();
+  const current: any = snapshot("active");
+  if (scenario.startsWith("canonical")) {
+    current.params.change.conversationState.turns = [];
+    current.params.change.conversationState.turnHistory = { kind: "canonical", history: { islands: [{ newerBoundary: { status: "exhausted" }, entries: [{ value: "old" }, { value: "active" }] }], entitiesByKey: { old: { turnId: "old", status: "completed" }, active: { turnId: "native-turn", status: "inProgress" }, orphan: { turnId: "orphan-turn", status: "inProgress" } } } };
+  }
+  if (scenario === "canonical-orphan") current.params.change.conversationState.turnHistory.history.islands[0].entries = [{ value: "old" }];
+  if (scenario === "canonical-partial") current.params.change.conversationState.turnHistory.history.islands[0].newerBoundary.status = "unknown";
+  if (scenario === "canonical-terminal") current.params.change.conversationState.turnHistory.history.entitiesByKey.active.status = "completed";
+  if (scenario === "canonical-missing-newest-id") {
+    current.params.change.conversationState.turnHistory.history.islands[0].entries.push({ value: "latest" });
+    current.params.change.conversationState.turnHistory.history.entitiesByKey.latest = { status: "completed" };
+  }
+  if (scenario === "missing-newest-id") current.params.change.conversationState.turns.push({status:"completed"});
+  if (scenario === "null-newest") current.params.change.conversationState.turns.push(null);
+  if (scenario === "missing") current.params.change.conversationState.turns = [];
+  if (scenario === "completed-newest") current.params.change.conversationState.turns.push({ turnId: "newer-completed", status: "completed" });
+  if (scenario === "invalid") current.params.change.conversationState.turns[0].turnId = " ";
+  message(current); expect(await reading).toBe(true);
+  expect(getNativeCodexSessionTurnId(home, id)).toBe(scenario === "legacy" || scenario === "canonical" ? "native-turn" : undefined);
+  expect(getNativeCodexSessionTurnId(path.join(home, "other"), id)).toBeUndefined();
+  if (scenario !== "legacy" && scenario !== "canonical") {
+    await expect(steerNativeCodexSessionTurn(home, id, "native-turn", [], home)).rejects.toThrow(/could not be verified/);
+    expect(socket.sent.some(value => value.method === "thread-follower-steer-turn")).toBe(false);
+  }
+});
+
+it.each(["turn", "canonical", "owner", "gap", "runtime", "home", "disconnect", "reset"])("revokes old native steering proof when %s changes", async scenario => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
+  expect(getNativeCodexSessionTurnId(home, id)).toBe("native-turn");
+  if (scenario === "owner") {
+    const other: any = snapshot("active", 2, "another-owner"); other.params.change.conversationState.turns = []; message(other);
+  } else if (scenario === "disconnect") socket.destroy();
+  else if (scenario === "reset") message({ type: "broadcast", method: "ipc-connection-reset", version: 1 });
+  else message({ type: "broadcast", version: 11, sourceClientId: "owner", method: "thread-stream-state-changed", params: { hostId: "local", conversationId: id, change: {
+    type: "patches", baseRevision: scenario === "gap" ? 0 : 1, revision: 2,
+    patches: [{ op: "replace", path: scenario === "turn" ? ["turns", 0, "turnId"] : scenario === "canonical" ? ["turnHistory", "history", "entitiesByKey", "active", "status"] : scenario === "home" ? ["rolloutPath"] : ["threadRuntimeStatus"], value: scenario === "runtime" ? { type: "idle" } : "changed" }]
+  } } });
+  expect(getNativeCodexSessionTurnId(home, id)).toBeUndefined();
+  if (scenario === "turn" || scenario === "canonical") {
+    const newer = snapshot("active", 2); newer.params.change.conversationState.turns[0]!.turnId = "new-turn";
+    message(newer); expect(getNativeCodexSessionTurnId(home, id)).toBe("new-turn");
+    await expect(steerNativeCodexSessionTurn(home, id, "native-turn", [], home)).rejects.toThrow(/changed/);
+    expect(socket.sent.some(value => value.method === "thread-follower-steer-turn")).toBe(false);
+  }
+});
+
+it.each(["owner", "turn", "home", "disconnect"])("does not send native guidance if %s changes during final canonical preflight", async scenario => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
+  mocks.realpath.mockImplementationOnce(async (file: string) => {
+    if (scenario === "home") return path.join(home, "changed-home");
+    if (scenario === "disconnect") socket.destroy();
+    else {
+      const newer = snapshot("active", 2, scenario === "owner" ? "another-owner" : "owner");
+      if (scenario === "turn") newer.params.change.conversationState.turns[0]!.turnId = "new-turn";
+      message(newer);
+    }
+    return file;
+  });
+  const pending = steerNativeCodexSessionTurn(home, id, "native-turn", [], home);
+  if (scenario === "home" || scenario === "disconnect") await expect(pending).resolves.toBe(false);
+  else await expect(pending).rejects.toThrow(/changed/);
+  expect(socket.sent.some(value => value.method === "thread-follower-steer-turn")).toBe(false);
+});
+
+it.each([undefined, null, "", " ", 42, "x".repeat(257)])("keeps an invalid native guidance acknowledgment inconclusive without replay (%j)", async turnId => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
+  const result = expect(steerNativeCodexSessionTurn(home, id, "native-turn", [], home)).rejects.toThrow(/unconfirmed/);
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  const sent = socket.sent.find(value => value.method === "thread-follower-steer-turn");
+  message({ type: "response", requestId: sent.requestId, resultType: "success", result: { result: { turnId } } });
+  await result;
+  expect(socket.sent.filter(value => value.method === "thread-follower-steer-turn")).toHaveLength(1);
+});
+
+it("retains native turn proof for ordinary activity patches and refuses a full request queue", async () => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
+  message({ type: "broadcast", version: 11, sourceClientId: "owner", method: "thread-stream-state-changed", params: { hostId: "local", conversationId: id, change: {
+    type: "patches", baseRevision: 1, revision: 2, patches: [{ op: "add", path: ["turns", 0, "items", 0], value: { type: "agentMessage" } }]
+  } } });
+  expect(getNativeCodexSessionTurnId(home, id)).toBe("native-turn");
+  Object.assign(socket, { writableLength: 4 * 1024 * 1024 + 1 });
+  await expect(steerNativeCodexSessionTurn(home, id, "native-turn", [], home)).rejects.toThrow(/queue is full/);
+  expect(socket.sent.some(value => value.method === "thread-follower-steer-turn")).toBe(false);
 });

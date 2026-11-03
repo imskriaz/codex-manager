@@ -26,6 +26,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.getByRole('tab',{name,exact:true}).click();
     await page.reload();
     await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Task views keep overflow local');
+    if(width<=390 && name!=='Board') {
+      const surface=page.locator(name==='List'?'.task-list-view':name==='Gantt'?'.task-gantt-scroll':'.task-calendar-scroll');
+      if(name==='List') await surface.locator('tbody tr').first().waitFor();
+      const geometry=await surface.evaluate(element=>({width:element.clientWidth,content:element.scrollWidth,tableWidth:element.querySelector('table')?.getBoundingClientRect().width}));
+      assert.ok(geometry.content>geometry.width,'Wide task '+name+' keeps readable columns with local scrolling: '+JSON.stringify(geometry));
+    }
   }
   await page.evaluate(() => {
     window.__originalSetItem = Storage.prototype.setItem;
@@ -153,13 +160,14 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByText('Review the workspace and explain the result.', {exact:true}).waitFor();
   const timeline=task.getByRole('region',{name:'Activity timeline',exact:true});
   await timeline.getByText('Timeline review comment',{exact:true}).waitFor();
-    assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),1,'Thinking uses the same disclosure as sessions');
-    assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),1,'Failed activity is preserved like session history');
-    assert.equal(await timeline.locator('.task-timeline-meta').count(),0,'Messages use shared session metadata');
+  assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),1,'Live thinking uses the same disclosure as sessions');
+  assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),1,'Failed activity is preserved like session history');
+  assert.equal(await timeline.locator('.task-timeline-meta').count(),0,'Messages use shared session metadata');
   assert.ok(await timeline.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Timeline fits narrow panels');
-    assert.equal(await timeline.locator('.cli-session-message.is-user').count(),1,'Activity uses the session user bubble');
+  assert.equal(await timeline.locator('.cli-session-message.is-user').count(),1,'Activity uses the session user bubble');
   await page.screenshot({path:path.join(output,`task-activity-${width}x${height}.png`)});
-  await task.locator('.cli-activity > summary').first().click();
+  await timeline.locator('.cli-activity-group-details > summary').first().click();
+  await timeline.locator('.cli-activity > summary').first().click();
   await task.getByText('Script completed', { exact: true }).waitFor();
   await task.getByRole('tab', { name: 'Files', exact: true }).click();
   await task.locator('.task-file-row').first().waitFor();
@@ -333,11 +341,12 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   } else {
     await create.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
-    await page.locator('.dashboard-notice-stack').getByText('Saved offline.',{exact:true}).waitFor();
+    assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Saved offline.'}).count(),0,'The visible offline card confirms saving without an information toast');
   }
   assert.equal(await page.locator('.task-board-status').count(),0,'Action feedback never inserts a board row');
-  await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
-  assert.equal(await page.locator('.dashboard-notice-stack').count(),0,'Task feedback is dismissible');
+  assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'Routine task outcomes stay quiet');
+  while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).first().click();
+  await page.locator('.dashboard-notice-stack').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Offline drafts never send a live request');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);

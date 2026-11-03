@@ -10,7 +10,7 @@ vi.mock("child_process", async (original) => ({ ...await original<typeof import(
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
-import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
@@ -44,6 +44,7 @@ afterEach(async () => {
   vi.mocked(startNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
   vi.mocked(steerNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
+  vi.mocked(getNativeCodexSessionTurnId).mockReturnValue(undefined);
   configureSqliteStateStore(undefined); preferenceStore.close();
   await rm(root, { recursive: true, force: true });
 });
@@ -214,6 +215,17 @@ describe("native App Server new sessions", () => {
       if (scenario === "delayed") await appendFile(transcript, event("task_started"));
       await vi.waitFor(() => expect(updates[0]?.status).toBe("running"));
       if (scenario === 'active') {
+        vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+        vi.mocked(getNativeCodexSessionTurnId).mockReturnValue("restored-turn");
+        expect((await readCodexCliSessionSummary(id, root, "display"))?.steerTurnId).toBe("restored-turn");
+        vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+        vi.mocked(getNativeCodexSessionTurnId).mockReturnValue(undefined);
+        expect((await readCodexCliSessionSummary(id, root, "display"))?.steerTurnId).toBeUndefined();
+        vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+        expect((await readCodexCliSessionSummary(id, root, "display"))?.steerTurnId).toBeUndefined();
+        await expect(steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "restored-turn", text: "Old observer" })).rejects.toThrow(/does not own/);
+        expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
+        vi.mocked(getNativeCodexSessionTurnId).mockReturnValue('restored-turn');
         vi.mocked(steerNativeCodexSessionTurn).mockResolvedValueOnce(true);
         await steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'restored-turn',text:'Follow up',projectPath:root});
         expect(steerNativeCodexSessionTurn).toHaveBeenCalledWith(root,id,'restored-turn',expect.any(Array),root);
@@ -275,6 +287,7 @@ describe("native App Server new sessions", () => {
     try {
       await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
       expect(await readCodexCliSessionSummary(id)).toMatchObject({ locked: true, status: "running" });
+      vi.mocked(getNativeCodexSessionTurnId).mockReturnValue('owned-native-turn');
       await expect(steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'another-turn',text:'Follow up'})).rejects.toThrow('turn changed');
       vi.mocked(steerNativeCodexSessionTurn).mockResolvedValueOnce(true);
       await steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'owned-native-turn',text:'Follow up',projectPath:root});
@@ -489,6 +502,13 @@ describe("native App Server new sessions", () => {
     mocks.open.mockResolvedValue(rpc);
     try {
       await startCodexCliSession({ text: "First prompt", projectPath: root });
+      expect(readNewCodexCliSessionSummary(id)?.steerTurnId).toBe("turn-1");
+      process.env["CODEX_HOME"] = path.join(root, "other-home");
+      try {
+        expect(readNewCodexCliSessionSummary(id)?.steerTurnId).toBeUndefined();
+        await expect(steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "turn-1", text: "Wrong home" })).rejects.toThrow(/does not own/);
+        expect(rpc.request).not.toHaveBeenCalledWith("turn/steer", expect.anything());
+      } finally { process.env["CODEX_HOME"] = root; }
       await expect(steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "other", text: "Guide" })).rejects.toThrow(/turn changed/);
       vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
       await steerCodexCliSessionTurn({ sessionId: id, expectedTurnId: "turn-1", text: "Guide" });

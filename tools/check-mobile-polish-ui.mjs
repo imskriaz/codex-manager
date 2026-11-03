@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-export async function checkMobilePolishUi(page, { origin, width, height, output, parentId }) {
+export async function checkMobilePolishUi(page, { origin, width, height, output, parentId, runningId }) {
   const exact = name => ({ name, exact: true });
   const fits = async (locator, name) => {
     const bounds = await locator.boundingBox();
@@ -36,6 +36,11 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.ok(await account.locator('strong').isVisible(), 'Sidebar retains account identity on mobile');
   if (await account.locator('em').count()) assert.ok(await account.locator('em').isVisible(), 'Sidebar retains the plan badge on mobile');
   await fits(page.locator('.cli-account-footer'), 'Sidebar account footer');
+  assert.equal(await account.locator('.cli-account-footer-type').count(), 0, 'Account footer has no provider row');
+  assert.equal(await page.locator('.cli-account-footer .cli-quota-note:visible').count(), 0, 'Account footer has no Saved label');
+  const identityBounds = await account.boundingBox(), quotaBounds = await page.locator('.cli-account-footer-quota').boundingBox();
+  assert.ok(quotaBounds.y >= identityBounds.y + identityBounds.height - 1, 'Quota follows the account row');
+  assert.ok(await account.evaluate(element => !element.innerText.includes('passwordless')), 'Account row shows only name and plan');
   await page.screenshot({ path: path.join(output, `mobile-polish-sidebar-${width}.png`), animations: 'disabled' });
   await page.goto(origin + '/workspace/' + parentId);
   const draft = page.getByRole('textbox', exact('Message Codex'));
@@ -56,6 +61,13 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.equal(await page.locator('.cli-turn-change-bar').count(), 0, 'Redundant turn-change footer stays removed');
   await page.getByRole('button', exact('View usage')).waitFor();
   await fits(page.locator('.cli-turn-usage-strip'), 'Turn usage row');
+  const changedFiles = page.locator('.cli-turn-usage-strip').getByRole('button', { name: 'View 4 changed files', exact: true });
+  await changedFiles.waitFor();
+  assert.equal(await changedFiles.innerText(), '4 files changed', 'Changed-file count stays available beside usage');
+  await fits(changedFiles, 'Changed-file action');
+  await changedFiles.click();
+  assert.equal(await page.getByRole('tab', exact('Reviews')).getAttribute('aria-selected'), 'true', 'Changed-file count opens Reviews');
+  await page.getByRole('button', exact('Hide workspace tools')).click();
   const meter = page.locator('.cli-context-meter');
   await meter.waitFor();
   assert.equal(await meter.locator('circle').count(), 2, 'Context use has one circular meter');
@@ -89,6 +101,17 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.ok(await page.locator('.cli-file-editor > header').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'File header fits the selected path and actions');
   await noOverflow('Workspace');
   await page.screenshot({ path: path.join(output, `mobile-polish-workspace-${width}.png`), animations: 'disabled' });
+  await page.evaluate(sessionId => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: 'polish-new-turn', sequence: 1, turnId: 'next-turn', status: 'running', updatedAt: Date.now()+1000, messages: [{ id: 'next-prompt', role: 'user', kind: 'message', turnId: 'next-turn', text: 'Start a new task without file edits' }] } } })), parentId);
+  await page.locator('.cli-turn-usage-strip button[aria-label^="View "]').waitFor({state:'hidden'});
+  assert.equal(await page.locator('.cli-turn-usage-strip').getByRole('button', exact('View usage')).count(), 1, 'Usage remains available when the next turn has no changed files');
+  await page.goto(origin + '/workspace/' + runningId);
+  const runningStatus = page.locator('.cli-composer');
+  await runningStatus.getByRole('textbox', exact('Message Codex')).waitFor();
+  assert.equal(await page.locator('.cli-conversation > .cli-composer-unavailable').count(), 0, 'Running state retains the composer');
+  assert.equal(await runningStatus.locator('.cli-running-quota-inline,.cli-quota-inline,.cli-running-quota').count(), 0, 'Composer omits duplicate quota');
+  await page.locator('.cli-turn-usage-strip .cli-turn-quota').waitFor({ state: 'visible' });
+  await fits(runningStatus, 'Compact running status');
+  await page.screenshot({ path: path.join(output, `mobile-polish-running-${width}.png`), animations: 'disabled' });
   await page.goto(origin + '/tasks');
   await page.locator('.task-board-header').waitFor();
   await fits(page.locator('.task-board-header'), 'Task header');

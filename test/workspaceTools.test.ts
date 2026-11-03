@@ -610,7 +610,7 @@ describe("workspace tools", () => {
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringMatching(
         /The Git action completed, but workspace status could not refresh: (?:status inspection unavailable|Workspace status is still loading)\. Refresh the workspace; do not repeat the Git action\./
       ));
-    } finally { spawn.mockImplementation(originalSpawn); restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
+    } finally { spawn.mockImplementation(originalSpawn); restoreWorkspace(); await removeTestDirectory(projectPath); }
   });
 });
 

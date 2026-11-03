@@ -2,7 +2,7 @@ import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexCapacityInterruption, isCodexQuotaInterruption } from "../domain/codexSessionState";
-import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
+import { getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -77,7 +77,7 @@ const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
 const recentNewSessions = new Map<string, { summary: DashboardCliSessionSummary; text: string }>();
 const newSessionFailures = new Map<string, Error>();
-const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
+const activeAppServerTurns = new Map<string, { home: string; rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean>; cancelled?: boolean }>();
 const nativeTurnObservers = new Map<string, { turnId?: string; cancelled?: boolean }>();
 const observedNativeStops = new Map<string, Promise<boolean>>();
@@ -117,7 +117,15 @@ function ownedNativeTurn(home: string, id: string) {
 }
 
 function ownsSessionTurn(home: string, id: string): boolean {
-  return activeAppServerTurns.has(id) || Boolean(ownedNativeTurn(home, id));
+  return activeAppServerTurns.get(id)?.home === path.resolve(home) || Boolean(ownedNativeTurn(home, id));
+}
+
+function steerableSessionTurn(home: string, id: string): string | undefined {
+  const privateTurn = activeAppServerTurns.get(id);
+  if (privateTurn) return privateTurn.home !== path.resolve(home) || privateTurn.cancelRequested ? undefined : privateTurn.turnId;
+  const native = ownedNativeTurn(home, id);
+  if (native?.stop) return undefined;
+  return getNativeCodexSessionTurnId(home, id);
 }
 
 function canStopSessionTurn(home: string, id: string): boolean {
@@ -251,6 +259,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
   return rows.map(row => {
     const preference = preferences.get(row.id);
     const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
+    delete decorated.steerTurnId;
     delete decorated.autoResumeEnabled; delete decorated.queueEnabled; delete decorated.queuePriority; delete decorated.queueError;
     if (autoResume || preference?.autoResume !== undefined) decorated.autoResumeEnabled = (autoResume || preference?.autoResume === true) && preference?.autoResume !== false;
     if (preference?.queue === true) {
@@ -266,6 +275,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
     if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
     const canStop = status === "running" && canStopSessionTurn(home,row.id);
     return { ...decorated,status,canStop,locked:status !== "idle",
+      steerTurnId: status === "running" ? steerableSessionTurn(home, row.id) : undefined,
       statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
       runningBy:status === "running" ? ownsSessionTurn(home, row.id) ? "Codex Manager" : "another Codex process" : undefined,
       runningSince:status === "running" ? row.runningSince : undefined,
@@ -474,7 +484,7 @@ export async function readCodexCliSessionSummary(
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
   const recent = recentNewSessions.get(sessionId)?.summary;
-  if (requireNativeRuntime !== true && recent && ownsSessionTurn(codexHome, sessionId)) return recent;
+  if (requireNativeRuntime !== true && recent && ownsSessionTurn(codexHome, sessionId)) return { ...recent, steerTurnId: steerableSessionTurn(codexHome, sessionId) };
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
   const indexed = (await readCodexCliSessionIndex(codexHome).catch(error => { if (!state) throw error; return [] as CliSessionIndexEntry[]; })).find(candidate => candidate.id === sessionId);
   let entry = state ? mergeSessionIndexEntry(state, indexed) : indexed;
@@ -702,6 +712,7 @@ async function toCliSessionSummary(
     model: turnMetadata?.model,
     reasoningEffort: turnMetadata?.reasoningEffort,
     runningSince,
+    steerTurnId: running ? steerableSessionTurn(codexHome, entry.id) : undefined,
     interrupted: turnState && turnState !== "unknown" ? !running && (["active", "failed", "quota-paused"].includes(turnState) || turnMetadata?.cancelled === true) : undefined,
     updatedAt,
     ...state,
@@ -964,7 +975,7 @@ export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSe
   const summary = recentNewSessions.get(sessionId)?.summary;
   if (!summary) return undefined;
   const running = ownsSessionTurn(resolveCodexHome(), sessionId);
-  return { ...summary, status: running ? "running" : "idle", canStop: running };
+  return { ...summary, status: running ? "running" : "idle", canStop: running, steerTurnId: running ? steerableSessionTurn(resolveCodexHome(), sessionId) : undefined };
 }
 
 async function runNewCodexCliSession(options: {
@@ -1002,6 +1013,7 @@ async function startAppServerSession(options: {
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
 }, onStarted: (sessionId: string) => void): Promise<string> {
+  const home = path.resolve(resolveCodexHome());
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   const live = reserveCodexSessionLive();
@@ -1022,7 +1034,7 @@ async function startAppServerSession(options: {
     threadId = candidateThreadId;
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
     detachPrompts = attachCodexAppServerPrompts(rpc, threadId);
-    activeAppServerTurns.set(threadId, { rpc });
+    activeAppServerTurns.set(threadId, { home, rpc });
     await rpc.startAndWaitForTurn(threadId, {
       threadId: candidateThreadId,
       input: appServerChatInput(options.text.trim(), options.attachments),
@@ -1103,7 +1115,7 @@ async function sendAppServerSessionMessage(options: {
     rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd, options.signal);
     options.signal?.throwIfAborted();
     detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
-    activeAppServerTurns.set(options.sessionId, { rpc });
+    activeAppServerTurns.set(options.sessionId, { home: path.resolve(home), rpc });
     try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true }); }
     catch (error) {
       if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
@@ -1300,7 +1312,7 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   const prepared = prepareChatInput(options.text, options.attachments);
   const active = activeAppServerTurns.get(sessionId);
   if (active) {
-    if (!active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
+    if (active.home !== path.resolve(home) || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
     if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
     const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
       threadId: sessionId, expectedTurnId: options.expectedTurnId,
@@ -1310,8 +1322,8 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
     return;
   }
   const native = ownedNativeTurn(home, sessionId);
-  let nativeTurnId = native?.turnId;
-  if (!nativeTurnId) nativeTurnId = await observedNativeTurn(home, sessionId);
+  await readNativeCodexSessionRunning(home, sessionId);
+  const nativeTurnId = getNativeCodexSessionTurnId(home, sessionId);
   if (nativeTurnId) {
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
     if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(prepared.text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
@@ -1376,6 +1388,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   }
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {
+    if (activeAppServer.home !== path.resolve(home)) throw new Error("The active Codex home changed. Refresh before stopping this turn.");
     if (activeAppServer.stop) return activeAppServer.stop;
     suppressRecovery(activeAppServer.turnId);
     activeAppServer.cancelRequested = true;

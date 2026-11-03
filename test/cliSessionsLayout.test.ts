@@ -4,6 +4,7 @@ import {
   consolidateSessionMessages,
   groupCompletedTurns,
   summarizeChangedFiles,
+  summarizeTurnChanges,
   parseDiffLines,
   countPeerSessions,
   getMessagePrompt,
@@ -22,6 +23,23 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it('counts unique changed files in the current turn, retaining changes before steering', () => {
+    const messages = [
+      { id: 'old', kind: 'file-change' as const, turnId: 'old-turn', text: '', changes: [{ path: 'old.ts', kind: 'update' as const }] },
+      { id: 'prompt', role: 'user' as const, turnId: 'current', text: 'Update the files' },
+      { id: 'edit', kind: 'file-change' as const, turnId: 'current', text: '', changes: [{ path: 'a.ts', kind: 'update' as const }, { path: 'b.ts', kind: 'add' as const }] },
+      { id: 'steer', role: 'user' as const, turnId: 'current', text: 'Also check the result' },
+      { id: 'repeat', kind: 'file-change' as const, turnId: 'current', text: '', changes: [{ path: 'a.ts', kind: 'update' as const }] }
+    ];
+    expect(summarizeTurnChanges(messages)?.files).toBe(2);
+    expect(summarizeTurnChanges(messages, 'current')?.files).toBe(2);
+    expect(summarizeTurnChanges(messages, 'new-turn')).toBeUndefined();
+    expect(summarizeTurnChanges([...messages, { id: 'next', role: 'user', turnId: 'next-turn', text: 'New task' }])).toBeUndefined();
+    expect(summarizeTurnChanges(messages.map(({ turnId: _turnId, ...message }) => message))?.files).toBe(1);
+    expect(summarizeTurnChanges([])).toBeUndefined();
+    expect(summarizeTurnChanges([{id:'old-partial',kind:'file-change',text:'',changes:[{path:'old.ts',kind:'update'}]}], 'new-turn')).toBeUndefined();
+    expect(summarizeTurnChanges([{ id: 'partial', kind: 'file-change', text: '', changes: [{ path: 'only.ts', kind: 'delete' }] }])?.files).toBe(1);
+  });
   it("shows interrupted-work resume preferences while preserving explicit queue review", () => {
     const interrupted = { status: "idle" as const, interrupted: true };
     expect(showsCodexSessionAutoResume({ status: "running" })).toBe(true);
@@ -42,8 +60,9 @@ describe("sessions sidebar layout", () => {
     expect(isCodexSessionRunning({ status: "unknown" })).toBe(true);
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
-    expect(source).toContain("Running state unavailable.");
-    expect(source).toContain("Your draft is saved; refresh before sending.");
+    expect(source).toContain("Checking running state");
+    expect(source).toContain('props.selectedSession.statusError}</span>');
+    expect(source).toContain('props.selectedSession?.status === "unknown" || props.stopping');
   });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
@@ -445,7 +464,11 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("SessionShareModal");
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
-    expect(source).toContain("Running elsewhere");
+    expect(source).toContain("steeringTurnId");
+    expect(source).not.toContain('<strong>Running elsewhere</strong>');
+    expect(source).not.toContain('class="cli-account-footer-type"');
+    expect(source).not.toContain('class="cli-running-quota-inline"');
+    expect(source).toContain('<TurnUsageStrip account={props.account}');
     expect(source).not.toContain("Running elsewhere · wait to send");
     expect(css).toContain("content-visibility: auto");
     expect(css).toContain("contain-intrinsic-size");

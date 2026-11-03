@@ -20,18 +20,25 @@ describe("CLI session cache merging", () => {
     const previous = { id: 'session', title: 'Old title', status: 'running' as const, canStop: true, updatedAt: '2026-11-01T12:00:00Z', autoResumeEnabled: true, queueEnabled: true, queuePriority: 2 as const, queueError: 'Old failure', goal: { objective: 'Work', status: 'active' as const } };
     const incoming = { ...previous, status: 'idle' as const, canStop: false, updatedAt: '2026-11-01T11:00:00Z', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined, title: 'Confirmed title', goal: null };
     for (const action of ['setCodexSessionAutoResume', 'setCodexSessionQueue'] as const) {
-      expect(mergeConfirmedCliSession(incoming, previous, action)).toMatchObject({ status: 'running', canStop: true, title: 'Old title', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined });
+      expect(mergeConfirmedCliSession(incoming, previous, action)).toMatchObject({ status: 'idle', canStop: false, title: 'Old title', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined });
     }
-    expect(mergeConfirmedCliSession(incoming, previous, 'renameCodexCliSession')).toMatchObject({ title: 'Confirmed title', status: 'running', autoResumeEnabled: true });
-    expect(mergeConfirmedCliSession(incoming, previous, 'setCodexSessionGoalStatus')).toMatchObject({ goal: null, status: 'running' });
-    expect(mergeCachedCliSession(incoming, previous)).toBe(previous);
+    expect(mergeConfirmedCliSession(incoming, previous, 'renameCodexCliSession')).toMatchObject({ title: 'Confirmed title', status: 'idle', autoResumeEnabled: true });
+    expect(mergeConfirmedCliSession(incoming, previous, 'setCodexSessionGoalStatus')).toMatchObject({ goal: null, status: 'idle' });
+    expect(mergeCachedCliSession(incoming, previous)).toMatchObject({ ...previous, status: 'idle', canStop: false });
   });
   it('preserves archive metadata during partial refreshes and ignores older snapshots', () => {
     const archived = {id:'archived',title:'Archived task',status:'idle' as const,archived:true,updatedAt:'2026-10-31T10:00:00Z'};
     const partial = {id:'archived',title:'Archived task',status:'unknown' as const};
     expect(mergeCachedCliSession(partial,archived).archived).toBe(true);
-    expect(mergeCachedCliSession({...archived,archived:false,updatedAt:'2026-10-31T09:00:00Z'},archived)).toBe(archived);
+    expect(mergeCachedCliSession({...archived,archived:false,updatedAt:'2026-10-31T09:00:00Z'},archived)).toMatchObject(archived);
     expect(mergeCachedCliSession({...archived,archived:false,updatedAt:'2026-10-31T11:00:00Z'},archived).archived).toBe(false);
+  });
+  it.each([undefined, 'new-turn'])('applies current steering proof independently of older transcript timestamps (%s)', steerTurnId => {
+    const previous = { id: 's', title: 'New title', model: 'new-model', status: 'running' as const, locked: true, canStop: true, steerTurnId: 'old-turn', updatedAt: '2026-11-03T10:00:00Z' };
+    const incoming = { id: 's', title: 'Old title', model: 'old-model', status: steerTurnId ? 'running' as const : 'unknown' as const, locked: true, canStop: false, steerTurnId, statusError: steerTurnId ? undefined : 'Owner unavailable', updatedAt: '2026-11-03T09:00:00Z' };
+    expect(mergeCachedCliSessions([incoming], [previous])[0]).toMatchObject({ ...previous, status: incoming.status, canStop: false, steerTurnId, statusError: incoming.statusError });
+    expect(mergeCachedCliSession(incoming, previous)).toMatchObject({ title: 'New title', model: 'new-model', steerTurnId });
+    expect(previous.steerTurnId).toBe('old-turn');
   });
   it("keeps only the selected remote account catalogue in live state", () => {
     const a = [{ id: "same-id", email: "a@example.test" }], b = [{ id: "same-id", email: "b@example.test" }];

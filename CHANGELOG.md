@@ -1,11 +1,16 @@
 # Changelog
 
-## 1.6.5-pre.1
+## 1.6.5
 
+- Keep wide session tables, task columns, API tables and workspace tabs readable with local horizontal scrolling on small screens.
 - Compact mobile dashboard branding, sidebar identity, tabs, dialogs and the single-line empty composer; increase browser text by 10% while preserving responsive layouts.
 - Show one send or stop action, clear acknowledged follow-ups without losing newer drafts, and guard repeated submissions.
+- Keep the composer stable through running, checking and reconnecting states, and enable steering through a verified main Codex owner.
+- Keep the sidebar footer to account/plan and quota rows without provider or saved-data labels.
 - Reuse the session transcript in task activities and agent views, keep compaction status visible, and consolidate command copying.
 - Show context usage beside attachments and a compact account/quota row above the composer, with usage details in Env.
+- Keep quota in the usage row without repeating it in the running status.
+- Show the current turn's changed-file count beside View usage, with direct access to Reviews.
 - Keep informational outcomes inline; restrict push to attention, approvals, questions and errors, with replay and delivery deduplication.
 - Release owned private-server processes and writer handles safely, and surface requests from the official Codex owner.
 

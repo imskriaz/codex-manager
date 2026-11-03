@@ -88,7 +88,7 @@ try {
   console.log('Current worker controls the online dashboard');
   await page.waitForFunction(() => document.querySelectorAll('.saved-card-container, .saved-table-row').length > 0);
   await page.getByRole('button', { name: 'Project task board', exact: true }).click();
-  await page.locator('.task-board-card').first().waitFor();
+  await page.locator('.task-board-columns').waitFor();
   await page.waitForFunction(async () => {
     const database = await new Promise(resolve => { const request = indexedDB.open('codex-manager-cache', 1); request.onsuccess = () => resolve(request.result); });
     try {
@@ -109,7 +109,8 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.saved-card-container, .saved-table-row').length > 0);
   await page.screenshot({ path: path.join(output, 'dashboard-cold-offline.png') });
   console.log('Cold offline dashboard restored');
-  await page.goto(origin + '/tasks'); await page.locator('.task-board-card').first().waitFor();
+  await page.goto(origin + '/tasks'); await page.locator('.task-board-columns').waitFor();
+  assert.equal(await page.locator('.task-board-column').count(), 4, 'Cached task boards restore all stages even when the project has no tasks');
   await page.getByRole('button', { name: 'Board actions', exact: true }).click();
   assert.equal(await page.getByRole('menuitem', { name: 'Share project', exact: true }).isDisabled(), true, 'Sharing remains live-only offline');
   await page.keyboard.press('Escape');

@@ -1037,7 +1037,7 @@ function App() {
                   previousRouteSession.status !== routeSession.status ||
                   previousRouteSession.projectPath !== routeSession.projectPath ||
                   previousRouteSession.runningBy !== routeSession.runningBy ||
-                  previousRouteSession.canStop !== routeSession.canStop;
+                  previousRouteSession.canStop !== routeSession.canStop || previousRouteSession.steerTurnId !== routeSession.steerTurnId;
                 setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current));
                 // A running turn appends activity events to its transcript while
                 // the session index can keep the same updatedAt. Refresh the
