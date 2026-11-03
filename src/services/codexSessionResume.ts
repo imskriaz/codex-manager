@@ -1,3 +1,5 @@
+import { readSessionQuestions } from '../domain/sessionQuestions';
+import { parseCodexTokenUsage } from '../domain/codexSessionLive';
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
@@ -11,8 +13,8 @@ import { execFile, spawn } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
-import { prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
-import { appServerChatInput } from "./codexChatAttachments";
+import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_WIRE_BYTES, needsChatAttachmentFiles, prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
+import { appServerChatInput, materializeChatAttachments } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError, type AppServerTransport } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
@@ -23,7 +25,7 @@ import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
-  DashboardCliSandboxMode
+  DashboardCliSandboxMode, DashboardCodexSessionLiveState
 } from "../domain/dashboard/types";
 import { runCrossWindowExclusive, runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 import { recordPersistentEvent } from "../utils/persistentLog";
@@ -45,14 +47,14 @@ const RUNNING_TURNS_FILE = "codex-manager-running-turns.json";
 const SESSION_DIRECTORY = "sessions";
 const SESSION_LOCK_DIRECTORY = "thread-writer-locks";
 const MAX_SESSION_INDEX_BYTES = 5 * 1024 * 1024;
-const MAX_SESSION_TRANSCRIPT_READ_BYTES = 25 * 1024 * 1024;
+const MAX_SESSION_TRANSCRIPT_READ_BYTES = MAX_CHAT_WIRE_BYTES;
 const MAX_VISIBLE_CLI_SESSIONS = 10_000;
 const SESSION_TRANSCRIPT_DETAIL_LIMIT = 200;
 const MAX_VISIBLE_SESSION_MESSAGES = 250;
 const MAX_TRANSCRIPT_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_MESSAGE_CHARS = 12_000;
-const MAX_SESSION_IMAGE_BYTES = 8 * 1024 * 1024;
-const MAX_SESSION_IMAGE_TOTAL_BYTES = 16 * 1024 * 1024;
+const MAX_SESSION_IMAGE_BYTES = MAX_CHAT_ATTACHMENT_BYTES;
+const MAX_SESSION_IMAGE_TOTAL_BYTES = MAX_CHAT_ATTACHMENT_BYTES;
 const MAX_SESSION_SCAN_ENTRIES = 10_000;
 const MAX_MODELS_CACHE_BYTES = 5 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -711,6 +713,8 @@ async function toCliSessionSummary(
     title: normalizeSessionTitle(entry.thread_name, entry.id),
     model: turnMetadata?.model,
     reasoningEffort: turnMetadata?.reasoningEffort,
+    sandboxMode: turnMetadata?.sandboxMode,
+    tokenUsage: turnMetadata?.tokenUsage,
     runningSince,
     steerTurnId: running ? steerableSessionTurn(codexHome, entry.id) : undefined,
     interrupted: turnState && turnState !== "unknown" ? !running && (["active", "failed", "quota-paused"].includes(turnState) || turnMetadata?.cancelled === true) : undefined,
@@ -892,6 +896,7 @@ export async function sendCodexCliSessionMessage(options: {
   signal?: AbortSignal;
   clearManualStop?: boolean;
   interruptedOnly?: boolean;
+  preferPrivate?: boolean;
 }): Promise<void> {
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
@@ -911,6 +916,10 @@ export async function sendCodexCliSessionMessage(options: {
     throw new Error("The selected access mode is invalid.");
   }
   const cwd = await resolveRecordedSessionProject(options.sessionId, options.projectPath);
+  options.signal?.throwIfAborted();
+  const attachmentHome = resolveCodexHome();
+  options.text = await materializeChatAttachments(options.text, options.attachments, cwd, options.signal);
+  if (resolveCodexHome() !== attachmentHome) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   options.signal?.throwIfAborted();
   if (options.clearManualStop) clearCodexSessionManualStop(resolveCodexHome(), options.sessionId);
   await sendAppServerSessionMessage(options, cwd);
@@ -1016,6 +1025,8 @@ async function startAppServerSession(options: {
   const home = path.resolve(resolveCodexHome());
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
+  options.text = await materializeChatAttachments(options.text, options.attachments, cwd);
+  if (path.resolve(resolveCodexHome()) !== home) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
   let detachPrompts: () => void = () => undefined;
@@ -1073,6 +1084,8 @@ async function sendAppServerSessionMessage(options: {
   onStarted?: () => void;
   signal?: AbortSignal;
   interruptedOnly?: boolean;
+  preferPrivate?: boolean;
+  goalContinuation?: boolean;
 }, cwd: string): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
@@ -1080,7 +1093,7 @@ async function sendAppServerSessionMessage(options: {
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   const params = {
-    threadId: options.sessionId, input: appServerChatInput(options.text.trim(), options.attachments), cwd,
+    threadId: options.sessionId, input: options.goalContinuation ? [] : appServerChatInput(options.text.trim(), options.attachments), cwd,
     ...(options.model ? { model: options.model } : {}), ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
     ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
   };
@@ -1089,6 +1102,15 @@ async function sendAppServerSessionMessage(options: {
   const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
   const home = resolveCodexHome();
   const needsContinuation = async (): Promise<boolean> => {
+    options.signal?.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error("The active account home changed. No continuation was sent.");
+    if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
+      throw new Error("This session was explicitly stopped while starting. It was left stopped.");
+    if (options.goalContinuation) {
+      const goals = await readCodexSessionGoals(home, [options.sessionId]);
+      const goal = goals?.get(options.sessionId);
+      if (!goals || !goal || !['active','usageLimited','usage_limited'].includes(goal.status)) throw new Error('The goal changed or was paused. Private recovery was not started.');
+    }
     if (!options.interruptedOnly) return true;
     const state = await readRecentTranscriptTurnState(transcript);
     options.signal?.throwIfAborted();
@@ -1101,7 +1123,7 @@ async function sendAppServerSessionMessage(options: {
   };
   if (!await needsContinuation()) return;
   const nativeStarted = (turnId: string) => nativeTurnStarted(home, options.sessionId, turnId);
-  if ((getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) {
+  if (!options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) {
     options.onStarted?.();
     await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
     return;
@@ -1118,7 +1140,7 @@ async function sendAppServerSessionMessage(options: {
     activeAppServerTurns.set(options.sessionId, { home: path.resolve(home), rpc });
     try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true }); }
     catch (error) {
-      if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
+      if (options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
       if (!await needsContinuation()) return;
       if (!await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
       options.signal?.removeEventListener("abort", abort);
@@ -1155,8 +1177,10 @@ async function sendAppServerSessionMessage(options: {
   });
 }
 
+export class CodexNativeOwnerUnavailableError extends Error {}
+
 /** Continue an existing goal through its official owner, without adding a user message. */
-export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary, signal?: AbortSignal, origin: "user" | "automatic" = "automatic"): Promise<void> {
+export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary, signal?: AbortSignal, origin: "user" | "automatic" = "automatic", preferPrivate = false): Promise<void> {
   validateSessionId(session.id);
   signal?.throwIfAborted();
   const timeout = AbortSignal.timeout(25_000);
@@ -1165,6 +1189,32 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
   if (origin === "user") clearCodexSessionManualStop(home, session.id);
   const cwd = await resolveRecordedSessionProject(session.id, session.projectPath);
   signal?.throwIfAborted();
+  if (preferPrivate) {
+    await runCrossWindowExclusive(`codex:goal:${session.id.toLowerCase()}`, 'Private goal recovery', async leaseSignal => {
+      signal = signal ? AbortSignal.any([signal, leaseSignal]) : leaseSignal;
+      signal.throwIfAborted();
+      if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Private recovery was not started.');
+      if (origin !== 'user' && (await readManuallyStoppedCodexSessionIds(home, [session.id], signal)).length)
+        throw new Error('This session was explicitly stopped. Private recovery was not started.');
+      const goals = await readCodexSessionGoals(home, [session.id]);
+      const goal = goals?.get(session.id);
+      if (!goals || !goal) throw new Error('Goal storage is unavailable. Private recovery was not started.');
+      signal?.throwIfAborted();
+      if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Private recovery was not started.');
+      if (goal.status === 'paused') {
+        if (origin !== 'user' && (!session.interrupted || isExplicitSessionGoalPause(home, session.id))) throw new Error('This goal was paused. It was left paused.');
+        const result = await runCodexAppServerRequest<{ goal?: { status?: string } }>('thread/goal/set', { threadId: session.id, status: 'active', origin }, 10_000, signal);
+        if (result.goal?.status !== 'active') throw new Error('Goal reactivation was not confirmed. Check Codex before retrying.');
+      } else if (!['active','usageLimited','usage_limited'].includes(goal.status)) throw new Error('This goal is no longer eligible for private recovery.');
+      let accepted!: () => void;
+      const started = new Promise<void>(resolve => { accepted = resolve; });
+      const turn = sendAppServerSessionMessage({ sessionId: session.id, text: '', projectPath: cwd, signal, preferPrivate: true, goalContinuation: true, onStarted: accepted }, cwd);
+      void turn.catch(error => recordPersistentEvent('warning', 'session-resume', 'Private goal continuation failed', { sessionRef: toSessionLogRef(session.id) }, error));
+      await waitWithin(Promise.race([started, turn]), 15_000, 'Private goal recovery was not confirmed. Check Codex before retrying.', signal);
+      if (origin === 'user') clearExplicitSessionGoalPause(home, session.id);
+    });
+    return;
+  }
   const live = reserveCodexSessionLive();
   let accepted = false;
   let goalStatus: string | undefined;
@@ -1177,7 +1227,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       const nativeRunning = await readNativeCodexSessionRunning(home, session.id, signal);
       signal?.throwIfAborted();
       if (resolveCodexHome() !== home) throw new Error("The active Codex home changed. Saved recovery was retained.");
-      if (nativeRunning === undefined) throw new Error("The official Codex goal runtime is unavailable. Saved recovery was retained.");
+      if (nativeRunning === undefined) throw new CodexNativeOwnerUnavailableError("The official Codex goal runtime is unavailable. Saved recovery was retained.");
       if (nativeRunning === true) {
         observeRunningCodexSession({ ...session, status: "running" });
         return;
@@ -1210,7 +1260,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       if (!await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, turnId => {
         accepted = true;
         nativeTurnStarted(home, session.id, turnId);
-      })) throw new Error("The official Codex goal owner is unavailable. Open the conversation and retry. Saved recovery was retained.");
+      })) throw new CodexNativeOwnerUnavailableError("The official Codex goal owner is unavailable. Open the conversation and retry. Saved recovery was retained.");
       if (origin === "user") clearExplicitSessionGoalPause(home, session.id);
       void waitForNativeSessionTurn(session.id, transcript, previous, ownedNativeTurn(home, session.id)?.turnId, home).catch(error =>
         recordPersistentEvent("warning", "session-resume", "Native goal continuation ended without completion", { sessionRef: toSessionLogRef(session.id), title: session.title }, error));
@@ -1314,9 +1364,11 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   if (active) {
     if (active.home !== path.resolve(home) || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
     if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
+    if (resolveCodexHome() !== home || active.cancelRequested || active.turnId !== options.expectedTurnId) throw new Error("The active Codex turn changed. Refresh before sending guidance.");
     const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
       threadId: sessionId, expectedTurnId: options.expectedTurnId,
-      input: appServerChatInput(prepared.text, prepared.attachments)
+      input: appServerChatInput(text, prepared.attachments)
     });
     if (result.turnId !== options.expectedTurnId) throw new Error("Codex did not confirm guidance for the expected turn. Refresh before retrying.");
     return;
@@ -1326,7 +1378,9 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   const nativeTurnId = getNativeCodexSessionTurnId(home, sessionId);
   if (nativeTurnId) {
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
-    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(prepared.text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
+    if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Refresh before sending guidance.");
+    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
       throw new Error('The native Codex owner is unavailable. Your follow-up was not sent; refresh before retrying.');
     return;
   }
@@ -1856,7 +1910,7 @@ function parseAppServerThreadItem(
   const durationMs = typeof item["durationMs"] === "number" ? item["durationMs"] : undefined;
   if (type === "userMessage") {
     const content = parseUserInputs(item["content"]);
-    return content.text || content.images.length
+    return content.text || content.images.length || content.textAttachments?.length
       ? { id, kind: "message", role: "user", text: content.text, images: content.images, ...(content.textAttachments?.length ? { textAttachments: content.textAttachments } : {}), timestamp }
       : undefined;
   }
@@ -1865,13 +1919,15 @@ function parseAppServerThreadItem(
     const text = (
       typeof item["text"] === "string" ? item["text"] : content.text || readHumanText(item["content"]) || ""
     ).trim();
-    return text || content.images.length
+    const questions = readSessionQuestions(item["questions"]);
+    return text || content.images.length || questions.length
       ? {
           id,
           kind: "message",
           role: "assistant",
           text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
           ...(content.images.length ? { images: content.images } : {}),
+          ...(questions.length ? { questions } : {}),
           timestamp
         }
       : undefined;
@@ -2165,7 +2221,7 @@ function parseUserInputs(value: unknown, maxChars = MAX_SESSION_MESSAGE_CHARS): 
     } else if (item["type"] === "skill" && typeof item["name"] === "string") parts.push(`[Skill: ${item["name"]}]`);
   }
   const text = parts.join("\n\n").trim(), textAttachments = readChatTextAttachments(text);
-  return { text: text.slice(0, maxChars), images: images.slice(0, 20), ...(textAttachments.length ? { textAttachments } : {}) };
+  return { text: withoutChatTextAttachments(text).slice(0, maxChars), images: images.slice(0, MAX_CHAT_ATTACHMENTS), ...(textAttachments.length ? { textAttachments } : {}) };
 }
 
 function readSafeImageSource(item: Record<string, unknown>): string | undefined {
@@ -2211,7 +2267,7 @@ function readImageSources(item: Record<string, unknown>): string[] {
     if (source && !sources.includes(source)) sources.push(source);
   };
   const visit = (value: unknown, depth = 0): void => {
-    if (depth > 4 || sources.length >= 20 || value === null || value === undefined) return;
+    if (depth > 4 || sources.length >= MAX_CHAT_ATTACHMENTS || value === null || value === undefined) return;
     if (typeof value === "string") {
       add(value);
       return;
@@ -2265,7 +2321,7 @@ async function hydrateSessionImages(messages: DashboardCliSessionMessage[]): Pro
       }
       try {
         const snapshot = await readSafeFileSnapshot(localPath, {
-          maxBytes: MAX_SESSION_IMAGE_BYTES,
+          maxBytes: Math.min(MAX_SESSION_IMAGE_BYTES, MAX_SESSION_IMAGE_TOTAL_BYTES - totalBytes),
           rejectIfLarger: true
         });
         totalBytes += snapshot.size;
@@ -3128,7 +3184,7 @@ const cliTranscriptTurnStateCache = new Map<string, {
   turnId?: string; resumeTurnId?: string;
   cancelled?: boolean; resumeCancelled?: boolean;
   startedAt?: number; resumeStartedAt?: number;
-  model?: string; reasoningEffort?: string; resumeModel?: string; resumeReasoningEffort?: string;
+  model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; resumeModel?: string; resumeReasoningEffort?: string; resumeSandboxMode?: DashboardCliSandboxMode; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"]; resumeTokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
 }>();
 
 async function readCliRunningSince(transcriptPath: string | undefined): Promise<number | undefined> {
@@ -3164,6 +3220,8 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let startedAt = incremental ? previous!.resumeStartedAt : undefined;
     let model = incremental ? previous!.resumeModel : undefined;
     let reasoningEffort = incremental ? previous!.resumeReasoningEffort : undefined;
+    let sandboxMode = incremental ? previous!.resumeSandboxMode : undefined;
+    let tokenUsage = incremental ? previous!.resumeTokenUsage : undefined;
     const lines = snapshot.buffer.toString("utf8").split("\n");
     // A bounded initial read may begin in the middle of a JSON record.
     if (!incremental && snapshot.startOffset > 0) lines.shift();
@@ -3171,16 +3229,19 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let resumeTurnId = turnId;
     let resumeCancelled = turnCancelled;
     let resumeStartedAt = startedAt;
-    let resumeModel = model, resumeReasoningEffort = reasoningEffort;
+    let resumeModel = model, resumeReasoningEffort = reasoningEffort, resumeSandboxMode = sandboxMode, resumeTokenUsage = tokenUsage;
     for (const [index, line] of lines.entries()) {
-      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; }
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; }
       try {
-        const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown } };
+        const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown; sandbox_policy?: { type?: unknown }; sandbox_mode?: unknown; info?: unknown } };
         if (record?.type === "turn_context") {
+          const mode = record.payload?.sandbox_policy?.type ?? record.payload?.sandbox_mode;
+          if (typeof mode === 'string' && isCliSandboxMode(mode)) sandboxMode = mode;
           if (typeof record.payload?.model === "string" && record.payload.model.trim()) model = record.payload.model.slice(0, 256);
           const effort = record.payload?.effort ?? record.payload?.reasoning_effort;
           if (typeof effort === "string" && effort.trim()) reasoningEffort = effort.slice(0, 64);
         }
+        if (record?.type === "event_msg" && record.payload?.type === "token_count") tokenUsage = parseCodexTokenUsage(record.payload.info) ?? tokenUsage;
         const type = record?.type === "event_msg" ? record.payload?.type : record?.type;
         const eventTurnId = record?.type === "event_msg" ? record.payload?.turn_id : record?.turn_id;
         if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
@@ -3219,7 +3280,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     }
     cliTranscriptTurnStateCache.set(transcriptPath, {
       size: snapshot.size, mtimeMs: snapshot.mtimeMs,
-      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, startedAt, resumeStartedAt, model, reasoningEffort, resumeModel, resumeReasoningEffort
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, startedAt, resumeStartedAt, model, reasoningEffort, sandboxMode, tokenUsage, resumeModel, resumeReasoningEffort, resumeSandboxMode, resumeTokenUsage
     });
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;
@@ -3633,14 +3694,14 @@ function mergeCliTranscriptMessage(
           result: message.result ?? existing.result,
           debug: existing.debug ?? message.debug,
           ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
-          ...(images.length ? { images: images.slice(0, 20) } : {})
+          ...(images.length ? { images: images.slice(0, MAX_CHAT_ATTACHMENTS) } : {})
         }
       : {
           ...existing,
           ...message,
           id: message.kind === "compaction" ? message.id : existing.id,
           ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
-          ...(images.length ? { images: images.slice(0, 20) } : {})
+          ...(images.length ? { images: images.slice(0, MAX_CHAT_ATTACHMENTS) } : {})
         };
     return false;
   }
@@ -3786,14 +3847,16 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       }
     }
     const text = parts.join("\n\n").trim();
-    if (!text && images.length === 0) return undefined;
+    const questions = role === "assistant" ? readSessionQuestions(payload["questions"]) : [];
+    if (!text && images.length === 0 && !questions.length) return undefined;
     if (role === "user" && isInternalSessionContext(text, payload)) return undefined;
     const textAttachments = role === 'user' ? readChatTextAttachments(text) : [];
     return {
-      id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "message"}`,
+      id: typeof payload["id"] === "string" ? payload["id"] : `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "message"}`,
       role,
       text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
-      ...(images.length ? { images: images.slice(0, 20) } : {}),
+      ...(images.length ? { images: images.slice(0, MAX_CHAT_ATTACHMENTS) } : {}),
+      ...(questions.length ? { questions } : {}),
       ...(textAttachments.length ? { textAttachments } : {}),
       timestamp
     };
@@ -3843,13 +3906,13 @@ function parsePersistedUserMessage(
   }
   const text = content.text || (typeof payload["message"] === "string" ? payload["message"].trim() : "");
   const textAttachments = content.textAttachments ?? readChatTextAttachments(typeof payload['message'] === 'string' ? payload['message'] : '');
-  return text || content.images.length
+  return text || content.images.length || textAttachments.length
     ? {
         id,
         kind: "message",
         role: "user",
-        text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
-        ...(content.images.length ? { images: content.images.slice(0, 20) } : {}),
+        text: withoutChatTextAttachments(text).slice(0, MAX_SESSION_MESSAGE_CHARS),
+        ...(content.images.length ? { images: content.images.slice(0, MAX_CHAT_ATTACHMENTS) } : {}),
         ...(textAttachments.length ? { textAttachments } : {}),
         timestamp
       }

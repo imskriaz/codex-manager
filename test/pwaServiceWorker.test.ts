@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
-type WorkerEvent = { data?: { json(): unknown }; action?: string; notification?: { data: any; close(): void }; waitUntil?: (work: Promise<unknown>) => void; request?: { method: string; mode: string; url: string }; respondWith?: (response: Promise<Response>) => void };
+type WorkerEvent = { data?: { json(): unknown }; action?: string; reply?: string; notification?: { data: any; close(): void }; waitUntil?: (work: Promise<unknown>) => void; request?: { method: string; mode: string; url: string }; respondWith?: (response: Promise<Response>) => void };
 
 function createWorker(fetchMock: (request: { url: string }) => Promise<Response>, entries = new Map<string, Response>()) {
   const origin = "https://dashboard.example";
@@ -266,4 +266,24 @@ describe("browser PWA cache boundary", () => {
     await response;
     expect(worker.entries.has("https://dashboard.example/assets/dashboard.js?v=test")).toBe(false);
   });
+  it('renders optional notification text replies, sends the typed answer once, and opens the related session', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}')); const worker = createWorker(fetchMock);
+    const id = '11111111-1111-4111-8111-111111111111', url = `/workspace/${id}?device=worker`;
+    let work: Promise<unknown> | undefined;
+    worker.handlers.get('push')?.({ data: { json: () => ({ body: 'What should change?', notificationId: 'question', actions: ['Reply','Answer'], replyAction: 'Reply', url, createdAt: Date.now() }) }, waitUntil: value => { work = value; } }); await work;
+    expect(worker.self.registration.showNotification).toHaveBeenCalledWith('Codex Manager', expect.objectContaining({ actions: [expect.objectContaining({ action: 'Reply', type: 'text' }), expect.objectContaining({ action: 'Answer' })] }));
+    const data = worker.self.registration.showNotification.mock.calls[0]![1].data;
+    worker.handlers.get('notificationclick')?.({ action: 'Reply', reply: 'Use compact layout', notification: { data, close: vi.fn() }, waitUntil: value => { work = value; } }); await work;
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/push/action', expect.objectContaining({ body: JSON.stringify({ notificationId: 'question', action: 'Reply', reply: 'Use compact layout' }) }));
+    expect(worker.self.clients.openWindow).toHaveBeenCalledWith('https://dashboard.example' + url);
+  });
+  it('opens the session prompt when inline replies are unsupported and retains target links on failures', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 503 })); const worker = createWorker(fetchMock); let work: Promise<unknown> | undefined;
+    const data = { notificationId: 'question', actions: ['Reply','Answer'], replyAction: 'Reply', url: '/tasks?device=worker', createdAt: Date.now() };
+    worker.handlers.get('notificationclick')?.({ action: 'Reply', notification: { data, close: vi.fn() }, waitUntil: value => { work = value; } }); await work;
+    expect(fetchMock).not.toHaveBeenCalled(); expect(worker.self.clients.openWindow).toHaveBeenCalledWith('https://dashboard.example/tasks?device=worker');
+    worker.handlers.get('notificationclick')?.({ action: 'Reply', reply: 'Answer', notification: { data, close: vi.fn() }, waitUntil: value => { work = value; } }); await work;
+    expect(worker.self.registration.showNotification).toHaveBeenLastCalledWith('Codex Manager', expect.objectContaining({ data: { url: data.url } }));
+  });
+
 });

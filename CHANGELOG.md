@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.5-pre.1
+
+- Allow 32 files or documents totaling 50 MB; give Codex documents and large text as saved files, with compact previews and inline Resend.
+
+- Fall back to private Auto Resume after native UI failure, retaining ownership, pause and duplicate-send checks.
+- Keep session sends and steering visible immediately, with a saved local FIFO queue and inline Resend for failures.
+- Show Codex question prompts, session usage and context fill, editable access settings, and line change counts.
+- Add image gallery navigation and a compact task conversation with the shared composer and a clean activity timeline.
+- Keep public project views selectable and refreshed, and notify subscribed devices about questions and permissions.
+
+
 ## 1.6.5
 
 - Keep wide session tables, task columns, API tables and workspace tabs readable with local horizontal scrolling on small screens.

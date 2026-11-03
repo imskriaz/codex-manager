@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareChatInput, validateChatAttachments } from "../src/domain/chatAttachments";
+import { chatUploadTimeoutMs, chatAttachmentPreviews, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, prepareChatInput, validateChatAttachments } from "../src/domain/chatAttachments";
 import { appServerChatInput, withCliImageAttachments } from "../src/services/codexChatAttachments";
 import { access, readFile } from "node:fs/promises";
 
@@ -22,8 +22,8 @@ describe("chat attachments", () => {
     expect(() => validateChatAttachments([{ ...image, data: "data:image/png;base64,YmFk" }])).toThrow(/format/);
     expect(() => validateChatAttachments([text, text])).toThrow(/invalid/);
     expect(() => validateChatAttachments([{ ...text, name: "../file" }])).toThrow(/invalid/);
-    expect(() => validateChatAttachments([{ ...text, data: "x".repeat(32769) }])).toThrow(/32 KB/);
-    expect(() => validateChatAttachments(Array.from({ length: 9 }, (_, id) => ({ ...text, id: String(id) })))).toThrow(/8 files/);
+    expect(validateChatAttachments([{ ...text, data: "x".repeat(32769) }])[0]?.size).toBe(32769);
+    expect(() => validateChatAttachments(Array.from({ length: 33 }, (_, id) => ({ ...text, id: String(id) })))).toThrow(/32 files/);
     expect(() => prepareChatInput("x".repeat(64000), [text])).toThrow(/too long/);
     expect(() => prepareChatInput("", [])).toThrow(/Write a message/);
   });
@@ -40,4 +40,29 @@ describe("chat attachments", () => {
     })).rejects.toThrow("turn failed");
     await expect(access(filename)).rejects.toMatchObject({ code: "ENOENT" });
   });
+});
+
+it('accepts 32 files and 50 MB but rejects total bytes above the boundary, with compact large-text previews', () => {
+  expect(MAX_CHAT_ATTACHMENT_BYTES).toBe(50 * 1024 * 1024); expect(MAX_CHAT_ATTACHMENTS).toBe(32);
+  const data = 'x'.repeat(MAX_CHAT_ATTACHMENT_BYTES);
+  const files = validateChatAttachments([{ ...text, data }]);
+  const prepared = prepareChatInput('Review', files);
+  expect(prepared.text.length).toBeLessThan(300);
+  expect(chatAttachmentPreviews(files)[0]?.text).toContain(`${MAX_CHAT_ATTACHMENT_BYTES} bytes`);
+  expect(() => validateChatAttachments([...files, { ...text, id: 'extra', data: 'x' }])).toThrow(/50 MB/);
+  expect(validateChatAttachments(Array.from({ length: 32 }, (_, id) => ({ ...text, id: String(id) })))).toHaveLength(32);
+});
+
+it.each(['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/zip','application/octet-stream'])('accepts %s documents and keeps their binary body out of the prompt', mimeType => {
+  const file = { id: 'document', name: 'document.bin', kind: 'file' as const, mimeType, data: `data:${mimeType};base64,UEsDBA==`, size: 999 };
+  const prepared = prepareChatInput('', [file]);
+  expect(prepared.attachments[0]?.size).toBe(4); expect(prepared.text).toContain('4 bytes'); expect(prepared.text).not.toContain('UEsDBA==');
+  expect(() => validateChatAttachments([{ ...file, data: `data:${mimeType};base64,invalid!` }])).toThrow(/invalid/);
+  const oversizedType = "application/" + "a".repeat(201);
+  expect(() => validateChatAttachments([{ ...file, mimeType: oversizedType, data: `data:${oversizedType};base64,UEsDBA==` }])).toThrow(/invalid/);
+});
+
+it('gives large file transfers a bounded five-minute confirmation window', () => {
+  expect(chatUploadTimeoutMs()).toBe(0);
+  expect(chatUploadTimeoutMs([{ ...text, size: 2 * 1024 * 1024 }])).toBe(300000);
 });

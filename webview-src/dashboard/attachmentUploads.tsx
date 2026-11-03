@@ -1,25 +1,21 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
+import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
 
 export async function readChatAttachmentFiles(files: File[], existing = 0): Promise<ChatAttachment[]> {
-  if (files.length + existing > 8) throw new Error("Attach up to 8 files.");
+  if (files.length + existing > MAX_CHAT_ATTACHMENTS) throw new Error("Attach up to 32 files.");
+  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 50 MB in total. Remove a file and try again.");
   const added: ChatAttachment[] = [];
   for (const file of files) {
     const image = ["image/png", "image/jpeg", "image/webp"].includes(file.type);
-    if (file.size > (image ? 1024 * 1024 : 32 * 1024))
-      throw new Error(`${file.name} is too large. Images: 1 MB; text: 32 KB.`);
-    if (
-      !image &&
-      !file.type.startsWith("text/") &&
-      !/\.(txt|md|json|csv|ts|tsx|js|jsx|py|html|css|xml|yml|yaml|toml|log|rs|go|java|c|cpp|h|sh|sql)$/i.test(file.name)
-    )
-      throw new Error(`${file.name} is unsupported. Attach PNG, JPEG, WebP, or a text/code file.`);
+    if (file.size > MAX_CHAT_ATTACHMENT_BYTES)
+      throw new Error(`${file.name} is too large. 50 MB total per message.`);
+    const text = !image && (file.type.startsWith('text/') || /\.(txt|md|json|csv|ts|tsx|js|jsx|py|html|css|xml|yml|yaml|toml|log|rs|go|java|c|cpp|h|sh|sql)$/i.test(file.name));
     const data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       const timer = window.setTimeout(() => {
         reject(new Error(`Reading ${file.name} timed out. Attach it again.`));
         reader.abort();
-      }, 10000);
+      }, 60000);
       reader.onload = () => {
         clearTimeout(timer);
         resolve(typeof reader.result === "string" ? reader.result : "");
@@ -28,14 +24,14 @@ export async function readChatAttachmentFiles(files: File[], existing = 0): Prom
         clearTimeout(timer);
         reject(new Error(`${file.name} could not be read. Attach it again.`));
       };
-      if (image) reader.readAsDataURL(file);
-      else reader.readAsText(file);
+      if (text) reader.readAsText(file);
+      else reader.readAsDataURL(file);
     });
     added.push({
       id: crypto.randomUUID(),
       name: file.name,
-      kind: image ? "image" : "text",
-      mimeType: image ? file.type : "text/plain",
+      kind: image ? "image" : text ? "text" : "file",
+      mimeType: image ? file.type : text ? "text/plain" : data.match(/^data:([^;]+);base64,/)?.[1] ?? "application/octet-stream",
       data,
       size: file.size
     });
@@ -118,7 +114,6 @@ export function AttachmentPicker({
         type="file"
         multiple
         hidden
-        accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.html,.css,.xml,.yml,.yaml,.toml,.log,.rs,.go,.java,.c,.cpp,.h,.sh,.sql"
         aria-label={label}
         onChange={(event) => {
           const picked = [...(event.currentTarget.files ?? [])];
@@ -132,7 +127,7 @@ export function AttachmentPicker({
         disabled={disabled || reading}
         onClick={() => input.current?.click()}
         aria-label={label}
-        title="PNG, JPEG, WebP, text or code · 1 MB total"
+        title="Any files or documents · 32 files, 50 MB total"
       >
         <AttachmentIcon />
         {reading ? "Reading…" : "Attach"}

@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { observeRunningCodexSession, readCodexCliSessionSummary, readManuallyStoppedCodexSessionIds, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
+import { CodexNativeOwnerUnavailableError, observeRunningCodexSession, readCodexCliSessionSummary, readManuallyStoppedCodexSessionIds, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
@@ -8,7 +8,7 @@ import { clearCodexSessionManualStop, readCodexSessionPreferences } from "./code
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
-export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic"): Promise<"running" | "continued" | "goal" | "idle"> {
+export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic", connection: "native" | "private" = "native"): Promise<"running" | "continued" | "goal" | "idle"> {
   const home = resolveCodexHome();
   const key = `${home}:${sessionId}`;
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };
@@ -27,8 +27,14 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
   let phase = "state-verification";
   let goalStatus: string | undefined;
   const work = (async () => {
-    const session = await waitWithin(readCodexCliSessionSummary(sessionId, home, true), 6_000, "Session state could not be verified after opening.", controller.signal);
+    let privateFallback = connection === "private";
+    let session = await waitWithin(readCodexCliSessionSummary(sessionId, home, !privateFallback), 6_000, "Session state could not be verified after opening.", controller.signal);
     controller.signal.throwIfAborted();
+    if (session?.status === 'unknown' && !privateFallback) {
+      const verified = await waitWithin(readCodexCliSessionSummary(sessionId, home, false), 6000, 'Private recovery state could not be verified.', controller.signal);
+      if (verified?.status === 'idle' && !verified.locked) { session = verified; privateFallback = true; }
+    }
+    if (privateFallback) recordPersistentEvent('warning', 'session-resume', 'Using private Auto Resume fallback', { ...identity, origin, transport: 'private-app-server' });
     if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
     if (!session || session.archived || session.subAgent || session.parentSessionId) throw new Error("This session is missing, archived, or belongs to a parent. Refresh before resuming.");
     title = session.title;
@@ -41,6 +47,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       recordPersistentEvent("info", "session-resume", "Native session already running; no prompt sent", { ...identity, title: session.title, activitySource: "official-native", nativeRunning: true });
       return "running" as const;
     }
+    if (privateFallback && session.locked) throw new Error('Another Codex writer still owns this session. Private recovery was not started.');
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
     if (origin === "user") clearCodexSessionManualStop(home, sessionId);
     else if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop ||
@@ -54,7 +61,14 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     if (eligibleGoal) {
       phase = "goal-continuation";
       recordPersistentEvent("info", "session-resume", "Goal recovery requested", { ...identity, origin, goalStatus, explicitPause, interrupted: session.interrupted === true, reason: recoverablePausedGoal && goalStatus === "paused" ? "interrupted-paused-goal" : "unfinished-goal", promptKind: "none", transport: "official-native" });
-      await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic"), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
+      try {
+        await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic", ...(privateFallback ? [true] as const : [])), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
+      } catch (error) {
+        if (privateFallback || controller.signal.aborted || !(error instanceof CodexNativeOwnerUnavailableError)) throw error;
+        const verified = await readCodexCliSessionSummary(sessionId, home, false);
+        if (!verified || verified.status !== 'idle' || verified.locked) throw error;
+        await waitWithin(resumeCodexSessionGoal(verified, controller.signal, origin === 'user' ? 'user' : 'automatic', true), 25_000, 'Private goal resume was not confirmed. Check Codex before retrying.', controller.signal);
+      }
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;
     }
@@ -78,7 +92,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     let accepted!: () => void;
     let didStart = false;
     const started = new Promise<void>(resolve => { accepted = () => { didStart = true; resolve(); }; });
-    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted, clearManualStop: origin === "user", interruptedOnly: true });
+    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted, clearManualStop: origin === "user", interruptedOnly: true, ...(privateFallback ? { preferPrivate: true } : {}) });
     void turn.catch(error => recordPersistentEvent("warning", "session-resume", "Continuation turn failed", { ...identity, title: session.title }, error));
     await waitWithin(Promise.race([started, turn]), 15_000, "Continue was not confirmed. Check this session before retrying.", controller.signal);
     if (!didStart) {

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import * as path from "path";
-import { validateChatAttachments, type ChatAttachment } from "../domain/chatAttachments";
+import { MAX_CHAT_ATTACHMENT_BYTES, validateChatAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import type { ProjectAttachment } from "../domain/projectTasks";
 import type { DashboardWorkspaceFile } from "../domain/dashboard/types";
 import { getSqliteStateStore } from "../storage/sqliteState";
@@ -38,7 +38,7 @@ async function directory(project: string, create = false): Promise<string> {
   return folder;
 }
 async function verifiedFile(folder: string, file: ProjectAttachment): Promise<Buffer> {
-  if (!/^[a-f0-9]{64}$/.test(file.hash) || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 1024 * 1024)
+  if (!/^[a-f0-9]{64}$/.test(file.hash) || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_CHAT_ATTACHMENT_BYTES)
     throw new Error("Saved attachment metadata is invalid.");
   const target = path.join(folder, file.hash);
   const info = await fs.lstat(target);
@@ -66,7 +66,7 @@ export function describeProjectAttachments(value: unknown): ProjectAttachment[] 
     if (!/^[a-zA-Z0-9:_-]{1,160}$/.test(file.id))
       throw new Error("The attachment identifier is invalid. Attach the file again.");
     const data =
-      file.kind === "image"
+      file.kind !== "text"
         ? Buffer.from(file.data.slice(file.data.indexOf(",") + 1), "base64")
         : Buffer.from(file.data, "utf8");
     return {
@@ -129,7 +129,7 @@ export async function saveProjectAttachments(
     for (const file of files) {
       signal?.throwIfAborted();
       const data =
-        file.kind === "image"
+        file.kind !== "text"
           ? Buffer.from(file.data.slice(file.data.indexOf(",") + 1), "base64")
           : Buffer.from(file.data, "utf8");
       const attachment: ProjectAttachment = {
@@ -180,6 +180,19 @@ export async function saveProjectAttachments(
     throw storageError(error);
   }
 }
+/** Session uploads reuse the verified, content-addressed private attachment store. */
+export async function saveCodexAttachmentFiles(projectPath: string, files: ChatAttachment[], signal?: AbortSignal): Promise<Array<{ name: string; path: string }>> {
+  const store = getSqliteStateStore();
+  const identity = createHash('sha256').update(`session-uploads:${projectPath}\0`);
+  for (const file of files) identity.update(file.name).update('\0').update(file.data).update('\0');
+  const project = identity.digest('hex');
+  const saved = await saveProjectAttachments(project, files, signal);
+  signal?.throwIfAborted();
+  if (getSqliteStateStore() !== store) throw new Error("Manager storage changed while saving attachments. Refresh before sending.");
+  const folder = await directory(project);
+  return (saved ?? []).map(file => ({ name: file.name, path: path.join(folder, file.hash) }));
+}
+
 export async function readProjectAttachmentFile(
   project: string,
   file: ProjectAttachment
@@ -195,14 +208,14 @@ export async function readProjectAttachmentFile(
     path: file.name,
     size: data.length,
     content: file.kind === "text" ? data.toString("utf8") : "",
-    kind: file.kind === "image" ? "image" : "text",
+    kind: file.kind === "image" ? "image" : file.kind === "text" ? "text" : "document",
     language: "plaintext",
     mimeType: file.mimeType,
     revision: file.hash,
-    ...(file.kind === "image" ? { dataUrl: `data:${file.mimeType};base64,${data.toString("base64")}` } : {})
+    ...(file.kind !== "text" ? { dataUrl: `data:${file.mimeType};base64,${data.toString("base64")}` } : {})
   };
 }
 export async function readProjectAttachmentInput(project: string, file: ProjectAttachment): Promise<ChatAttachment> {
   const value = await readProjectAttachmentFile(project, file);
-  return validateChatAttachments([{ ...file, data: file.kind === "image" ? value.dataUrl : value.content }])[0]!;
+  return validateChatAttachments([{ ...file, data: file.kind !== "text" ? value.dataUrl : value.content }])[0]!;
 }

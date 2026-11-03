@@ -16623,3 +16623,100 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-message-markdown .cli-table-scroll > table { display:table; width:max-content; min-width:100%; max-width:none; margin:0; border-collapse:collapse; overflow:visible; }
 .cli-table-scroll th,.cli-table-scroll td { min-width:12ch; max-width:48ch; padding:5px 8px; border:1px solid var(--border-default); text-align:left; vertical-align:top; white-space:normal; overflow-wrap:break-word; word-break:normal; }
 .task-list-title { min-width:160px; max-width:450px; }
+
+/* Compact session controls retain readable settings and visible context fill. */
+.cli-context-meter { width: 20px; justify-content: center; }
+.cli-context-meter-value { stroke: var(--accent-blue, var(--accent, #5d9fff)); transition: stroke-dashoffset 180ms ease; }
+.cli-workspace .cli-composer-options-toggle { font-size: calc(11px * var(--dashboard-text-scale, 1)); gap: 4px; }
+.cli-workspace .cli-composer-options-toggle > .cli-composer-effort { display: inline; flex: none; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-workspace .cli-composer-options-toggle > .cli-composer-permission { display: inline-flex; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-workspace .cli-composer-options-toggle :is(svg,.cli-composer-permission svg) { width: 12px; height: 12px; flex-basis: 12px; }
+.cli-workspace .cli-composer :is(.cli-attach-button,.cli-send-button,.cli-stop-button) svg { width: 16px; height: 16px; }
+.cli-workspace .cli-rail-toggle svg,.cli-workspace .cli-rail-header .cli-icon-button svg { width: 21px; height: 21px; }
+.cli-turn-usage-strip .cli-turn-usage-actions button { gap: 4px; }
+.cli-turn-usage-strip .is-added { color: var(--success, #43b581); font-weight: 500; }
+.cli-turn-usage-strip .is-removed { color: var(--danger, #ed7777); font-weight: 500; }
+.cli-turn-usage > .cli-activity-body { padding: 0; }
+.cli-image-lightbox { gap: 8px; padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); }
+.cli-image-stage { min-width: 0; min-height: 0; overflow: auto; display: grid; place-items: center; touch-action: pan-y; }
+.cli-image-stage img { max-width: 100%; max-height: calc(100dvh - 70px); object-fit: contain; }
+.cli-image-stage.is-zoomed { display: block; touch-action: auto; }
+.cli-image-stage.is-zoomed img { max-width: none; max-height: none; width: auto; height: auto; }
+.cli-image-lightbox-toolbar { font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.cli-image-lightbox-toolbar span { gap: 6px; }
+.cli-image-lightbox-toolbar button { min-width: 32px; font-size: calc(20px * var(--dashboard-text-scale, 1)); }
+.cli-question-prompt { margin: 12px 0; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-surface); font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.cli-question-prompt > strong { display: block; margin-bottom: 10px; }
+.cli-question-prompt fieldset { min-width: 0; margin: 10px 0; padding: 0; border: 0; }
+.cli-question-prompt legend { margin-bottom: 8px; color: var(--text-primary); font-weight: 500; }
+.cli-question-option { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px; border: 1px solid var(--border-default); border-radius: 6px; margin: 6px 0; cursor: pointer; }
+.cli-question-option:has(input:checked) { border-color: var(--accent-blue); background: color-mix(in srgb, var(--accent-blue) 9%, transparent); }
+.cli-question-freeform { display: grid; gap: 5px; color: var(--text-muted); }
+.cli-question-freeform textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: 8px; border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); background: var(--bg-base); font: inherit; }
+.cli-question-prompt > button,.cli-queue-actions button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font: inherit; }
+.cli-question-prompt > button:disabled { opacity: .6; cursor: default; }
+.cli-local-queue:empty { display: none; }
+.cli-pending-message { margin-block: 10px; }
+.cli-pending-message .cli-session-message { margin-bottom: 4px; }
+.cli-queued-status,.cli-pending-message > small { display: flex; justify-content: flex-end; align-items: center; gap: 6px; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-queue-error { display: block; margin-block: 5px; text-align: right; color: var(--warning); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-queue-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.task-detail-panel { inset: 12px 12px auto auto; width: min(720px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); max-height: calc(100dvh - 24px); border: 1px solid var(--border-muted); border-radius: 12px; box-shadow: 0 12px 48px #0003; }
+.task-detail-panel > .settings-modal-head { min-height: 38px; padding: 7px 10px; align-items: center; }
+.task-detail-panel .settings-modal-title { font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.task-detail-panel-body:has(.task-session-conversation) { display: flex; flex: 1; flex-direction: column; overflow: hidden; }
+.task-detail-panel .task-detail-scroll:has(.task-session-conversation) { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+.task-detail-scroll:has(.task-session-conversation) > .cli-agent-workspace { height: 100%; display: flex; flex-direction: column; gap: 0; overflow: hidden; }
+.task-detail-panel .cli-agent-tabs { position: sticky; top: 0; z-index: 2; flex: none; padding: 4px 6px; background: var(--bg-surface); }
+.task-detail-panel .cli-agent-workspace > header { flex: none; padding: 5px 8px; }
+.task-detail-panel .task-session-conversation.cli-workspace { position: relative; inset: auto; display: flex; flex-direction: column; flex: 1; min-height: 0; height: auto; width: 100%; min-width: 0; margin: 0; border: 0; background: var(--bg-base); overflow: hidden; }
+.task-session-transcript { flex: 1; min-height: 80px; overflow: auto; padding: 12px; overscroll-behavior: contain; }
+.task-session-compose { flex: none; padding: 6px; border-top: 1px solid var(--border-muted); background: var(--bg-surface); }
+.task-session-compose .cli-composer,.task-session-compose .cli-turn-usage-strip { box-sizing: border-box; width: 100%; margin: 0; }
+.task-session-usage { max-height: 180px; overflow: auto; padding: 8px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.task-timeline-events { list-style: none; margin: 12px 0 0 7px; padding: 0 0 0 16px; border-left: 1px solid var(--border-default); }
+.task-timeline-events > li { position: relative; margin: 0 0 18px; min-width: 0; }
+.task-timeline-events > li::before { content: ''; position: absolute; top: 5px; left: -20px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-blue); box-shadow: 0 0 0 3px var(--bg-surface); }
+.task-timeline-events > li > header { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: calc(11px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
+.task-timeline-events time { font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.task-timeline-events .cli-session-message { margin: 0; }
+@media (max-width: 760px) {
+  .cli-workspace .cli-composer.is-empty .cli-composer-options-toggle > .cli-composer-model { max-width: min(125px, 29vw); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+  .cli-workspace .cli-composer.is-empty .cli-composer-effort { display: inline; }
+  .cli-workspace .cli-composer.is-empty .cli-composer-permission { display: inline-flex; }
+  .cli-workspace .cli-composer-options-toggle { gap: 3px; }
+  .cli-workspace .cli-rail-toggle svg { width: 22px; height: 22px; }
+  .cli-image-lightbox-toolbar strong { max-width: 30vw; }
+  .cli-image-lightbox-toolbar span { gap: 4px; }
+  .cli-image-lightbox-toolbar button { min-width: 36px; height: 36px; }
+  .cli-question-option { min-height: 40px; }
+  .cli-question-freeform textarea { font-size: calc(16px * var(--dashboard-text-scale, 1)); }
+  .task-detail-panel { inset: max(6px, env(safe-area-inset-top)) 6px auto; width: auto; height: calc(100dvh - 12px); max-height: calc(100dvh - 12px); border-radius: 9px; }
+  .task-detail-panel .task-detail-tabs { flex: none; }
+  .task-detail-panel .task-session-compose .cli-composer { width: 100%; }
+  .cli-turn-usage-strip .cli-turn-account { max-width: 80px; }
+}
+@media (prefers-reduced-motion: reduce) { .cli-context-meter-value { transition: none; } }
+
+
+.cli-rail-toggle svg { width: 21px; height: 21px; }
+.cli-image-stage img { animation: cli-image-enter 160ms ease-out; }
+@keyframes cli-image-enter { from { opacity: .65; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .cli-image-stage img { animation: none; } }
+
+.cli-queued-footer { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:8px; margin-top:2px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-queued-footer button { min-height:28px; padding:2px 6px; border:0; border-radius:4px; background:transparent; color:var(--text-muted); font:inherit; cursor:pointer; }
+.cli-queued-footer .cli-queue-resend { color:var(--accent-blue); font-weight:500; }
+.cli-queued-footer button:hover { background:var(--bg-surface); }
+.cli-queued-footer button:focus-visible { outline:2px solid var(--accent-blue); outline-offset:2px; }
+.cli-queued-footer .cli-queue-actions { margin:0; gap:4px; }
+.cli-pending-message > .cli-queue-error { max-width:100%; margin:1px 0 0; font-size: calc(10px * var(--dashboard-text-scale, 1)); line-height:1.35; }
+
+.cli-message-text-attachments { display:flex; flex-direction:column; gap:4px; margin-top:5px; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-message-text-attachments details { min-width:0; max-width:100%; padding:4px 7px; border:1px solid var(--border-default); border-radius:6px; }
+.cli-message-text-attachments summary { cursor:pointer; overflow-wrap:anywhere; }
+.cli-message-text-attachments pre { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+
+.cli-queue-load-warning { display:flex; align-items:center; gap:8px; margin:5px 0; color:var(--text-muted); font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-queue-load-warning span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.cli-queue-load-warning button { flex:none; padding:4px 6px; border:1px solid var(--border-default); border-radius:5px; color:var(--text-primary); background:var(--bg-surface); font:inherit; cursor:pointer; }

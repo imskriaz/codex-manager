@@ -747,6 +747,8 @@ export interface DashboardCliSessionSummary {
   title: string;
   model?: string;
   reasoningEffort?: string;
+  sandboxMode?: DashboardCliSandboxMode;
+  tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
   /** Start of the currently running turn, in epoch milliseconds, when recorded. */
   runningSince?: number;
   /** A recorded unfinished turn or retained reload recovery can be reopened. */
@@ -827,6 +829,7 @@ export interface DashboardCliSessionMessage {
     alt?: string;
   }>;
   textAttachments?: Array<{ name: string; text: string }>;
+  questions?: Array<{ title: string; options?: string[] }>;
   timestamp?: string;
 }
 
@@ -844,7 +847,7 @@ export interface DashboardCodexSessionLiveState {
   messages: DashboardCliSessionMessage[];
   plan?: { explanation?: string; steps: Array<{ step: string; status: "pending" | "inProgress" | "completed" }> };
   diff?: string;
-  tokenUsage?: { total?: number; input?: number; cachedInput?: number; output?: number; reasoningOutput?: number; contextWindow?: number };
+  tokenUsage?: { total?: number; input?: number; cachedInput?: number; output?: number; reasoningOutput?: number; contextWindow?: number; contextTokens?: number };
   rateLimits?: {
     primary?: { usedPercent: number; windowDurationMins?: number; resetsAt?: number };
     secondary?: { usedPercent: number; windowDurationMins?: number; resetsAt?: number };
@@ -1060,6 +1063,7 @@ export interface DashboardWorkspaceTerminalOutput {
 
 export interface DashboardCodexServerRequest {
   id: string;
+  sourceMessageId?: string;
   threadId: string;
   kind: "command" | "file-change" | "permissions" | "question";
   title: string;

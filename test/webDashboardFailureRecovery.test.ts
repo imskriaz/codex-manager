@@ -346,7 +346,7 @@ describe("browser action completion during state failure", () => {
     const { server, internal } = createServer();
     const socket = new EventEmitter();
     try {
-      expect(internal.webSocketServer.options.maxPayload).toBe(2 * 1024 * 1024);
+      expect(internal.webSocketServer.options.maxPayload).toBe(128 * 1024 * 1024);
       internal.webSocketServer.emit("connection", socket, { url: "/ws?peer=1&deviceId=test" });
       expect(() => socket.emit("error", new Error("oversized message"))).not.toThrow();
     } finally { server.dispose(); }

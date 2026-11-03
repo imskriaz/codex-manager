@@ -1,6 +1,7 @@
+import { CodexNativeOwnerUnavailableError } from '../src/services/codexSessionResume';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ summary: vi.fn(), stopped: vi.fn(), send: vi.fn(), goal: vi.fn(), observe: vi.fn(), files: vi.fn(), log: vi.fn() }));
-vi.mock("../src/services/codexSessionResume", () => ({ observeRunningCodexSession: mocks.observe, readManuallyStoppedCodexSessionIds: mocks.stopped, readCodexCliSessionSummary: mocks.summary, sendCodexCliSessionMessage: mocks.send, resumeCodexSessionGoal: mocks.goal, resolveCodexHome: () => "recovery-test", toSessionLogRef: () => "session-ref" }));
+vi.mock("../src/services/codexSessionResume", () => ({ CodexNativeOwnerUnavailableError: class extends Error {}, observeRunningCodexSession: mocks.observe, readManuallyStoppedCodexSessionIds: mocks.stopped, readCodexCliSessionSummary: mocks.summary, sendCodexCliSessionMessage: mocks.send, resumeCodexSessionGoal: mocks.goal, resolveCodexHome: () => "recovery-test", toSessionLogRef: () => "session-ref" }));
 vi.mock("node:fs/promises", () => ({ readdir: mocks.files }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: mocks.log }));
 import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
@@ -127,4 +128,27 @@ describe("post-load session recovery", () => {
     expect(await pending).toBe("running"); expect(mocks.send).not.toHaveBeenCalled();
     expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Native session already running; no prompt sent", expect.objectContaining({ sessionRef: "session-ref", title: "Loaded native task", activitySource: "official-native", nativeRunning: true }));
   });
+  it('falls back to private continuation only after idle and unlocked state is verified', async () => {
+    mocks.summary.mockResolvedValueOnce({ id: 'session', status: 'unknown' }).mockResolvedValueOnce({ id: 'session', status: 'idle', interrupted: true, goal: null });
+    expect(await resumeCodexSessionWork('session')).toBe('continued'); expect(mocks.summary).toHaveBeenLastCalledWith('session', 'recovery-test', false); expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ preferPrivate: true, interruptedOnly: true }));
+  });
+  it('preserves paused goals and active writer ownership in private recovery', async () => {
+    mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', locked: true, interrupted: true, goal: null });
+    await expect(resumeCodexSessionWork('session', undefined, 'automatic', 'private')).rejects.toThrow(/writer/); expect(mocks.send).not.toHaveBeenCalled();
+    mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', interrupted: true, goal: { status: 'paused' } }); markExplicitSessionGoalPause('recovery-test', 'session');
+    expect(await resumeCodexSessionWork('session', undefined, 'automatic', 'private')).toBe('idle'); expect(mocks.goal).not.toHaveBeenCalled(); clearExplicitSessionGoalPause('recovery-test', 'session');
+  });
+  it('resumes an eligible goal through the private connection without adding a user message', async () => {
+    mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', goal: { status: 'active' } });
+    expect(await resumeCodexSessionWork('session', undefined, 'automatic', 'private')).toBe('goal'); expect(mocks.goal).toHaveBeenCalledWith(expect.objectContaining({ id: 'session' }), expect.any(AbortSignal), 'automatic', true); expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it('uses a private goal fallback after a confirmed unavailable owner without replaying an uncertain start', async () => {
+    mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', goal: { status: 'active' } });
+    mocks.goal.mockRejectedValueOnce(new CodexNativeOwnerUnavailableError('Owner unavailable')).mockResolvedValueOnce(undefined);
+    expect(await resumeCodexSessionWork('session')).toBe('goal'); expect(mocks.goal).toHaveBeenCalledTimes(2); expect(mocks.goal.mock.calls[1]![3]).toBe(true);
+    mocks.goal.mockReset().mockRejectedValue(new Error('Goal resume was not confirmed'));
+    await expect(resumeCodexSessionWork('session')).rejects.toThrow(/not confirmed/); expect(mocks.goal).toHaveBeenCalledOnce();
+  });
+
 });

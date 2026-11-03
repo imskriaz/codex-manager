@@ -28,7 +28,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
   });
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), 1, 'Repeated submit events send only once');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Confirmation lost; verify before retrying.' } })));
-  await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === 'First steering message');
+  await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).waitFor();
+  assert.equal(await input.inputValue(),'','A failed send stays in the conversation without restoring the composer');
   await input.fill('My next draft');
   await page.evaluate(() => {
     window.__steerState = { ...window.__steerState, sequence: 2, updatedAt: Date.now(), messages: [{ id: 'steer-echo', role: 'user', kind: 'message', turnId: 'turn-fixture', text: 'First steering message' }] };
@@ -44,7 +45,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.evaluate(() => {
     window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Uncertain result' } }));
   });
-  await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === 'My next draft');
+  await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).waitFor();
+  assert.equal(await input.inputValue(),'','The failed follow-up offers inline Resend');
   await page.evaluate(() => {
     window.__steerState = { ...window.__steerState, sequence: 3, updatedAt: Date.now(), messages: [...window.__steerState.messages, { id: 'second-steer-echo', role: 'user', kind: 'message', turnId: 'turn-fixture', text: 'My next draft' }, { id: 'later-reply', role: 'assistant', kind: 'message', turnId: 'turn-fixture', text: 'Working on the follow-up' }] };
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
@@ -74,31 +76,30 @@ export async function checkSteerUi(page, { origin, parentId }) {
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-status-refresh', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
     }, {sessionId:parentId,status});
     await page.waitForFunction(status => status === 'unknown'
-      ? document.querySelector('.cli-composer-state')?.textContent === 'Checking running state'
+      ? document.querySelector('.cli-composer-state')?.textContent === 'Checking running state · messages wait locally'
       : !document.querySelector('.cli-composer-state'), status);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Status refresh never unmounts the composer');
     assert.equal(await input.inputValue(), 'Native owner guidance', 'Status refresh preserves typed guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
-    if(status==='unknown') {
-      assert.equal(await send.isDisabled(),true,'Unknown ownership disables sending');
-      const before=await page.evaluate(()=>window.__uiActions.filter(a=>['steerCodexCliSessionTurn','sendCodexCliSessionMessage','startCodexCliSession'].includes(a.action)).length);
-      await input.press('Control+Enter');
-      assert.equal(await page.evaluate(()=>window.__uiActions.filter(a=>['steerCodexCliSessionTurn','sendCodexCliSessionMessage','startCodexCliSession'].includes(a.action)).length),before,'Enter cannot bypass unverified ownership');
-    }
+    if(status==='unknown') assert.equal(await send.isEnabled(),true,'Unverified sessions accept a local queued draft without dispatching');
   }
   for (const connected of [false,true]) {
     await page.evaluate(connected => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } })), connected);
     await page.waitForFunction(connected => connected
       ? !document.querySelector('.cli-composer-state')
-      : document.querySelector('.cli-composer-state')?.textContent === 'Reconnecting', connected);
+      : document.querySelector('.cli-composer-state')?.textContent === 'Offline · messages save locally until reconnect', connected);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Reconnect preserves the composer node');
     assert.equal(await input.inputValue(), 'Native owner guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     if(!connected){
-      assert.equal(await send.isDisabled(),true,'Offline sending stays disabled');
+      assert.equal(await send.isEnabled(),true,'Offline messages can save in the local queue');
       const before=await page.evaluate(()=>window.__uiActions.length);
       await input.press('Control+Enter');
-      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline Enter sends nothing');
+      await page.locator('.cli-local-queue .is-queued').waitFor();
+      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline Enter queues without host writes');
+      await page.locator('.cli-local-queue').getByRole('button',{name:'Edit',exact:true}).click();
+      assert.equal(await input.inputValue(),'Native owner guidance','Editing a queued message restores its text');
+      await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     }
   }
   await page.evaluate(() => { window.__holdNextSteer=true; window.__heldSteerResult=undefined; });

@@ -1,5 +1,5 @@
 import type { DashboardCliComposerConfig, DashboardCliSandboxMode, DashboardCliSessionSummary, DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../../src/domain/dashboard/types";
-import { validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
+import { chatAttachmentPreviews, validateChatAttachments, type ChatAttachment } from "../../src/domain/chatAttachments";
 
 export type CliComposerDraft = {
   text: string;
@@ -14,13 +14,14 @@ export type CliSubmissionResult = { requestId: string; status: "completed" | "fa
 export function isCliSubmissionEcho(message: DashboardCliSessionMessage, submitted: CliComposerDraft, seenIds: Set<string>, turnId?: string): boolean {
   if (seenIds.has(message.id) || message.role !== "user" || (message.kind && message.kind !== "message") || (turnId && message.turnId && message.turnId !== turnId)) return false;
   return message.text.trim() === submitted.text.trim()
-    && JSON.stringify(message.textAttachments ?? []) === JSON.stringify(submitted.attachments.filter(file => file.kind === "text").map(file => ({ name: file.name, text: file.data })))
+    && JSON.stringify(message.textAttachments ?? []) === JSON.stringify(chatAttachmentPreviews(submitted.attachments))
     && (message.images?.length ?? 0) === submitted.attachments.filter(file => file.kind === "image").length;
 }
 
 export function cliContextUsage(usage: DashboardCodexSessionLiveState["tokenUsage"]) {
-  if (typeof usage?.total !== "number" || !Number.isFinite(usage.total) || usage.total < 0 || typeof usage.contextWindow !== "number" || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
-  return { used: usage.total, limit: usage.contextWindow, percent: Math.min(100, Math.round(usage.total / usage.contextWindow * 100)) };
+  const used = usage?.contextTokens ?? usage?.total;
+  if (typeof used !== "number" || !Number.isFinite(used) || used < 0 || typeof usage?.contextWindow !== "number" || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return undefined;
+  return { used, limit: usage.contextWindow, percent: Math.min(100, Math.round(used / usage.contextWindow * 100)) };
 }
 
 export function cliComposerDraftKey(deviceId: string | undefined, sessionId: string | undefined, projectPath?: string): string {
@@ -44,7 +45,7 @@ export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | un
   }
 }
 
-export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort">) {
+export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort" | "sandboxMode">) {
   const preferredModel = draft?.model ?? session?.model;
   const preferredEffort = draft?.reasoningEffort ?? session?.reasoningEffort;
   const model = config?.models.find((option) => option.id === preferredModel)
@@ -54,7 +55,7 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
     : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
       ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
   return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
-    sandboxMode: draft?.sandboxMode ?? config?.defaultSandboxMode ?? "workspace-write" as DashboardCliSandboxMode };
+    sandboxMode: draft?.sandboxMode ?? session?.sandboxMode ?? config?.defaultSandboxMode ?? "workspace-write" as DashboardCliSandboxMode };
 }
 
 /** Clear only the submitted content, preserving edits made while it was in flight. */
@@ -69,4 +70,8 @@ export function restoreFailedCliComposerDraft(current: CliComposerDraft, submitt
   return { ...current,
     text: current.text ? current.text : submitted.text,
     attachments: current.attachments.length ? current.attachments : submitted.attachments };
+}
+
+export function canRestoreCliComposerDraft(current: CliComposerDraft, failed: CliComposerDraft): boolean {
+  return (!current.text || current.text === failed.text) && (!current.attachments.length || JSON.stringify(current.attachments) === JSON.stringify(failed.attachments));
 }

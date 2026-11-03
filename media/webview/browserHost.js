@@ -18,13 +18,18 @@
   let hiddenAt;
   const pendingSocketActions = new Map();
   const pendingHttpActions = new Set();
-  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask", "startProjectSubtask"].includes(message?.action)
+  const baseRequestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask", "startProjectSubtask"].includes(message?.action)
     ? 15 * 60_000 + 15_000
     : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
       ? 10 * 60_000 + 30_000
       : ["refreshAll", "batchRefresh", "batchResyncProfile", "batchSetAccountAutoResetAllowed"].includes(message?.action)
         ? (message.action === "batchSetAccountAutoResetAllowed" ? 30_000 : message.action === "batchResyncProfile" ? 300_000 : 240_000) * Math.max(1, message.payload?.accountIds?.length || peerAccountCounts.get(message.payload?.targetDeviceId) || lastAccountCount) + 15_000
         : ["generateApiToken","listApiTokens","revokeApiToken"].includes(message?.action) ? 20_000 : message?.action === "workspaceTerminal" ? 10_000 : message?.action === "refreshView" ? 8_000 : message?.action === "resyncProfile" ? 315_000 : message?.action === "refresh" ? 255_000 : 135_000;
+  const requestTimeoutMs = (message) => {
+    const files = message?.payload?.attachments ?? message?.payload?.task?.uploads ?? message?.payload?.comment?.uploads;
+    const bytes = Array.isArray(files) ? files.reduce((sum, file) => sum + (Number.isFinite(file?.size) ? Math.max(0,file.size) : 0),0) : 0;
+    return Math.max(baseRequestTimeoutMs(message), bytes > 1024 * 1024 ? 300000 : 0);
+  };
   let lastAccountCount = 1;
   const peerAccountCounts = new Map();
   const forgetSocketAction = (requestId) => {

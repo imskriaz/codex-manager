@@ -2,7 +2,8 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { recordPersistentEvent } from "../utils/persistentLog";
-import type { ChatAttachment } from "../domain/chatAttachments";
+import { needsChatAttachmentFiles, type ChatAttachment } from "../domain/chatAttachments";
+import { saveCodexAttachmentFiles } from "./projectTaskAttachments";
 
 /** Images are argv file paths for CLI; app-server uses inline data URLs. */
 export async function withCliImageAttachments<T>(files: ChatAttachment[] | undefined, run: (paths: string[]) => Promise<T>): Promise<T> {
@@ -29,4 +30,10 @@ export async function withCliImageAttachments<T>(files: ChatAttachment[] | undef
 
 export function appServerChatInput(text: string, attachments?: ChatAttachment[]) {
   return [{ type: "text", text, text_elements: [] }, ...(attachments ?? []).filter((file) => file.kind === "image").map((file) => ({ type: "image", url: file.data }))];
+}
+
+export async function materializeChatAttachments(text: string, files: ChatAttachment[] | undefined, projectPath: string, signal?: AbortSignal): Promise<string> {
+  if (!files || !needsChatAttachmentFiles(files)) return text;
+  const stored = await saveCodexAttachmentFiles(projectPath, files.filter(file => file.kind !== 'image'), signal);
+  return text + '\n\n<attachment_paths>\nRead complete uploaded files from these paths:\n' + stored.map(file => `${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`).join('\n') + '\n</attachment_paths>';
 }

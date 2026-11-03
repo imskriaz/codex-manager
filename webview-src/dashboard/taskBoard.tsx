@@ -1,7 +1,7 @@
 import { useAnchoredPopover } from './anchoredPopover';
 import { ScrollMore } from './scrollMore';
 import { AttachmentPicker, AttachmentIcon } from './attachmentUploads';
-import { validateChatAttachments, type ChatAttachment } from '../../src/domain/chatAttachments';
+import { chatUploadTimeoutMs, validateChatAttachments, type ChatAttachment } from '../../src/domain/chatAttachments';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { ComponentChildren } from 'preact';
@@ -14,7 +14,8 @@ import { projectTaskStages, sessionTaskStage, taskSessionAgents, PROJECT_SHARE_F
 import { readBrowserCache, writeBrowserCache, listBrowserOutbox, deleteBrowserCache } from './cliSessionCache';
 import { handleTabKeyDown, ModalShell, TaskDetailPanel } from './primitives';
 import { ShareAccessReview, ShareLinkField } from './shareControls';
-import { AgentWorkspace, SessionMessage, SessionTranscript, TurnCopyButton } from './cliSessionsModal';
+import { TaskSessionConversation } from './taskSessionConversation';
+import { AgentWorkspace, SessionMessage, TurnCopyButton } from './cliSessionsModal';
 import { cliSessionTargetKey } from './cliSessionRoute';
 import type { SendAction } from './hookTypes';
 import { renderRefreshIcon, renderSyncIcon } from './icons';
@@ -30,6 +31,9 @@ const label = (value: string) => value[0]!.toUpperCase() + value.slice(1);
 const boardScope = (device: string | undefined, project: string) => JSON.stringify([device ?? 'local', project]);
 
 export function TaskBoard(props: {
+  composerConfig?: import('../../src/domain/dashboard/types').DashboardCliComposerConfig;
+  liveStates?: Record<string, import('../../src/domain/dashboard/types').DashboardCodexSessionLiveState>;
+  peers?: Array<{ id: string; connected: boolean; local?: boolean }>;
   sessions: DashboardCliSessionSummary[]; projects?: DashboardCliProject[]; connected: boolean; targetDeviceId?: string; active?: boolean;
   shared?: { draftKey: string; board: ProjectBoard; permissions: ProjectSharePermission[]; request: (action: DashboardActionName, payload: DashboardActionPayload) => Promise<DashboardActionResultPayload> };
   selectedSystem?: string;
@@ -111,15 +115,16 @@ export function TaskBoard(props: {
     if (props.shared) { void props.shared.request(action, payload).then(resolve, reject); return; }
     const id = props.sendAction(action, undefined, { projectPath: project, targetDeviceId: props.targetDeviceId, automatic: true, ...payload });
     if (!id) { reject(new Error('The request could not be sent.')); return; }
-    const timer = setTimeout(() => { requests.current.delete(id); reject(new Error('Completion was not confirmed. Refresh before retrying. Your local draft was kept.')); }, ['startProjectTask','startProjectSubtask'].includes(action) ? 915000 : 65000);
+    const timer = setTimeout(() => { requests.current.delete(id); reject(new Error('Completion was not confirmed. Refresh before retrying. Your local draft was kept.')); }, Math.max(['startProjectTask','startProjectSubtask'].includes(action) ? 915000 : 65000, chatUploadTimeoutMs(payload.attachments ?? payload.task?.uploads ?? payload.comment?.uploads)));
     requests.current.set(id, { resolve, reject, timer });
   });
   useEffect(() => {
     if (props.shared) return;
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
       const message = event.data;
+      if (visibleRef.current && message?.type === 'dashboard:snapshot' && !document.hidden) void refreshRef.current();
       if (message?.type === 'dashboard:project-changed') {
-        if (visibleRef.current && message.projectPath === projectRef.current) { void refreshRef.current(); void detailRefreshRef.current(); }
+        if (visibleRef.current && message.projectPath.replace(/\\/g, '/').toLowerCase() === projectRef.current.replace(/\\/g, '/').toLowerCase()) { void refreshRef.current(); void detailRefreshRef.current(); }
         return;
       }
       if (visibleRef.current && message?.type === 'dashboard:codex-session-live') {
@@ -161,7 +166,7 @@ export function TaskBoard(props: {
   useEffect(() => {
     if (!props.shared) return;
     const config = props.shared.board.boardConfig;
-    setShowArchive(config?.showArchive === true); setView(config?.view ?? 'board'); setVisibleStages(config?.columns ?? stages); setStageFilter(config?.stageFilter ?? 'all');
+    setShowArchive(config?.showArchive === true); setVisibleStages(config?.columns ?? stages); setStageFilter(config?.stageFilter ?? 'all');
   }, [props.shared?.board?.boardConfig]);
   useEffect(() => {
     if (props.active === false) { receivedBoard.current = false; setOutbox([]); return; }
@@ -492,7 +497,7 @@ export function TaskBoard(props: {
   return <section class={`task-board-section ${selected?.id ? 'has-detail-panel' : ''}`} aria-labelledby="task-board-title">
     <header class="task-board-header"><h2 id="task-board-title" class="sr-only">Task workspace</h2>{props.shared ? <div class="task-board-heading task-board-shared-heading"><span class="task-context-icon"><FolderIcon /></span><strong>{props.systemName || 'Project'}</strong></div> : null}{!props.shared ? <div class="task-board-heading"><span id="task-sidebar-toggle-slot" class="content-sidebar-slot" /><div class="task-context-tabs" aria-label="Workspace context">
       <label class="task-context-select task-project-select"><span class="task-context-icon"><FolderIcon /></span><span><strong>{project ? basename(project) : 'Choose project'}</strong></span><span class="task-context-chevron"><ChevronDownIcon /></span><select aria-label="Task project" title={`${project || 'Choose project'} · ${cards.length} tasks · ${cards.filter(task => task.session?.status === 'running').length} running`} value={project} disabled={busy || !!props.shared} onChange={event => setProject(event.currentTarget.value)}><option value="">Choose a project</option>{projects.map(value => <option key={value} value={value}>{props.shared ? props.systemName : basename(value)}</option>)}</select></label>
-    </div></div> : null}<div class="task-view-tabs" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Task views">{(['board','list','gantt','calendar'] as const).map(value => <button key={value} type="button" role="tab" aria-label={value === 'gantt' ? 'Gantt' : label(value)} aria-selected={view === value} disabled={!!props.shared && view !== value} title={label(value)} onClick={() => {
+    </div></div> : null}<div class="task-view-tabs" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Task views">{(['board','list','gantt','calendar'] as const).map(value => <button key={value} type="button" role="tab" aria-label={value === 'gantt' ? 'Gantt' : label(value)} aria-selected={view === value} title={label(value)} onClick={() => {
       setView(value); if (!saveTaskBoardView(value)) setStatus('Display choice is kept in this tab only. Browser storage is unavailable.');
     }}><ViewIcon view={value} /><span>{value === 'gantt' ? 'Gantt' : label(value)}</span></button>)}</div><div class="task-board-toolbar">
       <button type="button" ref={searchToggle} class={`task-search-toggle ${search.trim() ? 'has-query' : ''}`} aria-label="Search tasks" title={search.trim() ? `Filter: ${search.trim()}` : 'Search tasks'} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) requestAnimationFrame(() => searchInput.current?.focus()); }}><SearchIcon /></button><label class={`task-board-search ${searchOpen ? 'is-open' : ''}`}><SearchIcon /><input ref={searchInput} type="search" aria-label="Search tasks" placeholder="Search tasks…" value={search} onKeyDown={event => { if (event.key === 'Escape') { setSearch(''); setSearchOpen(false); searchToggle.current?.focus(); } }} onInput={event => setSearch(event.currentTarget.value)} /><button type="button" class="task-search-close" aria-label="Close task search" onClick={() => { setSearchOpen(false); searchToggle.current?.focus(); }}>×</button></label>
@@ -550,9 +555,9 @@ export function TaskBoard(props: {
         </div> : <>
         <div class="task-detail-scroll cli-workspace cli-message-surface" role="tabpanel">
           {tab !== 'agents' && cursor ? <button type="button" disabled={detailLoading} onClick={() => setCursor(undefined)}>Latest activity</button> : null}{tab !== 'agents' && details?.olderThan ? <button type="button" disabled={detailLoading} onClick={() => setCursor(details.olderThan)}>Older history</button> : null}
-          {tab === 'agents' ? <TaskAgents key={`${scope}:${selected.id}`} sessions={[...(selected.sessionId ? [{ ...(selectedSession ?? { id: selected.sessionId, title: selected.title, status: selected.sessionStatus ?? 'unknown', deviceId: props.targetDeviceId }), agentName: selectedSession?.model || 'Main agent' }] : []), ...selectedAgents]} shared={!!props.shared} connected={props.connected} messages={details?.messages ?? []} call={call} onFeedback={notice => setStatus(notice.message, notice.level)} /> : null}
+          {tab === 'agents' ? <TaskAgents key={`${scope}:${selected.id}`} config={props.composerConfig} liveStates={props.liveStates} peers={props.peers} sendAction={props.sendAction} deviceId={ownerDeviceId} onChanges={() => setTab('changes')} onOpenFile={path => { setTab('files'); void openFile({ path, name: basename(path), type: 'file', depth: 0 }); }} sessions={[...(selected.sessionId ? [{ ...(selectedSession ?? { id: selected.sessionId, title: selected.title, status: selected.sessionStatus ?? 'unknown', deviceId: props.targetDeviceId }), agentName: selectedSession?.model || 'Main agent' }] : []), ...selectedAgents]} shared={!!props.shared} connected={props.connected} messages={details?.messages ?? []} call={call} onFeedback={notice => setStatus(notice.message, notice.level)} /> : null}
           {tab === 'activities' && details ? <TaskActivityTimeline messages={details.messages} comments={can('comments') && !cursor ? comments : []} loading={detailLoading} onAttachment={can('files') ? (ownerId, upload) => { void openAttachment('comment', ownerId, upload); } : undefined} onFeedback={notice => setStatus(notice.message, notice.level)} /> : null}
-          {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry); }}><span>{entry.attachment ? entry.name : entry.path}</span><small>{entry.attachment ? 'Attachment' : 'Changed file'}</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <SessionMessage key={file.revision} message={{ id: file.revision, kind: 'message', role: 'user', text: '', images: [{ src: file.dataUrl, alt: file.path }] }} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
+          {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry); }}><span>{entry.attachment ? entry.name : entry.path}</span><small>{entry.attachment ? 'Attachment' : 'Changed file'}</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <SessionMessage key={file.revision} message={{ id: file.revision, kind: 'message', role: 'user', text: '', images: [{ src: file.dataUrl, alt: file.path }] }} /> : <pre>{file.content || (file.dataUrl ? "Download this document to view it." : "")}</pre>}{file.dataUrl && file.kind !== "image" ? <a href={file.dataUrl} download={file.path}>Download document</a> : null}</article> : null}</> : null}
           {tab === 'changes' ? <><p>Current project: {details?.environment?.changes ?? 0} changed files · +{details?.environment?.additions ?? 0} / −{details?.environment?.deletions ?? 0}</p>{details?.environment?.branchDiff ? <details><summary>Current branch differences</summary><pre>{details.environment.branchDiff}</pre></details> : null}{details?.messages.filter(item => item.changes?.length).map(item => <SessionMessage key={item.id} message={item} />)}</> : null}
           {tab !== 'agents' ? detailLoading ? <p role="status" class="settings-note">Refreshing {label(tab).toLowerCase()}…</p> : !details ? <p class="task-board-empty">{selected.id ? 'No cached details yet. Reconnect to load this view.' : 'Save this task to add comments and start Codex.'}</p> : null : null}
         </div>
@@ -560,7 +565,7 @@ export function TaskBoard(props: {
       </> : null}
     </TaskDetailPanel>
     <ModalShell open={!!attachmentPreview} title={attachmentPreview?.path || 'Attachment'} closeLabel="Close attachment" className="task-attachment-modal dashboard-modal-compact" onClose={() => { attachmentRequest.current++; setAttachmentPreview(undefined); }}>
-      {attachmentPreview ? <><div class="task-attachment-actions"><span>{Math.ceil(attachmentPreview.size / 1024)} KB</span>{attachmentPreview.kind === 'text' ? <TurnCopyButton text={attachmentPreview.content} label="Copy attachment" onActionFeedback={notice => setStatus(notice.message, notice.level)} /> : null}<a class="modal-secondary-btn" download={attachmentPreview.path} href={attachmentPreview.dataUrl ?? `data:text/plain;charset=utf-8,${encodeURIComponent(attachmentPreview.content)}`} onClick={() => setStatus('Download started.', 'info')}>Download</a></div>{attachmentPreview.kind === 'image' && attachmentPreview.dataUrl ? <div class="cli-workspace cli-message-surface"><SessionMessage message={{id:attachmentPreview.revision,role:'user',kind:'message',text:'',images:[{src:attachmentPreview.dataUrl,alt:attachmentPreview.path}]}} /></div> : <pre class="task-attachment-text">{attachmentPreview.content}</pre>}</> : null}
+      {attachmentPreview ? <><div class="task-attachment-actions"><span>{Math.ceil(attachmentPreview.size / 1024)} KB</span>{attachmentPreview.kind === 'text' ? <TurnCopyButton text={attachmentPreview.content} label="Copy attachment" onActionFeedback={notice => setStatus(notice.message, notice.level)} /> : null}<a class="modal-secondary-btn" download={attachmentPreview.path} href={attachmentPreview.dataUrl ?? `data:text/plain;charset=utf-8,${encodeURIComponent(attachmentPreview.content)}`} onClick={() => setStatus('Download started.', 'info')}>Download</a></div>{attachmentPreview.kind === 'image' && attachmentPreview.dataUrl ? <div class="cli-workspace cli-message-surface"><SessionMessage message={{id:attachmentPreview.revision,role:'user',kind:'message',text:'',images:[{src:attachmentPreview.dataUrl,alt:attachmentPreview.path}]}} /></div> : <pre class="task-attachment-text">{attachmentPreview.content || "Download this file to view it."}</pre>}</> : null}
     </ModalShell>
     <ModalShell open={hiddenOpen} title="Hidden sessions" closeLabel="Close hidden sessions" className="dashboard-modal-compact task-hidden-modal" onClose={() => setHiddenOpen(false)}>
       <label class="task-hidden-search"><SearchIcon /><input type="search" aria-label="Search hidden sessions" placeholder="Search hidden sessions…" value={hiddenSearch} onInput={event => { setHiddenSearch(event.currentTarget.value); setHiddenLimit(100); }} /></label>
@@ -584,7 +589,10 @@ export function TaskBoard(props: {
   </section>;
 }
 
-function TaskAgents({ sessions, shared, connected, messages, call, onFeedback }: { sessions: DashboardCliSessionSummary[]; shared: boolean; connected: boolean; messages: ProjectTaskDetails['messages']; call: (action: DashboardActionName, payload: DashboardActionPayload) => Promise<DashboardActionResultPayload>; onFeedback: (notice: DashboardNotice) => void }) {
+function TaskAgents({ sessions, shared, connected, messages, call, onFeedback, config, liveStates, sendAction, peers, deviceId, onChanges, onOpenFile }: {
+  config?: import('../../src/domain/dashboard/types').DashboardCliComposerConfig;
+  liveStates?: Record<string, import('../../src/domain/dashboard/types').DashboardCodexSessionLiveState>;
+  peers?: Array<{ id: string; connected: boolean; local?: boolean }>; sendAction: SendAction; deviceId?: string; onChanges: () => void; onOpenFile: (path: string) => void; sessions: DashboardCliSessionSummary[]; shared: boolean; connected: boolean; messages: ProjectTaskDetails['messages']; call: (action: DashboardActionName, payload: DashboardActionPayload) => Promise<DashboardActionResultPayload>; onFeedback: (notice: DashboardNotice) => void }) {
   const [data, setData] = useState<Record<string, { messages?: ProjectTaskDetails['messages']; error?: string; loading?: boolean }>>({});
   const pending = useRef(new Set<string>()), mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
@@ -602,7 +610,7 @@ function TaskAgents({ sessions, shared, connected, messages, call, onFeedback }:
     finally { pending.current.delete(key); }
   };
   const sharedData = sessions[0] ? { [cliSessionTargetKey(sessions[0])]: { messages }, ...data } : data;
-  return <AgentWorkspace connected={connected} sessions={sessions} data={sharedData} onRefresh={shared ? undefined : (agent, automatic) => { void refresh(agent, automatic); }} onFeedback={onFeedback} />;
+  return <AgentWorkspace connected={connected} sessions={sessions} data={sharedData} renderConversation={!shared ? (session, messages) => <TaskSessionConversation key={cliSessionTargetKey(session)} session={session} messages={messages} connected={connected} deviceId={deviceId} config={config} liveState={liveStates?.[cliSessionTargetKey(session)]} sendAction={sendAction} peers={peers} onRefresh={() => { void refresh(session); }} onFeedback={onFeedback} onChanges={onChanges} onOpenFile={onOpenFile} /> : undefined} onRefresh={shared ? undefined : (agent, automatic) => { void refresh(agent, automatic); }} onFeedback={onFeedback} />;
 }
 
 function TaskAttachmentLinks({ files, onOpen }: { files?: ProjectAttachment[]; onOpen: (file: ProjectAttachment) => void }) {
@@ -610,17 +618,12 @@ function TaskAttachmentLinks({ files, onOpen }: { files?: ProjectAttachment[]; o
   return <div class="task-upload-links">{files.map(file => <button key={file.id} type="button" disabled={!file.hash} title={`${file.name} · ${file.size} bytes`} onClick={() => onOpen(file)}><AttachmentIcon /><span>{file.name}</span></button>)}</div>;
 }
 function TaskActivityTimeline({ messages, comments, loading, onFeedback, onAttachment }: { messages: ProjectTaskDetails['messages']; comments: ProjectBoard['comments']; loading: boolean; onAttachment?: (ownerId: string, upload: ProjectAttachment) => void; onFeedback: (notice: DashboardNotice) => void }) {
-  const activity = projectTaskActivity(messages, comments);
-  const groups: Array<{ id: string; messages: ProjectTaskDetails['messages']; comment?: ProjectBoard['comments'][number] }> = [];
-  for (const item of activity) {
-    const previous = groups.at(-1);
-    if (item.comment) groups.push({ id: item.id, messages: [], comment: item.comment });
-    else if (previous && !previous.comment) previous.messages.push(item.message);
-    else groups.push({ id: item.id, messages: [item.message] });
-  }
+  const activity = projectTaskActivity(messages, comments).filter(item => item.comment || !['tool-call','command','reasoning','web-search'].includes(item.message.kind ?? '') || item.message.status === 'failed');
   return <section class="task-timeline" aria-label="Activity timeline">
     <header class="task-timeline-heading"><strong>Activity</strong><small>{activity.length} {activity.length === 1 ? 'event' : 'events'}</small></header>
-    <div class="cli-session-messages">{groups.map(group => group.comment ? <article key={group.id} class="task-activity"><small>{group.comment.author} · Comment</small><p>{group.comment.text}</p>{onAttachment ? <TaskAttachmentLinks files={group.comment.attachments} onOpen={file => onAttachment(group.comment!.id, file)} /> : null}</article> : <SessionTranscript key={group.id} messages={group.messages} running={messages.some(message => message.status === 'inProgress')} onActionFeedback={onFeedback} />)}</div>
+    <ol class="task-timeline-events">{activity.map(item => <li key={item.id}><header><strong>{item.message?.status === 'failed' ? 'Session issue' : item.label}</strong>{item.timestamp ? <time dateTime={item.timestamp}>{new Date(item.timestamp).toLocaleString()}</time> : null}</header>
+      {item.comment ? <article class="task-activity"><p>{item.comment.text}</p>{onAttachment ? <TaskAttachmentLinks files={item.comment.attachments} onOpen={file => onAttachment(item.comment!.id, file)} /> : null}</article> : <SessionMessage message={item.message.status === 'failed' && ['tool-call','command'].includes(item.message.kind ?? '') ? { ...item.message, kind: 'error', text: item.message.text || 'An activity failed. Open the session to review it.' } : item.message} onActionFeedback={onFeedback} />}
+    </li>)}</ol>
     {!activity.length && !loading ? <p class="task-board-empty">No relevant activity on this history page.</p> : null}
   </section>;
 }

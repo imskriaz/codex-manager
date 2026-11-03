@@ -152,3 +152,15 @@ it('persists public uploads and requires both Files and Comments to read comment
   expect((await request(query(share.token,commentPath))).statusCode).toBe(200);
   revokeProjectShares(root); expect((await request(query(share.token,taskPath))).statusCode).toBe(404);
 });
+
+it('accepts document uploads above the previous body limit and exposes only the permitted download snapshot', async () => {
+  const share=createProjectShare(root,['files','submissions']);
+  const data='data:application/pdf;base64,'+Buffer.alloc(2*1024*1024,32).toString('base64');
+  const upload={id:'report',name:'report.pdf',kind:'file',mimeType:'application/pdf',data,size:2*1024*1024};
+  const created=await request(`/api/projects/share/${share.token}`,{kind:'task',id:'document-task',title:'Document task',prompt:'Review the report',uploads:[upload]});
+  expect(created.statusCode).toBe(200);
+  const task=readProjectTasks(root).tasks[0]!, file=projectAttachmentPath('task',task.id,task.attachments![0]!);
+  const response=await request(`/api/projects/share/${share.token}?task=${task.id}&view=files&file=${encodeURIComponent(file)}`);
+  expect(response.statusCode).toBe(200); expect(JSON.parse(response.body).file.dataUrl).toBe(data);
+  expect(JSON.stringify(readProjectTasks(root).tasks)).not.toContain(data);
+});

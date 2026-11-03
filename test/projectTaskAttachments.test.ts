@@ -111,8 +111,8 @@ it("rejects unsupported, oversized and forged uploads before creating task recor
     saveProjectTaskWithAttachments(root, { ...draft, uploads: [{ ...upload, name: "../escape.md" }] })
   ).rejects.toThrow("invalid");
   await expect(
-    saveProjectTaskWithAttachments(root, { ...draft, uploads: [{ ...upload, data: "x".repeat(32769) }] })
-  ).rejects.toThrow("32 KB");
+    saveProjectTaskWithAttachments(root, { ...draft, uploads: [{ ...upload, data: "bad\0text" }] })
+  ).rejects.toThrow("binary data");
   await expect(
     saveProjectTaskWithAttachments(root, { ...draft, uploads: [{ ...upload, id: "../escape" }] })
   ).rejects.toThrow("identifier");
@@ -243,4 +243,34 @@ it("does not commit or remove uncertain files after its upload lease is cancelle
   await expect(saveProjectTaskWithAttachments(root, draft)).rejects.toThrow("Upload lease lost");
   expect(readProjectTask(root, draft.id)).toBeUndefined();
   expect(await fs.readdir(folder())).toHaveLength(1);
+});
+
+it('stores a large text upload as a verified private file reference without putting its body into model context', async () => {
+  const { prepareChatInput, validateChatAttachments } = await import('../src/domain/chatAttachments');
+  const { materializeChatAttachments } = await import('../src/services/codexChatAttachments');
+  const data = 'Large source file\n'.repeat(4000), files = validateChatAttachments([{ ...upload, data }]);
+  const prepared = prepareChatInput('Read the source', files);
+  const input = await materializeChatAttachments(prepared.text, files, root);
+  expect(input.length).toBeLessThan(1000); expect(input).not.toContain(data);
+  const match = input.match(/"brief.md": ("[^\n]+")/);
+  const saved = JSON.parse(match![1]!) as string;
+  expect(await fs.readFile(saved, 'utf8')).toBe(data);
+  expect(saved.startsWith(join(root, 'manager', 'attachments'))).toBe(true);
+  expect(await materializeChatAttachments(prepared.text, files, root)).toBe(input);
+  const abort = new AbortController(); abort.abort();
+  await expect(materializeChatAttachments(prepared.text, files, root, abort.signal)).rejects.toThrow();
+});
+
+it('stores and restores arbitrary document bytes for task upload, model input and download', async () => {
+  const file: ChatAttachment = { id: 'document', name: 'report.docx', kind: 'file', mimeType: 'application/octet-stream', data: 'data:application/octet-stream;base64,UEsDBA==', size: 4 };
+  const saved = await saveProjectTaskWithAttachments(root, { ...draft, uploads: [file] });
+  const input = await readProjectAttachmentInput(projectTaskKey(root), saved.attachments![0]!);
+  expect(input).toEqual(file);
+  const { materializeChatAttachments } = await import('../src/services/codexChatAttachments');
+  const { prepareChatInput } = await import('../src/domain/chatAttachments');
+  const prepared = prepareChatInput('Read the document', [input]);
+  const prompt = await materializeChatAttachments(prepared.text, prepared.attachments, root);
+  const match = prompt.match(/"report.docx": ("[^\n]+")/);
+  expect(await fs.readFile(JSON.parse(match![1]!) as string)).toEqual(Buffer.from('UEsDBA==','base64'));
+  expect(prompt).not.toContain(file.data);
 });

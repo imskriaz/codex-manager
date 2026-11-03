@@ -11,7 +11,7 @@
   const stopEvents = () => { events?.close(); events = undefined; };
   function clear() { stopped = true; epoch++; queued = false; stopEvents(); live = false; data = undefined; window.clearCodexSharedMessages?.(host); host.replaceChildren(); status.textContent = 'This project link expired or was revoked.'; }
   async function request(body, query) {
-    const current = epoch, controller = new AbortController(), timer = setTimeout(() => controller.abort(),15000);
+    const current = epoch, controller = new AbortController(), timer = setTimeout(() => controller.abort(),query?.file || (body?.uploads || []).reduce((sum,file)=>sum+(Number.isFinite(file?.size)?file.size:0),0)>1024*1024 ? 300000 : 15000);
     try {
       const response = await fetch(endpoint + (query ? '?' + new URLSearchParams(query) : ''), { method:body ? 'POST' : 'GET',signal:controller.signal,cache:'no-store',headers:{'Content-Type':'application/json','X-Codex-Dashboard':'1'},...(body ? {body:JSON.stringify(body)} : {}) });
       if (response.status === 404) { clear(); throw new Error('This project link expired or was revoked.'); }

@@ -147,12 +147,12 @@ self.addEventListener("push", (event) => {
     }
     const body = payload.body.slice(0, 900);
     const actions = typeof payload?.notificationId === "string" && Array.isArray(payload?.actions)
-      ? payload.actions.filter((action) => typeof action === "string").slice(0, 2).map((title) => ({ action: title, title })) : [];
+      ? payload.actions.filter((action) => typeof action === "string").slice(0, 2).map((title) => ({ action: title, title, ...(payload.replyAction === title ? { type: "text", placeholder: "Type your answer…" } : {}) })) : [];
     const title = typeof payload?.title === "string" && payload.title.trim() ? payload.title.trim().slice(0, 120) : "Codex Manager";
     await self.registration.showNotification(title, {
       body, icon: "/assets/icon-192.png", badge: "/assets/icon-192.png",
       tag: typeof payload?.tag === "string" ? payload.tag : "codex-manager-update", actions,
-      data: { title, url: payload?.url, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
+      data: { title, url: payload?.url, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), replyAction: payload?.replyAction, createdAt: payload?.createdAt }
     });
     if (eventId) {
       recentPushes.set(eventId, dedupeUntil);
@@ -171,23 +171,23 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil((async () => {
     const data = event.notification.data || {};
-    if (event.action) {
+    if (event.action && (event.action !== data.replyAction || typeof event.reply === "string" && event.reply.trim())) {
       let feedback;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       try {
         if (!data.actions?.includes(event.action) || typeof data.createdAt !== "number" || Date.now() - data.createdAt > 120000) throw new Error("This action has expired. Open the dashboard to review current actions.");
         const response = await fetch("/api/push/action", { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
-          headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify({ notificationId: data.notificationId, action: event.action }) });
+          headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify({ notificationId: data.notificationId, action: event.action, ...(event.action === data.replyAction && typeof event.reply === "string" ? { reply: event.reply } : {}) }) });
         if (!response.ok) throw new Error(response.status === 401 ? "Sign in again to act on this notification." : "This action could not be confirmed. Open the dashboard to check its outcome before retrying.");
       } catch (error) { feedback = error.message || "The host is unavailable. Open the dashboard and retry when connected."; }
       finally { clearTimeout(timer); }
-      if (feedback) await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
+      if (feedback) await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result", data: { url: data.url } });
     }
     let target = new URL("/", self.location.origin).href;
     try {
       const url = new URL(data.url, self.location.origin);
-      if (url.origin === self.location.origin && /^\/workspace\/[a-f0-9-]{36}$/i.test(url.pathname)) target = url.href;
+      if (url.origin === self.location.origin && /^\/(?:tasks|workspace(?:\/[a-f0-9-]{36})?)?$/i.test(url.pathname)) target = url.href;
     } catch { /* Invalid destinations open the dashboard. */ }
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);

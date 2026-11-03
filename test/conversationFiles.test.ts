@@ -38,7 +38,7 @@ it('lists uploads, images and recorded changes without duplicating payloads or t
 });
 
 it('keeps unavailable image metadata but never exposes local paths, credential URLs, active data types or oversized payloads as previews', () => {
-  const sources = ['file:///private/photo.png', 'C:\\private\\photo.png', 'javascript:alert(1)', 'https://user:password@example.com/image', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,bad', 'data:image/png;base64,' + 'A'.repeat(12 * 1024 * 1024)];
+  const sources = ['file:///private/photo.png', 'C:\\private\\photo.png', 'javascript:alert(1)', 'https://user:password@example.com/image', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,bad', 'data:image/png;base64,' + 'A'.repeat(68 * 1024 * 1024)];
   const messages: DashboardCliSessionMessage[] = [{ id: 'missing', text: '', images: sources.map(src => ({ src, alt: 'Unavailable image' })) }];
   expect(listConversationFiles(messages)).toHaveLength(sources.length);
   for (const file of listConversationFiles(messages)) expect(readConversationAttachment(messages, file.path)).toBeUndefined();

@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { CliQueuedMessage } from '../webview-src/dashboard/cliMessageQueue';
+
+const harness = vi.hoisted(() => ({ slots: [] as any[], cursor: 0, effects: [] as Array<() => void>, dirty: false, records: new Map<string, unknown>(), writes: vi.fn(), read: vi.fn() }));
+vi.mock('preact/hooks', () => ({
+  useState(initial: unknown) {
+    const index = harness.cursor++;
+    harness.slots[index] ??= { value: typeof initial === 'function' ? initial() : initial };
+    return [harness.slots[index].value, (next: unknown) => { const value = typeof next === 'function' ? next(harness.slots[index].value) : next; if (!Object.is(value, harness.slots[index].value)) { harness.slots[index].value = value; harness.dirty = true; } }];
+  },
+  useRef(initial: unknown) { const index = harness.cursor++; return harness.slots[index] ??= { current: initial }; },
+  useEffect(setup: () => void | (() => void), dependencies: unknown[]) {
+    const index = harness.cursor++, previous = harness.slots[index];
+    if (previous && dependencies.every((value, i) => Object.is(value, previous.dependencies[i]))) return;
+    const slot = { dependencies, cleanup: undefined as void | (() => void) };
+    harness.slots[index] = slot;
+    harness.effects.push(() => { previous?.cleanup?.(); slot.cleanup = setup(); });
+  }
+}));
+vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes }));
+import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
+import { canRestoreCliComposerDraft } from '../webview-src/dashboard/cliSessionComposerState';
+
+const draft = (text = 'First') => ({ text, attachments: [] });
+const entry = (patch: Partial<CliQueuedMessage> = {}): CliQueuedMessage => ({ id: 'one', draft: draft(), state: 'sending', createdAt: Date.now(), seenIds: ['old'], ...patch });
+let options: Parameters<typeof useCliMessageQueue>[0], queue: ReturnType<typeof useCliMessageQueue>;
+const send = vi.fn(), restore = vi.fn(), feedback = vi.fn(), locks = vi.fn();
+function render(patch: Partial<typeof options> = {}) {
+  options = { ...options, ...patch }; harness.cursor = 0; harness.dirty = false;
+  queue = useCliMessageQueue(options); harness.effects.splice(0).forEach(effect => effect()); return queue;
+}
+async function flush() { for (let i = 0; i < 40; i++) { await Promise.resolve(); if (harness.dirty) render(); } }
+beforeEach(() => {
+  vi.useFakeTimers(); harness.slots = []; harness.cursor = 0; harness.effects = []; harness.dirty = false; harness.records.clear();
+  send.mockReset().mockImplementation(() => 'request-' + send.mock.calls.length); restore.mockReset().mockReturnValue(true); feedback.mockReset();
+  harness.read.mockReset().mockImplementation(async key => structuredClone(harness.records.get(key)));
+  harness.writes.mockReset().mockImplementation(async (key, value) => { harness.records.set(key, structuredClone(value)); return true; });
+  locks.mockReset().mockImplementation(async (name, _options, work) => work({ name }));
+  vi.stubGlobal('navigator', { locks: { request: locks } }); vi.stubGlobal('window', new EventTarget());
+  options = { scope: 'pc:session', messages: [], results: [], canDispatch: false, send, restore, feedback };
+});
+afterEach(() => { for (const slot of harness.slots) slot?.cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('saves multiple offline messages immediately, fences each send, and drains in FIFO order after confirmation', async () => {
+  render(); await flush(); expect(queue.ready).toBe(true);
+  queue.enqueue(draft()); queue.enqueue(draft('Second')); await flush();
+  expect(queue.items.map(item => queuedMessageView(item).text)).toEqual(['First','Second']); expect(send).not.toHaveBeenCalled();
+  send.mockImplementation(value => { expect((harness.records.get('message-queue:pc:session') as CliQueuedMessage[]).find(item => item.draft.text === value.text)?.state).toBe('sending'); return 'request-' + send.mock.calls.length; });
+  render({ canDispatch: true }); await flush(); expect(send).toHaveBeenCalledExactlyOnceWith(draft());
+  render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  expect(send.mock.calls.map(call => call[0].text)).toEqual(['First','Second']);
+  render({ messages: [{ id: 'echo-1', role: 'user', text: 'First' }, { id: 'echo-2', role: 'user', text: 'Second' }] }); await flush();
+  expect(queue.items).toEqual([]);
+});
+
+it('keeps failed sends in the conversation and resends in place without changing the composer', async () => {
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); queue.enqueue(draft('Later')); await flush();
+  render({ results: [{ requestId: 'request-1', status: 'failed', message: 'Disconnected' }] }); await flush();
+  expect(restore).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed'); expect(send).toHaveBeenCalledOnce();
+  queue.resend(queue.items[0]!.id); queue.resend(queue.items[0]!.id); await flush();
+  expect(send).toHaveBeenCalledTimes(2); expect(queue.items.map(item => item.draft.text)).toEqual(['First','Later']);
+});
+
+it('does not send on full storage and preserves the message in the conversation', async () => {
+  harness.writes.mockResolvedValue(false); render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
+  expect(send).not.toHaveBeenCalled(); expect(restore).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed'); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('storage'));
+});
+
+it('does not dispatch when the durable send fence fails', async () => {
+  render({ canDispatch: true }); await flush();
+  harness.writes.mockImplementation(async (key, value) => { if (value.some((item: CliQueuedMessage) => item.state === 'sending')) return false; harness.records.set(key, structuredClone(value)); return true; });
+  queue.enqueue(draft()); await flush(); expect(send).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed');
+});
+
+it('pauses uncertain messages after timeout and reboot without replay and reconciles a late echo', async () => {
+  harness.records.set('message-queue:pc:session', [entry({ state: 'sent', requestId: 'old-request' }), entry({ id: 'two', draft: draft('Later'), state: 'queued' })]);
+  render({ canDispatch: true }); await flush(); expect(queue.items[0]?.state).toBe('uncertain'); expect(send).not.toHaveBeenCalled();
+  render({ messages: [{ id: 'echo', role: 'user', text: 'First' }] }); await flush(); expect(send).toHaveBeenCalledExactlyOnceWith(draft('Later'));
+  await vi.advanceTimersByTimeAsync(65_000); await flush(); expect(queue.items[0]?.state).toBe('uncertain'); expect(send).toHaveBeenCalledOnce(); expect(restore).not.toHaveBeenCalled();
+  queue.resend(queue.items[0]!.id); await flush(); expect(send).toHaveBeenCalledTimes(2);
+});
+
+it('rejects queue overflow, isolates another session, and refuses a second tab owner', async () => {
+  render(); await flush();
+  for (let i = 0; i < 20; i++) expect(queue.enqueue(draft(String(i)))).toBeTypeOf('string');
+  expect(queue.enqueue(draft('overflow'))).toBeUndefined(); await flush(); expect(queue.items).toHaveLength(20);
+  locks.mockImplementationOnce(async (_name, _options, work) => work(null)); render({ scope: 'other-pc:other-session', canDispatch: true }); await flush();
+  expect(queue.ready).toBe(false); expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.records.has('message-queue:pc:session')).toBe(true);
+});
+
+it('keeps a failed message when a newer composer draft prevents restoration', async () => {
+  harness.records.set('message-queue:pc:session', [entry({ state: 'failed' })]); render(); await flush();
+  restore.mockReturnValue(false); queue.remove('one', true); await flush(); expect(queue.items).toHaveLength(1);
+  expect(canRestoreCliComposerDraft(draft('Newer'), draft())).toBe(false);
+  expect(canRestoreCliComposerDraft(draft(''), draft())).toBe(true);
+});
+
+it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {
+  const first = entry({ turnId: 'turn' }), second = entry({ id: 'two', turnId: 'turn' });
+  const once = queuedMessageEchoes([first,second], [{ id: 'old', role: 'user', text: 'First' }, { id: 'wrong', role: 'user', text: 'First', turnId: 'other' }, { id: 'echo', role: 'user', text: 'First', turnId: 'turn' }]);
+  expect(once.matched).toEqual(new Set(['one'])); expect(once.items).toHaveLength(1);
+  expect(queuedMessageEchoes(once.items, [{ id: 'echo', role: 'user', text: 'First', turnId: 'turn' }]).matched.size).toBe(0);
+  expect(queuedMessageEchoes(once.items, [{ id: 'echo-2', role: 'user', text: 'First', turnId: 'turn' }]).matched).toEqual(new Set(['two']));
+  expect(() => normalizeCliMessageQueue([entry(),entry()])).toThrow();
+  expect(() => normalizeCliMessageQueue([{ ...entry(), draft: { text: 'bad', attachments: [{ kind: 'binary' }] } }])).toThrow();
+});
+
+
+it('retains quoted message whitespace through dispatch and the inline Resend button', async () => {
+  const quoted = draft('> Review this\n\n');
+  render({ canDispatch: true }); await flush(); queue.enqueue(quoted); await flush();
+  render({ results: [{ requestId: 'request-1', status: 'failed' }] }); await flush();
+  expect(restore).not.toHaveBeenCalled(); expect(queuedMessageView(queue.items[0]!).text).toBe(quoted.text);
+  queue.resend(queue.items[0]!.id); await flush(); expect(send.mock.calls.map(call => call[0])).toEqual([quoted, quoted]);
+});
+
+it('keeps a large document send pending through slow upload and exposes timeout without replay', async () => {
+  const document = { id: 'doc', name: 'report.pdf', kind: 'file' as const, mimeType: 'application/pdf', size: 3 * 1024 * 1024, data: 'data:application/pdf;base64,' + 'A'.repeat(4 * 1024 * 1024) };
+  render({ canDispatch: true }); await flush(); queue.enqueue({ text: 'Read this', attachments: [document] }); await flush();
+  expect(queuedMessageView(queue.items[0]!).textAttachments?.[0]?.name).toBe('report.pdf');
+  await vi.advanceTimersByTimeAsync(65001); await flush(); expect(queue.items[0]?.state).toBe('sending');
+  await vi.advanceTimersByTimeAsync(235000); await flush(); expect(queue.items[0]?.state).toBe('uncertain'); expect(send).toHaveBeenCalledOnce(); expect(restore).not.toHaveBeenCalled();
+});
+it('keeps an unreadable saved queue untouched and blocks dispatch with visible feedback', async () => {
+  harness.read.mockRejectedValue(new Error('Saved queue could not be read'));
+  render({ canDispatch: true }); await flush(); expect(queue.ready).toBe(false);
+  expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.writes).not.toHaveBeenCalled(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('could not be read'));
+  expect(queue.error).toContain('could not be read'); harness.read.mockResolvedValue([]); queue.retryLoad(); await flush(); expect(queue.ready).toBe(true); expect(queue.error).toBeUndefined(); expect(send).not.toHaveBeenCalled();
+});

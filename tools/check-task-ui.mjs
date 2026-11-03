@@ -122,6 +122,8 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(Number(await task.locator('.task-environment-grid dt').filter({hasText:/^Agents$/}).locator('..').locator('dd').innerText()),agentTotal,'Overview and Agents include the same main agent');
   const taskReadsBeforeAgents=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='getProjectTaskDetails').length);
   await task.getByRole('tab',{name:/^Agents/}).click();
+  await task.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor();
+  await task.getByRole('tab',{name:/All agents/}).click();
   await task.locator('.cli-agent-row.is-main').waitFor();
   await task.getByText('Reviewer',{exact:true}).waitFor();
   await page.screenshot({path:path.join(output,`task-agents-${width}x${height}.png`)});
@@ -160,15 +162,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByText('Review the workspace and explain the result.', {exact:true}).waitFor();
   const timeline=task.getByRole('region',{name:'Activity timeline',exact:true});
   await timeline.getByText('Timeline review comment',{exact:true}).waitFor();
-  assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),1,'Live thinking uses the same disclosure as sessions');
+  assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),0,'The activity timeline omits private thinking');
   assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),1,'Failed activity is preserved like session history');
   assert.equal(await timeline.locator('.task-timeline-meta').count(),0,'Messages use shared session metadata');
   assert.ok(await timeline.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Timeline fits narrow panels');
   assert.equal(await timeline.locator('.cli-session-message.is-user').count(),1,'Activity uses the session user bubble');
   await page.screenshot({path:path.join(output,`task-activity-${width}x${height}.png`)});
-  await timeline.locator('.cli-activity-group-details > summary').first().click();
-  await timeline.locator('.cli-activity > summary').first().click();
-  await task.getByText('Script completed', { exact: true }).waitFor();
+  assert.equal(await timeline.locator('.cli-activity.is-tool-call, .cli-activity.is-command').count(),0,'The timeline has no routine tool-call disclosures');
   await task.getByRole('tab', { name: 'Files', exact: true }).click();
   await task.locator('.task-file-row').first().waitFor();
   await page.screenshot({path:path.join(output,`task-files-${width}x${height}.png`)});
@@ -334,7 +334,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
   await create.getByRole('button', { name: 'Save task', exact: true }).click();
   if (width === 320) {
-    await page.locator('.dashboard-notice-stack').getByText(/Browser storage is full or unavailable/).waitFor();
+    await page.locator('.dashboard-notice-stack').getByText(/kept|storage|unavailable/i).waitFor();
     assert.equal(await create.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
     assert.equal(await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).count(),1,'Storage failures preserve the attachment');
     await create.getByRole('button', { name: 'Close new task', exact: true }).click();

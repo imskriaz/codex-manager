@@ -16,7 +16,7 @@ describe("Codex live current turn", () => {
     const live = reducer(), text = 'x'.repeat(20000); live.started('turn-1');
     live.accept('item/completed', params({ item: { id: 'upload', type: 'userMessage', content: [{ type: 'text', text: '<attached_file name="brief.txt">\n' + text + '\n</attached_file>' }] } }));
     const state = live.snapshot();
-    expect(state.messages[0]?.text).toHaveLength(12000);
+    expect(state.messages[0]?.text).toBe("");
     expect(state.truncated).toBe(true);
     expect(state.messages[0]?.textAttachments).toEqual([{ name: 'brief.txt', text }]);
     expect(isCodexSessionLiveState(state)).toBe(true); expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(MAX_CODEX_LIVE_STATE_BYTES);

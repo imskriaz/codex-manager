@@ -80,7 +80,7 @@ describe("canonical cross-PC WebSocket domain", () => {
     internal.replayPeerNotifications(socket); internal.replayPeerNotifications(socket);
     expect(socket.send).toHaveBeenCalledTimes(1);
     const event = JSON.parse(socket.send.mock.calls[0][0]);
-    expect(event.notice).toEqual({ level: 'warning', message: 'Reloading.', systemName: 'Original PC' });
+    expect(event.notice).toEqual({ level: 'warning', message: 'Reloading.', systemName: 'Original PC', url: '/' });
     expect(event.signature).toBe('signed');
     for (let i = 0; i < 140; i++) await internal.publishPeerNotification({ level: 'warning', message: `Warning ${i}` });
     expect(internal.peerNotifications.size).toBe(128);

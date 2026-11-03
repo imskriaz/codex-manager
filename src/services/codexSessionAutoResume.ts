@@ -642,6 +642,12 @@ export function resumePersistedCodexSessions(
       recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });
       return outcome;
     } catch (error) {
+      if (phase === 'readiness' && !signal?.aborted && !(error instanceof Error && /cancel|abort/i.test(error.message))) {
+        recordPersistentEvent('warning', 'auto-resume', 'Official UI unavailable; checking private recovery fallback', { ...details, phase }, error);
+        const outcome = await resumeCodexSessionWork(sessionId, signal, 'automatic', 'private');
+        recordPersistentEvent('info', 'auto-resume', 'Private recovery fallback completed', { ...details, outcome, durationMs: Date.now() - startedAt });
+        return outcome;
+      }
       recordPersistentEvent("warning", "auto-resume", "Official recovery path failed", { ...details, phase, durationMs: Date.now() - startedAt, cancelled: signal?.aborted === true, recoveryRetained: true }, error);
       throw error;
     }

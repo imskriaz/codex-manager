@@ -183,7 +183,7 @@ describe("persistent browser push", () => {
       host.notifyCodexRequest({ id: scenario, threadId: 'session', kind: 'question', title: 'Codex question', questions: scenario === 'multiple' ? [item, { ...item, id: 'second' }] : [item] });
       await settle();
       const payload = JSON.parse(send.mock.calls[0]![1]);
-      expect(payload.actions).toEqual(scenario === 'short' ? ['Small fix', 'Full fix'] : ['Answer']);
+      expect(payload.actions).toEqual(scenario === 'short' ? ['Small fix', 'Full fix'] : ['long', 'duplicates'].includes(scenario) ? ['Reply','Answer'] : ['Answer']);
       if (scenario === 'short') { expect(payload.body).toContain('Which approach?'); expect(payload.body).toContain('Small fix'); }
       if (scenario === 'secret') expect(payload.body).not.toContain('Which approach?');
     }
@@ -351,4 +351,13 @@ describe("persistent browser push", () => {
     stored.set("codexManager.browserPush.v1", "partial");
     await expect(service.publicKey()).rejects.toThrow();
   });
+  it('tracks background subscriptions and preserves safe related notification targets', async () => {
+    expect(await service.hasSubscriptions()).toBe(false);
+    const target = subscription('target'); await service.subscribe(target, 'owner', 'https://dashboard.example');
+    expect(await service.hasSubscriptions()).toBe(true);
+    service.notify({ level: 'warning', message: 'Task needs review', url: '/tasks?device=worker' }); await settle();
+    expect(JSON.parse(send.mock.calls[0]![1]).url).toBe('/tasks?device=worker');
+    await service.unsubscribe(target.endpoint, 'owner', 'https://dashboard.example'); expect(await service.hasSubscriptions()).toBe(false);
+  });
+
 });

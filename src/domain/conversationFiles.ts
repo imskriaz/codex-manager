@@ -1,12 +1,12 @@
 import type { DashboardCliSessionMessage, DashboardWorkspaceFile } from './dashboard/types';
 import type { ProjectTaskFile } from './projectTasks';
-import { readChatTextAttachments } from './chatAttachments';
+import { MAX_CHAT_ATTACHMENT_BYTES, readChatTextAttachments } from './chatAttachments';
 
 /** Public previews accept raster data or web URLs, never native/local file paths. */
 export function safeConversationImage(src: string): boolean {
   if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(src)) {
     const data = src.slice(src.indexOf(',') + 1);
-    return data.length > 0 && data.length <= Math.ceil(8 * 1024 * 1024 / 3) * 4 && data.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(data);
+    return data.length > 0 && data.length <= Math.ceil(MAX_CHAT_ATTACHMENT_BYTES / 3) * 4 && data.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(data);
   }
   if (src.length > 8192) return false;
   try { const url = new URL(src); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; }

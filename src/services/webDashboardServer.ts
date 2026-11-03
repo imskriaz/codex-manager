@@ -1,3 +1,6 @@
+import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
+import { notificationTargetUrl } from '../domain/notificationTarget';
+import { syncAsyncCodexQuestions } from './codexSessionQuestions';
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
@@ -49,7 +52,7 @@ import { recordPeerQuotaChecks } from "./quotaCheckCoordination";
 import { AccountsRepository } from "../storage";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessionRecoveryMetadata, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessionRecoveryMetadata, readCodexCliSessionSummary, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
@@ -86,7 +89,7 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_PERSISTED_SESSIONS = 16;
 const MAX_LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
-const MAX_DASHBOARD_MESSAGE_BYTES = 2 * 1024 * 1024;
+const MAX_DASHBOARD_MESSAGE_BYTES = MAX_CHAT_WIRE_BYTES;
 const PEER_HEARTBEAT_INTERVAL_MS = 5_000;
 // Keep a peer's claim visible through a short transport interruption. A
 // dropped WebSocket is not proof that the PC went offline; the reconnect and
@@ -456,6 +459,10 @@ export class WebDashboardServer implements vscode.Disposable {
   private lastPeerSentAt = 0;
   private peerPresenceLossTimer: NodeJS.Timeout | undefined;
   private peerHeartbeatFailureReported = false;
+  private pushWatching = false;
+  private questionPushTimer: NodeJS.Timeout | undefined;
+  private readonly questionPushSessions = new Set<string>();
+  private questionPushRunning = false;
   private cliSessionWatcher: fsSync.FSWatcher | undefined;
   private cliSessionChangeTimer: NodeJS.Timeout | undefined;
   private cliSessionRealtimeRevision = Date.now();
@@ -493,7 +500,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly stopStorageSubscription: (() => void) | undefined;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
   private readonly browserPush: BrowserPushService;
-  private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean; answers?: Record<string, Record<string, string>> }>();
+  private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean; replyQuestionId?: string; answers?: Record<string, Record<string, string>> }>();
   private readonly conversationShares: ConversationShares;
   private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
   private readonly hostProofKey = crypto.randomBytes(32);
@@ -680,6 +687,7 @@ export class WebDashboardServer implements vscode.Disposable {
     });
     this.updateOnlineDevicePresence();
     this.connectPeerSocket();
+    void this.browserPush.hasSubscriptions().then(enabled => { if (!this.peerStopped) { this.pushWatching = enabled; this.refreshCliSessionRealtimeLifecycle(); } }).catch(error => console.warn('[codexManager] question notification monitoring unavailable', error));
   }
 
   async stop(): Promise<void> {
@@ -687,6 +695,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.serverStart = undefined;
     this.projectShareEvents.close();
     this.peerStopped = true;
+    this.pushWatching = false; clearTimeout(this.questionPushTimer); this.questionPushTimer = undefined; this.questionPushSessions.clear();
     this.peerConnectionRevision += 1;
     this.sessions.clear();
     this.loginAttempts.clear();
@@ -946,7 +955,7 @@ export class WebDashboardServer implements vscode.Disposable {
         }
         if (api && method === 'POST') {
           if (!isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined) || request.headers['x-codex-dashboard'] !== '1') { response.statusCode = 403; this.sendJson(response, { error: 'Cross-origin project request rejected.' }); return; }
-          const body = JSON.parse(await readDashboardRequestBody(request, 2 * 1024 * 1024)) as Record<string, unknown>;
+          const body = JSON.parse(await readDashboardRequestBody(request, MAX_CHAT_WIRE_BYTES)) as Record<string, unknown>;
           const bodyText = (key: string): string => typeof body[key] === 'string' ? body[key] as string : '';
           if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
           if (body['kind'] === 'task') {
@@ -1128,7 +1137,7 @@ export class WebDashboardServer implements vscode.Disposable {
           return;
         }
         if (method !== "POST" || request.headers["x-codex-dashboard"] !== "1") throw new Error("Invalid notification request.");
-        const body = JSON.parse(await readDashboardRequestBody(request, 8192)) as Record<string, unknown>;
+        const body = JSON.parse(await readDashboardRequestBody(request, 36 * 1024)) as Record<string, unknown>;
         const owner = fingerprintWebDashboardSession(readDashboardSessionToken(request) ?? "local");
         const origin = request.headers.origin ?? this.getUrl();
         if (path === "/api/push/test") {
@@ -1141,10 +1150,14 @@ export class WebDashboardServer implements vscode.Disposable {
         }
         if (path === "/api/push/subscribe") {
           await this.browserPush.subscribe(body["subscription"], owner, origin, isLocalWebDashboardRequest(request) ? undefined : await this.encryptedSync?.getDashboardPassphraseFingerprint());
+          this.pushWatching = true; this.refreshCliSessionRealtimeLifecycle();
         } else if (path === "/api/push/unsubscribe" && typeof body["endpoint"] === "string") {
           await this.browserPush.unsubscribe(body["endpoint"], owner, origin);
+          this.pushWatching = await this.browserPush.hasSubscriptions(); this.refreshCliSessionRealtimeLifecycle();
         } else if (path === "/api/push/action" && typeof body["notificationId"] === "string" && typeof body["action"] === "string") {
           const notificationId = body["notificationId"], action = body["action"], codexAction = this.codexPushActions.get(notificationId);
+          const reply = action === 'Reply' && codexAction?.replyQuestionId ? body['reply'] : undefined;
+          if (action === 'Reply' && (typeof reply !== 'string' || !reply.trim() || reply.length > 8000)) throw new Error('Type an answer of 1 to 8,000 characters before sending.');
           if (!this.browserPush.takeAction(notificationId, action)) {
             response.statusCode = 409;
             this.sendJson(response, { error: "This notification has expired or was already handled. Open the dashboard to review current actions." });
@@ -1152,8 +1165,8 @@ export class WebDashboardServer implements vscode.Disposable {
           }
           this.codexPushActions.delete(notificationId);
           if (codexAction) {
-            const answers = codexAction.answers && Object.hasOwn(codexAction.answers, action) ? codexAction.answers[action] : undefined;
-            if (codexAction.question ? action !== "Answer" && !answers : !["Approve", "Decline", "Review"].includes(action)) throw new Error("This Codex action is invalid.");
+            const answers = codexAction.replyQuestionId && typeof reply === "string" ? { [codexAction.replyQuestionId]: reply.trim() } : codexAction.answers && Object.hasOwn(codexAction.answers, action) ? codexAction.answers[action] : undefined;
+            if (codexAction.question ? action !== "Answer" && !answers : !["Approve", "Decline", "Reject", "Review"].includes(action)) throw new Error("This Codex action is invalid.");
             if (answers || !codexAction.question && action !== "Review") {
               const result = await this.processClientMessage({ type: "dashboard:action", requestId: `push-${crypto.randomUUID()}`, action: "respondCodexServerRequest", payload: {
                 codexRequestId: codexAction.requestId,
@@ -1602,7 +1615,7 @@ export class WebDashboardServer implements vscode.Disposable {
             error:
               "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
           });
-        }, getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1));
+        }, Math.max(getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1), chatUploadTimeoutMs(message.payload?.attachments ?? message.payload?.task?.uploads ?? message.payload?.comment?.uploads)));
         this.peerActionWaiters.set(message.requestId, (result) => {
           clearTimeout(timeout);
           resolve(this.decoratePeerActionResult(result, targetDeviceId));
@@ -1648,7 +1661,7 @@ export class WebDashboardServer implements vscode.Disposable {
           error:
             "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
         });
-      }, getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1));
+      }, Math.max(getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1), chatUploadTimeoutMs(message.payload?.attachments ?? message.payload?.task?.uploads ?? message.payload?.comment?.uploads)));
       const onMessage = (data: Buffer): void => {
         try {
           const result = JSON.parse(data.toString()) as PeerActionResultMessage;
@@ -1827,6 +1840,7 @@ export class WebDashboardServer implements vscode.Disposable {
       while (this.remoteSessionLive.size > 30 || Buffer.byteLength(JSON.stringify([...this.remoteSessionLive.values()])) > 4 * 1024 * 1024)
         this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);
     }
+    this.notifyAsyncQuestions(state.sessionId, state.messages, state.deviceId);
     if (state.status === "failed") void this.notifySessionCompletion(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
@@ -1845,6 +1859,35 @@ export class WebDashboardServer implements vscode.Disposable {
     }
   }
 
+  private notifyAsyncQuestions(sessionId: string, messages: import('../domain/dashboard/types').DashboardCliSessionMessage[], deviceId?: string): void {
+    if (!deviceId) syncAsyncCodexQuestions(resolveCodexHome(), sessionId, messages);
+  }
+
+  private scheduleQuestionPush(filename: string): void {
+    if (!this.pushWatching || this.peerStopped) return;
+    const id = filename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
+    if (!id || this.questionPushSessions.size >= 128) return;
+    this.questionPushSessions.add(id);
+    if (this.questionPushTimer || this.questionPushRunning) return;
+    this.questionPushTimer = setTimeout(() => {
+      this.questionPushTimer = undefined; this.questionPushRunning = true;
+      const pending = [...this.questionPushSessions].slice(0, 8);
+      for (const id of pending) this.questionPushSessions.delete(id);
+      const home = resolveCodexHome();
+      void Promise.allSettled(pending.map(async id => {
+        // Observing the official owner also mirrors permission requests while the browser is closed.
+        await waitWithin(readCodexCliSessionSummary(id, home), 5000, 'Native prompt inspection is still pending.').catch(() => undefined);
+        const messages = await waitWithin(readCodexCliSessionMessages(id, home), 5000, 'Question history is still loading.');
+        if (!this.peerStopped && this.pushWatching && home === resolveCodexHome()) this.notifyAsyncQuestions(id, messages);
+      })).then(results => { for (const result of results) if (result.status === 'rejected') console.warn('[codexManager] question notification check deferred', result.reason); }).finally(() => {
+        this.questionPushRunning = false;
+        const next = this.questionPushSessions.values().next().value;
+        if (next) this.scheduleQuestionPush(`${next}.jsonl`);
+      });
+    }, 1500);
+    this.questionPushTimer.unref?.();
+  }
+
   private notifyCodexRequest(request: Extract<DashboardHostMessage, { type: "dashboard:codex-request" }>["request"]): void {
     const targetDeviceId = request.deviceId;
     const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${request.id}`;
@@ -1852,9 +1895,10 @@ export class WebDashboardServer implements vscode.Disposable {
     const singleQuestion = question && request.questions?.length === 1 ? request.questions[0] : undefined;
     const options = singleQuestion && !singleQuestion.isSecret ? singleQuestion.options : undefined;
     const labels = options?.map(option => option.label);
-    const directChoices = labels && labels.length > 0 && labels.length <= 2 && labels.every(label => label.trim() && label.length <= 48 && !["Answer", "Review"].includes(label)) && new Set(labels).size === labels.length && `${singleQuestion?.question ?? ""} Choices: ${labels.join(" / ")}`.length <= 180;
+    const directChoices = labels && labels.length > 0 && labels.length <= 2 && labels.every(label => label.trim() && label.length <= 48 && !["Answer", "Review", "Reply"].includes(label)) && new Set(labels).size === labels.length && `${singleQuestion?.question ?? ""} Choices: ${labels.join(" / ")}`.length <= 180;
     const answers = directChoices && singleQuestion ? Object.fromEntries(labels.map(label => [label, { [singleQuestion.id]: label }])) : undefined;
-    this.codexPushActions.set(notificationId, { requestId: request.id, ...(targetDeviceId ? { targetDeviceId } : {}), question, answers });
+    const replyQuestionId = singleQuestion && !singleQuestion.isSecret && !answers ? singleQuestion.id : undefined;
+    this.codexPushActions.set(notificationId, { replyQuestionId, requestId: request.id, ...(targetDeviceId ? { targetDeviceId } : {}), question, answers });
     while (this.codexPushActions.size > 128) this.codexPushActions.delete(this.codexPushActions.keys().next().value!);
     const detail = question ? "Codex is waiting for an answer." : "Codex is waiting for approval. Review the request in the dashboard.";
     this.browserPush.notify({
@@ -1864,7 +1908,8 @@ export class WebDashboardServer implements vscode.Disposable {
       systemName: targetDeviceId ? this.peerSessions.get(targetDeviceId)?.deviceName || "Remote system" : os.hostname(),
       message: question ? request.questions?.some(item => item.isSecret) ? `${detail} Open the dashboard to answer privately.` : request.questions?.map(item => `${item.question}${item.options?.length ? " Choices: " + item.options.map(option => option.label).join(" / ") : ""}`).join(" · ") || detail : request.detail || detail,
       url: `/workspace/${encodeURIComponent(request.threadId)}${targetDeviceId ? `?device=${encodeURIComponent(targetDeviceId)}` : ""}`,
-      actions: question ? answers ? Object.keys(answers) : ["Answer"] : request.kind === "permissions" || (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
+      replyAction: replyQuestionId ? "Reply" : undefined,
+      actions: question ? answers ? Object.keys(answers) : replyQuestionId ? ["Reply", "Answer"] : ["Answer"] : request.kind === "permissions" ? ["Approve", "Reject"] : (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
     });
   }
 
@@ -1909,6 +1954,7 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       this.cliSessionWatcher = fsSync.watch(codexHome, { recursive: true }, (_eventType, filename) => {
         if (!isCliSessionWatchPath(filename)) return;
+        if (filename) this.scheduleQuestionPush(String(filename));
         this.scheduleCliSessionRefresh();
       });
       this.cliSessionWatcher.on("error", () => {
@@ -1933,13 +1979,13 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private refreshCliSessionRealtimeLifecycle(): void {
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
+    if ((!this.hasWorkspaceViewer() && !this.pushWatching) || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
       this.stopCliSessionRealtime();
       return;
     }
     const wasWatching = Boolean(this.cliSessionWatcher);
     this.startCliSessionWatcher();
-    if (!wasWatching && this.cliSessionWatcher) void this.publishCliSessionsRealtime();
+    if (!wasWatching && this.cliSessionWatcher && this.hasWorkspaceViewer()) void this.publishCliSessionsRealtime();
   }
 
   private stopCliSessionRealtime(): void {
@@ -2182,7 +2228,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (notice.level === 'info') return;
     if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
     const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ? crypto.createHash('sha256').update(notice.notificationId).digest('hex') : crypto.createHash('sha256').update(JSON.stringify([notice.level, notice.title, notice.message, notice.systemName])).digest('hex'), sentAt: Date.now(),
-      notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName } };
+      notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName, url: notificationTargetUrl(notice.url) } };
     const revision = this.peerConnectionRevision;
     const signature = await waitWithin(Promise.resolve(this.encryptedSync?.signRealtimePeerPayload(peerNotificationPayload(unsigned))), 2000, 'Remote notification signing timed out.');
     const event = { ...unsigned, signature };
@@ -2204,7 +2250,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerNotifications.set(key, value);
     while (this.peerNotifications.size > 128) this.peerNotifications.delete(this.peerNotifications.keys().next().value!);
     // Remote notices are passive: choices must stay with their owning PC.
-    const notice = { level: value.notice.level, message: value.notice.message, title: value.notice.title, systemName: value.notice.systemName, notificationId: key };
+    const notice = { level: value.notice.level, message: value.notice.message, title: value.notice.title, systemName: value.notice.systemName, notificationId: key, url: notificationTargetUrl(value.notice.url, value.deviceId) };
     this.browserPush.notify(notice);
     const raw = JSON.stringify({ type: 'dashboard:notice', ...notice });
     for (const socket of this.webSocketClients) {
@@ -2517,7 +2563,7 @@ export class WebDashboardServer implements vscode.Disposable {
       typeof message.deviceId !== "string" ||
       message.deviceId === this.deviceId ||
       typeof message.vault !== "string" ||
-      message.vault.length > MAX_DASHBOARD_MESSAGE_BYTES ||
+      message.vault.length > 2 * 1024 * 1024 ||
       typeof message.sentAt !== "number" ||
       !Number.isFinite(message.sentAt) ||
       typeof message.signature !== "string" ||

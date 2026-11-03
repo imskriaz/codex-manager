@@ -79,6 +79,12 @@ describe("shared running-session detection and auto resume", () => {
     await appendFile(transcript, context({}, 42) + "\n");
     expect((await readCodexCliSessions(home))[0]).toMatchObject({ model: "gpt-next", reasoningEffort: "medium" });
   });
+  it('reads native session access and cumulative usage while keeping current context tokens separate', async () => {
+    await appendFile(transcript, JSON.stringify({ type: 'turn_context', payload: { sandbox_policy: { type: 'read-only' }, model: 'native-model', effort: 'high' } }) + '\n');
+    await appendFile(transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 9000, input_tokens: 8000, output_tokens: 1000 }, last_token_usage: { total_tokens: 200 }, model_context_window: 1000 } } }) + '\n');
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ sandboxMode: 'read-only', tokenUsage: { total: 9000, contextTokens: 200, contextWindow: 1000 } });
+  });
+
   it("retains an interrupted native turn after the writer disappears and clears recovery on completion", async () => {
     await rm(lock);
     const old = new Date(Date.now() - 10 * 60_000);

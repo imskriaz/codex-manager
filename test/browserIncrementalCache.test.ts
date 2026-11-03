@@ -92,3 +92,20 @@ it('bounds memory and rejects expired/future disk entries', async () => {
   expect(await cache.readBrowserCache('future')).toBeUndefined();
   expect(await cache.readBrowserCache('expired')).toBeUndefined();
 });
+
+it('persists large document queues and task outboxes without evicting either', async () => {
+  const cache = await fixture(), data = 'A'.repeat(3 * 1024 * 1024);
+  expect(await cache.writeBrowserCache('message-queue:large', { data })).toBe(true);
+  expect(await cache.writeBrowserCache('outbox:large', { data })).toBe(true);
+  expect(await cache.readBrowserCache('message-queue:large')).toEqual({ data });
+  expect(cache.records.has('browser:outbox:large')).toBe(true);
+});
+it('refuses to replace unreadable or future-dated durable queues with an empty queue', async () => {
+  const cache = await fixture();
+  cache.records.set('browser:message-queue:future', { key: 'browser:message-queue:future', updatedAt: Date.now()+60000, value: [{ id: 'saved' }] });
+  await expect(cache.readBrowserCache('message-queue:future')).rejects.toThrow('timing is invalid');
+  expect(cache.records.get('browser:message-queue:future')?.value).toEqual([{ id: 'saved' }]);
+  vi.resetModules(); vi.stubGlobal('indexedDB', { open() { throw new Error('Unavailable'); } });
+  const unavailable = await import('../webview-src/dashboard/cliSessionCache');
+  await expect(unavailable.readBrowserCache('message-queue:unavailable')).rejects.toThrow('storage is unavailable');
+});

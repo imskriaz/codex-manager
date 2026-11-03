@@ -62,7 +62,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Checking running state");
     expect(source).toContain('props.selectedSession.statusError}</span>');
-    expect(source).toContain('props.selectedSession?.status === "unknown" || props.stopping');
+    expect(source).toContain("props.selectedSession.status !== 'unknown' && !props.stopping");
   });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
@@ -91,7 +91,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("onActionFeedback={showNotice}");
     expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
     expect(css).toContain("touch-action: pan-x");
-    expect(source).toContain("Reconnecting");
+    expect(source).toContain("Offline · messages save locally until reconnect");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
     expect(source).toContain("function ImageLightbox");

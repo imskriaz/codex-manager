@@ -1,3 +1,4 @@
+import { MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { StringDecoder } from "node:string_decoder";
 import { createServer } from "node:net";
@@ -139,7 +140,7 @@ export class CodexAppServerRpc {
       });
       child.stderr.on("data", (chunk: Buffer | string) => { client.stderr = `${client.stderr}${chunk.toString()}`.slice(-4096); });
       signal?.throwIfAborted();
-      const socket = new WebSocket(url, { handshakeTimeout: 30_000, maxPayload: 4 * 1024 * 1024 });
+      const socket = new WebSocket(url, { handshakeTimeout: 30_000, maxPayload: MAX_CHAT_WIRE_BYTES });
       client.socket = socket;
       socket.on("message", (data) => {
         const text = typeof data === "string" ? data : Buffer.isBuffer(data) ? data.toString() : data instanceof ArrayBuffer ? Buffer.from(data).toString() : Buffer.concat(data).toString();
@@ -282,12 +283,14 @@ export class CodexAppServerRpc {
   private send(message: unknown): void {
     if (this.closed) throw this.transportError ?? new Error("Codex app-server connection is closed.");
     const encoded = JSON.stringify(message);
+    const request = message as { method?: string; params?: { input?: Array<{ type?: string }> } };
+    const limit = ['turn/start','turn/steer'].includes(request.method ?? '') && Array.isArray(request.params?.input) && request.params.input.some(item => item.type === 'image') ? MAX_CHAT_WIRE_BYTES : 2 * 1024 * 1024;
     if (this.socket) {
-      if (this.socket.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > 2 * 1024 * 1024 || Buffer.byteLength(encoded, "utf8") > 2 * 1024 * 1024) throw new Error("The Codex app-server WebSocket is closed, the queue is full, or the request is too large.");
+      if (this.socket.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > 2 * 1024 * 1024 || Buffer.byteLength(encoded, "utf8") > limit) throw new Error("The Codex app-server WebSocket is closed, the queue is full, or the request is too large.");
       this.socket.send(encoded);
       return;
     }
-    if (Buffer.byteLength(encoded, "utf8") > 2 * 1024 * 1024 || this.child.stdin.writableLength > 2 * 1024 * 1024) throw new Error("The Codex app-server message queue is full or the request is too large.");
+    if (Buffer.byteLength(encoded, "utf8") > limit || this.child.stdin.writableLength > 2 * 1024 * 1024) throw new Error("The Codex app-server message queue is full or the request is too large.");
     this.child.stdin.write(`${encoded}\n`, "utf8");
   }
 
@@ -296,13 +299,13 @@ export class CodexAppServerRpc {
     this.lineBuffer += this.decoder.write(chunk);
     let newline: number;
     while ((newline = this.lineBuffer.indexOf("\n")) >= 0) {
-      if (Buffer.byteLength(this.lineBuffer.slice(0, newline), "utf8") > 4 * 1024 * 1024) { this.fail(new Error("Codex app-server sent an oversized protocol message.")); return; }
+      if (Buffer.byteLength(this.lineBuffer.slice(0, newline), "utf8") > MAX_CHAT_WIRE_BYTES) { this.fail(new Error("Codex app-server sent an oversized protocol message.")); return; }
       const line = this.lineBuffer.slice(0, newline);
       this.lineBuffer = this.lineBuffer.slice(newline + 1);
       this.receive(line);
       if (this.closed) return;
     }
-    if (Buffer.byteLength(this.lineBuffer, "utf8") > 4 * 1024 * 1024) this.fail(new Error("Codex app-server sent an oversized unfinished protocol message."));
+    if (Buffer.byteLength(this.lineBuffer, "utf8") > MAX_CHAT_WIRE_BYTES) this.fail(new Error("Codex app-server sent an oversized unfinished protocol message."));
   }
 
   private receive(raw: string): void {

@@ -218,7 +218,7 @@ function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: s
           .slice(0, 20).map((option) => ({ label: safeString(option["label"]), description: safeString(option["description"]) })) : undefined
       }));
     if (rawQuestions.length > 3 || !questions.length || new Set(questions.map((question) => question.id)).size !== questions.length || questions.some((question) => !question.id || !question.question || question.id === "__proto__" || question.id === "constructor" || question.id.length > 128)) return undefined;
-    return { id, threadId, kind: "question", title: "Codex has a question", questions };
+    return { id, threadId, kind: "question", title: "Codex has a question", questions, ...(typeof params["sourceMessageId"] === "string" ? { sourceMessageId: params["sourceMessageId"].slice(0, 256) } : {}) };
   }
   return undefined;
 }

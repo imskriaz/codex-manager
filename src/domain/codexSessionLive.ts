@@ -12,6 +12,17 @@ const record = (value: unknown): Record<string, unknown> | undefined => value &&
 const string = (value: unknown, max = MAX_TEXT) => typeof value === "string" ? value.slice(0, max) : undefined;
 const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 
+export function parseCodexTokenUsage(value: unknown): DashboardCodexSessionLiveState['tokenUsage'] {
+  const usage = record(value);
+  const total = record(usage?.['total'] ?? usage?.['total_token_usage'] ?? usage?.['last'] ?? usage?.['last_token_usage']);
+  const last = record(usage?.['last'] ?? usage?.['last_token_usage']);
+  if (!usage || !total) return undefined;
+  const token = (camel: string, snake: string) => { const value = total[camel] ?? total[snake]; return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined; };
+  const context = last?.['totalTokens'] ?? last?.['total_tokens'];
+  const limit = usage['modelContextWindow'] ?? usage['model_context_window'];
+  return { total: token('totalTokens','total_tokens'), input: token('inputTokens','input_tokens'), cachedInput: token('cachedInputTokens','cached_input_tokens'), output: token('outputTokens','output_tokens'), reasoningOutput: token('reasoningOutputTokens','reasoning_output_tokens'), contextTokens: Number.isSafeInteger(context) && (context as number) >= 0 ? context as number : undefined, contextWindow: Number.isSafeInteger(limit) && (limit as number) > 0 ? limit as number : undefined };
+}
+
 /** The peer boundary accepts the same bounded, display-only state as local hosts. */
 export function isCodexSessionLiveState(value: unknown): value is DashboardCodexSessionLiveState {
   const state = record(value);
@@ -26,7 +37,7 @@ export function isCodexSessionLiveState(value: unknown): value is DashboardCodex
   const plan = record(state["plan"]);
   if (state["plan"] !== undefined && (!plan || Object.keys(plan).some((key) => key !== "explanation" && key !== "steps") || !Array.isArray(plan["steps"]) || plan["steps"].length > 100 || (plan["explanation"] !== undefined && (typeof plan["explanation"] !== "string" || plan["explanation"].length > MAX_TEXT)) || plan["steps"].some((value) => { const step = record(value); return !step || Object.keys(step).some((key) => key !== "step" && key !== "status") || typeof step["step"] !== "string" || step["step"].length > MAX_TEXT || !["pending", "inProgress", "completed"].includes(String(step["status"])); }))) return false;
   const usage = record(state["tokenUsage"]);
-  if (state["tokenUsage"] !== undefined && (!usage || Object.entries(usage).some(([key, value]) => !["total", "input", "cachedInput", "output", "reasoningOutput", "contextWindow"].includes(key) || (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0))))) return false;
+  if (state["tokenUsage"] !== undefined && (!usage || Object.entries(usage).some(([key, value]) => !["total", "input", "cachedInput", "output", "reasoningOutput", "contextWindow", "contextTokens"].includes(key) || (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0))))) return false;
   const limits = record(state["rateLimits"]);
   if (state["rateLimits"] !== undefined && (!limits || Object.entries(limits).some(([key, value]) => {
     if (key !== "primary" && key !== "secondary") return true;
@@ -54,6 +65,12 @@ export function validMessage(value: unknown, maxText = MAX_TEXT): boolean {
     else if (key === "role") { if (value !== "user" && value !== "assistant") return false; }
     else if (key === "status") { if (typeof value !== "string" || !["inProgress", "completed", "failed", "declined", "interrupted", "unknown"].includes(value)) return false; }
     else if (key === "exitCode" || key === "durationMs") { if (typeof value !== "number" || !Number.isFinite(value) || (key === "durationMs" && value < 0)) return false; }
+    else if (key === 'questions') {
+      if (!Array.isArray(value) || value.length > 10 || value.some(value => {
+        const question = record(value);
+        return !question || typeof question['title'] !== 'string' || !question['title'].trim() || question['title'].length > 8000 || Object.keys(question).some(key => !['title', 'options'].includes(key)) || (question['options'] !== undefined && (!Array.isArray(question['options']) || question['options'].length > 20 || question['options'].some(option => typeof option !== 'string' || option.length > 8000)));
+      })) return false;
+    }
     else if (key === 'textAttachments') {
       if (!Array.isArray(value) || value.length > MAX_CHAT_ATTACHMENTS || value.some(value => {
         const file = record(value);
@@ -143,10 +160,9 @@ export class CodexSessionLiveReducer {
       this.state.diff = string(params["diff"]);
     } else if (method === "thread/tokenUsage/updated") {
       const usage = record(params["tokenUsage"]);
-      const totals = record(usage?.["last"] ?? usage?.["total"]);
-      if (!usage || !totals) return false;
-      const tokens = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
-      this.state.tokenUsage = { total: tokens(totals["totalTokens"]), input: tokens(totals["inputTokens"]), cachedInput: tokens(totals["cachedInputTokens"]), output: tokens(totals["outputTokens"]), reasoningOutput: tokens(totals["reasoningOutputTokens"]), contextWindow: tokens(usage["modelContextWindow"]) };
+      const tokens = parseCodexTokenUsage(usage);
+      if (!tokens) return false;
+      this.state.tokenUsage = tokens;
     } else if (method === "account/rateLimits/updated") {
       const limits = record(params["rateLimits"]);
       if (!limits) return false;

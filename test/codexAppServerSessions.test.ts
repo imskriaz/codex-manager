@@ -68,6 +68,40 @@ describe("native App Server new sessions", () => {
     expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ autoResume: false, queue: false, queueClaimId: 'uncertain', queueError: 'Review this start' });
   });
 
+  it('supplies document uploads to Codex as private file references instead of image or binary inline input', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const rpc = { request: vi.fn(async () => ({})), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('document-turn'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Read the document', projectPath: root, attachments: [{ id: 'report', name: 'report.pdf', kind: 'file', mimeType: 'application/pdf', data: 'data:application/pdf;base64,JVBERi0=', size: 5 }] });
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ input: [expect.objectContaining({ type: 'text', text: expect.stringContaining('attachment_paths') })] }), expect.any(Number), expect.any(Function));
+    expect(JSON.stringify(rpc.startAndWaitForTurn.mock.calls)).not.toContain('JVBERi0=');
+  });
+
+  it('continues an active goal privately with empty input and never contacts the native owner', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    seedGoal('active');
+    const rpc = { request: vi.fn(async () => ({})), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('private-goal-turn'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await resumeCodexSessionGoal({ id, title: 'Goal', status: 'idle', projectPath: root, goal: { objective: 'Finish', status: 'active' } }, undefined, 'automatic', true);
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ input: [] }), expect.any(Number), expect.any(Function));
+  });
+
+  it.each(['manual-stop', 'paused', 'writer-conflict'])('keeps private goal recovery safe when %s', async scenario => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    seedGoal(scenario === 'paused' ? 'paused' : 'active');
+    if (scenario === 'manual-stop') writeCodexSessionPreference(root, id, { manualStop: true });
+    const rpc = { request: vi.fn(async () => { throw new Error('already has an active writer'); }), onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(resumeCodexSessionGoal({ id, title: 'Goal', status: 'idle', projectPath: root }, undefined, 'automatic', true)).rejects.toThrow(scenario === 'manual-stop' ? 'explicitly stopped' : scenario === 'paused' ? 'paused' : 'active writer');
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+    expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+    if (scenario !== 'writer-conflict') expect(mocks.open).not.toHaveBeenCalled();
+    else expect(rpc.close).toHaveBeenCalled();
+  });
+
   it('preserves the previous mode when storage fails or the queue is full', () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'autoResumeEnabled' ? false : fallback } as vscode.WorkspaceConfiguration);
     setCodexSessionAutoResume(id, true);

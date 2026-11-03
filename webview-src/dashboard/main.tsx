@@ -2425,7 +2425,7 @@ function App() {
       >
         {selectedPeerOffline ? <p class="settings-notice-warning dashboard-peer-offline" role="status">Selected system offline. Saved data is shown while reconnecting. Choose another system or wait for it to reconnect.</p> : null}
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onActionFeedback={showNotice} active={browserPath === '/tasks'}
-          sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
+          sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
           connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
@@ -3051,7 +3051,7 @@ function App() {
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
-              requestPanel={codexRequestView}
+              requestPanel={codexRequestView} questionPromptIds={codexPrompts.entries.flatMap(entry => entry.request.sourceMessageId ? [entry.request.sourceMessageId] : [])}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}

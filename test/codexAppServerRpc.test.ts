@@ -16,6 +16,16 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it('sends image attachment inputs larger than the previous 2 MB protocol limit', async () => {
+    const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n');
+    const rpc = await opening;
+    const request = rpc.request('turn/steer', { input: [{ type: 'image', url: 'data:image/png;base64,' + 'A'.repeat(3 * 1024 * 1024) }] });
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turnId: 'large-upload' } }) + '\n');
+    await expect(request).resolves.toEqual({ turnId: 'large-upload' }); await rpc.close();
+  });
+
   it("terminates only the spawned Windows child tree before closing its wrapper", async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", { value: "win32" });
@@ -125,7 +135,9 @@ describe("app-server initialization recovery", () => {
     processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
     const rpc = await opening;
     const request = rpc.request("thread/read", {});
-    processChild.stdout.write("x".repeat(4 * 1024 * 1024 + 1));
+    const size = vi.spyOn(Buffer, "byteLength").mockImplementationOnce(() => 128 * 1024 * 1024 + 1);
+    processChild.stdout.write("oversized-fixture");
+    size.mockRestore();
     await expect(request).rejects.toThrow(/oversized unfinished/);
     expect(processChild.kill).toHaveBeenCalled();
   });

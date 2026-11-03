@@ -1,3 +1,6 @@
+import { unansweredSessionQuestions } from '../../src/domain/sessionQuestions';
+import { useCliMessageQueue, queuedMessageView } from './cliMessageQueue';
+import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
 import { ScrollMore } from './scrollMore';
 import { AccountQuota, getAccountQuotaMetrics } from './accountQuota';
@@ -28,7 +31,7 @@ import type {
   DashboardWorkspaceTerminalResult
 } from "../../src/domain/dashboard/types";
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
-import { validateChatAttachments, prepareChatInput, type ChatAttachment } from "../../src/domain/chatAttachments";
+import { chatAttachmentPreviews, validateChatAttachments, prepareChatInput, type ChatAttachment } from "../../src/domain/chatAttachments";
 import { readSubAgentMetadata } from "../../src/domain/sessionSource";
 import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -37,7 +40,7 @@ import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
-import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
+import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
 export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}`;
@@ -158,6 +161,7 @@ export type CliSessionsPageProps = {
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
   requestPanel?: preact.ComponentChildren;
+  questionPromptIds?: string[];
   messages: DashboardCliSessionMessage[];
   liveState?: DashboardCodexSessionLiveState;
   liveStates?: Record<string, DashboardCodexSessionLiveState>;
@@ -328,7 +332,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [search, setSearch] = useState("");
 
   const [attachmentReading, setAttachmentReading] = useState(false);
-  const submittedDrafts = useRef(new Map<string, ComposerDraft & { key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; seenIds: Set<string>; turnId?: string }>());
+  const [pendingMessages, setPendingMessages] = useState<Array<{ requestId: string; key: string; message: DashboardCliSessionMessage; sent?: boolean; failed?: boolean }>>([]);
+  const submittedDrafts = useRef(new Map<string, ComposerDraft & { projectPath?: string; key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; seenIds: Set<string>; turnId?: string }>());
   const submittingDrafts = useRef(new Map<string, string>());
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
@@ -475,18 +480,18 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           return entry?.draft?.trim() === terminal.text ? { ...current, [terminal.key]: { ...entry, draft: '' } } : current;
         });
       }
+      setPendingMessages(current => current.map(item => item.requestId === result.requestId ? { ...item, sent: result.status === "completed", failed: result.status !== "completed" } : item));
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       if (submittingDrafts.current.get(submitted.key) === result.requestId) submittingDrafts.current.delete(submitted.key);
       // Retain unconfirmed sends for late success without discarding newer edits.
-      if (result.status === "completed") submittedDrafts.current.delete(result.requestId);
-      else if (submitted.failedDraft) continue;
+      if (result.status !== "completed" && submitted.failedDraft) continue;
       setComposerDrafts((current) => {
         const draft = current[submitted.key];
         if (!draft) return current;
         const next = result.status === "completed"
           ? submitted.failedDraft === draft ? acknowledgeCliComposerDraft(draft, submitted) : { ...draft }
-          : restoreFailedCliComposerDraft(draft, submitted);
+          : { ...draft };
         if (result.status !== "completed") submitted.failedDraft = next;
         return { ...current, [submitted.key]: next };
       });
@@ -497,6 +502,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const [requestId, submitted] of submittedDrafts.current) {
       if (submitted.key !== draftKey || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId))) continue;
       submittedDrafts.current.delete(requestId);
+      setPendingMessages(current => current.filter(item => item.requestId !== requestId));
       if (submittingDrafts.current.get(submitted.key) === requestId) submittingDrafts.current.delete(submitted.key);
       setComposerDrafts(current => {
         const draft = current[submitted.key];
@@ -695,7 +701,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     else reportLocalFeedback({ level: "warning", message: "No user prompt is available to retry." });
   };
   const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || isCodexSessionRunning(props.selectedSession));
-  const turnChanges = useMemo(() => summarizeTurnChanges(props.messages, steeringTurnId ?? (isCliLiveStateCurrent(props.selectedSession, props.liveState) ? props.liveState?.turnId : undefined)), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
+  const turnChanges = useMemo(() => activitySummary(props.messages), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const showWorking = currentTurnRunning && !hasInProgressActivity;
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
@@ -855,9 +861,41 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     props.onBackToList();
   };
 
-  const submit = (): void => {
-    if (submittingDrafts.current.has(draftKey) || (currentTurnRunning && !canSteer) || props.selectedSession?.status === "unknown" || props.stopping || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
-    const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
+  const messageQueue = useCliMessageQueue({
+    scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
+    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && !props.sending && (!currentTurnRunning || canSteer)),
+    turnId: canSteer ? steeringTurnId : undefined,
+    send: value => canSteer && steeringTurnId
+      ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
+      : props.onSend({ ...value, sandboxMode: value.sandboxMode ?? sandboxMode, projectPath: props.selectedSession?.projectPath }),
+    restore: value => {
+      const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: [] };
+      if (!canRestoreCliComposerDraft(current, value)) { reportLocalFeedback({ level: 'warning', message: 'Your newer composer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; }
+      composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: restoreFailedCliComposerDraft(current, value) };
+      setComposerDrafts(composerDraftsRef.current); return true;
+    },
+    feedback: message => reportLocalFeedback({ level: 'warning', message })
+  });
+  const submit = (reply?: string): string | undefined => {
+    if (props.selectedSession) {
+      if (attachmentReading || selectedArchived || !draftReadyKeys.has(draftKey)) return;
+      const previous = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
+      const value = { ...previous, ...settings, text: reply ?? previous.text, attachments: reply ? [] : previous.attachments };
+      try { prepareChatInput(value.text, value.attachments); }
+      catch (error) { reportLocalFeedback({ level: 'error', message: (error as Error).message }); return; }
+      if (!value.text.trim() && !value.attachments.length) return;
+      const id = messageQueue.enqueue(value);
+      if (id) {
+        markDraftFields(['text', 'attachments']);
+        composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: acknowledgeCliComposerDraft(previous, value) };
+        setComposerDrafts(composerDraftsRef.current);
+        scrollToLatest();
+      }
+      return id;
+    }
+    if (submittingDrafts.current.has(draftKey) || (currentTurnRunning && !canSteer) || props.stopping || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
+    const existingDraft = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
+    const current = reply ? { ...existingDraft, text: reply, attachments: [] } : existingDraft;
     const text = current.text.trim(), uploads = current.attachments;
     if (!text && !uploads.length) {
       reportLocalFeedback({ level: "warning", message: "Write a message before sending it to Codex." });
@@ -865,21 +903,15 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
     try { prepareChatInput(text, uploads); }
     catch (error) { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
-    const clearedDraft = acknowledgeCliComposerDraft(current, current);
-    const submitted = { ...current, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
+    const clearedDraft = acknowledgeCliComposerDraft(existingDraft, current);
+    const submitted = { ...current, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
     submittingDrafts.current.set(draftKey, "sending");
     markDraftFields(['text', 'attachments']);
     composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: clearedDraft };
     setComposerDrafts(composerDraftsRef.current);
     let requestId: string | undefined;
     try {
-    if (!props.selectedSession) {
-      requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
-    } else if (canSteer && steeringTurnId) {
-      requestId = props.onSteer?.({ text, attachments: uploads, expectedTurnId: steeringTurnId });
-    } else {
-      requestId = props.onSend({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
-    }
+    requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
     } catch (error) {
       submittingDrafts.current.delete(draftKey);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
@@ -890,13 +922,28 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
       reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return;
     }
+    setPendingMessages(previous => [...previous.filter(item => !item.failed || item.key !== draftKey), { requestId, key: draftKey, message: { id: `pending-${requestId}`, kind: "message" as const, role: "user" as const, text, turnId: submitted.turnId, timestamp: new Date().toISOString(), images: uploads.filter(file => file.kind === "image").map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(uploads) } }].slice(-128));
     submittedDrafts.current.set(requestId, submitted);
     submittingDrafts.current.set(draftKey, requestId);
     for (const [id, previous] of submittedDrafts.current) {
       if (submittedDrafts.current.size <= 128) break;
       if (previous.failedDraft) submittedDrafts.current.delete(id);
     }
+    return requestId;
   };
+  const resendNewMessage = (requestId: string): void => {
+    const saved = submittedDrafts.current.get(requestId);
+    if (!saved || !saved.failedDraft || submittingDrafts.current.has(saved.key) || props.starting || props.connected === false) return;
+    try {
+      const nextId = props.onStart({ text: saved.text, attachments: saved.attachments, model: saved.model, reasoningEffort: saved.reasoningEffort, sandboxMode: saved.sandboxMode ?? sandboxMode, projectPath: saved.projectPath });
+      if (!nextId) { reportLocalFeedback({ level: 'warning', message: 'Resend was not sent. The message is kept here.' }); return; }
+      submittedDrafts.current.delete(requestId);
+      submittedDrafts.current.set(nextId, { ...saved, failedDraft: undefined });
+      submittingDrafts.current.set(saved.key, nextId);
+      setPendingMessages(previous => previous.map(item => item.requestId === requestId ? { ...item, requestId: nextId, sent: false, failed: false } : item));
+    } catch (error) { reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); }
+  };
+  const renderPendingMessages = () => pendingMessages.filter(item => item.key === draftKey).map(item => <div key={item.requestId} class="cli-pending-message"><SessionMessage message={item.message} onActionFeedback={reportLocalFeedback} /><div class="cli-queued-footer"><span class="cli-queued-status" role="status">{!item.sent && !item.failed ? <span class="cli-live-spinner" aria-hidden="true" /> : null}{item.failed ? 'Send failed' : item.sent ? 'Sent' : 'Sending…'}</span>{item.failed ? <button type="button" class="cli-queue-resend" disabled={props.connected === false || props.starting} onClick={() => resendNewMessage(item.requestId)}>Resend</button> : null}</div></div>);
   const addAttachments = async (files: File[]): Promise<void> => {
     if (attachmentReadRef.current || props.starting) return;
     if (!files.length) return;
@@ -1134,14 +1181,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  <SessionTranscript messages={props.messages} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
+                  <SessionTranscript messages={props.messages} onQuestionReply={!selectedArchived ? submit : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} questionPromptIds={props.questionPromptIds} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
+                  <QueuedMessages queue={messageQueue} onFeedback={reportLocalFeedback} onRefresh={props.onRefreshMessages} />
+                  {renderPendingMessages()}
+                  {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
                   {showWorking ? <WorkingMessage /> : null}
                   <div />
                 </div>
               </section>
               {showLatestButton ? <button type="button" class={"cli-scroll-latest" + (currentTurnRunning ? " is-running" : "")} aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}>{currentTurnRunning ? <span class="cli-scroll-dots" aria-hidden="true"><i /><i /><i /></span> : <ChevronIcon />}</button> : null}</div>
               {props.requestPanel}
-              <TurnUsageStrip account={props.account} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} onOpenChanges={() => openContextTab('reviews')} onOpen={() => openContextTab('env')} />
+              <TurnUsageStrip account={props.account} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpen={() => openContextTab('env')} />
 
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session"><QueueIcon /></span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
@@ -1160,11 +1210,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   models={props.composerConfig?.models ?? []}
                   reasoningOptions={reasoningOptions}
                   sending={currentTurnRunning}
-                  tokenUsage={props.liveState?.tokenUsage}
+                  tokenUsage={props.liveState?.tokenUsage ?? props.selectedSession?.tokenUsage}
                   canSteer={canSteer}
-                  submitDisabled={props.stopping || props.connected === false || !draftReadyKeys.has(draftKey) || props.steering || currentTurnRunning && !canSteer || props.selectedSession.status === "unknown"}
+                  submitDisabled={!messageQueue.ready || !draftReadyKeys.has(draftKey)}
                   stopDisabled={props.connected === false || !ownedLiveTurn && !props.selectedSession.canStop}
-                  unavailableReason={props.connected === false ? "Reconnecting" : props.selectedSession.status === "unknown" ? "Checking running state" : composerBlockedByOwner ? "Steering unavailable for this turn" : undefined}
+                  unavailableReason={props.connected === false ? "Offline · messages save locally until reconnect" : props.selectedSession.status === "unknown" ? "Checking running state · messages wait locally" : composerBlockedByOwner ? "Messages wait locally until this turn can accept them" : undefined}
                   stopping={props.stopping}
                   onDraft={setDraft}
                   onModel={(nextModel) => {
@@ -1175,7 +1225,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   onReasoning={setReasoningEffort}
                   onSandbox={setSandboxMode}
                   onProject={setProjectPath}
-                  onSubmit={submit}
+                  onSubmit={() => { submit(); }}
                   composerHeight={layout.composerHeight}
                   onResize={beginComposerResize}
                   onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)}
@@ -1187,11 +1237,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             </>
           ) : newChatProject !== undefined ? (
             <>
-              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
+              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div>{renderPendingMessages()}</section>
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1338,7 +1388,7 @@ export function ConversationHeader(props: {
   </header>;
 }
 
-function Composer(props: {
+export function Composer(props: {
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
   draft: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
@@ -1400,12 +1450,12 @@ function Composer(props: {
   const projectPicker = !props.projectLocked ? <div class="cli-composer-location is-top"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" title={props.projectPath ?? "Work locally"} onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></div> : null;
 
   return <>{projectPicker}<form ref={composerRef} class={`cli-composer ${!props.draft && !props.attachments.length ? "is-empty" : ""}`} style={`--cli-composer-text-limit:${props.composerHeight}px`} onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer?.files.length) return; event.preventDefault(); props.onAttach(Array.from(event.dataTransfer.files)); }} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
-    <input ref={fileInput} type="file" hidden multiple aria-label="Choose attachments" accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.rs,.go,.sql" onChange={(event) => { props.onAttach(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
+    <input ref={fileInput} type="file" hidden multiple aria-label="Choose attachments" onChange={(event) => { props.onAttach(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
     {props.attachments.length ? <div class="cli-attachment-list">{props.attachments.map((file) => <span key={file.id}>{file.kind === "image" ? <img src={file.data} alt="" /> : <FileIcon />}<span title={file.name}>{file.name}</span><button type="button" disabled={props.attachmentReading} aria-label={`Remove ${file.name}`} onClick={() => props.onRemoveAttachment(file.id)}><CloseIcon /></button></span>)}</div> : null}
     <div class="cli-composer-resizer" role="separator" aria-label="Resize message composer" aria-orientation="horizontal" aria-valuemin={120} aria-valuenow={Math.round(props.composerHeight)} tabIndex={0} onPointerDown={props.onResize} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") event.preventDefault(); props.onResizeKeyDown(event); }}><span /></div>
     <textarea ref={textarea} name="codex-message" value={props.draft} rows={1} maxLength={64_000} placeholder="Message Codex…" aria-label="Message Codex" onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
     {props.draft.length > 60_000 ? <small class="cli-composer-limit" role="status">{64_000 - props.draft.length} characters left</small> : null}
-    <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach images or text/code files (up to 8 files, 1 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" aria-hidden="true" /> : <AttachmentIcon />}</button>
+    <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach files or documents (up to 32 files, 50 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" aria-hidden="true" /> : <AttachmentIcon />}</button>
 
     <ContextMeter usage={props.tokenUsage} /></div><div class="cli-composer-submit">
       <div class="cli-composer-options-wrap" ref={optionsRef}>
@@ -1428,26 +1478,23 @@ export function ContextMeter({ usage }: { usage?: DashboardCodexSessionLiveState
   const label = context ? `Context ${percent}% used · ${context.used.toLocaleString()} / ${context.limit.toLocaleString()} tokens. Draft and attachments are included after Codex processes them.` : "Context usage is not available yet.";
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
-  return <span class="cli-context-meter" tabIndex={0} title={label} aria-label={label}><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="cli-context-meter-track" cx="10" cy="10" r={radius} /><circle class="cli-context-meter-value" cx="10" cy="10" r={radius} stroke-dasharray={circumference} stroke-dashoffset={circumference * (1 - percent / 100)} /></svg><small>{context ? `${percent}%` : "—"}</small></span>;
+  return <span class="cli-context-meter" tabIndex={0} title={label} aria-label={label}><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="cli-context-meter-track" cx="10" cy="10" r={radius} /><circle class="cli-context-meter-value" cx="10" cy="10" r={radius} style={{ strokeDasharray: String(circumference), strokeDashoffset: String(circumference * (1 - percent / 100)) }} /></svg></span>;
 }
 
-function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState }) {
-  const tokens = state?.tokenUsage;
+export function LiveTurnDetails({ state, usage }: { state?: DashboardCodexSessionLiveState; usage?: DashboardCodexSessionLiveState["tokenUsage"] }) {
+  const tokens = usage ?? state?.tokenUsage;
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
-  const total = typeof tokens?.total === "number" ? `${tokens.total.toLocaleString()} tokens` : undefined;
-  const primary = state?.rateLimits?.primary ? `${Math.round(state.rateLimits.primary.usedPercent)}% used` : undefined;
-  if (!state?.error && !state?.plan?.steps.length && !counts.length && !state?.rateLimits) return null;
+  if (!state?.plan?.steps.length && !counts.length && !state?.rateLimits) return null;
   return <div class="cli-turn-details">
-    {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
-    {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
-    {counts.length || state?.rateLimits ? <details class="cli-activity cli-turn-usage"><summary><span class="cli-activity-icon" aria-hidden="true" title="Token usage">Σ</span><span class="cli-activity-heading"><strong>Turn usage</strong><small>{[total, primary].filter(Boolean).join(" · ") || "Details"}</small></span><ChevronIcon /></summary><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></details> : null}
+    {state?.plan?.steps.length ? <details class="cli-activity is-plan" open><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
+    {counts.length || state?.rateLimits ? <section class="cli-activity cli-turn-usage" aria-label="Session usage"><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></section> : null}
   </div>;
 }
 
-export function TurnUsageStrip({ account, privacyMode, saved, changedFiles, onOpenChanges, onOpen }: { account?: DashboardAccountViewModel; privacyMode: boolean; saved?: boolean; changedFiles?: number; onOpenChanges: () => void; onOpen: () => void }) {
+export function TurnUsageStrip({ account, privacyMode, saved, changedFiles, additions, deletions, onOpenChanges, onOpen }: { account?: DashboardAccountViewModel; privacyMode: boolean; saved?: boolean; changedFiles?: number; additions?: number; deletions?: number; onOpenChanges: () => void; onOpen: () => void }) {
   const metrics = getAccountQuotaMetrics(account);
   const name = getSensitiveDisplayValue(account?.email || account?.displayName, privacyMode, 'email', 'No active account');
-  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and turn usage"><span class="cli-turn-account" title={name}>{name}</span><span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span><span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span></button> : null}<button type="button" onClick={onOpen}>View usage</button></span></div>;
+  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and session usage"><span class="cli-turn-account" title={name}>{name}</span><span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span><span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span><b class="is-added">+{additions ?? 0}</b><b class="is-removed">−{deletions ?? 0}</b></button> : null}<button type="button" onClick={onOpen}>View usage</button></span></div>;
 }
 
 export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onRetryPrompt?: () => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
@@ -1455,30 +1502,37 @@ export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedbac
   const questionReplies = useMemo(() => message.role === "user" ? parseQuestionReply(message.text) : undefined, [message.text, message.role]);
   if (!message.kind || message.kind === "message") {
     const isUser = message.role === "user";
-    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu"><TurnCopyButton text={turnCopyText || message.text} label={turnCopyText && turnCopyText !== message.text ? "Copy turn" : "Copy message"} onActionFeedback={onActionFeedback} />{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
+    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.textAttachments?.length ? <div class="cli-message-text-attachments">{message.textAttachments.map((file, index) => <details key={index}><summary>{file.name}</summary><pre>{file.text}</pre></details>)}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={message.images} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu"><TurnCopyButton text={turnCopyText || message.text} label={turnCopyText && turnCopyText !== message.text ? "Copy turn" : "Copy message"} onActionFeedback={onActionFeedback} />{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
   }
   return <ActivityMessage message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />;
 }
 
-function ImagePreview({ image, index }: { image: { src: string; alt?: string }; index: number }) {
+function ImagePreview({ image, index, images }: { image: { src: string; alt?: string }; index: number; images?: Array<{ src: string; alt?: string }> }) {
   const [open, setOpen] = useState(false);
   const alt = image.alt ?? `Image ${index + 1}`;
   return <>
     <button type="button" class="cli-image-preview-trigger" aria-label={`Preview ${alt}`} onClick={() => setOpen(true)}>
       <img src={image.src} alt={alt} loading="lazy" />
     </button>
-    {open ? <ImageLightbox image={{ ...image, alt }} onClose={() => setOpen(false)} /> : null}
+    {open ? <ImageLightbox image={{ ...image, alt }} images={images} initialIndex={index} onClose={() => setOpen(false)} /> : null}
   </>;
 }
 
-function ImageLightbox({ image, onClose }: { image: { src: string; alt?: string }; onClose: () => void }) {
+export function ImageLightbox({ image: initialImage, images, initialIndex = 0, onClose }: { image: { src: string; alt?: string }; images?: Array<{ src: string; alt?: string }>; initialIndex?: number; onClose: () => void }) {
+  const gallery = images?.length ? images : [initialImage];
+  const [index, setIndex] = useState(Math.min(initialIndex, gallery.length - 1));
+  const [zoomed, setZoomed] = useState(false);
+  const touch = useRef<number>();
+  const image = gallery[index] ?? initialImage;
+  const move = (delta: number) => { setIndex(current => (current + delta + gallery.length) % gallery.length); setZoomed(false); };
+  useEffect(() => { setFailed(false); }, [image.src]);
   const accessibility = useModalAccessibility(true, onClose);
   const [failed, setFailed] = useState(false);
   const alt = image.alt || "Image preview";
   return createPortal(
-      <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={accessibility.onKeyDown} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
-        <div class="cli-image-lightbox-toolbar"><strong>{alt}</strong><span><a href={image.src} target="_blank" rel="noopener noreferrer">Open original</a><button type="button" aria-label="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
-        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <img src={image.src} alt={alt} onError={() => setFailed(true)} />}
+      <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); move(event.key === 'ArrowLeft' ? -1 : 1); } else accessibility.onKeyDown(event); }} onTouchStart={event => { touch.current = event.touches[0]?.clientX; }} onTouchEnd={event => { const end = event.changedTouches[0]?.clientX; if (!zoomed && touch.current !== undefined && end !== undefined && Math.abs(end - touch.current) > 50) move(end < touch.current ? 1 : -1); touch.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
+        <div class="cli-image-lightbox-toolbar"><strong>{alt}</strong><span>{gallery.length > 1 ? <><button type="button" aria-label="Previous image" onClick={() => move(-1)}>‹</button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" onClick={() => move(1)}>›</button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} onClick={() => setZoomed(value => !value)}>{zoomed ? '−' : '+'}</button><a href={image.src} target="_blank" rel="noopener noreferrer">Open original</a><button type="button" aria-label="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
+        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`}><img key={image.src} src={image.src} alt={alt} onError={() => setFailed(true)} onDblClick={() => setZoomed(value => !value)} /></div>}
       </div>,
       document.body
     );
@@ -1489,8 +1543,9 @@ export function parseQuestionReply(text: string): Array<{ question: string; answ
   if (!match) return undefined;
   try {
     const value: unknown = JSON.parse(match[1]!);
-    if (!Array.isArray(value) || value.length === 0) return undefined;
-    const replies = value.map((item: unknown) => {
+    const rows = Array.isArray(value) ? value : [value];
+    if (rows.length === 0) return undefined;
+    const replies = rows.map((item: unknown) => {
       if (!item || typeof item !== "object") return undefined;
       const reply = item as Record<string, unknown>;
       if (typeof reply["question"] !== "string" || typeof reply["answer"] !== "string") return undefined;
@@ -1508,6 +1563,8 @@ function MarkdownMessage({ text, onOpenFile }: { text: string; onOpenFile?: (pat
   const html = useMemo(() => markdownRenderer.render(text), [text]);
   const [feedback, setFeedback] = useState<string>();
   const [preview, setPreview] = useState<{ src: string; alt?: string }>();
+  const markdownRoot = useRef<HTMLDivElement>(null);
+  const gallery = () => Array.from(markdownRoot.current?.querySelectorAll('img') ?? []).map(image => ({ src: image.src, alt: image.alt }));
   const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
     const file = (event.target as Element).closest<HTMLAnchorElement>('a[data-workspace-file]');
     if (file) {
@@ -1537,7 +1594,7 @@ function MarkdownMessage({ text, onOpenFile }: { text: string; onOpenFile?: (pat
       button.disabled = false;
     }
   };
-  return <><div class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{feedback ? <small role="status" class="cli-code-copy-feedback">{feedback}</small> : null}{preview ? <ImageLightbox image={preview} onClose={() => setPreview(undefined)} /> : null}</>;
+  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{feedback ? <small role="status" class="cli-code-copy-feedback">{feedback}</small> : null}{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
 }
 
 export function splitMessageParagraphs(text: string): string[] {
@@ -1591,7 +1648,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
         {message.arguments ? <div class="cli-activity-result"><div class="cli-code-surface"><div class="cli-code-surface-head"><strong>Arguments</strong><CopySnippet text={message.arguments} /></div><pre><code>{message.arguments}</code></pre></div></div> : null}
         {message.result ? <div class={`cli-activity-result ${failed ? "is-error" : ""}`}><div class="cli-code-surface"><div class="cli-code-surface-head"><strong>{failed ? "Error" : "Result"}</strong><CopySnippet text={message.result} label={failed ? "Copy error" : "Copy result"} /></div><pre><code>{message.result}</code></pre></div></div> : null}
         {message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><div class="cli-code-surface"><CopySnippet text={message.debug} label="Copy debug details" /><pre><code>{message.debug}</code></pre></div></details> : null}
-      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}</> : <ActivityDetail message={message} />}
+      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={message.images} />)}</div> : null}</> : <ActivityDetail message={message} />}
     </div>
   </details>;
 }
@@ -1647,7 +1704,7 @@ function WorkspaceEnvironmentView(props: {
   return <section class="cli-inspector-view" aria-label="Environment" aria-busy={props.loading}>
     <header class="cli-inspector-heading"><EmptyFolderIcon /><span><strong>{environment?.projectName || projectDisplayName(props.projectPath ?? '') || 'Workspace'}</strong><small>{props.systemName}</small></span><IconButton label="Refresh Environment" disabled={props.loading || !props.connected || !props.projectPath} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>
     <div class="cli-inspector-body">
-      <section aria-label="Turn usage details"><h3>Turn usage</h3>{props.liveState?.tokenUsage || props.liveState?.rateLimits ? <LiveTurnDetails state={props.liveState} /> : <p class="settings-note">Usage has not been reported for this session.</p>}</section>
+      <section aria-label="Session usage details"><h3>Session usage</h3>{props.liveState?.tokenUsage || props.session?.tokenUsage || props.liveState?.rateLimits ? <LiveTurnDetails state={props.liveState} usage={props.liveState?.tokenUsage ?? props.session?.tokenUsage} /> : <p class="settings-note">Usage has not been reported for this session.</p>}</section>
       {environment?.warning ? <p role="status">{environment.warning}</p> : null}
       <section><h3>Project</h3><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></section>
       <section><h3>Session</h3><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', props.session?.sessionSurface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></section>
@@ -1804,10 +1861,11 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
 }
 
 /** One transcript renderer; public views omit callbacks for private operations. */
-export function SessionTranscript({ messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+export function SessionTranscript({ messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, questionPromptIds }: { onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; questionPromptIds?: string[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(messages), running), [messages, running]);
   const copies = useMemo(() => getCompletedTurnCopyText(messages, running), [messages, running]);
-  return <>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/>)}</>;
+  const questions = unansweredSessionQuestions(messages).filter(message => !questionPromptIds?.includes(message.id));
+  return <>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/>)}{questions.map(question => <SessionQuestionPrompt key={question.id} message={question} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} />)}</>;
 }
 
 function CompletedTurnChanges({ messages, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenReviews: (path?: string) => void }) {
@@ -2016,9 +2074,9 @@ function BranchComparison(props: { environment?: DashboardWorkspaceEnvironment; 
   return <div class="cli-reviews-view cli-branch-comparison"><header><ReviewIcon /><span><strong>Compare branch</strong><small>{props.environment?.branchDiffBase ? `Against ${props.environment.branchDiffBase}` : "Git comparison"}</small></span><IconButton label="Show turn changes" onClick={props.onShowTurnReview}><ReviewIcon /></IconButton><IconButton label="Refresh comparison" disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>{props.loading ? <div class="cli-context-empty" role="status"><span class="cli-live-spinner" />Comparing branch…</div> : diff !== undefined ? <>{props.environment?.branchDiffTruncated ? <p role="status">Preview limited. Open the repository in VS Code for the full diff.</p> : null}{diff.trim() ? <DiffPreview diff={diff} /> : <div class="cli-context-empty" role="status">No tracked differences from {props.environment?.branchDiffBase ?? "the comparison base"}.</div>}</> : <div class="cli-context-empty" role="status">Comparison unavailable. Use Refresh comparison to retry.</div>}</div>;
 }
 
-export function AgentWorkspace(props: { connected?: boolean; sessions: DashboardCliSessionSummary[]; data: Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>; activeId?: string; onRefresh?: (agent: DashboardCliSessionSummary, automatic?: boolean) => void; onFeedback: (notice: DashboardNotice) => void }) {
-  const [activeId, setActiveId] = useState(props.activeId);
-  useEffect(() => setActiveId(props.activeId), [props.activeId]);
+export function AgentWorkspace(props: { connected?: boolean; sessions: DashboardCliSessionSummary[]; data: Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>; activeId?: string; renderConversation?: (session: DashboardCliSessionSummary, messages: DashboardCliSessionMessage[]) => preact.ComponentChildren; onRefresh?: (agent: DashboardCliSessionSummary, automatic?: boolean) => void; onFeedback: (notice: DashboardNotice) => void }) {
+  const [activeId, setActiveId] = useState(props.activeId ?? (props.renderConversation ? props.sessions[0]?.id : undefined));
+  useEffect(() => setActiveId(props.activeId ?? (props.renderConversation ? props.sessions[0]?.id : undefined)), [props.activeId]);
   const agent = props.sessions.find(item => item.id === activeId);
   const state = agent ? props.data[cliSessionTargetKey(agent)] : undefined;
   const name = (item: DashboardCliSessionSummary) => item.agentName || item.model || 'Agent';
@@ -2034,7 +2092,7 @@ export function AgentWorkspace(props: { connected?: boolean; sessions: Dashboard
       <header><span class={`cli-state-pill ${agent.status === 'running' ? 'is-running' : ''}`}>{agent.status === 'running' ? 'Running' : agent.interrupted ? 'Interrupted' : agent.status === 'unknown' ? 'Unverified' : 'Idle'}</span><small>{[agent.model, agent.reasoningEffort].filter(Boolean).join(' · ')}</small>{props.onRefresh ? <button type="button" disabled={state?.loading || props.connected === false} onClick={() => props.onRefresh?.(agent, false)}>Refresh</button> : null}</header>
       {state?.error ? <div role="alert" class="cli-agent-error">{state.error}</div> : null}
       {state?.loading ? <div role="status" class="settings-note">Refreshing agent messages…</div> : null}
-      <div class="cli-agent-transcript cli-session-messages"><SessionTranscript messages={state?.messages ?? []} running={agent.status === "running"} onActionFeedback={props.onFeedback} />{!state?.loading && !state?.error && !state?.messages?.length ? <p class="settings-note">{props.connected === false ? 'Reconnect to load this agent’s messages.' : 'No messages recorded yet.'}</p> : null}</div>
+      {props.renderConversation ? props.renderConversation(agent, state?.messages ?? []) : <div class="cli-agent-transcript cli-session-messages"><SessionTranscript messages={state?.messages ?? []} running={agent.status === "running"} onActionFeedback={props.onFeedback} />{!state?.loading && !state?.error && !state?.messages?.length ? <p class="settings-note">{props.connected === false ? 'Reconnect to load this agent’s messages.' : 'No messages recorded yet.'}</p> : null}</div>}
     </> : <p class="settings-note">This agent is no longer in the session list. Refresh sessions to reconnect.</p> : <div class="cli-agent-roster">{props.sessions.length ? props.sessions.map(item => <button type="button" class={`cli-agent-row ${!item.subAgent && !item.parentSessionId ? 'is-main' : ''}`} key={cliSessionTargetKey(item)} title={item.title} onClick={() => setActiveId(item.id)}>
       <WorkspaceToolIcon kind="agents" /><span><strong>{name(item)}</strong><small>{[!item.subAgent && !item.parentSessionId ? 'Main' : undefined, item.model !== name(item) ? item.model : undefined, item.reasoningEffort].filter(Boolean).join(' · ') || item.title}</small></span><span class="cli-agent-state">{item.status === 'running' ? <span class="cli-session-spinner" aria-label="Running" /> : null}{item.status === 'running' ? 'Running' : item.interrupted ? 'Interrupted' : item.status === 'unknown' ? 'Unverified' : 'Idle'}</span>
     </button>) : <p class="settings-note">No agents recorded for this session.</p>}</div>}
@@ -2521,3 +2579,14 @@ function CheckIcon() { return <Icon><path d="m5 12 4 4L19 6" fill="none" stroke=
 function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
+
+export function QueuedMessages({ queue, onFeedback, onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; onFeedback: (notice: DashboardNotice) => void; onRefresh: () => void }) {
+  return <div class="cli-local-queue" aria-label="Local message queue">{queue.error ? <div class="cli-queue-load-warning" role="alert"><span>{queue.error}</span><button type="button" onClick={queue.retryLoad}>Retry queue</button></div> : !queue.ready ? <small class="cli-queued-status" role="status"><span class="cli-live-spinner" aria-hidden="true" />Loading saved messages…</small> : null}{queue.items.map((item, index) => <div key={item.id} class={`cli-pending-message is-${item.state}`}>
+    <SessionMessage message={queuedMessageView(item)} onActionFeedback={onFeedback} />
+    <div class="cli-queued-footer">
+      <span class="cli-queued-status" role="status">{item.state === 'sending' ? <span class="cli-live-spinner" aria-hidden="true" /> : null}{item.state === 'queued' ? `Queued · ${index + 1}` : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Send failed'}</span>
+      {item.state === 'failed' || item.state === 'uncertain' ? <><button type="button" class="cli-queue-resend" onClick={() => queue.resend(item.id)}>Resend</button><button type="button" aria-label="Remove queued message" title="Remove message" onClick={() => queue.remove(item.id)}>×</button>{item.state === 'uncertain' ? <button type="button" class="cli-queue-refresh" onClick={onRefresh}>Check session</button> : null}</> : item.state === 'queued' ? <span class="cli-queue-actions"><button type="button" onClick={() => queue.remove(item.id, true)}>Edit</button><button type="button" onClick={() => queue.remove(item.id)}>Remove</button></span> : null}
+    </div>
+    {item.error ? <small class="cli-queue-error" role="status">{item.error}</small> : null}
+  </div>)}</div>;
+}

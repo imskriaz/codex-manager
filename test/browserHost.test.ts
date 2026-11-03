@@ -65,6 +65,8 @@ describe("browser dashboard bridge", () => {
     expect(timer.mock.calls.at(-1)?.[1]).toBe(4_815_000);
     await post({ type: 'dashboard:action', action: 'refreshAll', requestId: 'local', payload: { targetDeviceId: 'local' } });
     expect(timer.mock.calls.at(-1)?.[1]).toBe(255_000);
+    await post({ type: 'dashboard:action', action: 'steerCodexCliSessionTurn', requestId: 'large-document', payload: { attachments: [{ size: 50 * 1024 * 1024 }] } });
+    expect(timer.mock.calls.at(-1)?.[1]).toBe(300_000);
   });
   it.each(["opened", "blocked", "unsafe"])("opens external links on the initiating browser without sending a host action: %s", async outcome => {
     const events: Array<Record<string, unknown>> = [];

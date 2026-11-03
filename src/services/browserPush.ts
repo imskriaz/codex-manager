@@ -1,3 +1,4 @@
+import { notificationTargetUrl } from '../domain/notificationTarget';
 import type webPush from "web-push";
 import type * as vscode from "vscode";
 import { hostname } from "node:os";
@@ -182,7 +183,8 @@ export class BrowserPushService {
           level: notice.level,
           notificationId: notice.notificationId,
           actions: notice.actions?.slice(0, 2),
-          url: notice.url?.startsWith("/workspace/") ? notice.url : "/",
+          replyAction: notice.replyAction,
+          url: notificationTargetUrl(notice.url),
           createdAt: now
         });
         await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => {
@@ -267,6 +269,14 @@ export class BrowserPushService {
     this.testing = work;
     this.sends = work.then(() => undefined, () => undefined);
     return work;
+  }
+
+  async hasSubscriptions(): Promise<boolean> {
+    await this.mutations.catch(() => undefined);
+    const raw = await this.secrets.get(STORAGE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw) as PushState;
+    return Array.isArray(state.subscriptions) && state.subscriptions.some(item => item.expiresAt > Date.now());
   }
 
   async isSubscribed(endpoint: string, owner: string, origin: string): Promise<boolean> {

@@ -10,7 +10,7 @@ const TTL = 30 * 24 * 60 * 60 * 1000;
 type SharedMessage = Pick<DashboardCliSessionMessage, 'text'> & Partial<DashboardCliSessionMessage>;
 type Share = { fingerprint: string; sessionKey: string; title: string; messages: SharedMessage[]; includeActivities?: boolean; nativeSession?: boolean; sourceHome?: string; expiresAt: number };
 const fingerprint = (token: string) => createHash("sha256").update(token).digest("hex");
-const messageFields = ['id','turnId','kind','role','text','title','subtitle','status','command','cwd','output','exitCode','durationMs','arguments','result','debug','changes','images','textAttachments','timestamp'];
+const messageFields = ['id','turnId','kind','role','text','title','subtitle','status','command','cwd','output','exitCode','durationMs','arguments','result','debug','changes','images','textAttachments','questions','timestamp'];
 function sharedMessage(value: unknown, index: number, activities: boolean): SharedMessage | undefined {
   if (!value || typeof value !== 'object') return;
   const item = value as Record<string, unknown>;

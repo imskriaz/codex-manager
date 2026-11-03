@@ -1,3 +1,4 @@
+import { MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -250,7 +251,7 @@ async function connect(home: string): Promise<void> {
             header = Buffer.concat([header, data.subarray(offset, offset + length)]); offset += length;
             if (header.length < 4) continue;
             remaining = header.readUInt32LE(0); header = Buffer.alloc(0);
-            if (!remaining || remaining > 64 * 1024 * 1024) { reset(); return; }
+            if (!remaining || remaining > MAX_CHAT_WIRE_BYTES) { reset(); return; }
           }
           const length = Math.min(remaining, data.length - offset);
           chunks.push(data.subarray(offset, offset + length)); remaining -= length; offset += length;

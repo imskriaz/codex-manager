@@ -331,7 +331,7 @@ it.each(["wrong-home", "unknown-status", "wrong-host", "wrong-version"])("reject
   message(value); await vi.advanceTimersByTimeAsync(3000); expect(await pending).toBeUndefined();
 });
 it("settles pending reads on connection failure or oversized frames", async () => {
-  const pending = readNativeCodexSessionRunning(home, id); await initialize(); const huge = Buffer.alloc(4); huge.writeUInt32LE(64 * 1024 * 1024 + 1);
+  const pending = readNativeCodexSessionRunning(home, id); await initialize(); const huge = Buffer.alloc(4); huge.writeUInt32LE(128 * 1024 * 1024 + 1);
   socket.emit("data", huge); expect(await pending).toBeUndefined(); expect(socket.writable).toBe(false);
 });
 it("does not connect to a Unix socket writable by another user", async () => {

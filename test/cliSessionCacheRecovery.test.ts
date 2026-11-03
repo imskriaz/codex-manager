@@ -158,7 +158,7 @@ describe("browser cache recovery", () => {
     } });
     const cache = await import("../webview-src/dashboard/cliSessionCache");
     const read = cache.readCliComposerDraft("draft");
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(15000);
     await expect(read).resolves.toBeUndefined();
     const write = cache.writeCliComposerDraft("draft", { text: "preserve me", attachments: [] });
     await vi.advanceTimersByTimeAsync(3000);

@@ -21,7 +21,7 @@ function reader(stall = false) {
         });
     }
     readAsDataURL(file: File) {
-      this.readAsText(file);
+      this.result = "data:application/octet-stream;base64,UEsDBA=="; queueMicrotask(() => this.onload?.());
     }
     abort() {
       this.onabort?.();
@@ -35,18 +35,16 @@ it("uses bounded shared upload validation for task, comment and session readers"
   expect(await readChatAttachmentFiles([textFile()])).toMatchObject([
     { name: "brief.txt", kind: "text", data: "Requirements", size: 12 }
   ]);
-  await expect(readChatAttachmentFiles([textFile("unsafe.txt", "a\0b")])).rejects.toThrow("32 KB");
-  await expect(readChatAttachmentFiles([textFile()], 8)).rejects.toThrow("8 files");
-  await expect(
-    readChatAttachmentFiles([{ name: "program.exe", type: "application/octet-stream", size: 10 } as File])
-  ).rejects.toThrow("unsupported");
+  await expect(readChatAttachmentFiles([textFile("unsafe.txt", "a\0b")])).rejects.toThrow("binary data");
+  await expect(readChatAttachmentFiles([textFile()], 32)).rejects.toThrow("32 files");
+  expect(await readChatAttachmentFiles([{ name: "report.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 4 } as File])).toMatchObject([{ name: "report.docx", kind: "file", size: 4 }]);
 });
 it("reports the real file-read timeout even when abort fires synchronously", async () => {
   vi.useFakeTimers();
   reader(true);
   const reading = readChatAttachmentFiles([textFile()]);
   const outcome = expect(reading).rejects.toThrow("timed out");
-  await vi.advanceTimersByTimeAsync(10000);
+  await vi.advanceTimersByTimeAsync(60000);
   await outcome;
   expect(vi.getTimerCount()).toBe(0);
 });

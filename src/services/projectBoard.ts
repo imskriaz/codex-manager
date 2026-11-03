@@ -68,7 +68,7 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
     messages: details.messages.filter(item => normalizedView === 'activities'
       ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : share.permissions.includes('activities') && item.kind !== 'file-change')
       : normalizedView === 'changes' && item.changes?.length).map(item => ({
-      id: item.id, role: item.role, kind: item.kind, text: item.role === 'user' ? withoutChatTextAttachments(item.text) : item.text, title: item.title, status: item.status,
+      id: item.id, role: item.role, kind: item.kind, text: item.role === 'user' ? withoutChatTextAttachments(item.text) : item.text, title: item.title, status: item.status, timestamp: item.timestamp, questions: item.questions,
       ...(share.permissions.includes('files') && item.images?.length ? { images: item.images.filter(image => safeConversationImage(image.src)) } : {}),
       ...(normalizedView === 'activities' && share.permissions.includes('activities') ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
       ...(normalizedView === 'changes' ? { changes: item.changes } : {})

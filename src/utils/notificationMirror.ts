@@ -14,6 +14,7 @@ export interface MirroredNotification {
   systemName?: string;
   message: string;
   actions?: string[];
+  replyAction?: string;
   url?: string;
   actionPrompt?: DashboardActionPrompt;
 }

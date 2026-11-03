@@ -1,3 +1,4 @@
+import { checkUploadsUi } from './check-uploads-ui.mjs';
 import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
 import { checkSteerUi } from './check-steer-ui.mjs';
@@ -453,7 +454,8 @@ try {
   const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
   for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes('--mobile-polish') ? [[320,667],[360,800],[390,844],[760,1024],[1440,1000]] : process.argv.includes('--docs') ? [[1440,900],[390,844]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
-    if (width === 320) await context.addInitScript(() => {
+    if (process.argv.includes('--storage-unavailable')) await context.addInitScript(() => {
+      window.__workingIndexedDB=window.indexedDB;
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
@@ -501,10 +503,28 @@ try {
       await context.close();
       continue;
     }
+    if (process.argv.includes('--storage-unavailable')) {
+      await page.goto(`${origin}/workspace/${parentId}`);
+      const input = page.getByRole('textbox',{name:'Message Codex',exact:true}); await input.fill('Keep my message');
+      await page.getByText(/Saved queue is unavailable/).first().waitFor();
+      assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true,'An unreadable queue cannot be overwritten by a send');
+      assert.equal(await input.inputValue(),'Keep my message');
+      await page.evaluate(()=>Object.defineProperty(window,'indexedDB',{configurable:true,value:window.__workingIndexedDB}));
+      await page.getByRole('button',{name:'Retry queue',exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector('.cli-send-button')?.disabled===false);
+      assert.equal(await input.inputValue(),'Keep my message','Retrying storage leaves the composer intact');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(item.action)).length),0);
+      results.push({width,height,checks:'Unavailable queue storage preserves composer and blocks dispatch'}); await context.close(); continue;
+    }
+    if (process.argv.includes('--uploads')) {
+      await checkUploadsUi(page,{origin,parentId,width,height,output});
+      assert.deepEqual(errors,[],'Document uploads have no browser runtime errors');
+      results.push({width,height,checks:'PDF and DOCX uploads over 2 MB, durable queue, compact inline Resend, newer draft preservation, reload without replay'}); await context.close(); continue;
+    }
     if (process.argv.includes('--steer')) {
       await checkSteerUi(page, { origin, parentId });
       assert.deepEqual(errors, [], 'Steering has no browser runtime errors');
-      results.push({ width, height, checks: 'Steering sends once, clears on echo, restores uncertainty, preserves newer drafts and chronological replies' });
+      results.push({ width, height, checks: 'Steering sends once, shows inline Resend, preserves newer drafts and chronological replies' });
       await context.close(); continue;
     }
     if (process.argv.includes('--mobile-polish')) {
@@ -1732,12 +1752,12 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 4, status: 'completed', tokenUsage: { input: 40740, cachedInput: 0, output: 99, reasoningOutput: 72, total: 40839, contextWindow: 475000 }, rateLimits: { primary: { usedPercent: 32, resetsAt: 1793445000 }, secondary: { usedPercent: 60, resetsAt: 1793790000 } } } } })));
     await page.getByRole('button', {name:'View usage',exact:true}).click();
     const turnUsage = page.locator('.cli-inspector-view .cli-turn-usage');
-    await turnUsage.locator(':scope > summary').click();
+    assert.equal(await turnUsage.locator(':scope > summary').count(),0,'Session usage is expanded without a toggle');
     assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
     const textScale = await page.evaluate(() => Number(getComputedStyle(document.documentElement).getPropertyValue('--dashboard-text-scale')) || 1);
     assert.ok((await turnUsage.locator('.cli-activity-body').boundingBox()).height < 190 * textScale,'Expanded usage stays compact at the configured text scale');
     assert.ok(await turnUsage.locator('.cli-usage-grid > span').evaluateAll(items => items.every(item => { const label = item.querySelector('b').getBoundingClientRect(), value = item.querySelector('strong').getBoundingClientRect(); return Math.abs((label.top+label.bottom-value.top-value.bottom)/2)<1; })),'Usage labels and values share one code-style line');
-    await turnUsage.locator(':scope > summary').click();
+    assert.equal(await turnUsage.getAttribute('aria-label'),'Session usage');
     await page.getByRole('button', {name:'Hide workspace tools',exact:true}).click();
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
@@ -1936,8 +1956,14 @@ try {
     await page.screenshot({ path: path.join(output, `before-send-${width}x${height}.png`) });
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();
-    assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /, "Failed sends preserve the draft");
-    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 1, "Failed sends preserve attachments");
+    assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', "Failed sends leave the composer empty");
+    const failedMessage = page.locator('.cli-local-queue .is-failed').last();
+    await failedMessage.getByRole('button',{name:'Resend',exact:true}).waitFor();
+    assert.equal(await failedMessage.getByText('notes.txt',{exact:true}).count(),1,'Failed attachments stay under the message');
+    await failedMessage.getByRole('button',{name:'Resend',exact:true}).click();
+    await failedMessage.getByRole('button',{name:'Resend',exact:true}).waitFor();
+    assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', 'Resend never repopulates the composer');
+    await failedMessage.getByRole('button',{name:'Remove queued message',exact:true}).click();
     if(width===390) {
       const originalDraft=await page.getByRole('textbox',{name:'Message Codex',exact:true}).inputValue();
       await page.evaluate(()=>{
@@ -2007,9 +2033,9 @@ try {
     assert.equal(await page.getByRole("button", { name: "Remove late.txt", exact: true }).count(), 0, "Late file reads stay with the originating chat");
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
-    assert.match(await composer.inputValue(), /^> /, "Returning to a chat restores its draft");
+    assert.equal(await composer.inputValue(), "", "Returning to a chat keeps sent text out of the composer");
     await page.getByRole("button", { name: "Remove late.txt", exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0, "Failed upload stays with the inline Resend message");
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     assert.equal(await composer.inputValue(), "Separate new chat draft", "Returning to a new-chat project restores its separate draft");
@@ -2064,7 +2090,7 @@ try {
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "unreachable" } })));
-    await page.getByText("Reconnecting", { exact: true }).waitFor();
+    await page.getByText("Offline · messages save locally until reconnect", { exact: true }).waitFor();
     assert.equal(await page.locator(".dashboard-connection-banner").count(), 0, "Chat uses its inline reconnect status without a floating notice");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);

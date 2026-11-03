@@ -185,17 +185,19 @@ it("waits for conversation tab readiness before resuming", async () => {
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
 
-it.each(["not ready", "official extension missing", "owner disconnected", "manual cancellation"])("retains recovery and sends nothing when UI preparation fails: %s", async reason => {
+it.each(["not ready", "official extension missing", "owner disconnected", "manual cancellation"])("retains recovery when private fallback is unsafe after UI failure: %s", async reason => {
   const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
   vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(false);
-  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork");
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockRejectedValue(new Error(reason));
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockRejectedValue(new Error(reason));
   const log = vi.spyOn(diagnostics, "recordPersistentEvent");
   try {
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 0, failed: [{ sessionId: id, message: reason }] });
-    expect(resume).not.toHaveBeenCalled(); expect(state.read()).toEqual([id]);
-    expect(log).toHaveBeenCalledWith("warning", "auto-resume", "Official recovery path failed", expect.objectContaining({ recoveryPath: "vscode", phase: "readiness", recoveryRetained: true }), expect.any(Error));
+    if (reason === 'manual cancellation') expect(resume).not.toHaveBeenCalled();
+    else expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal), 'automatic', 'private');
+    expect(state.read()).toEqual([id]);
+    if (reason === "manual cancellation") expect(log).toHaveBeenCalledWith("warning", "auto-resume", "Official recovery path failed", expect.objectContaining({ recoveryPath: "vscode", phase: "readiness", recoveryRetained: true }), expect.any(Error));
     expect(log).not.toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.anything());
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
@@ -1414,4 +1416,13 @@ it("avoids title reads and storage writes for reordered unchanged recovery, then
     expect(read).toHaveBeenCalledOnce();
     expect(state.context.workspaceState.update).toHaveBeenCalledWith(AUTO_RESUME_METADATA_KEY,expect.any(Object));
   } finally {vi.useRealTimers();}
+});
+
+it('uses private Auto Resume after native UI failure and clears recovery only after confirmed acceptance', async () => {
+  const id = '01a04882-d037-7a42-ad24-9afb61901181', state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  const resume = vi.spyOn(await import('../src/services/codexSessionRecovery'), 'resumeCodexSessionWork').mockResolvedValue('continued');
+  const open = vi.spyOn(sessionEditor, 'openCodexSessionInVsCode').mockRejectedValue(new Error('Native UI unavailable'));
+  try { expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] }); expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal), 'automatic', 'private'); expect(state.read() ?? []).toEqual([]); }
+  finally { resume.mockRestore(); open.mockRestore(); }
 });

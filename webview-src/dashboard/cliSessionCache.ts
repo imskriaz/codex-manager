@@ -1,3 +1,4 @@
+import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../../src/domain/chatAttachments";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -16,7 +17,7 @@ const DASHBOARD_CACHE_KEY = "dashboard-state";
 const MAX_DASHBOARD_CACHE_AGE_MS = MAX_CACHE_AGE_MS;
 const MAX_DRAFT_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_DRAFT_RECORDS = 20;
-const MAX_DRAFT_BYTES = 16 * 1024 * 1024;
+const MAX_DRAFT_BYTES = MAX_CHAT_WIRE_BYTES * 2;
 
 type CacheRecord = {
   key: string;
@@ -52,7 +53,7 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
 
-const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
+const SESSION_METADATA = ["model","reasoningEffort","sandboxMode","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
 
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
@@ -133,7 +134,7 @@ function openCache(): Promise<IDBDatabase | undefined> {
     }, 2_000);
     let request: IDBOpenDBRequest;
     try { request = indexedDB.open(DB_NAME, DB_VERSION); }
-    catch { clearTimeout(timer); settled = true; resolve(undefined); return; }
+    catch { clearTimeout(timer); settled = true; cacheDatabase = undefined; resolve(undefined); return; }
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME))
         request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
@@ -238,7 +239,7 @@ async function saveCliComposerDraft(key: string, value: CliComposerDraft): Promi
   if (!db) return false;
   return new Promise<boolean>((resolve) => {
     const transaction = db.transaction(STORE_NAME, "readwrite");
-    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } resolve(false); }, 3_000);
+    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } resolve(false); }, chatUploadTimeoutMs(normalized.attachments) ? 15_000 : 3_000);
     const store = transaction.objectStore(STORE_NAME);
     const target = `composer:${key}`;
     const record: CacheRecord = { key: target, updatedAt: Date.now(), value: normalized };
@@ -385,21 +386,24 @@ async function readFreshRecord<T>(key: string, maxAgeMs: number): Promise<{ valu
   const record = await readRecord(key);
   if (!record) return undefined;
   const ageMs = Date.now() - record.updatedAt;
+  if (key.startsWith("browser:message-queue:") && (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs)) throw new Error("Saved queue timing is invalid. It was kept; check the device clock before resending.");
   return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maxAgeMs ? { value: record.value as T, ageMs } : undefined;
 }
 
 async function readRecord(key: string): Promise<CacheRecord | undefined> {
+  const strict = key.startsWith('browser:message-queue:');
   const db = await openCache();
-  if (!db) return undefined;
-  return new Promise<CacheRecord | undefined>((resolve) => {
+  if (!db) { if (strict) throw new Error('Browser storage is unavailable. The saved queue was kept; refresh when storage is available.'); return undefined; }
+  return new Promise<CacheRecord | undefined>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, "readonly");
     const finish = (record?: CacheRecord): void => { clearTimeout(timer); resolve(record); };
-    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
-    transaction.onabort = transaction.onerror = () => finish();
+    const failed = () => { clearTimeout(timer); if (strict) reject(new Error('Saved queue could not be read. It was kept; refresh before sending.')); else resolve(undefined); };
+    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } failed(); }, strict || key.startsWith('composer:') ? 15_000 : 3_000);
+    transaction.onabort = transaction.onerror = failed;
     const request = transaction.objectStore(STORE_NAME).get(key);
     request.onsuccess = () => finish(request.result as CacheRecord | undefined);
-    request.onerror = () => finish();
-  }).catch(() => undefined);
+    request.onerror = failed;
+  }).catch(error => { if (strict) throw error; return undefined; });
 }
 
 async function writeRecord(record: CacheRecord): Promise<void> {
@@ -416,7 +420,7 @@ async function writeRecord(record: CacheRecord): Promise<void> {
       if (row) {
         const value = row.value as CacheRecord | undefined;
         if (typeof value?.key !== 'string') { row.continue(); return; }
-        if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && value.key !== record.key) {
+        if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && !value.key.startsWith('browser:message-queue:') && value.key !== record.key) {
           if (!Number.isFinite(value.updatedAt) || value.updatedAt > Date.now() || Date.now() - value.updatedAt > MAX_CACHE_AGE_MS) row.delete();
           else prior.push({ key: value.key, at: value.updatedAt, bytes: value.sizeBytes ?? JSON.stringify(value).length * 2 });
         }
@@ -452,16 +456,16 @@ function rememberBrowserRead(key: string, value: unknown, persistedAt = 0): void
     total -= browserReadMemory.get(oldest)!.bytes; browserReadMemory.delete(oldest);
   }
 }
-export async function readBrowserCache<T>(key: string): Promise<T | undefined> {
+export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): Promise<T | undefined> {
   const memory = browserReadMemory.get(key);
-  if (memory && Date.now() >= memory.at && Date.now() - memory.at <= MAX_CACHE_AGE_MS) {
+  if (memory && Date.now() >= memory.at && Date.now() - memory.at <= maxAgeMs) {
     browserReadMemory.delete(key); browserReadMemory.set(key, memory);
     return structuredClone(memory.value) as T;
   }
   browserReadMemory.delete(key);
   let pending = browserReadLoads.get(key);
   if (!pending) {
-    pending = readFreshRecord<T>(`browser:${key}`, MAX_CACHE_AGE_MS).then(record => {
+    pending = readFreshRecord<T>(`browser:${key}`, maxAgeMs).then(record => {
       if (browserReadLoads.get(key) !== pending) return browserReadMemory.get(key)?.value;
       if (record) rememberBrowserRead(key, record.value, Date.now() - record.ageMs);
       return record?.value;
@@ -486,11 +490,11 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
   const db = await openCache(); if (!db) return false;
   const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
   try { record.sizeBytes = JSON.stringify(record).length * 2; } catch { return false; }
-  if (record.sizeBytes > 2 * 1024 * 1024) return false;
-  const durable = record.key.startsWith('browser:outbox:');
+  if (record.sizeBytes > (key.startsWith('message-queue:') || key.startsWith('outbox:') ? MAX_DRAFT_BYTES : 2 * 1024 * 1024)) return false;
+  const durable = record.key.startsWith('browser:outbox:') || record.key.startsWith('browser:message-queue:');
   return new Promise<boolean>(resolve => {
     const tx = db.transaction(STORE_NAME, 'readwrite'), store = tx.objectStore(STORE_NAME);
-    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, 3000);
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, record.sizeBytes! > 2 * 1024 * 1024 ? 15_000 : 3000);
     const cached: Array<{ key: string; bytes: number; at: number }> = [];
     let draftCount = 0, draftBytes = durable ? record.sizeBytes! : 0;
     const cursor = store.openCursor();
@@ -501,7 +505,7 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
         if (typeof prior?.key !== 'string') { row.continue(); return; }
         if (prior.key !== record.key) {
           const bytes = prior.sizeBytes ?? JSON.stringify(prior).length * 2;
-          if (prior.key.startsWith('browser:outbox:')) { draftCount++; draftBytes += bytes; }
+          if (prior.key.startsWith('browser:outbox:') || prior.key.startsWith('browser:message-queue:')) { draftCount++; draftBytes += bytes; }
           else if (!prior.key.startsWith('composer:')) {
             if (!Number.isFinite(prior.updatedAt) || prior.updatedAt > Date.now() || Date.now() - prior.updatedAt > MAX_CACHE_AGE_MS) row.delete();
             else cached.push({ key: prior.key, bytes, at: prior.updatedAt });
@@ -510,7 +514,7 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
         row.continue(); return;
       }
       // A full durable outbox rejects the new write; it never evicts unsynced work.
-      if (durable && (draftCount >= 100 || draftBytes > 8 * 1024 * 1024)) { tx.abort(); return; }
+      if (durable && (draftCount >= 100 || draftBytes > MAX_DRAFT_BYTES * 2)) { tx.abort(); return; }
       let bytes = cached.reduce((sum, entry) => sum + entry.bytes, durable ? 0 : record.sizeBytes!);
       cached.sort((a,b) => a.at - b.at);
       while (cached.length >= 80 || bytes > 24 * 1024 * 1024) { const oldest = cached.shift(); if (!oldest) break; store.delete(oldest.key); bytes -= oldest.bytes; }

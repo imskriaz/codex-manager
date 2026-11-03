@@ -1,3 +1,4 @@
+import { chatUploadTimeoutMs } from "../../src/domain/chatAttachments";
 import { useCallback, useEffect, useRef } from "preact/hooks";
 import type { DashboardActionName, DashboardNotice, DashboardSettingKey, DashboardSettings } from "../../src/domain/dashboard/types";
 import { noticeFromActionTimeout } from "./actionFeedback";
@@ -120,7 +121,7 @@ export function useDashboardActions(
         action,
         accountId,
         requestedAt: Date.now(),
-        timeoutMs: getActionTimeoutMs(action, payload?.accountIds?.length ?? (peer && !peer.local ? snapshot.current?.peerAccounts?.[peer.id]?.length : undefined) ?? actionFeedbackRef.current.accountCount)
+        timeoutMs: Math.max(getActionTimeoutMs(action, payload?.accountIds?.length ?? (peer && !peer.local ? snapshot.current?.peerAccounts?.[peer.id]?.length : undefined) ?? actionFeedbackRef.current.accountCount), chatUploadTimeoutMs(payload?.attachments ?? payload?.task?.uploads ?? payload?.comment?.uploads))
       }
     });
     const localSystemId = snapshot.current?.connectedPeers?.find(item => item.local)?.id;

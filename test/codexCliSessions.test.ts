@@ -1,3 +1,5 @@
+import { MAX_CHAT_WIRE_BYTES, prepareChatInput } from "../src/domain/chatAttachments";
+import { isCliSubmissionEcho } from "../webview-src/dashboard/cliSessionComposerState";
 import { mkdtemp, mkdir, open, readFile, readdir, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -105,7 +107,7 @@ describe("Codex session integration", () => {
     await writeFile(file,JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'Read once'}]}})+'\n');
     const snapshot=safeReads.readSafeFileSnapshot;let reads=0;
     const spy=vi.spyOn(safeReads,'readSafeFileSnapshot').mockImplementation(async(file,options)=>{
-      if(options.maxBytes===25*1024*1024){reads++;await new Promise(resolve=>setTimeout(resolve,30));}
+      if(options.maxBytes===MAX_CHAT_WIRE_BYTES){reads++;await new Promise(resolve=>setTimeout(resolve,30));}
       return snapshot(file,options);
     });
     try{
@@ -143,7 +145,7 @@ describe("Codex session integration", () => {
     await mkdir(path.join(root, 'sessions'));
     const content = 'x'.repeat(20000), text = '<attached_file name="brief.txt">\n' + content + '\n</attached_file>';
     const native = parseCodexAppServerThreadItems({ thread: { turns: [{ id: 'turn', items: [{ id: 'user', type: 'userMessage', content: [{ type: 'text', text }] }] }] } });
-    expect(native[0]?.text).toHaveLength(12000); expect(native[0]?.textAttachments).toEqual([{ name: 'brief.txt', text: content }]);
+    expect(native[0]?.text).toBe(""); expect(native[0]?.textAttachments).toEqual([{ name: 'brief.txt', text: content }]);
     const lines = [
       { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } },
       { type: 'event_msg', payload: { type: 'user_message', message: text + '\n\n' } }
@@ -161,7 +163,7 @@ describe("Codex session integration", () => {
     const spy = vi.spyOn(safeReads, 'readSafeFileSnapshot').mockImplementation(async (file, options) => {
       const result = await snapshot(file, options);
       if (file !== image) return result;
-      reads++; return { ...result, size: 8 * 1024 * 1024 };
+      reads++; return { ...result, size: 25 * 1024 * 1024 };
     });
     try {
       await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), Array.from({length:8}, (_, index) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Image ' + index }, { type: 'input_image', image_url: image }] } })).join('\n') + '\n');
@@ -1070,4 +1072,12 @@ it('reads a missing recorded project for Environment without weakening command o
     await expect(resolveRecordedSessionProject(sessionId)).rejects.toThrow(/folder is unavailable/);
     await expect(resolveRecordedSessionProject(sessionId,path.join(root,'different'),false)).rejects.toThrow(/different project/);
   } finally { if(previous===undefined)delete process.env['CODEX_HOME'];else process.env['CODEX_HOME']=previous; }
+});
+
+it('acknowledges document-only echoes while keeping private file paths out of the visible transcript', () => {
+  const prepared = prepareChatInput('', [{ id: 'doc', name: 'report.pdf', kind: 'file', mimeType: 'application/pdf', data: 'data:application/pdf;base64,JVBERi0=', size: 5 }]);
+  const messages = parseCodexAppServerThreadItems({ thread: { turns: [{ id: 'turn', items: [{ id: 'echo', type: 'userMessage', content: [{ type: 'text', text: prepared.text + '\n\n<attachment_paths>\n/private/manager/file\n</attachment_paths>' }] }] }] } });
+  expect(messages[0]?.text).toBe(''); expect(messages[0]?.textAttachments?.[0]?.name).toBe('report.pdf');
+  expect(JSON.stringify(messages)).not.toContain('/private/manager/file');
+  expect(isCliSubmissionEcho(messages[0]!, { text: '', attachments: prepared.attachments }, new Set(), 'turn')).toBe(true);
 });

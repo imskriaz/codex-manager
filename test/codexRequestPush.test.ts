@@ -71,3 +71,35 @@ it("requires an active login and surfaces remote disconnects without replaying a
   expect((await respond("prompt", "Approve")).status).toBe(409);
   expect(processMessage).toHaveBeenCalledOnce();
 });
+
+it('offers direct answers and inline text replies with a link to the owning session', () => {
+  const notify = vi.fn(); server.browserPush.notify = notify; server.peerSessions = new Map();
+  server.notifyCodexRequest({ id: 'choice', threadId: 'session', deviceId: 'worker', kind: 'question', title: 'Codex has a question', questions: [{ id: 'layout', question: 'Which layout?', isSecret: false, options: [{ label: 'Compact' }, { label: 'Spacious' }] }] });
+  expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ actions: ['Compact','Spacious'], url: '/workspace/session?device=worker' }));
+  server.notifyCodexRequest({ id: 'typed', threadId: 'session', kind: 'question', title: 'Codex has a question', questions: [{ id: 'answer', question: 'What should change?', isSecret: false }] });
+  expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ actions: ['Reply','Answer'], replyAction: 'Reply', url: '/workspace/session' }));
+  server.notifyCodexRequest({ id: 'reserved', threadId: 'session', kind: 'question', title: 'Next?', questions: [{ id: 'next', question: 'Next action?', isSecret: false, options: [{ label: 'Reply' }] }] });
+  expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ actions: ['Reply','Answer'], replyAction: 'Reply' }));
+  expect(processMessage).not.toHaveBeenCalled();
+});
+
+it('routes typed notification replies exactly once to Codex and keeps blank answers from consuming the action', async () => {
+  actions.set('prompt', ['Reply','Answer']); server.codexPushActions.set('prompt', { requestId: 'request', targetDeviceId: 'worker', question: true, replyQuestionId: 'answer' });
+  const post = (reply: string) => fetch(`${origin}/api/push/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Codex-Dashboard': '1', Origin: origin }, body: JSON.stringify({ notificationId: 'prompt', action: 'Reply', reply }) });
+  expect((await post(' ')).status).toBe(400); expect(processMessage).not.toHaveBeenCalled();
+  expect((await post('Typed answer')).status).toBe(200); expect(processMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: { codexRequestId: 'request', targetDeviceId: 'worker', codexDecision: 'approve', codexAnswers: { answer: 'Typed answer' } } }));
+  expect((await post('Typed answer')).status).toBe(400); expect(processMessage).toHaveBeenCalledOnce();
+});
+
+it('pushes permission requests with approve and reject actions and never grants access on delivery', () => {
+  const notify = vi.fn(); server.browserPush.notify = notify; server.peerSessions = new Map();
+  server.notifyCodexRequest({ id: 'permission', threadId: 'session', kind: 'permissions', title: 'Grant additional permissions?', detail: 'Network access requested. ' + 'Review these roots. '.repeat(12) });
+  expect(notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actions: ['Approve','Reject'], url: '/workspace/session', message: expect.stringContaining('Network access requested') }));
+  expect(processMessage).not.toHaveBeenCalled();
+});
+it('routes a permission Reject action as a decline exactly once', async () => {
+  actions.set('permission', ['Approve', 'Reject']); server.codexPushActions.set('permission', { requestId: 'request', targetDeviceId: 'worker', question: false });
+  expect((await respond('permission', 'Reject')).status).toBe(200);
+  expect(processMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ payload: { codexRequestId: 'request', targetDeviceId: 'worker', codexDecision: 'decline' } }));
+  expect((await respond('permission', 'Reject')).status).toBe(409);
+});
