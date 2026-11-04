@@ -61,6 +61,7 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
     case "openCodexCliSession":
     case "resumeCodexSessions":
     case "setCodexSessionGoalStatus":
+    case "setCodexSessionAccess":
       return 75_000;
     case "details":
     case "reloadPrompt":

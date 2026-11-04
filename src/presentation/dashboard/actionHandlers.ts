@@ -1,3 +1,4 @@
+import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
@@ -41,6 +42,7 @@ import {
   resumeCodexSessionGoal,
   setCodexSessionAutoResume,
   setCodexSessionQueue,
+  setCodexSessionAccess,
   startCodexCliSession,
   sendCodexCliSessionMessage,
   steerCodexCliSessionTurn,
@@ -258,7 +260,7 @@ async function executeDashboardActionMessageInTransport(
   errorMessage?: string;
 }> {
   if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn",
-    "openNewCodexWebview", "reopenCodexUi", "resumeCodexSessions", "setCodexSessionGoalStatus", "renameCodexCliSession",
+    "openNewCodexWebview", "reopenCodexUi", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAccess", "renameCodexCliSession",
     "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession"].includes(message.action) ||
     (message.action === "openCodexCliSession" && (ctx.hostKind !== "browser" || message.payload?.openInVsCode === true)))
     cancelCodexSessionAutoResume("Auto Resume was cancelled for this manual action.");
@@ -273,7 +275,7 @@ async function executeDashboardActionMessageInTransport(
     { hostKind: ctx.hostKind ?? "webview" },
     (result) => ({ status: result.status, errorMessage: result.errorMessage })
   );
-  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "respondCodexServerRequest"].includes(message.action)) return execute();
+  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "respondCodexServerRequest", "setCodexSessionAccess"].includes(message.action)) return execute();
   if (typeof message.requestId !== "string" || !message.requestId.trim() || message.requestId.length > 256)
     return { status: "failed", errorMessage: "The session request identifier is invalid. Refresh the session and try again." };
   let sessionActionRequests = sessionActionRequestsByContext.get(ctx.context);
@@ -1029,6 +1031,14 @@ async function runDashboardAction(
       return handleSteerCodexCliSessionTurn(payload);
     case "cancelCodexCliSessionTurn":
       return handleCancelCodexCliSessionTurn(payload?.sessionId);
+    case "setCodexSessionAccess": {
+      ensureCliIntegrationEnabled();
+      if (!payload?.sessionId || !payload.sandboxMode) throw new Error('Choose a session and access mode first.');
+      const session = await ensureCliSessionIsActive(payload.sessionId);
+      if (payload.projectPath && session.projectPath && await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath)) throw new Error('This session belongs to a different project. Refresh before changing access.');
+      const access = await setCodexSessionAccess(payload.sessionId, payload.sandboxMode);
+      return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
+    }
     case "respondCodexServerRequest":
       if (!payload?.codexRequestId || !payload.codexDecision) throw new Error("Choose a Codex prompt response before continuing.");
       await respondCodexAppServerPrompt(payload.codexRequestId, payload.codexDecision, payload.codexAnswers);
@@ -1965,6 +1975,7 @@ async function handleGetCodexCliSessionMessages(sessionId: string | undefined, r
     throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
   }
   if (cliSession.archived) throw new Error("Archived sessions cannot be opened. Restore the session first.");
+  void readNativeCodexSessionRunning(resolveCodexHome(), sessionId).catch(error => console.warn('[codexManager] live session settings are unavailable', error));
   const cliSessionMessages = await readCodexCliSessionMessages(sessionId);
   return { cliSession, cliSessionMessages, cliSessionLive: getCodexSessionLiveState(sessionId), notice: getCodexSessionReadNotice([cliSession]) };
 }

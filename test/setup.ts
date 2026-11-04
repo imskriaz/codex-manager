@@ -10,6 +10,8 @@ vi.mock("../src/services/codexNativeSessionStatus", () => ({
   startNativeCodexSessionTurn: vi.fn(async () => false),
   cancelNativeCodexSessionTurn: vi.fn(async () => false),
   steerNativeCodexSessionTurn: vi.fn(async () => false),
+  getNativeCodexSessionAccess: vi.fn(() => undefined),
+  updateNativeCodexSessionAccess: vi.fn(async () => false),
   getNativeCodexSessionTurnId: vi.fn(() => undefined),
   getNativeCodexSessionRunning: vi.fn(() => undefined),
   disposeNativeCodexSessionStatus: vi.fn()

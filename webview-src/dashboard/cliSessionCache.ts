@@ -53,7 +53,7 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
 
-const SESSION_METADATA = ["model","reasoningEffort","sandboxMode","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
+const SESSION_METADATA = ["model","reasoningEffort","sandboxMode","access","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
 
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
@@ -78,15 +78,19 @@ export function mergeCachedCliSession(
   incoming: DashboardCliSessionSummary,
   previous?: DashboardCliSessionSummary
 ): DashboardCliSessionSummary {
+  if (previous && sameCliSessionTarget(incoming, previous) && (previous.access?.updatedAt ?? 0) > (incoming.access?.updatedAt ?? 0)) incoming = { ...incoming, access: previous.access, sandboxMode: previous.access?.mode };
   // Transcript timestamps do not version current runtime ownership or capability.
   if (previous && sameCliSessionTarget(incoming,previous) && Date.parse(incoming.updatedAt ?? '') < Date.parse(previous.updatedAt ?? '')) return {
     ...previous, status: incoming.status, locked: incoming.locked, canStop: incoming.canStop,
     steerTurnId: incoming.steerTurnId, statusError: incoming.statusError,
-    runningBy: incoming.runningBy, runningSince: incoming.runningSince
+    runningBy: incoming.runningBy, runningSince: incoming.runningSince,
+    access: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.access : previous.access,
+    sandboxMode: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.sandboxMode : previous.sandboxMode
   };
   if (!previous || !sameCliSessionTarget(incoming,previous) ||
       !(previous.projectPath && !incoming.projectPath || SESSION_METADATA.some(key=>incoming[key]===undefined && previous[key]!==undefined))) return incoming;
   return { ...incoming,projectPath:incoming.projectPath || previous.projectPath,
+    access: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.access : previous.access, sandboxMode: incoming.access ? incoming.access.mode : incoming.sandboxMode ?? previous.sandboxMode,
     model:incoming.model ?? previous.model,reasoningEffort:incoming.reasoningEffort ?? previous.reasoningEffort,
     goal:incoming.goal === undefined ? previous.goal : incoming.goal,
     sessionSurface:incoming.sessionSurface ?? previous.sessionSurface,subAgent:incoming.subAgent ?? previous.subAgent,

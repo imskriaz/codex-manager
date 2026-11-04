@@ -1,3 +1,6 @@
+import { saveCodexSessionAccess } from './codexSessionAccessState';
+import { parseCodexSessionAccess, type CodexSessionAccess } from '../domain/codexSessionAccess';
+import { publishDashboardRealtime } from './dashboardRealtime';
 import { MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
@@ -12,6 +15,7 @@ import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompt
 
 type Observation = {
   home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number;
+  access?: CodexSessionAccess;
   prompts?: AppServerRequest[];
   promptResponses?: Map<string, Promise<void>>;
   waiters: Set<(running: boolean | undefined) => void>;
@@ -40,7 +44,7 @@ function follow(entry: Observation, following: boolean): void {
 function settle(entry: Observation, running: boolean | undefined): void {
   entry.running = running;
   if (running !== true) entry.turnId = undefined;
-  if (running === undefined) entry.ready = undefined;
+  if (running === undefined) { entry.ready = undefined; entry.access = undefined; }
   recordNativeSessionStatus(entry.home,entry.id,running);
   for (const resolve of entry.waiters) resolve(running);
   entry.waiters.clear();
@@ -51,6 +55,7 @@ function runtimeRunning(value: unknown): boolean | undefined {
 }
 type NativeConversationState = {
   id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown; requests?: unknown;
+  latestThreadSettings?: unknown;
   turns?: unknown; turnHistory?: { kind?: unknown; history?: { entitiesByKey?: unknown; islands?: Array<{ newerBoundary?: { status?: unknown }; entries?: Array<{ value?: unknown }> }> } };
 };
 
@@ -72,7 +77,7 @@ function activeNativeTurnId(state: NativeConversationState): string | undefined 
 
 type NativeMessage = {
   type?: unknown; method?: unknown; version?: unknown; sourceClientId?: unknown; requestId?: string; resultType?: string; error?: unknown;
-  result?: { clientId?: unknown; result?: { turn?: { id?: unknown }; turnId?: unknown }; ok?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
+  result?: { clientId?: unknown; result?: { turn?: { id?: unknown }; turnId?: unknown }; ok?: unknown; applied?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
   params?: { status?: unknown; clientId?: unknown; hostId?: unknown; conversationId?: unknown;
     change?: { type?: unknown; revision?: unknown; baseRevision?: unknown; patches?: unknown;
       conversationState?: NativeConversationState } };
@@ -116,6 +121,7 @@ function receive(message: NativeMessage): void {
       if (entry.owner === message.sourceClientId && entry.revision !== undefined && (change.revision < entry.revision || change.revision === entry.revision && !entry.needsTurnSnapshot)) continue;
       if (entry.owner !== message.sourceClientId) { clearNativeCodexPrompts(entry); entry.promptResponses = undefined; }
       entry.owner = message.sourceClientId; entry.revision = change.revision;
+      updateAccess(entry, parseCodexSessionAccess(state.latestThreadSettings), state.latestThreadSettings);
       entry.turnId = activeNativeTurnId(state); entry.needsTurnSnapshot = false;
       entry.prompts = readNativePrompts(state.requests, entry.id);
       for (const key of entry.promptResponses?.keys() ?? []) if (!entry.prompts.some(request => JSON.stringify(request) === key)) entry.promptResponses?.delete(key);
@@ -141,6 +147,10 @@ function receive(message: NativeMessage): void {
             patch.path[0] === "turnHistory" && !(patch.path[1] === "history" && patch.path[2] === "entitiesByKey" && patch.path.length > 4 && !["turnId", "status"].includes(String(patch.path[4])))) {
           entry.turnId = undefined;
         }
+        if (patch.path[0] === 'latestThreadSettings') {
+          if (patch.path.length === 1) updateAccess(entry, patch.op === 'remove' ? undefined : parseCodexSessionAccess(patch.value), patch.value);
+          else { entry.access = undefined; entry.needsTurnSnapshot = true; follow(entry, true); }
+        }
         if (patch.path[0] === "requests") {
           if (!applyPromptPatch(entry, patch)) {
             clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.revision = undefined;
@@ -161,6 +171,27 @@ function receive(message: NativeMessage): void {
       if (entry.running === true && !entry.turnId && !entry.needsTurnSnapshot) { entry.needsTurnSnapshot = true; follow(entry, true); }
     }
   }
+}
+
+function updateAccess(entry: Observation, access: CodexSessionAccess | undefined, settings?: unknown): void {
+  if (JSON.stringify(access && { ...access, updatedAt: 0 }) === JSON.stringify(entry.access && { ...entry.access, updatedAt: 0 })) return;
+  if (access) access = { ...access, updatedAt: Math.max(access.updatedAt, (entry.access?.updatedAt ?? 0) + 1) };
+  entry.access = access;
+  if (access) saveCodexSessionAccess(entry.home,entry.id,access,settings);
+  if (access) publishDashboardRealtime({ type: 'dashboard:codex-session-access', sessionId: entry.id, access });
+}
+export function getNativeCodexSessionAccess(home: string, id: string): CodexSessionAccess | undefined {
+  const entry = observations.get(`${path.resolve(home)}:${id}`);
+  return socket?.writable && entry?.owner && entry.ready && entry.revision !== undefined ? entry.access : undefined;
+}
+export async function updateNativeCodexSessionAccess(home: string, id: string, settings: Record<string, unknown>): Promise<boolean> {
+  await readNativeCodexSessionRunning(home, id);
+  const entry = observations.get(`${path.resolve(home)}:${id}`), owner = entry?.owner, revision = connectionRevision;
+  const reply = await requestNativeOwner(home, id, 'thread-follower-update-thread-settings', { conversationId: id, threadSettings: settings });
+  if (!reply) return false;
+  if (entry?.owner !== owner || connectionRevision !== revision || observations.get(`${path.resolve(home)}:${id}`) !== entry) throw new Error('The Codex owner changed while applying access. Refresh before changing it again.');
+  if (reply.result?.applied !== true) throw new Error('Codex did not confirm the access change. Refresh its settings before retrying.');
+  return true;
 }
 
 export function getNativeCodexSessionTurnId(home: string, id: string): string | undefined {
@@ -311,7 +342,7 @@ export async function steerNativeCodexSessionTurn(home: string, id: string, expe
   return true;
 }
 
-async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn" | 'thread-follower-steer-turn' | NativePromptMethod, params: Record<string, unknown>, signal?: AbortSignal, verify?: () => boolean, onSent?: () => void): Promise<NativeMessage | undefined> {
+async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn" | 'thread-follower-steer-turn' | 'thread-follower-update-thread-settings' | NativePromptMethod, params: Record<string, unknown>, signal?: AbortSignal, verify?: () => boolean, onSent?: () => void): Promise<NativeMessage | undefined> {
   const running = await readNativeCodexSessionRunning(home, id, signal);
   signal?.throwIfAborted();
   const entry = observations.get(`${path.resolve(home)}:${id}`);
@@ -320,7 +351,7 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
   if (path.resolve(normalizeNativePath(canonicalHome)) !== entry.canonicalHome) { clearNativeCodexPrompts(entry); entry.prompts = undefined; entry.owner = undefined; settle(entry, undefined); return undefined; }
   if (!entry.owner || entry.running === undefined || !socket?.writable) return undefined;
   if (verify && !verify()) throw new Error("The Codex request or owner changed. Refresh before responding.");
-  if (method === "thread-follower-start-turn" && !entry.ready) throw new Error("The Codex conversation is still loading. Wait for it to finish, then retry.");
+  if (["thread-follower-start-turn", "thread-follower-update-thread-settings"].includes(method) && !entry.ready) throw new Error("The Codex conversation is still loading. Wait for it to finish, then retry.");
   if (method === "thread-follower-start-turn" && entry.running) throw new Error("Codex is already working in this session. Refresh before sending another message.");
   if (method === 'thread-follower-steer-turn' && (!entry.ready || !entry.running)) throw new Error('The active Codex turn finished or is unavailable. Your follow-up was not sent; refresh before retrying.');
   if (requests.size >= 32 || socket.writableLength > 4 * 1024 * 1024) throw new Error("The Codex owner request queue is full. Wait before retrying.");
@@ -334,7 +365,7 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
-      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" ? 2 : method === 'thread-follower-interrupt-turn' ? 4 : 1,
+      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" || method === "thread-follower-update-thread-settings" ? 2 : method === 'thread-follower-interrupt-turn' ? 4 : 1,
         targetClientId: entry.owner, timeoutMs: 10_000,
         params });
       onSent?.();

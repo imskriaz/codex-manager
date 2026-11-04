@@ -46,6 +46,13 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
 
   await page.evaluate(otherId => { history.pushState({}, "", "/workspace/" + otherId); dispatchEvent(new PopStateEvent("popstate")); }, otherId);
   await page.getByText("Codex is waiting for input in another session.", { exact: true }).waitFor();
+  if (width <= 760) {
+    await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+    await page.locator('.codex-request-background').waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'Show projects and sessions',exact:true}).click();
+    await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
+    await page.locator('.codex-request-background').waitFor({state:'visible'});
+  }
   await page.goBack();
   await panel.waitFor();
   assert.equal(await custom.inputValue(), "Custom compact answer", "Navigating between sessions retains the answer draft");

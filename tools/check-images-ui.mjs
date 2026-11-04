@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+
+export async function checkImagesUi(page,{origin,parentId,width,height,output}) {
+  await page.goto(`${origin}/workspace/${parentId}`);
+  const trigger=page.getByRole('button',{name:'Preview Attachment preview',exact:true});
+  const box=page.locator('.cli-image-lightbox');
+  await trigger.click(); await box.waitFor();
+  const original=box.getByRole('link',{name:'View original image',exact:true});
+  assert.equal(await original.innerText(),'','Original image is an accessible icon');
+  assert.equal(await original.locator('svg').count(),1);
+  assert.equal(await original.getAttribute('target'),'_blank');
+  assert.match(await original.getAttribute('rel'),/noopener/);
+  const first=await original.getAttribute('href');
+  await box.locator('img').click(); assert.equal(await box.isVisible(),true,'Clicking the image keeps the preview open');
+  await box.getByRole('button',{name:'Zoom image',exact:true}).click();
+  await box.getByRole('button',{name:'Fit image',exact:true}).click();
+  await box.getByRole('button',{name:'Next image',exact:true}).click();
+  assert.notEqual(await original.getAttribute('href'),first,'Original follows the selected gallery image');
+  await box.getByText('2 / 2',{exact:true}).waitFor();
+  await page.keyboard.press('ArrowRight');
+  await box.getByText('1 / 2',{exact:true}).waitFor();
+  await page.keyboard.press('ArrowLeft');
+  await box.getByText('2 / 2',{exact:true}).waitFor();
+  const bounds=await box.locator('.cli-image-lightbox-toolbar').boundingBox();
+  assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1,'Compact image actions fit the viewport');
+  await page.screenshot({path:path.join(output,`images-${width}x${height}.png`),animations:'disabled'});
+  await box.locator('.cli-image-stage').click({position:{x:2,y:2}});
+  await box.waitFor({state:'detached'});
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Preview Attachment preview');
+  await trigger.click(); await box.locator('img').evaluate(img=>img.dispatchEvent(new Event('error')));
+  await box.getByRole('alert').waitFor();
+  assert.equal(await original.getAttribute('href'),first,'Failed previews keep the original available');
+  await page.keyboard.press('Escape'); await box.waitFor({state:'detached'});
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Preview Attachment preview');
+  await page.getByRole('link',{name:'Image file',exact:true}).press('Enter');
+  const fileTrigger=page.getByRole('button',{name:'Preview preview.png',exact:true});
+  await fileTrigger.click(); await box.waitFor();
+  assert.equal(await original.getAttribute('href'),first,'Workspace images use the same preview and original action');
+  await box.locator('img').click(); assert.equal(await box.isVisible(),true);
+  await box.locator('.cli-image-stage').click({position:{x:2,y:2}}); await box.waitFor({state:'detached'});
+  assert.equal(await fileTrigger.isVisible(),true,'Outside click returns to the workspace file');
+}

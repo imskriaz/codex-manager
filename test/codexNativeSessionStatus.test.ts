@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), realpath: vi
 vi.unmock("../src/services/codexNativeSessionStatus");
 vi.mock("node:net", () => ({ createConnection: mocks.connect }));
 vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: mocks.realpath }));
-import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { getNativeCodexSessionAccess, updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 import { listPendingCodexAppServerPrompts, respondCodexAppServerPrompt } from "../src/services/codexAppServerPrompts";
 
@@ -501,4 +501,27 @@ it("retains native turn proof for ordinary activity patches and refuses a full r
   Object.assign(socket, { writableLength: 4 * 1024 * 1024 + 1 });
   await expect(steerNativeCodexSessionTurn(home, id, "native-turn", [], home)).rejects.toThrow(/queue is full/);
   expect(socket.sent.some(value => value.method === "thread-follower-steer-turn")).toBe(false);
+});
+
+it('reads live access snapshots and nested changes without trusting stale owners', async () => {
+  const reading = readNativeCodexSessionRunning(home,id); await initialize();
+  const first = snapshot('idle') as any; first.params.change.conversationState.latestThreadSettings = { sandboxPolicy: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':danger-full-access' } };
+  message(first); await reading; expect(getNativeCodexSessionAccess(home,id)?.mode).toBe('danger-full-access');
+  const next = snapshot('idle',2) as any; next.params.change.conversationState.latestThreadSettings = { sandboxPolicy: { type: 'readOnly', networkAccess: false } };
+  message(next); expect(getNativeCodexSessionAccess(home,id)?.mode).toBe('read-only');
+  message(first); expect(getNativeCodexSessionAccess(home,id)?.mode).toBe('read-only');
+  socket.destroy(); expect(getNativeCodexSessionAccess(home,id)).toBeUndefined();
+});
+it.each(['confirmed','missing','timeout','disconnect'])('syncs native access through the verified owner and handles %s without replay', async outcome => {
+  const reading=readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot('active')); await reading;
+  const settings={sandboxPolicy:{type:'readOnly',networkAccess:false}};
+  const pending=updateNativeCodexSessionAccess(home,id,settings);
+  const result=outcome==='confirmed'?expect(pending).resolves.toBe(true):expect(pending).rejects.toThrow();
+  for(let i=0;i<70;i++)await Promise.resolve();
+  const sent=socket.sent.find(value=>value.method==='thread-follower-update-thread-settings');
+  expect(sent).toMatchObject({version:2,targetClientId:'owner',params:{conversationId:id,threadSettings:settings}});
+  if(outcome==='timeout')await vi.advanceTimersByTimeAsync(10001);
+  else if(outcome==='disconnect')socket.destroy();
+  else message({type:'response',requestId:sent.requestId,resultType:'success',result:outcome==='confirmed'?{applied:true}:{}});
+  await result; expect(socket.sent.filter(value=>value.method==='thread-follower-update-thread-settings')).toHaveLength(1);
 });

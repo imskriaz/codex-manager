@@ -55,7 +55,7 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
     : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
       ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
   return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
-    sandboxMode: draft?.sandboxMode ?? session?.sandboxMode ?? config?.defaultSandboxMode ?? "workspace-write" as DashboardCliSandboxMode };
+    sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? config?.defaultSandboxMode ?? "workspace-write" as DashboardCliSandboxMode };
 }
 
 /** Clear only the submitted content, preserving edits made while it was in flight. */

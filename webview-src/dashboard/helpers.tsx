@@ -306,3 +306,5 @@ export function isOpenWorkspaceProject(projectPath: string, roots: readonly { pa
   const project = normalize(projectPath);
   return roots.some(({ path }) => { const root = normalize(path); return project === root || project.startsWith(`${root}/`); });
 }
+
+export function codexModelLabel(value: string | undefined): string | undefined { return value?.replace(/(^|\/)gpt-/i, "$1"); }

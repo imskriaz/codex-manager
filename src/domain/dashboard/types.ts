@@ -606,6 +606,7 @@ export type DashboardActionName =
   | "getCodexCliSessionMessages"
   | "sendCodexCliSessionMessage"
   | "steerCodexCliSessionTurn"
+  | "setCodexSessionAccess"
   | "cancelCodexCliSessionTurn"
   | "respondCodexServerRequest"
   | "openCodexCliSession"
@@ -743,6 +744,7 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  access?: import("../codexSessionAccess").CodexSessionAccess;
   id: string;
   title: string;
   model?: string;
@@ -1227,6 +1229,7 @@ export type DashboardHostMessage =
     }
   | { type: "dashboard:codex-request"; request: DashboardCodexServerRequest }
   | { type: "dashboard:codex-requests"; requests: DashboardCodexServerRequest[] }
+  | { type: "dashboard:codex-session-access"; sessionId: string; deviceId?: string; access: import("../codexSessionAccess").CodexSessionAccess }
   | { type: "dashboard:codex-session-live"; state: DashboardCodexSessionLiveState }
   | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string }
   | {

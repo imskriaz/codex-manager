@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
 vi.mock("child_process", async (original) => ({ ...await original<typeof import("child_process")>(), spawn: mocks.spawn }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
+import { setCodexSessionAccess, observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
-import { cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
@@ -30,6 +30,7 @@ function seedGoal(status: string) {
 }
 beforeEach(async () => {
   vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+  vi.mocked(updateNativeCodexSessionAccess).mockReset().mockResolvedValue(false);
   root = await mkdtemp(path.join(os.tmpdir(), "codex-native-start-"));
   preferenceStore = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
   configureSqliteStateStore(preferenceStore);
@@ -93,7 +94,7 @@ describe("native App Server new sessions", () => {
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
     seedGoal(scenario === 'paused' ? 'paused' : 'active');
     if (scenario === 'manual-stop') writeCodexSessionPreference(root, id, { manualStop: true });
-    const rpc = { request: vi.fn(async () => { throw new Error('already has an active writer'); }), onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn() };
+    const rpc = { request: vi.fn(async () => { throw new Error('already has an active writer'); }), onNotification: () => () => undefined, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn() };
     mocks.open.mockResolvedValue(rpc);
     await expect(resumeCodexSessionGoal({ id, title: 'Goal', status: 'idle', projectPath: root }, undefined, 'automatic', true)).rejects.toThrow(scenario === 'manual-stop' ? 'explicitly stopped' : scenario === 'paused' ? 'paused' : 'active writer');
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
@@ -583,4 +584,24 @@ describe("native App Server new sessions", () => {
     expect(rpc.close).toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
+});
+
+it('updates an idle session through Codex without starting or replaying a user turn', async () => {
+  await mkdir(path.join(root,'sessions'));
+  await writeFile(path.join(root,'session_index.jsonl'),JSON.stringify({id,thread_name:'Access session'})+'\n');
+  await writeFile(path.join(root,'sessions',`rollout-${id}.jsonl`),JSON.stringify({type:'session_meta',payload:{id,cwd:root}})+'\n');
+  const rpc={request:vi.fn(async()=>({})),close:vi.fn()};mocks.open.mockResolvedValue(rpc);
+  const access=await setCodexSessionAccess(id,'read-only');expect(access.mode).toBe('read-only');
+  expect(rpc.request.mock.calls.map(call=>call[0])).toEqual(['thread/resume','thread/settings/update']);
+  expect(rpc.request).toHaveBeenLastCalledWith('thread/settings/update',{threadId:id,sandboxPolicy:{type:'readOnly',networkAccess:false}});
+  expect(rpc.close).toHaveBeenCalledOnce();
+  expect((await readCodexCliSessionSummary(id,root))?.access?.mode).toBe('read-only');
+});
+it('keeps access unchanged when the native owner cannot confirm the change', async () => {
+  await mkdir(path.join(root,'sessions'));
+  await writeFile(path.join(root,'session_index.jsonl'),JSON.stringify({id,thread_name:'Access session'})+'\n');
+  await writeFile(path.join(root,'sessions',`rollout-${id}.jsonl`),JSON.stringify({type:'session_meta',payload:{id,cwd:root}})+'\n');
+  vi.mocked(updateNativeCodexSessionAccess).mockRejectedValueOnce(new Error('Outcome unconfirmed'));
+  await expect(setCodexSessionAccess(id,'danger-full-access')).rejects.toThrow('unconfirmed');
+  expect(mocks.open).not.toHaveBeenCalled();expect((await readCodexCliSessionSummary(id,root))?.access).toBeUndefined();
 });

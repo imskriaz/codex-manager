@@ -59,3 +59,11 @@ describe("durable Codex composer state", () => {
     expect(resolveCliComposerSettings(saved, { models: [{ id: "available", label: "Available", reasoningEfforts: ["medium"], defaultReasoningEffort: "medium" }], defaultSandboxMode: "workspace-write" })).toEqual({ model: "available", reasoningEffort: "medium", sandboxMode: "read-only" });
   });
 });
+
+it('uses Codex session access rather than a stale saved composer override or global default', () => {
+  const draft={text:'Unsent',attachments:[],sandboxMode:'workspace-write' as const};
+  const config={models:[],defaultSandboxMode:'workspace-write' as const};
+  expect(resolveCliComposerSettings(draft,config,{sandboxMode:'danger-full-access'}).sandboxMode).toBe('danger-full-access');
+  expect(resolveCliComposerSettings(draft,config,{}).sandboxMode).toBeUndefined();
+  expect(resolveCliComposerSettings(draft,config).sandboxMode).toBe('workspace-write');
+});

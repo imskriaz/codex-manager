@@ -332,12 +332,20 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).waitFor();
   await page.waitForFunction(()=>!document.querySelector('.task-create-modal button[type=submit]')?.disabled);
   await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
+  if (width === 320) await page.evaluate(() => {
+    window.__taskStorageTransaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (...args) {
+      if (args[1] === 'readwrite') throw new DOMException('Storage full', 'QuotaExceededError');
+      return window.__taskStorageTransaction.apply(this, args);
+    };
+  });
   await create.getByRole('button', { name: 'Save task', exact: true }).click();
   if (width === 320) {
-    await page.locator('.dashboard-notice-stack').getByText(/kept|storage|unavailable/i).waitFor();
+    await page.locator('.dashboard-notice-stack').getByText('Browser storage is full or unavailable. Your open draft was kept; reconnect before closing this view.', {exact:true}).waitFor();
     assert.equal(await create.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
     assert.equal(await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).count(),1,'Storage failures preserve the attachment');
     await create.getByRole('button', { name: 'Close new task', exact: true }).click();
+    await page.evaluate(() => { IDBDatabase.prototype.transaction = window.__taskStorageTransaction; delete window.__taskStorageTransaction; });
   } else {
     await create.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();

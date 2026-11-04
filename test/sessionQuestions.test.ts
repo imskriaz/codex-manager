@@ -35,10 +35,11 @@ it('tracks cumulative session totals separately from the last context measuremen
   expect(parseCodexTokenUsage({ total: { totalTokens: -1 }, modelContextWindow: Infinity })).toMatchObject({ total: undefined, contextWindow: undefined });
 });
 
-it('initializes editable permissions from Codex rather than the global default and keeps a deliberate override', () => {
+it('uses confirmed Codex permissions instead of stale composer overrides', () => {
   const config = { models: [], defaultSandboxMode: 'workspace-write' as const };
   expect(resolveCliComposerSettings(undefined, config, { sandboxMode: 'read-only' }).sandboxMode).toBe('read-only');
-  expect(resolveCliComposerSettings({ text: '', attachments: [], sandboxMode: 'danger-full-access' }, config, { sandboxMode: 'read-only' }).sandboxMode).toBe('danger-full-access');
+  expect(resolveCliComposerSettings({ text: '', attachments: [], sandboxMode: 'danger-full-access' }, config, { sandboxMode: 'read-only' }).sandboxMode).toBe('read-only');
+  expect(resolveCliComposerSettings({ text: '', attachments: [], sandboxMode: 'danger-full-access' }, config).sandboxMode).toBe('danger-full-access');
 });
 
 

@@ -1,3 +1,5 @@
+import { codexModelLabel } from "./helpers";
+import { isCodexSessionAccess } from '../../src/domain/codexSessionAccess';
 import { codexPromptKey } from "./codexSessionPrompts";
 import { useCodexSessionPrompts } from "./codexSessionPromptHook";
 import { CodexSessionRequest } from "./codexSessionRequest";
@@ -827,6 +829,11 @@ function App() {
           setAgentMessages((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, value.loading ? { ...value, loading: false, error: "Connection lost while loading agent messages. Reconnecting; use Refresh if needed." } : value])));
         }
         return;
+      }
+      if (message.type === 'dashboard:codex-session-access' && isCodexSessionAccess(message.access)) {
+        const apply = (session: DashboardCliSessionSummary) => session.id === message.sessionId && session.deviceId === message.deviceId && (session.access?.updatedAt ?? 0) <= message.access.updatedAt ? { ...session, access: message.access, sandboxMode: message.access.mode } : session;
+        setCliSessions(current => current.map(apply));
+        setSelectedCliSession(current => current ? apply(current) : current);
       }
       if (message.type === "dashboard:codex-session-live") {
         acceptLiveSnapshot(message.state);
@@ -3207,6 +3214,7 @@ function App() {
                 })
               }
               onStart={(input) => sendAction("startCodexCliSession", undefined, { ...input, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
+              onAccess={(session, sandboxMode) => sendAction("setCodexSessionAccess", undefined, { sessionId: session.id, sandboxMode, projectPath: session.projectPath, targetDeviceId: session.deviceId })}
               onSteer={(input) => {
                 if (!selectedCliSession) return undefined;
                 const requestId = sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath });
@@ -3601,7 +3609,7 @@ function CliSessionsMenu(props: {
                   return <article class={`cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}`} role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
                     <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || actionPending || session.status === 'unknown' || offline} aria-label={`${props.browser || running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : props.browser || running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
-                    <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
+                    <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{codexModelLabel(session.model) || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
                     {showsCodexSessionAutoResume(session) ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : null}

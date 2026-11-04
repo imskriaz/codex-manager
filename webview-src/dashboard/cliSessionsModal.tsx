@@ -1,3 +1,5 @@
+import { codexModelLabel } from "./helpers";
+import { useSessionAccess } from './sessionAccess';
 import { unansweredSessionQuestions } from '../../src/domain/sessionQuestions';
 import { useCliMessageQueue, queuedMessageView } from './cliMessageQueue';
 import { SessionQuestionPrompt } from './sessionQuestions';
@@ -212,7 +214,7 @@ export type CliSessionsPageProps = {
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   onPeerChange?: (peerId: string) => void;
   onRefresh: () => void;
-  onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode; projectPath?: string }) => string | undefined;
+  onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; projectPath?: string }) => string | undefined;
   onSelect: (session: DashboardCliSessionSummary) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
@@ -231,12 +233,13 @@ export type CliSessionsPageProps = {
   onClearFile: () => void;
   onDeleteFile: (filePath: string, projectPath?: string) => void;
   onSaveFile: (filePath: string, content: string, revision: string, projectPath?: string) => string | undefined;
+  onAccess?: (session: DashboardCliSessionSummary, mode: DashboardCliSandboxMode) => string | undefined;
   onSend: (input: {
     text: string;
     attachments?: ChatAttachment[];
     model?: string;
     reasoningEffort?: string;
-    sandboxMode: DashboardCliSandboxMode;
+    sandboxMode?: DashboardCliSandboxMode;
     projectPath?: string;
   }) => string | undefined;
   onStop: (session: DashboardCliSessionSummary) => void;
@@ -358,6 +361,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession);
   const { model, reasoningEffort, sandboxMode } = settings;
+  const access = useSessionAccess({ session: props.selectedSession, connected: props.connected !== false,
+    send: mode => props.selectedSession && props.onAccess?.(props.selectedSession, mode), feedback: props.onActionFeedback });
   const updateDraftSettings = (patch: Partial<ComposerDraft>) => {
     markDraftFields(Object.keys(patch) as Array<keyof ComposerDraft>);
     setComposerDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] ?? { text: "", attachments: EMPTY_CHAT_ATTACHMENTS }), ...patch } }));
@@ -863,11 +868,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   const messageQueue = useCliMessageQueue({
     scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
-    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && !props.sending && (!currentTurnRunning || canSteer)),
+    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && !props.sending && !access.pending && (!currentTurnRunning || canSteer)),
     turnId: canSteer ? steeringTurnId : undefined,
     send: value => canSteer && steeringTurnId
       ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
-      : props.onSend({ ...value, sandboxMode: value.sandboxMode ?? sandboxMode, projectPath: props.selectedSession?.projectPath }),
+      : props.onSend({ ...value, sandboxMode: undefined, projectPath: props.selectedSession?.projectPath }),
     restore: value => {
       const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: [] };
       if (!canRestoreCliComposerDraft(current, value)) { reportLocalFeedback({ level: 'warning', message: 'Your newer composer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; }
@@ -880,7 +885,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (props.selectedSession) {
       if (attachmentReading || selectedArchived || !draftReadyKeys.has(draftKey)) return;
       const previous = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
-      const value = { ...previous, ...settings, text: reply ?? previous.text, attachments: reply ? [] : previous.attachments };
+      const value = { ...previous, ...settings, sandboxMode: undefined, text: reply ?? previous.text, attachments: reply ? [] : previous.attachments };
       try { prepareChatInput(value.text, value.attachments); }
       catch (error) { reportLocalFeedback({ level: 'error', message: (error as Error).message }); return; }
       if (!value.text.trim() && !value.attachments.length) return;
@@ -1203,7 +1208,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   draft={draft}
                   model={model}
                   reasoningEffort={reasoningEffort}
-                  sandboxMode={sandboxMode}
+                  sandboxMode={access.mode}
+                  permissionProfile={access.profile}
+                  accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}
+                  accessStatus={access.status}
                   projectPath={props.selectedSession.projectPath ?? projectPath}
                   projectLocked
                   projects={composerProjects}
@@ -1223,7 +1231,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]);
                   }}
                   onReasoning={setReasoningEffort}
-                  onSandbox={setSandboxMode}
+                  onSandbox={access.change}
                   onProject={setProjectPath}
                   onSubmit={() => { submit(); }}
                   composerHeight={layout.composerHeight}
@@ -1390,7 +1398,8 @@ export function ConversationHeader(props: {
 
 export function Composer(props: {
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
-  draft: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode;
+  draft: string; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode;
+  permissionProfile?: string; accessDisabled?: boolean; accessStatus?: string;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
   canSteer?: boolean; submitDisabled?: boolean; stopDisabled?: boolean; unavailableReason?: string; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
@@ -1444,9 +1453,9 @@ export function Composer(props: {
   const selectedReasoning = reasoningChoices.includes(props.reasoningEffort ?? "")
     ? props.reasoningEffort
     : reasoningChoices[0];
-  const accessLabel = props.sandboxMode === "danger-full-access" ? "Full access" : props.sandboxMode === "read-only" ? "Read only" : "Workspace write";
-  const accessSummary = props.sandboxMode === "danger-full-access" ? "Full" : props.sandboxMode === "read-only" ? "Read" : "Write";
-  const reasoningLabel = selectedReasoning === "xhigh" ? "Extra high" : capitalize(selectedReasoning ?? "medium");
+  const accessLabel = props.permissionProfile && !props.permissionProfile.startsWith(":") ? `Codex profile: ${props.permissionProfile}` : props.sandboxMode === "danger-full-access" ? "Full access" : props.sandboxMode === "read-only" ? "Read only" : props.sandboxMode === "workspace-write" ? "Workspace write" : "Codex permissions";
+  const accessSummary = props.permissionProfile && !props.permissionProfile.startsWith(":") ? props.permissionProfile : props.sandboxMode === "danger-full-access" ? "Full" : props.sandboxMode === "read-only" ? "Read" : props.sandboxMode === "workspace-write" ? "Write" : "Codex";
+  const reasoningLabel = selectedReasoning === "xhigh" ? "XHigh" : capitalize(selectedReasoning ?? "medium");
   const projectPicker = !props.projectLocked ? <div class="cli-composer-location is-top"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" title={props.projectPath ?? "Work locally"} onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></div> : null;
 
   return <>{projectPicker}<form ref={composerRef} class={`cli-composer ${!props.draft && !props.attachments.length ? "is-empty" : ""}`} style={`--cli-composer-text-limit:${props.composerHeight}px`} onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer?.files.length) return; event.preventDefault(); props.onAttach(Array.from(event.dataTransfer.files)); }} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
@@ -1457,14 +1466,15 @@ export function Composer(props: {
     {props.draft.length > 60_000 ? <small class="cli-composer-limit" role="status">{64_000 - props.draft.length} characters left</small> : null}
     <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach files or documents (up to 32 files, 50 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" aria-hidden="true" /> : <AttachmentIcon />}</button>
 
-    <ContextMeter usage={props.tokenUsage} /></div><div class="cli-composer-submit">
+    </div><div class="cli-composer-submit">
       <div class="cli-composer-options-wrap" ref={optionsRef}>
-        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[selectedModel?.label ?? "Default model", reasoningLabel, accessLabel].join(" · ")} onClick={() => setOptionsOpen((open) => !open)}><span class="cli-composer-model">{selectedModel?.label ?? "Default"}</span><small class="cli-composer-effort">{reasoningLabel}</small><span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span><ChevronIcon /></button>
+        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[codexModelLabel(selectedModel?.label) ?? "Default model", reasoningLabel, accessLabel].join(" · ")} onClick={() => setOptionsOpen((open) => !open)}><ContextMeter usage={props.tokenUsage} inButton /><span class="cli-composer-model">{codexModelLabel(selectedModel?.label) ?? "Default"}</span><small class="cli-composer-effort">{reasoningLabel}</small><span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span><ChevronIcon /></button>
         {optionsOpen ? <div ref={optionsPanelRef} id={optionsId} class="cli-composer-options" popover="manual" role="group" aria-label="Message settings">
           <header><strong>{props.sending ? "Next turn settings" : "Message settings"}</strong><button type="button" aria-label="Close message settings" onClick={closeOptions}><CloseIcon /></button></header>
-          <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+          <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
-          <label><span>Access</span><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+          <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+          {props.accessStatus ? <small class="cli-access-status" role="status">{props.accessStatus}</small> : props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
       </div>
       {props.sending && !(props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="button" class="cli-stop-button" disabled={props.stopping || props.stopDisabled} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}>{props.stopping ? <span class="cli-live-spinner" aria-hidden="true" /> : <StopIcon />}<span class="cli-stop-label">{props.stopping ? "Stopping" : "Stop"}</span></button> : null}{!props.sending || (props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
@@ -1472,13 +1482,13 @@ export function Composer(props: {
   </form></>;
 }
 
-export function ContextMeter({ usage }: { usage?: DashboardCodexSessionLiveState["tokenUsage"] }) {
+export function ContextMeter({ usage, inButton = false }: { usage?: DashboardCodexSessionLiveState["tokenUsage"]; inButton?: boolean }) {
   const context = cliContextUsage(usage);
   const percent = context?.percent ?? 0;
   const label = context ? `Context ${percent}% used · ${context.used.toLocaleString()} / ${context.limit.toLocaleString()} tokens. Draft and attachments are included after Codex processes them.` : "Context usage is not available yet.";
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
-  return <span class="cli-context-meter" tabIndex={0} title={label} aria-label={label}><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="cli-context-meter-track" cx="10" cy="10" r={radius} /><circle class="cli-context-meter-value" cx="10" cy="10" r={radius} style={{ strokeDasharray: String(circumference), strokeDashoffset: String(circumference * (1 - percent / 100)) }} /></svg></span>;
+  return <span class="cli-context-meter" tabIndex={inButton ? undefined : 0} title={label} aria-label={label}><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="cli-context-meter-track" cx="10" cy="10" r={radius} /><circle class="cli-context-meter-value" cx="10" cy="10" r={radius} style={{ strokeDasharray: String(circumference), strokeDashoffset: String(circumference * (1 - percent / 100)) }} /></svg></span>;
 }
 
 export function LiveTurnDetails({ state, usage }: { state?: DashboardCodexSessionLiveState; usage?: DashboardCodexSessionLiveState["tokenUsage"] }) {
@@ -1531,8 +1541,8 @@ export function ImageLightbox({ image: initialImage, images, initialIndex = 0, o
   const alt = image.alt || "Image preview";
   return createPortal(
       <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); move(event.key === 'ArrowLeft' ? -1 : 1); } else accessibility.onKeyDown(event); }} onTouchStart={event => { touch.current = event.touches[0]?.clientX; }} onTouchEnd={event => { const end = event.changedTouches[0]?.clientX; if (!zoomed && touch.current !== undefined && end !== undefined && Math.abs(end - touch.current) > 50) move(end < touch.current ? 1 : -1); touch.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
-        <div class="cli-image-lightbox-toolbar"><strong>{alt}</strong><span>{gallery.length > 1 ? <><button type="button" aria-label="Previous image" onClick={() => move(-1)}>‹</button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" onClick={() => move(1)}>›</button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} onClick={() => setZoomed(value => !value)}>{zoomed ? '−' : '+'}</button><a href={image.src} target="_blank" rel="noopener noreferrer">Open original</a><button type="button" aria-label="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
-        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`}><img key={image.src} src={image.src} alt={alt} onError={() => setFailed(true)} onDblClick={() => setZoomed(value => !value)} /></div>}
+        <div class="cli-image-lightbox-toolbar"><strong>{alt}</strong><span>{gallery.length > 1 ? <><button type="button" aria-label="Previous image" onClick={() => move(-1)}>‹</button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" onClick={() => move(1)}>›</button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} onClick={() => setZoomed(value => !value)}>{zoomed ? '−' : '+'}</button><a href={image.src} target="_blank" rel="noopener noreferrer" aria-label="View original image" title="View original image"><Icon><path d="M14 3h7v7m0-7L10 14M10 3H3v18h18v-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
+        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><img key={image.src} src={image.src} alt={alt} onError={() => setFailed(true)} onDblClick={() => setZoomed(value => !value)} /></div>}
       </div>,
       document.body
     );
@@ -2079,7 +2089,7 @@ export function AgentWorkspace(props: { connected?: boolean; sessions: Dashboard
   useEffect(() => setActiveId(props.activeId ?? (props.renderConversation ? props.sessions[0]?.id : undefined)), [props.activeId]);
   const agent = props.sessions.find(item => item.id === activeId);
   const state = agent ? props.data[cliSessionTargetKey(agent)] : undefined;
-  const name = (item: DashboardCliSessionSummary) => item.agentName || item.model || 'Agent';
+  const name = (item: DashboardCliSessionSummary) => item.agentName || codexModelLabel(item.model) || 'Agent';
   useEffect(() => {
     if (agent && props.connected !== false && document.visibilityState === 'visible' && navigator.onLine) props.onRefresh?.(agent, true);
   }, [agent?.id, agent?.deviceId, agent?.status, agent?.updatedAt, props.connected]);
@@ -2089,7 +2099,7 @@ export function AgentWorkspace(props: { connected?: boolean; sessions: Dashboard
       {agent ? <button type="button" role="tab" aria-selected="true" title={name(agent)}>{name(agent)}</button> : null}
     </div>
     {activeId ? agent ? <>
-      <header><span class={`cli-state-pill ${agent.status === 'running' ? 'is-running' : ''}`}>{agent.status === 'running' ? 'Running' : agent.interrupted ? 'Interrupted' : agent.status === 'unknown' ? 'Unverified' : 'Idle'}</span><small>{[agent.model, agent.reasoningEffort].filter(Boolean).join(' · ')}</small>{props.onRefresh ? <button type="button" disabled={state?.loading || props.connected === false} onClick={() => props.onRefresh?.(agent, false)}>Refresh</button> : null}</header>
+      <header><span class={`cli-state-pill ${agent.status === 'running' ? 'is-running' : ''}`}>{agent.status === 'running' ? 'Running' : agent.interrupted ? 'Interrupted' : agent.status === 'unknown' ? 'Unverified' : 'Idle'}</span><small>{[codexModelLabel(agent.model), agent.reasoningEffort].filter(Boolean).join(' · ')}</small>{props.onRefresh ? <button type="button" disabled={state?.loading || props.connected === false} onClick={() => props.onRefresh?.(agent, false)}>Refresh</button> : null}</header>
       {state?.error ? <div role="alert" class="cli-agent-error">{state.error}</div> : null}
       {state?.loading ? <div role="status" class="settings-note">Refreshing agent messages…</div> : null}
       {props.renderConversation ? props.renderConversation(agent, state?.messages ?? []) : <div class="cli-agent-transcript cli-session-messages"><SessionTranscript messages={state?.messages ?? []} running={agent.status === "running"} onActionFeedback={props.onFeedback} />{!state?.loading && !state?.error && !state?.messages?.length ? <p class="settings-note">{props.connected === false ? 'Reconnect to load this agent’s messages.' : 'No messages recorded yet.'}</p> : null}</div>}
@@ -2121,7 +2131,6 @@ function WorkspaceFilesView(props: {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [documentModes, setDocumentModes] = useState<Record<string, "edit" | "preview">>({});
   const [imageOpen, setImageOpen] = useState(false);
-  const imageAccessibility = useModalAccessibility(imageOpen, () => setImageOpen(false));
   const [fileMenu, setFileMenu] = useState<{ entry: DashboardWorkspaceFileEntry; x: number; y: number }>();
   const [deleteTarget, setDeleteTarget] = useState<DashboardWorkspaceFileEntry>();
   const directoryPaths = useMemo(() => new Set(props.files.filter(entry => entry.type === "directory").map(entry => entry.path)), [props.files]);
@@ -2155,7 +2164,7 @@ function WorkspaceFilesView(props: {
     {fileMenu ? <WorkspaceContextMenu x={fileMenu.x} y={fileMenu.y} onClose={() => setFileMenu(undefined)}><strong title={fileMenu.entry.path}>{fileMenu.entry.name}</strong>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); openFile(fileMenu.entry.path); }}><FileIcon /> Open</button> : <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); setCollapsed((current) => ({ ...current, [fileMenu.entry.path]: current[fileMenu.entry.path] === false })); }}><EmptyFolderIcon /> Expand / collapse</button>}<button type="button" role="menuitem" onClick={() => { const selected = fileMenu.entry.path; setFileMenu(undefined); void navigator.clipboard.writeText(selected).then(() => props.onFeedback({ level: "info", message: "File path copied." }), () => props.onFeedback({ level: "error", message: "File path could not be copied." })); }}><LinkIcon /> Copy path</button>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" class="is-danger" disabled={props.connected === false} onClick={() => { setDeleteTarget(fileMenu.entry); setFileMenu(undefined); }}><TrashIcon /> Delete</button> : null}</WorkspaceContextMenu> : null}
     {deleteTarget ? <DeleteConfirmation compact title={deleteTarget.name} onCancel={() => setDeleteTarget(undefined)} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDeleteFile(target.path); if (target.path === currentPath) props.onClearFile(); }} /> : null}
     {currentPath ? <div class="cli-file-editor">{fileReady && props.file ? <><header><span><strong title={props.file.path}>{props.file.path}</strong><small>{dirty ? "Modified" : `${props.file.kind === "text" ? props.file.language : props.file.mimeType} · ${formatFileSize(props.file.size)}`}</small></span><span class="cli-file-actions">{props.file.language === "markdown" ? <button type="button" onClick={() => setDocumentModes((current) => ({ ...current, [props.file!.path]: markdownPreview ? "edit" : "preview" }))}>{markdownPreview ? "Edit" : "Preview"}</button> : null}{props.file.kind === "text" ? <button type="button" disabled={!dirty || props.saving || props.connected === false} onClick={() => props.onSave(props.file!.path, draft, revision)}>{props.saving ? "Saving…" : "Save"}</button> : null}</span></header>{props.file.kind === "image" && props.file.dataUrl ? <figure class="cli-file-image-preview"><button type="button" aria-label={`Preview ${props.file.path}`} onClick={() => setImageOpen(true)}><img src={props.file.dataUrl} alt={props.file.path} /></button><figcaption>{props.file.mimeType} · {formatFileSize(props.file.size)}</figcaption></figure> : props.file.kind === "audio" && props.file.dataUrl ? <div class="cli-file-media-preview"><FileIcon /><audio controls preload="metadata" src={props.file.dataUrl}>Audio preview is not supported by this browser.</audio><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "video" && props.file.dataUrl ? <div class="cli-file-media-preview is-video"><FileIcon /><video controls preload="metadata" src={props.file.dataUrl}>Video preview is not supported by this browser.</video><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "pdf" && props.file.dataUrl ? <iframe class="cli-file-pdf-preview" title={`Preview ${props.file.path}`} src={props.file.dataUrl} /> : props.file.kind === "document" ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>body{max-width:760px;margin:0 auto;padding:32px;color:#24292f;background:#fff;font:15px/1.65 Georgia,serif}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #d0d7de}</style>${props.file.content}`} /> : markdownPreview ? <MarkdownPreview content={draft} /> : <WorkspaceCodeEditor path={props.file.path} language={props.file.language} value={draft} disabled={props.connected === false} onChange={(value) => props.onDraft(props.file!.path, value)} onSave={() => { if (dirty && !props.saving && props.connected !== false) props.onSave(props.file!.path, draft, revision); }} />}</> : <div class="cli-context-empty" role="status"><FileIcon /><span>{props.fileLoading ? "Opening file…" : "File could not be loaded."}</span>{!props.fileLoading ? <button type="button" disabled={props.connected === false} onClick={() => props.onOpenFile(currentPath)}>Retry</button> : null}</div>}</div> : null}
-  </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <div ref={imageAccessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${props.file.path}`} tabIndex={-1} onKeyDown={imageAccessibility.onKeyDown} onPointerDown={imageAccessibility.onBackdropPointerDown} onMouseDown={imageAccessibility.onBackdropMouseDown} onClick={imageAccessibility.onBackdropClick}><div class="cli-image-lightbox-toolbar"><strong>{props.file.path}</strong><button type="button" aria-label="Close image preview" onClick={() => setImageOpen(false)}><CloseIcon /></button></div><img src={props.file.dataUrl} alt={props.file.path} /></div> : null}</>;
+  </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <ImageLightbox image={{ src: props.file.dataUrl, alt: props.file.path }} onClose={() => setImageOpen(false)} /> : null}</>;
 }
 
 

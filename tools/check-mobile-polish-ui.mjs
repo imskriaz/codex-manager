@@ -50,12 +50,12 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   await composer.waitFor();
   const composerBox = await fits(composer, 'Empty composer');
   const inputBox = await draft.boundingBox(), toolbarBox = await page.locator('.cli-composer-toolbar').boundingBox();
-  assert.ok(Math.abs(inputBox.y + inputBox.height / 2 - toolbarBox.y - toolbarBox.height / 2) <= 3, 'Empty message and its controls share one row');
-  assert.ok(composerBox.height <= 54, `Empty composer stays one line (${composerBox.height}px)`);
-  assert.ok(inputBox.width >= 64, 'Empty composer leaves usable typing space');
+  assert.ok(toolbarBox.y >= inputBox.y + inputBox.height, 'Blank and typed messages use a full-width field above the controls');
+  assert.ok(composerBox.height <= 110, `Empty composer stays compact in two rows (${composerBox.height}px)`);
+  assert.ok(inputBox.width >= composerBox.width - 30, 'The input uses the full composer width');
   if (width <= 760) {
     const sendBox = await page.getByRole('button', exact('Send message')).boundingBox();
-    assert.ok(sendBox.width >= 32 && sendBox.width <= 36 && sendBox.height >= 32 && sendBox.height <= 36, 'Send target stays compact and operable');
+    assert.ok(sendBox.width >= 44 && sendBox.height >= 44, 'Send target stays compact and operable');
     assert.ok(await draft.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), 'Mobile editing avoids automatic focus zoom');
   }
   assert.equal(await page.locator('.cli-turn-change-bar').count(), 0, 'Redundant turn-change footer stays removed');
@@ -63,7 +63,7 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   await fits(page.locator('.cli-turn-usage-strip'), 'Turn usage row');
   const changedFiles = page.locator('.cli-turn-usage-strip').getByRole('button', { name: 'View 4 changed files', exact: true });
   await changedFiles.waitFor();
-  assert.equal(await changedFiles.innerText(), '4 files changed', 'Changed-file count stays available beside usage');
+  assert.match(await changedFiles.innerText(), /4 files changed\s*\+4\s*[−-]4/, 'Changed-file count includes added and removed lines');
   await fits(changedFiles, 'Changed-file action');
   await changedFiles.click();
   assert.equal(await page.getByRole('tab', exact('Reviews')).getAttribute('aria-selected'), 'true', 'Changed-file count opens Reviews');
@@ -101,9 +101,10 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.ok(await page.locator('.cli-file-editor > header').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'File header fits the selected path and actions');
   await noOverflow('Workspace');
   await page.screenshot({ path: path.join(output, `mobile-polish-workspace-${width}.png`), animations: 'disabled' });
-  await page.evaluate(sessionId => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: 'polish-new-turn', sequence: 1, turnId: 'next-turn', status: 'running', updatedAt: Date.now()+1000, messages: [{ id: 'next-prompt', role: 'user', kind: 'message', turnId: 'next-turn', text: 'Start a new task without file edits' }] } } })), parentId);
-  await page.locator('.cli-turn-usage-strip button[aria-label^="View "]').waitFor({state:'hidden'});
-  assert.equal(await page.locator('.cli-turn-usage-strip').getByRole('button', exact('View usage')).count(), 1, 'Usage remains available when the next turn has no changed files');
+  await page.evaluate(sessionId => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '01a04882-d037-7a42-ad24-9afb61901201', sequence: 1, turnId: 'next-turn', status: 'running', updatedAt: Date.now()+1000, messages: [{ id: 'next-prompt', role: 'user', kind: 'message', turnId: 'next-turn', text: 'Start a new task without file edits' }] } } })), parentId);
+  await page.getByText('Start a new task without file edits',{exact:true}).waitFor();
+  assert.match(await changedFiles.innerText(), /4 files changed\s*\+4\s*[−-]4/, 'Session change totals remain available across turns');
+  assert.equal(await page.locator('.cli-turn-usage-strip').getByRole('button', exact('View usage')).count(), 1, 'Session usage remains available across turns');
   await page.goto(origin + '/workspace/' + runningId);
   const runningStatus = page.locator('.cli-composer');
   await runningStatus.getByRole('textbox', exact('Message Codex')).waitFor();

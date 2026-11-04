@@ -1,3 +1,5 @@
+import { checkImagesUi } from './check-images-ui.mjs';
+import { checkSessionAccessUi } from './check-session-access-ui.mjs';
 import { checkUploadsUi } from './check-uploads-ui.mjs';
 import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
@@ -77,6 +79,10 @@ const messages = [
   { id: "assistant", kind: "message", role: "assistant", text: `The workspace is ready.\n\n\`\`\`ts\nconst answer = 42;\n\`\`\`\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |\n\n![Markdown preview](${previewImage})` }
 ];
 messages.at(-1).text+='\n\nInspect [Source file](src/app.ts:12), [Native source](file:///D:/demo/src/app.ts#L12), or [absolute source](/outside/example.ts).';
+if (process.argv.includes('--images')) {
+  messages[0].images.push({src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100"><rect width="160" height="100" fill="steelblue"/></svg>'),alt:'Second image'});
+  messages.at(-1).text+='\n\n[Image file](preview.png)';
+}
 if(process.argv.includes('--docs'))prepareDocsSnapshot(snapshot,sessions,messages);
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
 const mockHost = `(() => {
@@ -147,7 +153,16 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
-        if(message.action==='respondCodexServerRequest') {
+        if(message.action==='setCodexSessionAccess') {
+          const session=sessions.find(item=>item.id===message.payload.sessionId);
+          if(window.__failAccess) {window.__failAccess=false;error='Access change could not be confirmed.';}
+          else if(session) {
+            session.access={mode:message.payload.sandboxMode,updatedAt:Date.now()};session.sandboxMode=session.access.mode;
+            payload={cliSession:session,notice:{level:'info',message:'Access synced with Codex.'}};
+            dispatch({type:'dashboard:codex-session-access',sessionId:session.id,deviceId:session.deviceId,access:session.access});
+          }
+        }
+        else if(message.action==='respondCodexServerRequest') {
           if(window.__failNextCodexReply) {window.__failNextCodexReply=false;error='Simulated response connection failure. Your answer is kept.';}
           else {
             window.__uiCodexRequests=(window.__uiCodexRequests||[]).filter(item=>item.id!==message.payload.codexRequestId || item.deviceId!==message.payload.targetDeviceId);
@@ -229,6 +244,7 @@ const mockHost = `(() => {
           if(!file) error='This attachment is unavailable.';
           else payload={workspaceFile:{path:file.name,content:file.kind==='text'?file.data:'',kind:file.kind,language:'plaintext',mimeType:file.mimeType,size:file.size,revision:'upload-fixture',...(file.kind==='image'?{dataUrl:file.data}:{})}};
         }
+        else if(message.action==='readWorkspaceFile' && message.payload.filePath.endsWith('preview.png')) payload={workspaceFile:{path:'preview.png',content:'',kind:'image',mimeType:'image/png',dataUrl:${JSON.stringify(previewImage)},size:67,revision:'image-fixture'}};
         else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:window.__fileRevision||'fixture'}};
         else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
@@ -503,6 +519,16 @@ try {
       await context.close();
       continue;
     }
+    if (process.argv.includes('--images')) {
+      await checkImagesUi(page,{origin,parentId,width,height,output});
+      assert.deepEqual(errors,[],'Image previews have no browser runtime errors');
+      results.push({width,height,checks:'Icon original link, gallery navigation, image/control clicks, outside click, failure and workspace-file previews'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--composer-access')) {
+      await checkSessionAccessUi(page,{origin,parentId,width,height,output});
+      assert.deepEqual(errors,[]);results.push({width,height,checks:'Two-row blank and typed composer, context beside model, Codex access sync, failure and offline behavior'});await context.close();continue;
+    }
     if (process.argv.includes('--storage-unavailable')) {
       await page.goto(`${origin}/workspace/${parentId}`);
       const input = page.getByRole('textbox',{name:'Message Codex',exact:true}); await input.fill('Keep my message');
@@ -530,7 +556,7 @@ try {
     if (process.argv.includes('--mobile-polish')) {
       await checkMobilePolishUi(page, { origin, width, height, output, parentId, runningId });
       assert.deepEqual(errors, [], 'Compact UI has no browser runtime errors');
-      results.push({ width, height, checks: '10% typography, dashboard logo/version, sidebar identity/system, empty one-line composer, context meter, usage row, files, tabs and dialogs' });
+      results.push({ width, height, checks: '10% typography, dashboard logo/version, sidebar identity/system, compact two-row composer, context meter, usage row, files, tabs and dialogs' });
       await context.close(); continue;
     }
     if (process.argv.includes('--requests')) {
@@ -2277,7 +2303,8 @@ try {
     assert.ok((await autoResumeControl.getAttribute('title')).includes('off'), 'Tooltip matches the effective state');
     const runningMeta = page.locator(".cli-sessions-running-row .cli-session-row-meta");
     assert.equal(await runningMeta.locator("span").nth(2).textContent(), "demo", "Project follows the PC name");
-    assert.ok((await runningMeta.textContent()).includes("gpt-5"));
+    assert.match(await runningMeta.textContent(), /\b5\b/, "Model name keeps its version");
+    assert.doesNotMatch(await runningMeta.textContent(), /gpt-/i, "Displayed model names omit the GPT prefix");
     assert.match(await runningMeta.textContent(), /\d+m \d+s/);
     assert.ok((await page.locator(".cli-sessions-running-row").getAttribute("title")).includes("Thinking: high"));
     assert.ok((await page.locator(".cli-sessions-running-row").getAttribute("title")).includes("Finish the running task"));

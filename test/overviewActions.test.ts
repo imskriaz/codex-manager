@@ -63,7 +63,7 @@ describe("overview actions", () => {
     expect(main).toContain("!session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)");
     expect(main).toContain("if (!belongsToActivePeer)");
     expect(main).toContain('if (!initialMessages.length) requestCliSessionMessages(session.id, session.deviceId, true);');
-    expect(main).toContain('session.model || "Model unavailable"');
+    expect(main).toContain('codexModelLabel(session.model) || "Model unavailable"');
     expect(main).toContain(': "Session dashboard"');
     expect(main).toMatch(/setCliSessionsMenuOpen\(false\);\r?\n\s+openCliSessions\(\);/);
     expect(main).not.toContain("onClick={openCliSessions}");
