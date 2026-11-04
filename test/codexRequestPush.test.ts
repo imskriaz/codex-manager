@@ -83,6 +83,12 @@ it('offers direct answers and inline text replies with a link to the owning sess
   expect(processMessage).not.toHaveBeenCalled();
 });
 
+it('never pushes expired or invalid-date questions', () => {
+  const notify = vi.fn(); server.browserPush.notify = notify; server.peerSessions = new Map();
+  for (const createdAt of [Date.now() - 120_000, Date.now() + 60_000, NaN]) server.notifyCodexRequest({ id: 'stale', threadId: 'session', kind: 'question', title: 'Old question', createdAt });
+  expect(notify).not.toHaveBeenCalled();
+});
+
 it('routes typed notification replies exactly once to Codex and keeps blank answers from consuming the action', async () => {
   actions.set('prompt', ['Reply','Answer']); server.codexPushActions.set('prompt', { requestId: 'request', targetDeviceId: 'worker', question: true, replyQuestionId: 'answer' });
   const post = (reply: string) => fetch(`${origin}/api/push/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Codex-Dashboard': '1', Origin: origin }, body: JSON.stringify({ notificationId: 'prompt', action: 'Reply', reply }) });

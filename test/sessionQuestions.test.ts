@@ -1,6 +1,6 @@
 import { notificationTargetUrl } from '../src/domain/notificationTarget';
 import { expect, it } from 'vitest';
-import { readSessionQuestions, sessionQuestionReply, unansweredSessionQuestions } from '../src/domain/sessionQuestions';
+import { activeSessionQuestion, readSessionQuestions, sessionQuestionReply, unansweredSessionQuestions } from '../src/domain/sessionQuestions';
 import { parseCodexTokenUsage, validMessage } from '../src/domain/codexSessionLive';
 import { parseCodexAppServerThreadItems } from '../src/services/codexSessionResume';
 import { cliContextUsage, resolveCliComposerSettings } from '../webview-src/dashboard/cliSessionComposerState';
@@ -14,6 +14,24 @@ it('preserves async Codex questions and sends native question IDs with selectabl
   expect(reply).toContain('questionItemId'); expect(reply).toContain('request_user_input_async');
   expect(unansweredSessionQuestions([ask, { id: 'answer', role: 'user', text: reply }])).toEqual([]);
   expect(unansweredSessionQuestions([ask, { id: 'answer', role: 'user', text: 'Compact' }])).toEqual([ask]);
+});
+
+it('only interrupts for a recent question with no newer activity and keeps old questions answerable', () => {
+  const now = Date.now();
+  const ask = { id: 'ask', role: 'assistant' as const, text: '', timestamp: new Date(now - 119_999).toISOString(), questions: [{ title: 'Continue?' }] };
+  expect(activeSessionQuestion([ask], now)).toEqual(ask);
+  expect(activeSessionQuestion([ask], now + 1)).toBeUndefined();
+  for (const later of [{ id: 'command', kind: 'command' as const, text: 'working' }, { id: 'reply', role: 'user' as const, text: 'Next task' }, { ...ask, id: 'next' }]) expect(activeSessionQuestion([ask, later], now)?.id).not.toBe(ask.id);
+  for (const timestamp of [undefined, 'invalid', new Date(now + 1).toISOString()]) expect(activeSessionQuestion([{ ...ask, timestamp }], now)).toBeUndefined();
+  expect(unansweredSessionQuestions([ask, { id: 'later', text: 'More work' }])).toEqual([ask]);
+});
+
+it('replies only to remaining questions without renumbering their native identities', () => {
+  const ask = { id: 'partial', text: '', questions: [{ title: 'First?' }, { title: 'Second?' }] };
+  const reply = sessionQuestionReply(ask, { '1': 'Second answer' });
+  expect(reply).not.toContain('First?');
+  expect(reply).toContain('Second?');
+  expect(unansweredSessionQuestions([{ ...ask, role: 'assistant' }, { id: 'reply', role: 'user', text: reply }])).toHaveLength(1);
 });
 
 it('keeps all unanswered prompts and rejects malformed question payloads at the peer boundary', () => {

@@ -1,9 +1,11 @@
+import { checkMessageTypesUi } from './check-message-types-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
 import { checkImagesUi } from './check-images-ui.mjs';
 import { checkSessionAccessUi } from './check-session-access-ui.mjs';
 import { checkUploadsUi } from './check-uploads-ui.mjs';
 import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
+import { checkSessionQuestionUi } from './check-session-question-ui.mjs';
 import { checkSteerUi } from './check-steer-ui.mjs';
 import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
@@ -282,6 +284,7 @@ const mockHost = `(() => {
           payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,...(i===2?{accountLabel:'former@example.test'}:{}),fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
           if(window.__docsFixture)payload.usageGraph.history=state.accounts.flatMap((account,index)=>Array.from({length:20},(_,point)=>({accountId:account.id,at:query.from+(query.to-query.from)*point/19,hourly:Math.max(0,98-index*8-Math.floor(point/3)*(index%3+1)*1.2-(point%3===2?0.4:0)),weekly:Math.max(0,92-index*8-point*.2)})));
         }
+        else if(message.action === 'getCodexSkills') { if(window.__failSkills) error='Skill discovery is offline. Retry when connected.'; else payload={cliSkills:[{name:'review-code',description:'Review code changes and check regressions'},{name:'ui-design',description:'Improve the interface'}]}; }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
           else if (window.__systemFixture && message.payload?.targetDeviceId === 'fixture-system') payload = {cliSessions:[{id:'44444444-4444-4444-8444-444444444444',title:'Remote system session',status:'idle',projectPath:'E:/remote-project',deviceId:'fixture-system',deviceName:'Remote system',remote:true,updatedAt:new Date().toISOString()}],cliSessionsDeviceId:'fixture-system',cliComposerConfig:{...config,projects:[{id:'remote-project',path:'E:/remote-project',label:'remote-project'}]}};
@@ -302,7 +305,7 @@ const mockHost = `(() => {
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
-          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
+          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
         } else if(message.action === 'getCodexSubAgentMessages' && window.__failAgentRead) error='Agent transcript unavailable. Saved messages were kept.';
         else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
@@ -577,6 +580,22 @@ try {
       await checkSessionRequestsUi(page, width, height, output, parentId, runningId);
       assert.deepEqual(errors, [], 'Session approval and question browser errors');
       results.push({width,height,checks:'session approvals, choices, custom and secret answers, navigation, failure, offline, reconnect, duplicates'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--message-types')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+      await checkMessageTypesUi(page, { parentId, agentId, width, output });
+      assert.deepEqual(errors, [], 'Message presentation has no browser runtime errors');
+      results.push({ width, height, checks: 'Every transcript kind, wrapped tool output, capacity notice, agent links, slash skills and failure recovery' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--questions')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+      await checkSessionQuestionUi(page, { parentId, width, output });
+      assert.deepEqual(errors, [], 'Question prompts have no browser runtime errors');
+      results.push({ width, height, checks: 'question timeout, at-message Answer, new activity, immediate queue, offline, duplicate submission, composer preservation, reconnect' });
       await context.close(); continue;
     }
     if (process.argv.includes('--workspace-ui') || process.argv.includes('--scroll-ui')) {
@@ -1788,7 +1807,8 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 3 } } })));
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 0, "A stale running snapshot cannot revive a completed spinner");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 4, status: 'completed', tokenUsage: { input: 40740, cachedInput: 0, output: 99, reasoningOutput: 72, total: 40839, contextWindow: 475000 }, rateLimits: { primary: { usedPercent: 32, resetsAt: 1793445000 }, secondary: { usedPercent: 60, resetsAt: 1793790000 } } } } })));
-    await page.getByRole('button', {name:'View usage',exact:true}).click();
+    const showUsageTools = page.getByRole('button',{name:'Show workspace tools',exact:true}); if (await showUsageTools.isVisible()) await showUsageTools.click();
+    await page.getByRole('tab',{name:'Env',exact:true}).click();
     const turnUsage = page.locator('.cli-inspector-view .cli-turn-usage');
     assert.equal(await turnUsage.locator(':scope > summary').count(),0,'Session usage is expanded without a toggle');
     assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
@@ -1862,8 +1882,8 @@ try {
     });
     await tool.locator(":scope > summary").click();
     const argumentCode = tool.locator(".cli-code-surface pre").first();
-    assert.equal(await argumentCode.evaluate(element => getComputedStyle(element).whiteSpace), "pre", "Tool arguments preserve whitespace");
-    assert.ok(await argumentCode.evaluate(element => element.scrollWidth > element.clientWidth), "Long arguments scroll horizontally");
+    assert.equal(await argumentCode.evaluate(element => getComputedStyle(element).whiteSpace), "pre-wrap", "Tool arguments preserve whitespace and wrap");
+    assert.ok(await argumentCode.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Long arguments wrap within their panel");
     await tool.getByRole("button", { name: "Copy code", exact: true }).click();
     await tool.getByRole("button", { name: "Copied", exact: true }).waitFor();
     const copiedText = await page.evaluate(async () => {
@@ -1873,7 +1893,7 @@ try {
     const command = page.locator(".cli-activity.is-command").first();
     await command.locator(":scope > summary").click();
     const shellOutput = command.locator(".cli-code-surface pre");
-    assert.ok(await shellOutput.evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight > element.clientHeight), "Shell output scrolls in both directions");
+    assert.ok(await shellOutput.evaluate(element => element.scrollWidth <= element.clientWidth + 1 && element.scrollHeight > element.clientHeight), "Shell output wraps and scrolls vertically");
     const fileChange = page.locator(".cli-file-change-list > details").first();
     await fileChange.locator(":scope > summary > span").click();
     assert.equal(await fileChange.locator(".cli-diff-line.is-added").count(), 1);

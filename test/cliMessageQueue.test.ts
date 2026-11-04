@@ -20,6 +20,7 @@ vi.mock('preact/hooks', () => ({
 vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes }));
 import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
 import { canRestoreCliComposerDraft } from '../webview-src/dashboard/cliSessionComposerState';
+import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 
 const draft = (text = 'First') => ({ text, attachments: [] });
 const entry = (patch: Partial<CliQueuedMessage> = {}): CliQueuedMessage => ({ id: 'one', draft: draft(), state: 'sending', createdAt: Date.now(), seenIds: ['old'], ...patch });
@@ -40,6 +41,25 @@ beforeEach(() => {
   options = { scope: 'pc:session', messages: [], results: [], canDispatch: false, send, restore, feedback };
 });
 afterEach(() => { for (const slot of harness.slots) slot?.cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('queues an answer once immediately while offline and keeps the fence through failure and resend', async () => {
+  render(); await flush();
+  const ask = { id: 'ask', text: '', questions: [{ title: 'Continue?' }] };
+  const reply = draft(sessionQuestionReply(ask, { '0': 'Yes' }));
+  const id = queue.enqueue(reply);
+  expect(queue.enqueue(draft(sessionQuestionReply(ask, { '0': 'Different answer' })))).toBe(id);
+  await flush(); expect(queue.items).toHaveLength(1); expect(send).not.toHaveBeenCalled();
+  render({ canDispatch: true }); await flush();
+  render({ results: [{ requestId: 'request-1', status: 'failed', message: 'Offline' }] }); await flush();
+  expect(queue.enqueue(reply)).toBe(id); expect(queue.items).toHaveLength(1);
+  queue.resend(id!); await flush(); expect(send).toHaveBeenCalledTimes(2);
+});
+
+it('rejects replies to questions already answered in the transcript', async () => {
+  const text = sessionQuestionReply({ id: 'ask', text: '', questions: [{ title: 'Continue?' }] }, { '0': 'Yes' });
+  render({ messages: [{ id: 'sent', role: 'user', text }] }); await flush();
+  expect(queue.enqueue(draft(text))).toBeUndefined(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('already answered'));
+});
 
 it('saves multiple offline messages immediately, fences each send, and drains in FIFO order after confirmation', async () => {
   render(); await flush(); expect(queue.ready).toBe(true);

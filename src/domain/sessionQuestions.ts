@@ -33,7 +33,16 @@ export function unansweredSessionQuestions(messages: DashboardCliSessionMessage[
   return messages.filter(message => message.questions?.some((_, index) => !answered.has(JSON.stringify(['request_user_input_async', message.id, index]))));
 }
 
+export const SESSION_QUESTION_PROMPT_MS = 120_000;
+
+/** History stays answerable; only a recent question with no later activity interrupts. */
+export function activeSessionQuestion(messages: DashboardCliSessionMessage[], now = Date.now()) {
+  const question = unansweredSessionQuestions(messages).at(-1);
+  const timestamp = Date.parse(question?.timestamp ?? '');
+  return question && messages.at(-1)?.id === question.id && Number.isFinite(timestamp) && timestamp <= now && now - timestamp < SESSION_QUESTION_PROMPT_MS ? question : undefined;
+}
+
 export function sessionQuestionReply(message: DashboardCliSessionMessage, answers: Record<string, string>): string {
-  return `<send_user_message_question_reply>\n${JSON.stringify(message.questions?.map((question, index) => ({ questionItemId: JSON.stringify(['request_user_input_async', message.id, index]), question: question.title, answer: answers[String(index)]?.trim() ?? '' })))}\n</send_user_message_question_reply>`;
+  return `<send_user_message_question_reply>\n${JSON.stringify(message.questions?.flatMap((question, index) => answers[String(index)]?.trim() ? [{ questionItemId: JSON.stringify(['request_user_input_async', message.id, index]), question: question.title, answer: answers[String(index)]!.trim() }] : []))}\n</send_user_message_question_reply>`;
 }
 

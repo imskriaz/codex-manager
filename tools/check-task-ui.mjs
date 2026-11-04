@@ -21,6 +21,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await ideaColumn.getAttribute('aria-checked'),'true','Idea is shown by default');
   await page.keyboard.press('Escape');
   await page.locator('.task-board-card').filter({ hasText: 'Release work' }).waitFor();
+  await page.getByRole('button',{name:'Actions for Release work',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Delete task',exact:true}).waitFor();
+  await page.keyboard.press('Escape');
   const addBox=await page.getByRole('button',{name:'＋ Task',exact:true}).boundingBox(),menuBox=await page.getByRole('button',{name:'Board actions',exact:true}).boundingBox();
   assert.ok(Math.abs(addBox.y-menuBox.y)<1&&Math.abs(addBox.height-menuBox.height)<1,'Task actions share a height and baseline: '+JSON.stringify({addBox,menuBox}));
 
@@ -336,10 +339,6 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await share.getByRole('button', { name: 'Close', exact: true }).click();
 
   const sentBefore = await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length);
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
-  await page.getByRole('button', { name: 'Board actions', exact: true }).click();
-  assert.equal(await page.getByRole('menuitem',{name:'Share project',exact:true}).isDisabled(),true,'Sharing disables offline');
-  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '＋ Task', exact: true }).click();
   const create=page.getByRole('dialog',{name:'New task',exact:true});
   assert.equal(await create.locator('[role=tablist],.task-environment-grid').count(),0,'New task has a focused form without metadata or tabs');
@@ -348,6 +347,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await create.getByLabel('Prompt / idea', { exact: true }).fill('Keep this work through reconnect.');
   await create.locator('input[type=file]').setInputFiles({name:'task-brief.txt',mimeType:'text/plain',buffer:Buffer.from('Task attachment survives offline save')});
   await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).waitFor();
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
+  await page.locator('.dashboard-offline-overlay').waitFor();
+  assert.equal(await page.getByRole('button',{name:'Board actions',exact:true}).isDisabled(),true,'All board actions disable offline');
+  assert.equal(await create.getByLabel('Title',{exact:true}).inputValue(),'Offline task draft','The masked view preserves the open draft');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length),sentBefore,'No task write starts offline');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+  await page.locator('.dashboard-offline-overlay').waitFor({state:'hidden'});
   await page.waitForFunction(()=>!document.querySelector('.task-create-modal button[type=submit]')?.disabled);
   await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
   if (width === 320) await page.evaluate(() => {
@@ -373,7 +379,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'Routine task outcomes stay quiet');
   while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).first().click();
   await page.locator('.dashboard-notice-stack').waitFor({state:'hidden'});
-  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Offline drafts never send a live request');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore + (width === 320 ? 0 : 1), 'Only the explicit save after reconnect sends a request');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
   if (width === 390) {

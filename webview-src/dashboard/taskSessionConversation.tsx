@@ -11,7 +11,7 @@ import { Composer, LiveTurnDetails, QueuedMessages, SessionTranscript, summarize
 import { readChatAttachmentFiles } from './attachmentUploads';
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from './cliSessionComposerState';
 import { readCliComposerDraft, writeCliComposerDraft } from './cliSessionCache';
-import { useCliMessageQueue } from './cliMessageQueue';
+import { useCliMessageQueue, queuedMessageView } from './cliMessageQueue';
 import { useCodexSessionPrompts } from './codexSessionPromptHook';
 import { CodexSessionRequest } from './codexSessionRequest';
 import { codexPromptKey } from './codexSessionPrompts';
@@ -26,12 +26,19 @@ export function TaskSessionConversation(props: {
   const scope = cliComposerDraftKey(props.deviceId ?? props.session.deviceId, props.session.id);
   const [draft, setDraft] = useState<CliComposerDraft>({ text: '', attachments: [] }), [ready, setReady] = useState(false), [reading, setReading] = useState(false);
   const [results, setResults] = useState<CliSubmissionResult[]>([]), [stopping, setStopping] = useState<string>();
-  const [height, setHeight] = useState(160), [showUsage, setShowUsage] = useState(false), [notice, setNotice] = useState<DashboardNotice>();
+  const [height, setHeight] = useState(160), [notice, setNotice] = useState<DashboardNotice>();
   const resizeCleanup = useRef<() => void>();
   const current = useRef(draft); current.current = draft;
+  const currentScope = useRef(scope); currentScope.current = scope;
   const mounted = useRef(true);
   useEffect(() => { if (props.connected !== false) setNotice(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
-  const report = (value: DashboardNotice) => { setNotice(value); props.onFeedback(value); };
+  const report = (value: DashboardNotice) => { if (currentScope.current === scope) setNotice(value); props.onFeedback(value); };
+  useEffect(() => setNotice(undefined), [scope]);
+  useEffect(() => {
+    if (notice?.level !== 'info') return;
+    const timer = setTimeout(() => setNotice(undefined), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const settings = resolveCliComposerSettings(draft, props.config, props.session);
   const access = useSessionAccess({ session: props.session, connected: props.connected,
     send: sandboxMode => props.sendAction('setCodexSessionAccess', undefined, { sessionId: props.session.id, sandboxMode, targetDeviceId: props.session.deviceId, projectPath: props.session.projectPath }), feedback: report });
@@ -48,7 +55,7 @@ export function TaskSessionConversation(props: {
     return () => { mounted.current = false; resizeCleanup.current?.(); };
   }, [scope]);
   useEffect(() => {
-    if (ready) void writeCliComposerDraft(scope, draft).then(saved => { if (!saved && mounted.current) setNotice({ level: 'warning', message: 'Browser storage could not save this draft. Copy it before closing.' }); });
+    if (ready) void writeCliComposerDraft(scope, draft).then(saved => { if (!saved && mounted.current) report({ level: 'warning', message: 'Browser storage could not save this draft. Copy it before closing.' }); });
   }, [draft, ready, scope]);
   const queue = useCliMessageQueue({ scope, messages, results, connected: props.connected,
     canDispatch: props.connected && !access.pending && !resume.pending && !props.session.archived && props.session.status !== 'unknown' && !stopping && (!running || !!steerTurnId),
@@ -74,9 +81,9 @@ export function TaskSessionConversation(props: {
     const timer = setTimeout(() => { setStopping(undefined); report({ level: 'warning', message: 'Stop is awaiting confirmation. Refresh the conversation before retrying.' }); }, 15_000);
     return () => clearTimeout(timer);
   }, [stopping]);
-  const submit = (reply?: string) => {
+  const submit = () => {
     if (!ready || reading) return;
-    const value = { ...current.current, ...settings, sandboxMode: undefined, text: reply ?? current.current.text, attachments: reply ? [] : current.current.attachments };
+    const value = { ...current.current, ...settings, sandboxMode: undefined, text: current.current.text, attachments: current.current.attachments };
     try { prepareChatInput(value.text, value.attachments); }
     catch (error) { report({ level: 'error', message: (error as Error).message }); return; }
     if (!value.text.trim() && !value.attachments.length) return;
@@ -94,15 +101,14 @@ export function TaskSessionConversation(props: {
   const files = summarizeChangedFiles(messages);
   const patch = (value: Partial<CliComposerDraft>) => setDraft(previous => ({ ...previous, ...value }));
   return <section class="task-session-conversation cli-workspace cli-message-surface" aria-label="Session conversation">
-    <div class="task-session-transcript cli-session-messages"><SessionTranscript messages={messages} running={running} onActionFeedback={report} onQuestionReply={submit} questionDisabled={!queue.ready} questionScope={scope} questionPromptIds={prompts.entries.flatMap(entry => entry.request.sourceMessageId ? [entry.request.sourceMessageId] : [])} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
+    <div class="task-session-transcript cli-session-messages"><SessionTranscript messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
       <QueuedMessages queue={queue} onFeedback={report} onRefresh={props.onRefresh} />
       {props.liveState?.plan ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
     </div>
     <div class="task-session-compose">
       {prompts.active ? <CodexSessionRequest entry={prompts.active} inline queuedCount={prompts.entries.length - 1} connected={prompts.connectedTo(prompts.active)} checking={prompts.checking} onCheck={() => prompts.active && prompts.check(codexPromptKey(prompts.active.request))} onAnswer={prompts.answer} onRespond={prompts.respond} /> : null}
-      <TurnUsageStrip privacyMode changedFiles={files.length} additions={files.reduce((sum, file) => sum + file.additions, 0)} deletions={files.reduce((sum, file) => sum + file.deletions, 0)} onOpenChanges={() => props.onChanges?.()} onOpen={() => setShowUsage(value => !value)} />
-      {showUsage ? <section class="task-session-usage"><strong>Session usage</strong><LiveTurnDetails state={props.liveState} usage={props.liveState?.tokenUsage ?? props.session.tokenUsage} /></section> : null}
-      <Composer feedback={notice} draft={draft.text} attachments={draft.attachments} attachmentReading={reading} onAttach={files => void attach(files)} onRemoveAttachment={id => patch({ attachments: draft.attachments.filter(file => file.id !== id) })} {...settings} sandboxMode={access.mode} permissionProfile={access.profile} accessDisabled={!props.connected || access.pending || props.session.status === "unknown"} accessStatus={access.status} projectLocked projectPath={props.session.projectPath} projects={[]} models={props.config?.models ?? []} reasoningOptions={['low','medium','high','xhigh']} sending={running} onResume={resume.available ? resume.resume : undefined} resuming={resume.pending} resumeDisabled={!props.connected || access.pending || !queue.ready || queue.items.length > 0} stopping={!!stopping} canSteer={!!steerTurnId} submitDisabled={!ready || !queue.ready || !!props.session.archived} stopDisabled={!props.connected || !props.session.canStop && !props.liveState?.turnId} unavailableReason={!props.connected ? 'Reconnecting…' : props.session.archived ? 'Restore this archived session before sending' : undefined} tokenUsage={props.liveState?.tokenUsage ?? props.session.tokenUsage}
+      <TurnUsageStrip privacyMode changedFiles={files.length} additions={files.reduce((sum, file) => sum + file.additions, 0)} deletions={files.reduce((sum, file) => sum + file.deletions, 0)} onOpenChanges={() => props.onChanges?.()} />
+      <Composer deviceId={props.deviceId ?? props.session.deviceId} feedback={notice} draft={draft.text} attachments={draft.attachments} attachmentReading={reading} onAttach={files => void attach(files)} onRemoveAttachment={id => patch({ attachments: draft.attachments.filter(file => file.id !== id) })} {...settings} sandboxMode={access.mode} permissionProfile={access.profile} accessDisabled={!props.connected || access.pending || props.session.status === "unknown"} accessStatus={access.status} projectLocked projectPath={props.session.projectPath} projects={[]} models={props.config?.models ?? []} reasoningOptions={['low','medium','high','xhigh']} sending={running} onResume={resume.available ? resume.resume : undefined} resuming={resume.pending} resumeDisabled={!props.connected || access.pending || !queue.ready || queue.items.length > 0} stopping={!!stopping} canSteer={!!steerTurnId} submitDisabled={!ready || !queue.ready || !!props.session.archived} stopDisabled={!props.connected || !props.session.canStop && !props.liveState?.turnId} unavailableReason={!props.connected ? 'Reconnecting…' : props.session.archived ? 'Restore this archived session before sending' : undefined} tokenUsage={props.liveState?.tokenUsage ?? props.session.tokenUsage}
         onDraft={text => { setNotice(undefined); patch({ text }); }} onModel={model => patch({ model })} onReasoning={reasoningEffort => patch({ reasoningEffort })} onSandbox={access.change} onProject={() => {}} onSubmit={() => { submit(); }} onStop={() => { const id = props.sendAction('cancelCodexCliSessionTurn', undefined, { sessionId: props.session.id, targetDeviceId: props.session.deviceId }); if (id) setStopping(id); else report({ level: 'warning', message: 'Stop was not sent. Reconnect before retrying.' }); }} composerHeight={height} onResize={event => {
           event.preventDefault(); resizeCleanup.current?.();
           const start = event.clientY, initial = height;

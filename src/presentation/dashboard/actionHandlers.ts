@@ -29,6 +29,8 @@ import {
   openCodexSessionInVsCode,
   openNewCodexWebview,
   readCodexCliComposerConfig,
+  readCodexSkills,
+  readCodexArchiveMaintenanceState,
   readCodexCliSessionSummary,
   resolveCodexHome,
   resolveRecordedSessionProject,
@@ -99,7 +101,7 @@ import { isAutoSwitchLocked, updateAutoSwitchLock } from "../workbench/autoSwitc
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
 import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
-import { saveProjectTaskWithAttachments, addProjectCommentWithAttachments, readProjectAttachment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
+import { deleteProjectTask, saveProjectTaskWithAttachments, addProjectCommentWithAttachments, readProjectAttachment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
 import { resolveWorkspaceProjectPathAsync } from '../../services/workspaceTools';
 import {
   clearQueuedAccountSwitch,
@@ -111,7 +113,7 @@ import { homedir } from "node:os";
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
-  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
+  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -156,6 +158,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "setCodexSessionAutoResume",
   "setCodexSessionQueue",
   "startCodexCliSession",
+  "getCodexSkills",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
   "getCodexSubAgentMessages",
@@ -267,7 +270,7 @@ async function executeDashboardActionMessageInTransport(
     cancelCodexSessionAutoResume("Auto Resume was cancelled for this manual action.");
   // Routine reads and the console itself must not generate audit traffic.
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
-    "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
+    "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
     "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal"
   ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
@@ -425,6 +428,12 @@ async function runDashboardAction(
     case 'getProjectTaskDetails':
       if (!payload?.taskId) throw new Error('Choose a task first.');
       return { projectTaskDetails: await readProjectTaskDetails(await resolveWorkspaceProjectPathAsync(payload.projectPath), payload.taskId, payload.taskView, payload.taskBefore) };
+    case 'deleteProjectTask': {
+      const project = await resolveWorkspaceProjectPathAsync(payload?.projectPath);
+      if (!payload?.taskId || !Number.isSafeInteger(payload.taskRevision)) throw new Error('Choose a task and refresh before deleting it.');
+      deleteProjectTask(project, payload.taskId, payload.taskRevision!);
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Task deleted.' } };
+    }
     case 'saveProjectTask': {
       if (!payload?.task) throw new Error('The task draft is missing.');
       const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
@@ -1062,6 +1071,11 @@ async function runDashboardAction(
       return handleUnarchiveCodexCliSession(payload?.sessionId);
     case "deleteCodexCliSession":
       return handleDeleteCodexCliSession(payload);
+    case "getCodexSkills": {
+      ensureCliIntegrationEnabled();
+      const result = await readCodexSkills(await resolveWorkspaceProjectPathAsync(payload?.projectPath));
+      return { cliSkills: result.skills, ...(result.warning ? { notice: { level: 'warning' as const, message: result.warning } } : {}) };
+    }
     case "getWorkspaceEnvironment":
       return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
     case 'workspaceTerminal':
@@ -2193,7 +2207,10 @@ async function handleForkCodexCliSession(sessionId: string | undefined) {
 async function handleArchiveCodexCliSession(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
-  await ensureCliSessionIsActive(sessionId);
+  const current = await readCodexArchiveMaintenanceState(sessionId, resolveCodexHome(), true);
+  if (!current) throw new Error('This session was not found. Refresh sessions before retrying.');
+  if (current.archived) return { notice: { level: 'info' as const, message: 'Codex session is already archived.' } };
+  if (current.status !== 'idle') throw new Error('Stop the active turn and refresh its running state before archiving.');
   await archiveCodexCliSession(sessionId);
   return {
     notice: { level: "info" as const, message: "Codex session archived." }
@@ -2203,8 +2220,9 @@ async function handleArchiveCodexCliSession(sessionId: string | undefined) {
 async function handleUnarchiveCodexCliSession(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
-  const session = await findCliSession(sessionId);
-  if (!session.archived) throw new Error("This session is already active.");
+  const session = await readCodexArchiveMaintenanceState(sessionId);
+  if (!session) throw new Error('This session was not found. Refresh sessions before retrying.');
+  if (!session.archived) return { notice: { level: 'info' as const, message: 'This session is already active.' } };
   await unarchiveCodexCliSession(sessionId);
   return {
     notice: { level: "info" as const, message: "Codex session restored to Active." }

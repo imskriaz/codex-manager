@@ -18,6 +18,14 @@ export async function checkReviewsUi(page, { origin, parentId, width, output }) 
   await page.getByRole('columnheader', {name:'Before',exact:true}).waitFor();
   await page.getByRole('columnheader', {name:'After',exact:true}).waitFor();
   assert.ok(await page.locator('.cli-review-detail').evaluate(element => element.scrollWidth <= element.clientWidth + 1),'Review content stays inside its panel');
+  const header = page.locator('.cli-review-detail > header');
+  await header.locator('strong').evaluate(element => element.textContent = 'D:/projects/' + 'very-long-directory/'.repeat(20) + 'main.tsx');
+  const headerBox = await header.boundingBox();
+  assert.ok(headerBox.x + headerBox.width <= width + 1,'Review header stays inside the viewport after a long path');
+  for (const control of [header.locator('small'), header.getByRole('button',{name:'Open in Files',exact:true})]) {
+    const box = await control.boundingBox();
+    assert.ok(box.x >= headerBox.x && box.x + box.width <= headerBox.x + headerBox.width + 1,'Review counts and action remain visible beside a long path');
+  }
   await page.screenshot({path:path.join(output,`workspace-review-detail-${width}.png`),animations:'disabled'});
   await page.getByRole('button', {name:'Open in Files',exact:true}).click();
   await page.locator('.cli-file-editor .cm-content').waitFor();

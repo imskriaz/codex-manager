@@ -60,6 +60,7 @@ describe("session request routing and recovery", () => {
     const key = codexPromptKey(request());
     let hook = render(); hook.answer(key, "choice", "Compact");
     hook = render(); hook.respond(key, "approve"); hook.respond(key, "approve");
+    expect(render().active).toBeUndefined();
     expect(send).toHaveBeenCalledExactlyOnceWith("respondCodexServerRequest", undefined, { codexRequestId: "question", codexDecision: "approve", codexAnswers: { choice: "Compact" }, targetDeviceId: "worker" });
     emit({ type: "dashboard:action-result", requestId: "response1", action: "respondCodexServerRequest", status: "failed", error: "Connection lost" });
     hook = render();
@@ -112,6 +113,20 @@ describe("session request routing and recovery", () => {
     hook.respond(codexPromptKey(request()), "decline"); expect(send).not.toHaveBeenCalled();
     hook = render({ peers: [] }); expect(hook.connectedTo(hook.active!)).toBe(false);
   });
+});
+
+it('uses the transcript queue for async questions and never selects a modal for another VS Code session', () => {
+  render({ browser: false, target: { id: 'another' } });
+  emit({ type: 'dashboard:codex-requests', requests: [request()] }); expect(render().active).toBeUndefined();
+  emit({ type: 'dashboard:codex-requests', requests: [{ ...request(), sourceMessageId: 'message' }] });
+  const hook = render({ target: { id: 'thread', deviceId: 'worker' } });
+  expect(hook.active).toBeUndefined(); expect(hook.background).toBeUndefined();
+});
+
+it('does not surface expired question notifications after reconnect', () => {
+  render({ target: { id: 'another' } });
+  emit({ type: 'dashboard:codex-requests', requests: [{ ...request(), createdAt: Date.now() - 120_000 }] });
+  expect(render().background).toBeUndefined();
 });
 
 

@@ -1,3 +1,4 @@
+import { deleteCodexSessionFromStorage } from './codexSessionStorageDelete';
 import { readSavedCodexSessionAccess, saveCodexSessionAccess } from './codexSessionAccessState';
 import { parseCodexSessionAccess, recordedCodexSandboxPolicy, codexSessionAccessPolicy, type CodexSessionAccess } from '../domain/codexSessionAccess';
 import { readSessionQuestions } from '../domain/sessionQuestions';
@@ -39,6 +40,7 @@ import { normalizeNativePath } from "../utils/nativePaths";
 import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, markCodexSessionManualStop, clearCodexSessionManualStop, retireCodexSessionQueue } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
+import { sendCodexQuestionReply } from './codexQuestionReply';
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -110,6 +112,7 @@ export async function withCodexSessionMaintenance<T>(ids: string[], task: () => 
   const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined };
   return maintenanceConnection.run(context, async () => {
     const store = getSqliteStateStore();
+    writerLockProbes.delete(path.join(context.home, SESSION_LOCK_DIRECTORY));
     if (store) invalidateSessionCatalogue(store, context.home);
     try { return await task(); }
     finally {
@@ -429,7 +432,7 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
   const index = await readCodexCliSessionIndex(home);
   if (index.length > 10000) throw new Error("The session history is too large for one cleanup. Reduce it in Codex before retrying.");
   const result = new Map(records.map(row => [row.id, { id: row.id, title: normalizeSessionTitle(row.title, row.id), archived: row.archived === true, projectPath: row.cwd, transcriptPath: row.rolloutPath, parentSessionId: readSubAgentMetadata(row.source).parentSessionId, model: row.model, updatedAt: row.updatedAt }]));
-  const missing = index.filter(row => !result.has(row.id));
+  const missing = index.filter(row => !result.has(row.id) && !(getSqliteStateStore() && isConfirmedSessionDeleted(getSqliteStateStore()!, home, row.id)));
   if (result.size + missing.length > 10000) throw new Error("The session history is too large for one cleanup. Reduce it in Codex before retrying.");
   const archived = missing.length || records.some(row => row.archived === undefined) ? await readArchivedSessionIds(home) : new Set<string>();
   for (const row of records) if (row.archived === undefined) result.get(row.id)!.archived = archived.has(row.id);
@@ -437,6 +440,12 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
   for (const row of missing) {
     const transcriptPath = paths.get(row.id), metadata = await readCliSessionMetadata(home, row.id, transcriptPath);
     result.set(row.id, { id: row.id, title: normalizeSessionTitle(row.thread_name, row.id), archived: archived.has(row.id), projectPath: metadata.projectPath, transcriptPath, parentSessionId: metadata.parentSessionId, model: undefined, updatedAt: normalizeTimestamp(row.updated_at) });
+  }
+  const store = getSqliteStateStore(), prefix = `${getCodexHomeStateKey(home)}:`;
+  for (const key of store?.keys('session-file-cleanup') ?? []) {
+    if (!key.startsWith(prefix)) continue;
+    const id = key.slice(prefix.length), pending = store?.get<{ path?: string }>('session-file-cleanup', key);
+    if (SESSION_ID_PATTERN.test(id) && pending?.path && !records.some(record => record.id === id)) result.set(id, { id, title: 'Finish deleted conversation cleanup', archived: true, projectPath: undefined, transcriptPath: pending.path, parentSessionId: undefined, model: undefined, updatedAt: undefined });
   }
   return [...result.values()];
 }
@@ -555,7 +564,8 @@ export async function readCodexCliSessionSummary(
 /** Archived cleanup must work even when the native renderer cannot answer IPC. */
 export async function readCodexArchiveMaintenanceState(sessionId: string, home = resolveCodexHome(), includeActive = false): Promise<{ archived: boolean; status: "idle" | "running" | "unknown" } | undefined> {
   validateSessionId(sessionId);
-  const record = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
+  const nativeRecord = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
+  const record = nativeRecord ?? (getSqliteStateStore()?.get('session-file-cleanup', `${getCodexHomeStateKey(home)}:${sessionId.toLowerCase()}`) ? { archived: true } : undefined);
   if (!record || record.archived === undefined) {
     const legacy = await readCodexCliSessionSummary(sessionId, home);
     return legacy ? { archived: legacy.archived === true, status: legacy.status } : undefined;
@@ -568,7 +578,7 @@ export async function readCodexArchiveMaintenanceState(sessionId: string, home =
   if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error("The session writer lock is invalid. This conversation was kept.");
   const running = Boolean(stat && await isWriterLockHeld(lock));
   const current = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
-  return current ? { archived: current.archived === true, status: running || (!includeActive && !current.archived) ? "running" : "idle" } : undefined;
+  return current ? { archived: current.archived === true, status: running || (!includeActive && !current.archived) ? "running" : "idle" } : record && !nativeRecord ? { archived: true, status: running ? "running" : "idle" } : undefined;
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -927,6 +937,36 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
   };
 }
 
+export async function readCodexSkills(project: string): Promise<{ skills: Array<{ name: string; description: string }>; warning?: string }> {
+  const home = resolveCodexHome(), controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('Skill discovery timed out. Retry when connected.')), 12_000);
+  let rpc: CodexAppServerRpc | undefined;
+  const abort = () => { void rpc?.close(); };
+  controller.signal.addEventListener('abort', abort, { once: true });
+  try {
+    const executable = await resolveCodexCliExecutable();
+    controller.signal.throwIfAborted();
+    rpc = await openCodexAppServer(executable, project, controller.signal);
+    if (home !== resolveCodexHome()) throw new Error('Codex home changed. Retry skill discovery.');
+    const response = await rpc.request<{ data?: Array<{ cwd?: string; errors?: unknown[]; skills?: Array<{ name?: unknown; description?: unknown; enabled?: unknown }> }> }>('skills/list', { cwds: [project], forceReload: true }, 10_000);
+    controller.signal.throwIfAborted();
+    if (home !== resolveCodexHome()) throw new Error('Codex home changed. Retry skill discovery.');
+    if (!Array.isArray(response?.data)) throw new Error('Codex returned an unreadable skill list. Update Codex and retry.');
+    const skills = new Map<string, { name: string; description: string }>();
+    let partial = false;
+    for (const group of response.data.slice(0, 100)) {
+      if (!group || typeof group !== 'object') continue;
+      if (typeof group.cwd === 'string' && (process.platform === 'win32' ? path.resolve(group.cwd).toLowerCase() !== path.resolve(project).toLowerCase() : path.resolve(group.cwd) !== path.resolve(project))) continue;
+      if (!Array.isArray(group.skills)) throw new Error('Codex returned an unreadable project skill list. Update Codex and retry.');
+      if (Array.isArray(group.errors) && group.errors.length) partial = true;
+      for (const skill of group.skills.slice(0, 1000)) if (skill && skill.enabled !== false && typeof skill.name === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,159}$/i.test(skill.name)) {
+        if (!skills.has(skill.name)) skills.set(skill.name, { name: skill.name, description: typeof skill.description === 'string' ? skill.description.slice(0, 1000) : '' });
+      }
+    }
+    return { skills: [...skills.values()].slice(0, 1000), ...(partial ? { warning: 'Some skills could not be loaded. Available skills are shown; retry after checking their files.' } : {}) };
+  } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); await rpc?.close(); }
+}
+
 export async function sendCodexCliSessionMessage(options: {
   sessionId: string;
   text: string;
@@ -965,7 +1005,7 @@ export async function sendCodexCliSessionMessage(options: {
   if (resolveCodexHome() !== attachmentHome) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   options.signal?.throwIfAborted();
   if (options.clearManualStop) clearCodexSessionManualStop(resolveCodexHome(), options.sessionId);
-  await sendAppServerSessionMessage(options, cwd);
+  await sendCodexQuestionReply(attachmentHome, options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId, attachmentHome), onAttempt => sendAppServerSessionMessage(options, cwd, onAttempt));
 }
 
 async function readLiveCliModels(codexHome: string): Promise<DashboardCliComposerConfig["models"]> {
@@ -1131,7 +1171,7 @@ async function sendAppServerSessionMessage(options: {
   interruptedOnly?: boolean;
   preferPrivate?: boolean;
   goalContinuation?: boolean;
-}, cwd: string): Promise<void> {
+}, cwd: string, onAttempt?: (attempted: boolean) => void): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
@@ -1168,7 +1208,13 @@ async function sendAppServerSessionMessage(options: {
   };
   if (!await needsContinuation()) return;
   const nativeStarted = (turnId: string) => nativeTurnStarted(home, options.sessionId, turnId);
-  if (!options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) {
+  const startNative = async () => {
+    onAttempt?.(true);
+    const started = await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted);
+    if (!started) onAttempt?.(false);
+    return started;
+  };
+  if (!options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNative()) {
     options.onStarted?.();
     await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
     return;
@@ -1202,7 +1248,7 @@ async function sendAppServerSessionMessage(options: {
     catch (error) {
       if (options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
       if (!await needsContinuation()) return;
-      if (!await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
+      if (!await startNative()) throw error;
       options.signal?.removeEventListener("abort", abort);
       live.dispose(true);
       activeAppServerTurns.delete(options.sessionId); await rpc.close();
@@ -1215,6 +1261,7 @@ async function sendAppServerSessionMessage(options: {
       throw new Error('This session was explicitly stopped while starting. It was left stopped.');
     if (!await needsContinuation()) return;
     live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    onAttempt?.(true);
     await rpc.startAndWaitForTurn(options.sessionId, params, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
       if (active) active.turnId = turnId;
@@ -1417,6 +1464,10 @@ async function observedNativeTurn(home: string, sessionId: string): Promise<stri
 
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
 export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
+  return sendCodexQuestionReply(resolveCodexHome(), options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId), onAttempt => steerCodexCliSessionTurnOnce(options, onAttempt));
+}
+
+async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCodexCliSessionTurn>[0], onAttempt: (attempted: boolean) => void): Promise<void> {
   validateSessionId(options.sessionId);
   const sessionId = options.sessionId.toLowerCase(), home = resolveCodexHome();
   const prepared = prepareChatInput(options.text, options.attachments);
@@ -1426,6 +1477,7 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
     if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
     const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
     if (resolveCodexHome() !== home || active.cancelRequested || active.turnId !== options.expectedTurnId) throw new Error("The active Codex turn changed. Refresh before sending guidance.");
+    onAttempt(true);
     const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
       threadId: sessionId, expectedTurnId: options.expectedTurnId,
       input: appServerChatInput(text, prepared.attachments)
@@ -1440,8 +1492,11 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
     const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
     if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Refresh before sending guidance.");
-    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
+    onAttempt(true);
+    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(text, prepared.attachments), resolveCliProjectPath(options.projectPath))) {
+      onAttempt(false);
       throw new Error('The native Codex owner is unavailable. Your follow-up was not sent; refresh before retrying.');
+    }
     return;
   }
   throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
@@ -1823,18 +1878,20 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
   if (recent) recent.summary = { ...recent.summary, archived: false };
 }
 
-export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean } = {}): Promise<void> {
+export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
   validateSessionId(sessionId);
   const home = resolveCodexHome();
   if (ownsSessionTurn(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
-    const archived = options.archivedOnly || maintenanceConnection.getStore()?.ids.has(sessionId) ? await readCodexArchiveMaintenanceState(sessionId, home, !options.archivedOnly) : undefined;
+    const archived = await readCodexArchiveMaintenanceState(sessionId, home, !options.archivedOnly);
     if (options.archivedOnly && !archived?.archived) throw new Error("This conversation is no longer archived. It was kept.");
     if (archived ? archived.status !== "idle" : await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
     const deletionStartedAt = Date.now();
-    try { await runCodexAppServerRequest("thread/delete", { threadId: sessionId }); }
+    try {
+      if (!options.directStorage || !await deleteCodexSessionFromStorage(home, sessionId, options.archivedOnly === true)) await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
+    }
     catch (error) {
       if (!(error instanceof Error) || !/\b(?:thread|conversation|session) (?:not found|does not exist|has (?:already )?been deleted)\b|\bno (?:thread|conversation|session) found\b/i.test(error.message)) throw error;
     }
@@ -2980,8 +3037,9 @@ async function runCodexAppServerRequest<T = unknown>(
   const sessionId = (params as { threadId?: unknown } | null)?.threadId;
   let cwd: string;
   try {
-    cwd = method === "thread/delete" ? requestHome : typeof sessionId === "string" ? await resolveRecordedSessionProject(sessionId) : resolveCliProjectPath(undefined);
-    if (method === "thread/delete") await assertUsableCliProjectPath(cwd);
+    const storageOnly = ["thread/delete", "thread/archive", "thread/unarchive", "thread/name/set", "thread/goal/clear"].includes(method);
+    cwd = storageOnly ? requestHome : typeof sessionId === "string" ? await resolveRecordedSessionProject(sessionId) : resolveCliProjectPath(undefined);
+    if (storageOnly) await assertUsableCliProjectPath(cwd);
   }
   catch (error) {
     if (typeof sessionId !== "string" || !["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete", "thread/goal/clear"].includes(method)) throw error;

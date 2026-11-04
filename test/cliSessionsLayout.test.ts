@@ -32,6 +32,8 @@ describe("sessions sidebar layout", () => {
     expect(source.match(/onContextMenu={openTaskContextMenu}/g)?.length).toBe(4);
     expect(source).toContain("'deleteCodexCliSession'");
     expect(source).toContain("setConfirmation({ title: 'Delete conversation?'");
+    expect(source).toContain("Delete task");
+    expect(source).toContain("deleteProjectTask");
     expect(primitives).toContain('return <aside ref={ref} class="task-detail-panel');
     expect(primitives).toContain('title={props.title}');
   });
@@ -74,7 +76,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Checking running state");
-    expect(source).toContain('placeholder={composerHint || "Message Codex…"}');
+    expect(source).toContain('placeholder="Message Codex…"');
     expect(source).toContain('onRetryFeedback={sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain("props.selectedSession.status !== 'unknown' && !props.stopping");
@@ -101,7 +103,7 @@ describe("sessions sidebar layout", () => {
     expect(main).not.toContain('if (next.level === "info") return;');
     expect(source).toContain("function CopySnippet");
     expect(main).not.toContain('if (feedback.level === "info") return;');
-    expect(source).not.toContain('notice.level !== "info"');
+    expect(source).toContain("if (notice.level !== 'info') props.onActionFeedback(notice)");
     expect(source).toContain("setComposerFeedback(notice); props.onActionFeedback(notice);");
     expect(main).toContain("onActionFeedback={showNotice}");
     expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
@@ -114,7 +116,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt })");
     expect(source).toContain('aria-label="Close image preview"');
     expect(source).toContain('class="cli-code-surface"');
-    expect(source).toContain('label={failed ? "Copy error" : "Copy result"}');
+    expect(source).toContain('copyLabel={failed ? "Copy error" : "Copy result"}');
     expect(css).toContain("overflow-x: auto");
     expect(css).toContain("cli-code-copy-float");
     expect(css).toContain("cli-image-lightbox");
@@ -212,7 +214,7 @@ describe("sessions sidebar layout", () => {
     expect(filters).toBeGreaterThan(-1);
     expect(projects).toBeGreaterThan(filters);
     expect(source).not.toContain("<AccountDock");
-    expect(source).toContain('class="cli-account-footer"');
+    expect(source).toContain('class={`cli-account-footer');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('class="cli-composer-location is-top"');
     expect(source).toContain("!props.projectLocked");
@@ -721,7 +723,7 @@ describe("sessions sidebar layout", () => {
   it("renders command and tool-call details instead of generic placeholders", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('message.command ?? message.text');
-    expect(source).toContain('<strong>Arguments</strong>');
+    expect(source).toContain('<ActivityCode text={message.arguments} label="Arguments"');
     expect(source).toContain('message.command ?? message.text).split("\\n")[0]');
   });
 
@@ -799,6 +801,22 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('label="Hide workspace tools" onClick={props.onCollapse}');
     expect(canonicalWebPath('D:\\Work\\Project\\')).toBe('d:/work/project');
     expect(canonicalWebPath('/work/Project')).not.toBe(canonicalWebPath('/work/project'));
+  });
+
+  it('opens agents directly from the activity row and keeps the chevron for details', () => {
+    const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+    expect(source).not.toContain('class="cli-agent-links"');
+    expect(source).toContain("class={agentLink ? 'cli-agent-activity-link' : undefined}");
+    expect(source).toContain('class="cli-agent-detail-toggle"');
+    expect(source).toContain('openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined)');
+  });
+
+  it('keeps independent session operations available and lets the host verify unknown writers', () => {
+    const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+    const main = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+    expect(source).toContain('session.status === "running" || session.locked === true');
+    expect(source).toContain('props.isSessionPending?.(session) ?? props.mutating');
+    expect(main).toContain('isSessionPending={session => state.pendingActions.some');
   });
 
   it("renders every persisted Codex activity family with an explicit detail path", () => {

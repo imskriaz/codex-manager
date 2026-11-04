@@ -15,7 +15,7 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
+import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -51,6 +51,36 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it('deletes a stored session without waiting for renderer IPC or project discovery', async () => {
+    const db = new DatabaseSync(path.join(root, 'state_1.sqlite'));
+    db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)');
+    db.prepare('INSERT INTO threads VALUES(?,1,?)').run(id, path.join(root, 'archived_sessions', `rollout-${id}.jsonl`)); db.close();
+    const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
+    vi.mocked(readNativeCodexSessionRunning).mockClear();
+    await deleteCodexCliSession(id);
+    expect(readNativeCodexSessionRunning).not.toHaveBeenCalled();
+    expect(rpc.request).toHaveBeenCalledExactlyOnceWith('thread/delete', { threadId: id }, expect.any(Number));
+    expect(mocks.open.mock.calls[0]?.[1]).toBe(root);
+  });
+  it('loads only enabled project skills, validates names, and closes discovery without starting a turn', async () => {
+    const rpc = { request: vi.fn(async () => ({ data: [{ cwd: root, skills: [{ name: 'review', description: 'Review changes' }, { name: 'disabled', enabled: false }, { name: '<unsafe>' }, { name: 'review', description: 'Duplicate' }] }, { cwd: path.join(root, 'other'), skills: [{ name: 'other-project' }] }] })), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    expect(await readCodexSkills(root)).toEqual({ skills: [{ name: 'review', description: 'Review changes' }] });
+    expect(rpc.request).toHaveBeenCalledExactlyOnceWith('skills/list', { cwds: [root], forceReload: true }, 10_000);
+    expect(rpc.close).toHaveBeenCalledOnce();
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
+  it('keeps available skills visible when some skill files fail to load', async () => {
+    mocks.open.mockResolvedValue({ request: async () => ({ data: [{ cwd: root, skills: [{ name: 'review' }], errors: [{ message: 'Unreadable skill' }] }] }), close: vi.fn() });
+    expect(await readCodexSkills(root)).toMatchObject({ skills: [{ name: 'review' }], warning: expect.stringContaining('Some skills could not be loaded') });
+  });
+  it.each(['offline', 'malformed', 'home-changed'])('reports inconclusive skill discovery (%s)', async scenario => {
+    const rpc = { request: vi.fn(async () => { if (scenario === 'offline') throw new Error('Offline'); return {}; }), close: vi.fn() };
+    mocks.open.mockImplementation(async () => { if (scenario === 'home-changed') process.env.CODEX_HOME = path.join(root, 'other'); return rpc; });
+    try { await expect(readCodexSkills(root)).rejects.toThrow(); expect(rpc.close).toHaveBeenCalledOnce(); }
+    finally { process.env.CODEX_HOME = root; }
+  });
   it.each([false, true])('switches between Auto Resume, off, and queue without losing uncertain starts (global %s)', globalEnabled => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'autoResumeEnabled' ? globalEnabled : fallback } as vscode.WorkspaceConfiguration);
     setCodexSessionAutoResume(id, true);
@@ -482,13 +512,13 @@ describe("native App Server new sessions", () => {
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).toHaveBeenCalledTimes(["not-accepted", "unconfirmed"].includes(scenario) ? 1 : 0);
   });
-  it("uses the recorded project for lifecycle changes and storage for deletion", async () => {
+  it("runs storage-only lifecycle changes without discovering the recorded project", async () => {
     const project = path.join(root, "recorded-project"); await mkdir(project); await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: project } }) + "\n");
     const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
     await renameCodexCliSession(id, "Renamed task"); await archiveCodexCliSession(id); await unarchiveCodexCliSession(id); await deleteCodexCliSession(id);
     expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete"]);
-    expect(mocks.open.mock.calls.map(([, cwd]) => cwd)).toEqual([project,project,project,root]);
+    expect(mocks.open.mock.calls.map(([, cwd]) => cwd)).toEqual([root,root,root,root]);
     expect(mocks.spawn).not.toHaveBeenCalled(); expect(rpc.close).toHaveBeenCalledTimes(4);
   });
   it("rejects a different selected project instead of sending in an unrelated workspace", async () => {

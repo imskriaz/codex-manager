@@ -554,6 +554,7 @@ export type DashboardActionName =
   | "getProjectBoard"
   | "getProjectTaskDetails"
   | "saveProjectTask"
+  | "deleteProjectTask"
   | "addProjectComment"
   | "startProjectSubtask"
   | "startProjectTask"
@@ -601,6 +602,7 @@ export type DashboardActionName =
   | "setCodexSessionAutoResume"
   | "setCodexSessionQueue"
   | "startCodexCliSession"
+  | "getCodexSkills"
   | "listCodexCliSessions"
   | "getCodexSubAgentMessages"
   | "getCodexCliSessionMessages"
@@ -1065,6 +1067,7 @@ export interface DashboardWorkspaceTerminalOutput {
 
 export interface DashboardCodexServerRequest {
   id: string;
+  createdAt?: number;
   sourceMessageId?: string;
   threadId: string;
   kind: "command" | "file-change" | "permissions" | "question";
@@ -1139,6 +1142,7 @@ export interface DashboardActionResultPayload {
   cliSessionLive?: DashboardCodexSessionLiveState;
   cliSubAgentSession?: DashboardCliSessionSummary;
   cliSubAgentMessages?: DashboardCliSessionMessage[];
+  cliSkills?: Array<{ name: string; description: string }>;
   cliComposerConfig?: DashboardCliComposerConfig;
   workspaceEnvironment?: DashboardWorkspaceEnvironment;
   workspaceFiles?: DashboardWorkspaceFileEntry[];

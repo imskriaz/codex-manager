@@ -54,7 +54,7 @@ describe("Codex maintenance safety", () => {
     const job = api.runMaintenance(preview.token, true, ids);
     expect(api.runMaintenance(preview.token, true, ids).id).toBe(job.id);
     expect(await finish(job.id)).toMatchObject({total:3,cleared:1,skipped:1,failed:1});
-    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], {archivedOnly:false});
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], {archivedOnly:false,directStorage:true});
   });
   it('keeps a large parent when a child appeared after preview and continues after a per-session delete failure', async () => {
     await Promise.all(ids.map(id => writeFile(path.join(mocks.home, id+'.jsonl'), 'conversation')));
@@ -109,7 +109,7 @@ describe("Codex maintenance safety", () => {
     expect(api.runMaintenance(preview.token, true, [ids[0]!]).id).toBe(job.id);
     expect(() => api.runMaintenance(preview.token, true, [ids[1]!])).toThrow("another operation");
     expect(await finish(job.id)).toMatchObject({ total: 1, cleared: 1, failed: 0 });
-    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], { archivedOnly: true });
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], { archivedOnly: true, directStorage: true });
   });
   it("restores selected archived conversations without deleting their goals or chats", async () => {
     const preview = await api.previewMaintenance("archives");

@@ -1,5 +1,5 @@
 import type { DashboardCliSessionMessage } from '../domain/dashboard/types';
-import { unansweredSessionQuestions, answeredSessionQuestionIds } from '../domain/sessionQuestions';
+import { activeSessionQuestion, answeredSessionQuestionIds } from '../domain/sessionQuestions';
 import { waitWithin } from '../utils/concurrency';
 import { syncNativeCodexPrompts, clearNativeCodexPrompts, CodexPromptNotSentError } from './codexAppServerPrompts';
 import type { AppServerRequest } from './codexAppServerRpc';
@@ -18,10 +18,12 @@ export function syncAsyncCodexQuestions(home: string, sessionId: string, message
   }
   const answered = answeredSessionQuestionIds(messages);
   for (const id of answered) { entry.requests.delete(id); entry.accepted.delete(id); }
-  for (const message of unansweredSessionQuestions(messages)) message.questions?.forEach((question, index) => {
+  const active = activeSessionQuestion(messages);
+  for (const [id, request] of entry.requests) if ((request.params as { sourceMessageId?: string }).sourceMessageId !== active?.id) entry.requests.delete(id);
+  for (const message of active ? [active] : []) message.questions?.forEach((question, index) => {
     const id = JSON.stringify(['request_user_input_async', message.id, index]);
     if (answered.has(id) || entry!.accepted.has(id) || entry!.requests.size >= 30) return;
-    entry!.requests.set(id, { id, method: 'item/tool/requestUserInput', params: { threadId: sessionId, sourceMessageId: message.id, questions: [{ id, header: 'Question', question: question.title, options: question.options?.map(label => ({ label, description: '' })) }] } });
+    entry!.requests.set(id, { id, method: 'item/tool/requestUserInput', params: { threadId: sessionId, sourceMessageId: message.id, createdAt: Date.parse(message.timestamp!), questions: [{ id, header: 'Question', question: question.title, options: question.options?.map(label => ({ label, description: '' })) }] } });
   });
   const current = entry;
   syncNativeCodexPrompts(current.source, sessionId, [...current.requests.values()], async (request, result) => {
@@ -31,9 +33,9 @@ export function syncAsyncCodexQuestions(home: string, sessionId: string, message
     if (home !== resolveCodexHome()) throw new CodexPromptNotSentError('The Codex account home changed. Open the session before answering.');
     const messages = await readCodexCliSessionMessages(sessionId, home).catch(error => { throw new CodexPromptNotSentError((error as Error).message); });
     const sourceId = (request.params as { sourceMessageId: string }).sourceMessageId;
-    const question = unansweredSessionQuestions(messages).find(message => message.id === sourceId);
+    const question = activeSessionQuestion(messages);
     const definition = (request.params as { questions: Array<{ question: string }> }).questions[0]!;
-    if (!question || answeredSessionQuestionIds(messages).has(String(request.id))) throw new CodexPromptNotSentError('This question was already answered or is no longer active. Refresh the conversation.');
+    if (!question || question.id !== sourceId || answeredSessionQuestionIds(messages).has(String(request.id))) throw new CodexPromptNotSentError('This question was already answered or is no longer active. Open its message to answer.');
     const identity: unknown = JSON.parse(String(request.id));
     const index = Array.isArray(identity) && typeof identity[2] === "number" ? identity[2] : -1;
     if (question.questions?.[index]?.title !== definition.question) throw new CodexPromptNotSentError('The question changed. Refresh before answering.');

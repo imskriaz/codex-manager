@@ -129,7 +129,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession" || ['startProjectTask','startProjectSubtask'].includes(action)) {
     return 15 * 60_000 + 15_000;
   }
-  if (['moveProjectTask','getProjectBoard','getProjectTaskDetails','saveProjectTask','addProjectComment'].includes(action)) return 65_000;
+  if (['moveProjectTask','getProjectBoard','getProjectTaskDetails','saveProjectTask','deleteProjectTask','addProjectComment'].includes(action)) return 65_000;
   if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch", "getWorkspaceEnvironment"].includes(action)) {
     return 135_000;
   }
@@ -1569,7 +1569,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1907,6 +1907,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private notifyCodexRequest(request: Extract<DashboardHostMessage, { type: "dashboard:codex-request" }>["request"]): void {
+    if (request.kind === 'question' && request.createdAt !== undefined && (!Number.isFinite(request.createdAt) || Date.now() - request.createdAt >= 120_000 || request.createdAt > Date.now())) return;
     const targetDeviceId = request.deviceId;
     const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${request.id}`;
     const question = request.kind === "question";

@@ -56,6 +56,7 @@ vi.mock("../src/services/codexSessionResume", async () => {
   return {
     ...actual,
     archiveCodexCliSession: archiveSessionMock,
+    readCodexArchiveMaintenanceState: async (id: string) => { const session = await readCodexCliSessionSummaryMock(id); return session ? { archived: session.archived === true, status: session.status } : undefined; },
     readCodexCliSessions: readCodexCliSessionsMock,
     readCodexCliSessionSummary: readCodexCliSessionSummaryMock,
     readCodexCliSessionMessages: readCodexCliSessionMessagesMock,

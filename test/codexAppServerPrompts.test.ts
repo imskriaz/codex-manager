@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts } from "../src/services/codexAppServerPrompts";
+import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts, syncNativeCodexPrompts, clearNativeCodexPrompts } from "../src/services/codexAppServerPrompts";
 import type { AppServerRequest, CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
@@ -15,6 +15,19 @@ function createRpc() {
   return { rpc, emit: (request: AppServerRequest) => receive?.(request), answerServerRequest, rejectServerRequest };
 }
 afterEach(() => vi.useRealTimers());
+
+it('preserves native question age across owner resync and prompt expiry', async () => {
+  vi.useFakeTimers(); const source = {}, respond = vi.fn();
+  const requests = [{ id: 'native-question', method: 'item/tool/requestUserInput', params: { threadId: 'native-age', questions: [{ id: 'choice', question: 'Continue?' }] } }];
+  try {
+    syncNativeCodexPrompts(source, 'native-age', requests, respond);
+    const first = listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')!;
+    await vi.advanceTimersByTimeAsync(300_000);
+    syncNativeCodexPrompts(source, 'native-age', requests, respond);
+    expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')?.createdAt).toBe(first.createdAt);
+    expect(respond).not.toHaveBeenCalled();
+  } finally { clearNativeCodexPrompts(source); }
+});
 
 describe("Codex app-server dashboard prompts", () => {
   it("removes a stopped turn's prompts while preserving other sessions and resolving stale replies", () => {

@@ -19,6 +19,7 @@ type PendingPrompt = {
 export class CodexPromptNotSentError extends Error {}
 
 const pendingPrompts = new Map<string, PendingPrompt>();
+const nativeQuestionTimes = new WeakMap<object, Map<string | number, { signature: string; createdAt: number }>>();
 const PROMPT_TIMEOUT_MS = 5 * 60_000;
 const MAX_PENDING_PROMPTS = 30;
 
@@ -75,6 +76,9 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
 
 /** Mirror supported requests from a verified official owner; never answer on expiry or disconnect. */
 export function syncNativeCodexPrompts(source: object, threadId: string, requests: AppServerRequest[], respond: (request: AppServerRequest, result: unknown) => Promise<void>): void {
+  const questionTimes = nativeQuestionTimes.get(source) ?? new Map<string | number, { signature: string; createdAt: number }>();
+  nativeQuestionTimes.set(source, questionTimes);
+  for (const id of questionTimes.keys()) if (!requests.some(request => request.id === id)) questionTimes.delete(id);
   for (const [id, pending] of pendingPrompts) {
     if (pending.nativeSource !== source) continue;
     const current = requests.find(request => request.id === pending.serverId);
@@ -85,6 +89,12 @@ export function syncNativeCodexPrompts(source: object, threadId: string, request
     if (pendingPrompts.size >= MAX_PENDING_PROMPTS || Buffer.byteLength(JSON.stringify(serverRequest.params ?? {}), "utf8") > 32 * 1024) continue;
     const request = toDashboardRequest(serverRequest, threadId);
     if (!request || request.threadId !== threadId) continue;
+    if (request.kind === 'question') {
+      const signature = JSON.stringify(serverRequest);
+      const previous = questionTimes.get(serverRequest.id);
+      if (previous?.signature === signature) request.createdAt = previous.createdAt;
+      else questionTimes.set(serverRequest.id, { signature, createdAt: request.createdAt! });
+    }
     const timer = setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { nativeSource: source, respondNative: result => respond(serverRequest, result),
       serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS });
@@ -218,7 +228,7 @@ function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: s
           .slice(0, 20).map((option) => ({ label: safeString(option["label"]), description: safeString(option["description"]) })) : undefined
       }));
     if (rawQuestions.length > 3 || !questions.length || new Set(questions.map((question) => question.id)).size !== questions.length || questions.some((question) => !question.id || !question.question || question.id === "__proto__" || question.id === "constructor" || question.id.length > 128)) return undefined;
-    return { id, threadId, kind: "question", title: "Codex has a question", questions, ...(typeof params["sourceMessageId"] === "string" ? { sourceMessageId: params["sourceMessageId"].slice(0, 256) } : {}) };
+    return { id, threadId, kind: "question", title: "Codex has a question", createdAt: typeof params['createdAt'] === 'number' ? params['createdAt'] : Date.now(), questions, ...(typeof params["sourceMessageId"] === "string" ? { sourceMessageId: params["sourceMessageId"].slice(0, 256) } : {}) };
   }
   return undefined;
 }

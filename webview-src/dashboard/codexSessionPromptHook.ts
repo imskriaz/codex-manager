@@ -4,6 +4,7 @@ import type { SendAction } from "./hookTypes";
 import { postMessageToHost } from "./host";
 import { sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canAnswerCodexPrompt, readDismissedCodexRequests, saveDismissedCodexRequests, codexPromptKey, emptyCodexPrompts, updateCodexPrompts, type CodexPromptEntry, type CodexPromptUpdate } from "./codexSessionPrompts";
+import { SESSION_QUESTION_PROMPT_MS } from '../../src/domain/sessionQuestions';
 
 export function useCodexSessionPrompts(props: {
   target?: CliSessionTarget;
@@ -22,6 +23,13 @@ export function useCodexSessionPrompts(props: {
     if (!saveDismissedCodexRequests(next)) options.current.onNotice({level: "warning", message: "Request notification dismissed in this tab. Browser storage is unavailable."});
   };
   const [state, setState] = useState(emptyCodexPrompts);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const deadline = Math.min(...state.entries.flatMap(entry => entry.request.kind === 'question' && entry.request.createdAt !== undefined && entry.request.createdAt + SESSION_QUESTION_PROMPT_MS > Date.now() ? [entry.request.createdAt + SESSION_QUESTION_PROMPT_MS] : []));
+    if (!Number.isFinite(deadline)) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.max(0, deadline - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [state.entries, now]);
   const current = useRef(state);
   const options = useRef(props); options.current = props;
   const [checking, setChecking] = useState(false);
@@ -91,16 +99,22 @@ export function useCodexSessionPrompts(props: {
     if (!entry || entry.responseId || entry.uncertain) return;
     if (!connectedTo(entry)) { options.current.onNotice({ level: "warning", message: "The owning system is offline. Your answer is kept; reconnect before responding." }); return; }
     if (decision === "approve" && !canAnswerCodexPrompt(entry)) return;
-    const responseId = options.current.sendAction("respondCodexServerRequest", undefined, {
+    let responseId: string;
+    try { responseId = options.current.sendAction("respondCodexServerRequest", undefined, {
       codexRequestId: entry.request.id, codexDecision: decision,
       codexAnswers: decision === "approve" && entry.request.kind === "question" ? entry.answers : undefined,
       targetDeviceId: entry.request.deviceId
-    });
+    }); } catch (error) {
+      const message = error instanceof Error ? error.message : 'Your response could not be queued. Your answer is kept.';
+      update({ type: 'error', key, error: message }); options.current.onNotice({ level: 'error', message }); return;
+    }
     update({ type: "submit", key, responseId });
+    options.current.onNotice({ level: "info", message: "Response queued. Awaiting Codex confirmation." });
   };
-  const active = state.entries.find(matches) ?? (!props.browser ? state.entries[0] : undefined);
+  const visible = state.entries.filter(entry => !entry.request.sourceMessageId && !entry.responseId);
+  const active = visible.find(matches);
   return {
-    active, background: state.entries.find(entry => entry !== active && !dismissed.includes(codexPromptKey(entry.request))), dismiss, entries: state.entries,
+    active, background: visible.find(entry => entry !== active && !dismissed.includes(codexPromptKey(entry.request)) && (entry.request.kind !== 'question' || entry.request.createdAt === undefined || Math.max(now, Date.now()) - entry.request.createdAt < SESSION_QUESTION_PROMPT_MS)), dismiss, entries: state.entries,
     connectedTo, checking, check, respond,
     answer: (key: string, questionId: string, answer: string) => update({ type: "answer", key, questionId, answer }),
     timeout: (responseId: string) => update({ type: "timeout", responseId })

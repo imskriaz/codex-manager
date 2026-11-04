@@ -48,7 +48,7 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
   assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true,'Resume blocks concurrent dispatch');
   await page.waitForFunction(()=>!!window.__heldResumeResult?.requestId);
   await page.evaluate(()=>{window.__holdResumeClick=false;dispatchEvent(new MessageEvent('message',{data:{...window.__heldResumeResult,status:'failed',error:'Resume was not confirmed. Your work was kept.'}}));});
-  await page.locator('.cli-composer .cli-composer-state').filter({hasText:'Resume was not confirmed. Your work was kept.'}).waitFor();
+  await page.locator('.dashboard-notice-stack').filter({hasText:'Resume was not confirmed. Your work was kept.'}).waitFor();
   assert.equal(await input.inputValue(),'Keep this draft during Resume');
   await input.fill('');await play.waitFor();
   await update({interrupted:false});await play.waitFor({state:'hidden'});
@@ -57,7 +57,10 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
   await update({status:'idle',locked:true});assert.equal(await play.count(),0);
   await update({status:'idle',locked:false,interrupted:true});await play.waitFor();
   await play.click();
-  await page.waitForFunction(()=>document.querySelector('textarea[name="codex-message"]')?.placeholder==='Session resume confirmed.');
+  const confirmed = page.locator('.cli-composer .cli-composer-state').filter({hasText:'Session resume confirmed.'});
+  assert.equal(await confirmed.count(),0,'Successful Resume adds no composer status row');
+  assert.equal(await input.getAttribute('placeholder'),'Message Codex…','Resume feedback does not replace the normal placeholder');
+  await confirmed.waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='resumeCodexSessions').length),2,'Explicit retry starts one action');
   await page.goto(`${origin}/workspace/${runningId}`);await input.waitFor();await size(page.getByRole('button',{name:'Stop',exact:true}));
   assert.equal(await play.count(),0,'Running sessions show Stop');
@@ -74,7 +77,8 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
   const taskPlay=task.getByRole('button',{name:'Resume session',exact:true});await taskPlay.waitFor();await size(taskPlay);
   await page.evaluate(()=>{window.__failResumeClick=true;});
   const before=await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='resumeCodexSessions').length);
-  await taskPlay.click();await page.waitForFunction(()=>document.querySelector('.task-detail-panel textarea[name="codex-message"]')?.placeholder==='Resume was not confirmed. Your work was kept.');
+  await taskPlay.click();await page.locator('.dashboard-notice-stack').filter({hasText:'Resume was not confirmed. Your work was kept.'}).waitFor();
+  assert.equal(await page.locator('.task-detail-panel textarea[name="codex-message"]').getAttribute('placeholder'),'Message Codex…','Task failures remain visible separately from the normal placeholder');
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='resumeCodexSessions').length),before+1,'Task conversation uses the same session Resume action');
   await taskInput.fill('Task draft stays editable');await size(task.getByRole('button',{name:'Send message',exact:true}));
   await taskInput.fill('');

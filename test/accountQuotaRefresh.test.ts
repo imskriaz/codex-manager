@@ -499,8 +499,8 @@ describe("refreshSingleQuota token automation state", () => {
   });
 
 
-  it("does not discover sessions when Wait for running sessions is disabled", async () => {
-    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchEnabled" ? true : key === "autoSwitchWaitForSessionsEnabled" ? false : fallback } as never);
+  it.each([true, false])("switches without session discovery even with Quota Warning=%s", async quotaWarningEnabled => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchEnabled" ? true : key === "quotaWarningEnabled" ? quotaWarningEnabled : key === "autoSwitchWaitForSessionsEnabled" ? false : fallback } as never);
     const active = createAccount("wait-off-active", true, 0, 0);
     const next = createAccount("wait-off-next", false, 90, 90);
     const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
@@ -508,6 +508,11 @@ describe("refreshSingleQuota token automation state", () => {
     expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
     expect(read).not.toHaveBeenCalled();
     expect(isAutoSwitchWaitingForSessions()).toBe(false);
+    if (!quotaWarningEnabled) {
+      const warnings = vi.mocked(vscode.window.showWarningMessage).mock.calls.length;
+      await maybeWarnForAccount(repo as never, active.id);
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(warnings);
+    }
   });
 
   it("interrupts pending discovery immediately when Wait for running sessions is disabled", async () => {

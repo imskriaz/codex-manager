@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { readProjectBoard, readProjectTaskDetails, readSharedProjectTask } from '../src/services/projectBoard';
 import { taskSessionAgents } from '../src/domain/projectTasks';
-import { saveProjectTask, readProjectTasks } from '../src/services/projectTasks';
+import { deleteProjectTask, saveProjectTask, readProjectTasks } from '../src/services/projectTasks';
 import * as sessions from '../src/services/codexSessionResume';
 import * as workspace from '../src/services/workspaceTools';
 import { removeTestDirectory } from './testFilesystem';
@@ -66,6 +66,17 @@ it('preserves tasks when discovery fails and reports optional detail failures wi
   expect(readProjectTasks(root).tasks[0]?.title).toBe('Saved');
   vi.mocked(workspace.listWorkspaceFiles).mockRejectedValueOnce(new Error('Storage busy'));
   expect(await readProjectTaskDetails(root, 'draft', 'files')).toMatchObject({ warnings: [], files: [] });
+});
+
+it('deletes only custom tasks with the current revision and keeps linked sessions protected', async () => {
+  const task = saveProjectTask(root, { id: 'delete-me', title: 'Delete me', prompt: '', stage: 'planned', expectedRevision: 0 });
+  deleteProjectTask(root, task.id, task.revision);
+  expect(readProjectTasks(root).tasks.find(item => item.id === task.id)).toBeUndefined();
+  const linked = (await readProjectBoard(root)).tasks.find(item => item.sessionId)!;
+  expect(() => deleteProjectTask(root, linked.id, linked.revision)).toThrow(/linked conversation/);
+  const kept = saveProjectTask(root, { id: 'keep', title: 'Keep', prompt: '', stage: 'idea', expectedRevision: 0 });
+  expect(() => deleteProjectTask(root, kept.id, kept.revision - 1)).toThrow(/changed/);
+  expect(readProjectTasks(root).tasks.some(item => item.id === kept.id)).toBe(true);
 });
 
 it('keeps tool fields private on message-only links even when a mixed transcript row contains them', async () => {

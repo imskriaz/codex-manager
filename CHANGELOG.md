@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.7
+
+- Wrap and format tool arguments, results, commands, and debug output; preserve original copy text and diff alignment. Show model capacity failures as readable notices and open agent conversations by clicking their activity titles, with the chevron reserved for details.
+- Discover enabled project skills with `/`, insert skill mentions without sending, and open model or access settings from the command picker.
+- Keep independent session actions available, reject duplicate operations, and run archive/restore from session storage without waiting for project discovery. Archived bulk cleanup uses direct SQLite deletion with foreign-key cleanup and restart-safe transcript cleanup.
+
+- Keep questions on their conversation messages with an Answer button. Only a new question with no later activity opens automatically, for up to two minutes; old questions do not generate push notifications.
+- Queue answers immediately, close their form on submission, preserve composer drafts, and prevent duplicate answers across the queue, push actions, reconnects, and unconfirmed delivery.
+- Keep browser requests inside their owning session and remove the VS Code prompt modal. Preserve answer drafts and show failures with reviewed retry feedback.
+- Keep “Message Codex” as the composer placeholder and remove shifting status rows and message-card outlines. Use a single floating workspace connection banner and a centered, masked dashboard offline panel; disable actions until reconnected.
+- Open Account Center from the composer account name, trim the Environment header, preserve review counts beside long paths, add custom-task deletion, and apply session archive/restore/delete optimistically with failure rollback.
+
 ## 1.6.6
 
 - Keep dismissed or answered request notifications hidden across reconnects and reloads; retain the actual prompt in its session and notify for new requests.

@@ -84,7 +84,7 @@ import { createDashboardToastController, scheduleDashboardToastDismiss, type Das
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { DonationDetails } from "./donationDetails";
-import { ModalShell } from "./primitives";
+import { ModalShell, useModalAccessibility } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedback";
@@ -263,10 +263,28 @@ function App() {
   const cliListRequestRevisions = useRef(new Map<string, number>());
   const cliListViewTarget = useRef<string>();
   const peerAccountsRevision = useRef(new Map<string, number>());
+  const optimisticSessions = useRef(new Map<string, { session: DashboardCliSessionSummary; action: DashboardActionName }>());
   const setCliSessions = useCallback((update: DashboardCliSessionSummary[] | ((current: DashboardCliSessionSummary[]) => DashboardCliSessionSummary[])) => {
-    setCliSessionsState(current => (typeof update === "function" ? update(current) : update)
-      .filter(session => session.deviceId === cliListViewTarget.current));
+    setCliSessionsState(current => {
+      let sessions = typeof update === "function" ? update(current) : update;
+      for (const { session: target, action } of optimisticSessions.current.values()) {
+        sessions = action === 'deleteCodexCliSession' ? sessions.filter(session => !sameCliSessionTarget(session, target))
+          : sessions.map(session => sameCliSessionTarget(session, target) ? { ...session, archived: action === 'archiveCodexCliSession' } : session);
+      }
+      return sessions.filter(session => session.deviceId === cliListViewTarget.current);
+    });
   }, []);
+  const finishOptimisticSession = (requestId: string, restore: boolean): void => {
+    const pending = optimisticSessions.current.get(requestId);
+    optimisticSessions.current.delete(requestId);
+    if (restore && pending) {
+      setCliSessions(current => {
+        const existing = current.find(session => sameCliSessionTarget(session, pending.session));
+        return [...current.filter(session => !sameCliSessionTarget(session, pending.session)), existing ? { ...existing, archived: pending.session.archived } : pending.session];
+      });
+      setSelectedCliSession(current => current && sameCliSessionTarget(current, pending.session) ? { ...current, archived: pending.session.archived } : current);
+    }
+  };
   const messageRequestStreams = useRef(new Map<string, string | undefined>());
   const historicalStreams = useRef(new Set<string>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
@@ -414,13 +432,13 @@ function App() {
   const [browserHostStage, setBrowserHostStage] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>["stage"]>("connecting");
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
   const [connectionIssue, setConnectionIssue] = useState<"offline" | "unreachable">();
-  const connectionUnavailable = ["offline", "unreachable", "reconnecting"].includes(browserHostStage);
+  const connectionUnavailable = ["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage);
   const browserOffline = browserHostStage === "offline";
   useEffect(() => {
-    if (realtimeConnected || !connectionUnavailable) { setConnectionIssue(undefined); return; }
+    if (!isBrowserDashboard || realtimeConnected && !connectionUnavailable) { setConnectionIssue(undefined); return; }
     const timer = window.setTimeout(() => setConnectionIssue(browserOffline ? "offline" : "unreachable"), 3_000);
     return () => window.clearTimeout(timer);
-  }, [realtimeConnected, connectionUnavailable, browserOffline]);
+  }, [isBrowserDashboard, realtimeConnected, connectionUnavailable, browserOffline]);
   const showNotice = useCallback(
     (next: DashboardNotice) => {
       if (next.level === "info" && !next.actions?.length && !next.actionPrompt) return;
@@ -436,6 +454,7 @@ function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
+      finishOptimisticSession(requestId, true);
       sessionActionRequests.current.delete(requestId);
       if (action === "respondCodexServerRequest") codexPromptTimeoutRef.current?.(requestId);
       if (['generateApiToken','listApiTokens','revokeApiToken'].includes(action) && [apiRequests.current.list,apiRequests.current.mutation].includes(requestId)) {
@@ -637,8 +656,20 @@ function App() {
   cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
   const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
   const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): string | undefined => {
+    if (state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session) && (action !== "cancelCodexCliSessionTurn" || request.action === action))) {
+      showNotice({ level: 'warning', message: 'An action for this session is still pending. Wait for its result before retrying.' });
+      return undefined;
+    }
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
-    if (requestId) sessionActionRequests.current.set(requestId, session);
+    if (requestId) {
+      sessionActionRequests.current.set(requestId, session);
+      const previous = cliSessionsRef.current.find(item => sameCliSessionTarget(item, session));
+      if (previous && ['archiveCodexCliSession', 'unarchiveCodexCliSession', 'deleteCodexCliSession'].includes(action)) {
+        optimisticSessions.current.set(requestId, { session: previous, action });
+        setCliSessions(current => current);
+        if (action !== 'deleteCodexCliSession') setSelectedCliSession(current => current && sameCliSessionTarget(current, session) ? { ...current, archived: action === 'archiveCodexCliSession' } : current);
+      }
+    }
     return requestId;
   };
   const requestCliSessions = useCallback(
@@ -1462,6 +1493,7 @@ function App() {
         ].includes(message.action)
       ) {
         const target = sessionActionRequests.current.get(message.requestId);
+        finishOptimisticSession(message.requestId, message.status !== 'completed');
         sessionActionRequests.current.delete(message.requestId);
         const applyToCurrentChat = sameCliSessionTarget(target, currentSessionTarget());
         if (!isAutomaticRequest(message.requestId)) showCliSessionFeedback({
@@ -1797,6 +1829,10 @@ function App() {
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
   const selectedPeerOffline = selectedPeer?.connected === false;
+  const connectionBannerStage = connectionIssue ?? (selectedPeerOffline ? "offline" : undefined);
+  const dashboardUnavailable = selectedPeerOffline || isBrowserDashboard && (!realtimeConnected || connectionUnavailable);
+  const offlineAccessibility = useModalAccessibility(Boolean(snapshot) && dashboardUnavailable && !isCliSessionsPath(browserPath), () => undefined);
+  useEffect(() => { if (dashboardUnavailable) document.querySelectorAll<HTMLElement>(':popover-open').forEach(element => element.hidePopover?.()); }, [dashboardUnavailable]);
   useEffect(() => { if (selectedPeer?.connected) noticeControllerRef.current?.connectionRestored(true); }, [selectedPeer?.id, selectedPeer?.connected]);
   const hasPendingActions = state.pendingActions.length > 0;
   useEffect(() => {
@@ -2343,7 +2379,7 @@ function App() {
   };
 
   const codexRequestView = codexPrompts.active ? <CodexSessionRequest
-    key={codexPromptKey(codexPrompts.active.request)} entry={codexPrompts.active} inline={isBrowserDashboard} queuedCount={codexPrompts.entries.length - 1}
+    key={codexPromptKey(codexPrompts.active.request)} entry={codexPrompts.active} inline queuedCount={codexPrompts.entries.length - 1}
     connected={codexPrompts.connectedTo(codexPrompts.active)} checking={codexPrompts.checking}
     onCheck={() => codexPrompts.active && codexPrompts.check(codexPromptKey(codexPrompts.active.request))} onAnswer={codexPrompts.answer} onRespond={codexPrompts.respond}
   /> : undefined;
@@ -2399,8 +2435,8 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {isBrowserDashboard && !realtimeConnected && !isCliSessionsPath(browserPath) && connectionIssue
-        ? createPortal(<BrowserConnectionBanner stage={connectionIssue} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
+      {connectionBannerStage && isCliSessionsPath(browserPath)
+        ? createPortal(<BrowserConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
       {notice
         ? createPortal(
@@ -2436,12 +2472,12 @@ function App() {
             document.body
           )
         : null}
-      {!isBrowserDashboard && codexRequestView ? createPortal(codexRequestView, document.body) : null}
       <main
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {selectedPeerOffline ? <p class="settings-notice-warning dashboard-peer-offline" role="status">Selected system offline. Saved data is shown while reconnecting. Choose another system or wait for it to reconnect.</p> : null}
+        {dashboardUnavailable && !isCliSessionsPath(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}><BrowserConnectionRecovery stage={connectionBannerStage ?? 'unreachable'} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /></div>, document.body) : null}
+        <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
@@ -2894,6 +2930,7 @@ function App() {
             </div>
           </section>
         ) : null}
+        </fieldset>
       </main>
 
       <SettingsOverlay
@@ -3069,7 +3106,7 @@ function App() {
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
-              requestPanel={codexRequestView} questionPromptIds={codexPrompts.entries.flatMap(entry => entry.request.sourceMessageId ? [entry.request.sourceMessageId] : [])}
+              requestPanel={codexRequestView}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
@@ -3082,18 +3119,8 @@ function App() {
               messagesLoading={isActionPending("getCodexCliSessionMessages")}
               sending={isActionPending("sendCodexCliSessionMessage") && [...turnRequests.current.values()].some((target) => sameCliSessionTarget(target, selectedCliSession))}
               stopping={isActionPending("cancelCodexCliSessionTurn")}
-              mutating={(isBrowserDashboard && !realtimeConnected) || [
-                "openNewCodexWebview",
-                "openCodexCliSession",
-                "resumeCodexSessions",
-                "renameCodexCliSession",
-                "setCodexSessionAutoResume",
-                "setCodexSessionQueue",
-                "forkCodexCliSession",
-                "archiveCodexCliSession",
-                "unarchiveCodexCliSession",
-                "deleteCodexCliSession"
-              ].some((action) => isActionPending(action as DashboardActionName))}
+              isSessionPending={session => state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session))}
+              mutating={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), selectedCliSession))}
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
               onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status, ...(status === 'clear' ? { confirmed: true } : {}) })}
               onResume={(session) => requestSessionAction("resumeCodexSessions", session)}
@@ -3108,7 +3135,7 @@ function App() {
                 if (requestId) {
                   agentRequests.current.set(requestId, key);
                   setAgentMessages((current) => ({ ...current, [key]: { ...current[key], error: undefined, loading: true } }));
-                }
+                } else setAgentMessages(current => ({ ...current, [key]: { ...current[key], loading: false, error: 'Agent messages were not requested. Reconnect and refresh this agent.' } }));
               }}
               messagesError={cliSessionMessagesError}
               onActionFeedback={showNotice}

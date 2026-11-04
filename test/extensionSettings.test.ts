@@ -35,6 +35,12 @@ describe("5-hour quota control defaults", () => {
     }
     for (const key of ["cloudflaredDomain", "codexAppPath", "codexCliPath"]) expect(manifest[`codexManager.${key}`].default).toBe("");
   });
+  it('keeps quota monitoring and enabled recovery when quota warnings are off', () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'quotaWarningEnabled' ? false : fallback } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ quotaWarningEnabled: false, autoSwitchEnabled: true, autoResumeEnabled: true, autoRefreshMinutes: 10, autoRefreshCurrentMinutes: 1 });
+    expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(true);
+    expect(isHourlyQuotaControlEnabled()).toBe(true);
+  });
   it("defaults token collection on and bounds its interval from one minute to one day", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: true, dailyTokenUsageIntervalMinutes: 60 });

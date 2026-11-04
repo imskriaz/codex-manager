@@ -106,6 +106,22 @@ export function syncProjectSessions(project: string, home: string, sessions: Pro
   if (previous.size >= 64) previous.delete(previous.keys().next().value!);
   previous.set(importKey, fingerprint); imported.set(store, previous);
 }
+export function deleteProjectTask(project: string, id: string, expectedRevision: number): void {
+  identifier(id);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('The task revision is invalid. Refresh before deleting it.');
+  const { store, key } = projectStorage(project);
+  store.transaction(() => {
+    const task = getTask(store, key, id);
+    if (!task) throw new Error('This task was not found. Refresh the board before deleting it.');
+    if (task.sourceKey || task.sessionId) throw new Error('Delete the linked conversation from its session actions.');
+    if (task.revision !== expectedRevision) throw new Error('This task changed in another browser. Refresh and review it before deleting.');
+    if (store.prepare('SELECT 1 FROM project_tasks WHERE project=? AND parent_id=? LIMIT 1').get(key, id)) throw new Error('Move or delete this task’s subtasks first.');
+    store.prepare('DELETE FROM project_comments WHERE project=? AND task_id=?').run(key, id);
+    store.prepare('DELETE FROM project_tasks WHERE project=? AND id=?').run(key, id);
+  });
+  publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
+}
+
 export function saveProjectTask(project: string, input: ProjectTaskMutation, attachments?: ProjectAttachment[], validateOnly = false): ProjectTask {
   identifier(input?.id);
   if (input.uploads !== undefined && attachments === undefined) throw new Error('Attachment saving was not prepared. Your draft was kept.');

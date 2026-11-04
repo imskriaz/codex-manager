@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+
+export async function checkSessionQuestionUi(page, { parentId, width, output }) {
+  const inject = async (messages, sequence) => page.evaluate(({ messages, sequence, sessionId }) => {
+    window.__questionHistory = messages;
+    window.__questionFixture = { sessionId, streamId: '55555555-5555-4555-8555-555555555555', sequence, status: 'completed', updatedAt: Date.now(), messages };
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__questionFixture } }));
+  }, { messages, sequence, sessionId: parentId });
+  const ask = { id: 'question-fresh', role: 'assistant', kind: 'message', text: 'Choose the next step.', timestamp: new Date(Date.now() - 119_000).toISOString(), questions: [{ title: 'Which layout?', options: ['Compact', 'Spacious'] }] };
+  await inject([ask], 1);
+  const form = page.getByRole('form', { name: 'Answer Codex question', exact: true });
+  await form.waitFor();
+  await form.waitFor({ state: 'hidden' });
+  const question = page.locator('.cli-session-message').filter({ hasText: 'Which layout?' });
+  await question.getByRole('button', { name: 'Answer', exact: true }).waitFor();
+  await question.getByRole('button', { name: 'Answer', exact: true }).click();
+  await form.waitFor();
+  await form.getByRole('button', { name: 'Close', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });
+  await page.evaluate(() => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'info', message: 'An unrelated dashboard action completed.' } })));
+  assert.equal(await input.getAttribute('placeholder'), 'Message Codex…', 'Unrelated dashboard notices do not replace Message Codex');
+  await question.focus();
+  await question.getByRole('button', { name: 'Quote', exact: true }).click();
+  assert.equal(await input.getAttribute('placeholder'), 'Message Codex…', 'Local action feedback stays separate from Message Codex');
+  await input.fill('');
+  const fresh = { ...ask, id: 'question-current', timestamp: new Date().toISOString() };
+  await inject([fresh], 2); await form.waitFor();
+  await inject([fresh, { id: 'later-activity', kind: 'command', text: 'Continuing work', command: 'echo working', status: 'completed' }], 3);
+  await form.waitFor({ state: 'hidden' });
+  const current = page.locator('.cli-session-message').filter({ hasText: 'Which layout?' });
+  await current.getByRole('button', { name: 'Answer', exact: true }).click();
+  await form.getByRole('textbox', { name: 'Answer: Which layout?' }).fill('Compact with clear feedback');
+  const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
+  await composer.fill('Keep my next draft');
+  await page.evaluate(() => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
+  assert.equal(await form.getByRole('button', {name:'Send answer',exact:true}).isDisabled(),true,'Offline disables answer actions without discarding the draft');
+  const before = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length);
+  await form.evaluate(element => { element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+  await form.waitFor({ state: 'hidden' });
+  await page.locator('.cli-local-queue').filter({ hasText: 'Compact with clear feedback' }).waitFor();
+  assert.equal(await composer.inputValue(), 'Keep my next draft', 'Answering preserves the unrelated composer draft');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before, 'Offline answers queue without dispatch');
+  assert.equal(await page.locator('.cli-local-queue').count(), 1, 'Repeated answer submission queues once');
+  await page.screenshot({ path: path.join(output, `question-answer-queued-${width}.png`) });
+  await page.evaluate(() => { window.__holdNextSend = true; dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })); });
+  await page.waitForFunction(() => window.__heldSendResult);
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before + 1, 'Reconnect sends the queued answer exactly once');
+  assert.equal(await page.locator('.codex-request-backdrop').count(), 0, 'Questions never open a modal');
+}

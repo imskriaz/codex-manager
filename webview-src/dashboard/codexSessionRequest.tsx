@@ -1,4 +1,5 @@
-import { useId } from "preact/hooks";
+import { useEffect, useId, useState } from "preact/hooks";
+import { SESSION_QUESTION_PROMPT_MS } from '../../src/domain/sessionQuestions';
 import { useModalAccessibility } from "./primitives";
 import { canAnswerCodexPrompt, codexPromptKey, type CodexPromptEntry } from "./codexSessionPrompts";
 
@@ -17,6 +18,14 @@ export function CodexSessionRequest(props: {
   const { request, answers, responseId, uncertain, error } = props.entry;
   const key = codexPromptKey(request);
   const isQuestion = request.kind === "question";
+  const [opened, setOpened] = useState(false);
+  const [expired, setExpired] = useState(() => request.createdAt !== undefined && Date.now() - request.createdAt >= SESSION_QUESTION_PROMPT_MS);
+  useEffect(() => {
+    if (!isQuestion) return;
+    const timer = setTimeout(() => setExpired(true), Math.max(0, (request.createdAt ?? Date.now()) + SESSION_QUESTION_PROMPT_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [request.id, request.createdAt, isQuestion]);
+  if (isQuestion && expired && !opened && !error) return <section class="codex-session-request" aria-label="Codex question"><span>Codex has a question.</span> <button type="button" onClick={() => setOpened(true)} aria-expanded={false}>Answer</button></section>;
   const blocked = Boolean(responseId || uncertain || !props.connected);
   const content = <section ref={props.inline ? undefined : accessibility.modalRef} onKeyDown={props.inline ? undefined : accessibility.onKeyDown} tabIndex={-1}
     class={"codex-request-dialog" + (props.inline ? " codex-session-request" : "")} role={props.inline ? "region" : "dialog"} aria-modal={props.inline ? undefined : true}

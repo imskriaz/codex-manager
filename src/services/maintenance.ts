@@ -346,7 +346,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
           if (summary && (summary.status !== "idle" || (plan.preview.tool === "archives" && !summary.archived))) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running, unavailable, or no longer archived.`.slice(0, 300)); return; }
         }
         if (item.goalOnly) await clearCodexSessionGoal(item.id);
-        if (!item.goalOnly) { check(); await deleteCodexCliSession(item.id, { archivedOnly: plan.preview.tool === "archives" }); }
+        if (!item.goalOnly) { check(); await deleteCodexCliSession(item.id, { archivedOnly: plan.preview.tool === "archives", directStorage: true }); }
         state.cleared++;
       } catch (error) {
         if (controller.signal.aborted || leaseSignal.aborted) { state.skipped++; return; }

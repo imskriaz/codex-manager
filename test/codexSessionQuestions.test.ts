@@ -4,11 +4,26 @@ vi.mock('../src/services/codexSessionResume', () => ({ resolveCodexHome: () => '
 import { syncAsyncCodexQuestions } from '../src/services/codexSessionQuestions';
 import { cancelCodexAppServerPrompts, listPendingCodexAppServerPrompts, respondCodexAppServerPrompt } from '../src/services/codexAppServerPrompts';
 let session = '', sequence = 0;
-let message: { id: string; text: string; role: 'assistant'; questions: Array<{ title: string; options: string[] }> };
+let message: { id: string; text: string; timestamp: string; role: 'assistant'; questions: Array<{ title: string; options: string[] }> };
 beforeEach(() => {
-  session = 'session-' + ++sequence; message = { id: 'question-' + sequence, role: 'assistant', text: '', questions: [{ title: 'Which layout?', options: ['Compact','Spacious'] }] };
+  session = 'session-' + ++sequence; message = { id: 'question-' + sequence, timestamp: new Date().toISOString(), role: 'assistant', text: '', questions: [{ title: 'Which layout?', options: ['Compact','Spacious'] }] };
   mocks.messages.mockReset().mockResolvedValue([message]); mocks.summary.mockReset().mockResolvedValue({ id: session, status: 'idle', projectPath: 'project' });
   mocks.send.mockReset().mockImplementation(async options => { options.onStarted(); }); mocks.steer.mockReset().mockResolvedValue(undefined);
+});
+
+it('never mirrors old, missing-date or superseded questions, and clears a prompt when work continues', () => {
+  for (const timestamp of ['', 'invalid', new Date(Date.now() - 120_000).toISOString()]) {
+    syncAsyncCodexQuestions('home', session, [{ ...message, timestamp }]); expect(prompt()).toBeUndefined();
+  }
+  syncAsyncCodexQuestions('home', session, [message]); expect(prompt()).toBeDefined();
+  syncAsyncCodexQuestions('home', session, [message, { id: 'work', kind: 'command', text: 'More activity' }]); expect(prompt()).toBeUndefined();
+});
+
+it('rejects a push answer if newer activity arrives before the user clicks it', async () => {
+  syncAsyncCodexQuestions('home', session, [message]); const request = prompt();
+  mocks.messages.mockResolvedValue([message, { id: 'work', text: 'Continuing' }]);
+  await expect(respondCodexAppServerPrompt(request.id, 'approve', { [request.questions![0]!.id]: 'Compact' })).rejects.toThrow(/no longer active/);
+  expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.steer).not.toHaveBeenCalled();
 });
 afterEach(() => { cancelCodexAppServerPrompts(session); vi.useRealTimers(); });
 const prompt = () => listPendingCodexAppServerPrompts().find(request => request.threadId === session)!;

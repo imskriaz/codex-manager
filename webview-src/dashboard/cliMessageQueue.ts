@@ -1,5 +1,6 @@
 import { chatUploadTimeoutMs, chatAttachmentPreviews, MAX_CHAT_WIRE_BYTES } from "../../src/domain/chatAttachments";
 import type { DashboardCliSessionMessage } from '../../src/domain/dashboard/types';
+import { answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
 import { normalizeCliComposerDraft, type CliComposerDraft, type CliSubmissionResult, isCliSubmissionEcho } from './cliSessionComposerState';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
@@ -118,6 +119,13 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       const normalized = normalizeCliComposerDraft(draft);
       if (!normalized || !normalized.text.trim() && !normalized.attachments.length) { props.feedback('This message could not be queued. Check its text and attachments.'); return; }
       if (!owned.current || !ready) { props.feedback('The saved message queue is not ready. Your composer draft is kept.'); return; }
+      const answers = answeredSessionQuestionIds([{ id: 'answer', role: 'user', text: normalized.text }]);
+      if (answers.size) {
+        const duplicate = current.current.find(item => [...answeredSessionQuestionIds([queuedMessageView(item)])].some(id => answers.has(id)));
+        if (duplicate) { props.feedback('An answer to this question is already in the conversation queue. Review it there before retrying.'); return duplicate.id; }
+        const sent = answeredSessionQuestionIds(props.messages);
+        if ([...answers].some(id => sent.has(id))) { props.feedback('This question was already answered. Refresh the conversation before replying again.'); return; }
+      }
       if (current.current.length >= CLI_MESSAGE_QUEUE_LIMIT || JSON.stringify([...current.current, draft]).length * 2 > MAX_CLI_MESSAGE_QUEUE_BYTES - 8192) { props.feedback('The local message queue is full. Send or remove queued messages before adding another. Your draft is kept.'); return; }
       const item: CliQueuedMessage = { id: crypto.randomUUID(), draft: structuredClone(normalized), state: 'queued', createdAt: Date.now(), seenIds: [] };
       const next = [...current.current, item]; update(next);
