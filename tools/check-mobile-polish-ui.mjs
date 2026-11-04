@@ -55,7 +55,7 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.ok(inputBox.width >= composerBox.width - 30, 'The input uses the full composer width');
   if (width <= 760) {
     const sendBox = await page.getByRole('button', exact('Send message')).boundingBox();
-    assert.ok(sendBox.width >= 44 && sendBox.height >= 44, 'Send target stays compact and operable');
+    assert.ok(Math.abs(sendBox.width - 30) < 0.1 && Math.abs(sendBox.height - 30) < 0.1, 'Send uses a compact 30px control');
     assert.ok(await draft.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), 'Mobile editing avoids automatic focus zoom');
   }
   assert.equal(await page.locator('.cli-turn-change-bar').count(), 0, 'Redundant turn-change footer stays removed');

@@ -60,6 +60,12 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("keeps routine background inspection quiet while retaining real inspection failures", () => {
+    const pending = { id: "pending", title: "Pending", status: "unknown" as const, statusError: "Running state is being checked. Conversation history remains available." };
+    expect(getCodexSessionReadNotice([pending])).toBeUndefined();
+    expect(getCodexSessionReadNotice([pending, { ...pending, id: "failed", statusError: "Inspection timeout" }])?.message).toContain("Inspection timeout");
+    expect(getCodexSessionReadNotice([{ ...pending, statusError: undefined }])).toBeDefined();
+  });
   it("retains an explicitly stopped conversation for non-goal recovery without calling it running", async () => {
     await appendFile(transcript, event("turn_aborted"));
     expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });

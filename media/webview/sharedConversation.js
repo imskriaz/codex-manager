@@ -8,6 +8,7 @@
   let signature, stopped = false, loading = false, queued = false, events, epoch = 0;
   const stopEvents = () => { events?.close(); events = undefined; };
   const revoke = () => {
+    document.title = 'Codex Manager - Shared session';
     stopped = true; epoch++; queued = false; stopEvents();
     if (header) { window.clearCodexSharedMessages?.(header); header.replaceChildren(); }
     window.clearCodexSharedMessages?.(conversation); conversation.replaceChildren();
@@ -36,6 +37,7 @@
       const data = await response.json();
       if (stopped || current !== epoch) return;
       if (!Array.isArray(data.messages)) throw new Error();
+      document.title = ['Codex Manager', 'Shared session', data.title].filter(Boolean).join(' - ');
       const next = JSON.stringify(data.messages);
       if (next !== signature && window.renderCodexSharedMessages) {
         const follow = signature === undefined || conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 80;

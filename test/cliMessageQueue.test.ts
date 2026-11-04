@@ -49,6 +49,7 @@ it('saves multiple offline messages immediately, fences each send, and drains in
   render({ canDispatch: true }); await flush(); expect(send).toHaveBeenCalledExactlyOnceWith(draft());
   render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
   expect(send.mock.calls.map(call => call[0].text)).toEqual(['First','Second']);
+  expect((harness.records.get('message-queue:pc:session') as CliQueuedMessage[]).some(item => item.draft.text === 'First')).toBe(false);
   render({ messages: [{ id: 'echo-1', role: 'user', text: 'First' }, { id: 'echo-2', role: 'user', text: 'Second' }] }); await flush();
   expect(queue.items).toEqual([]);
 });
@@ -126,4 +127,25 @@ it('keeps an unreadable saved queue untouched and blocks dispatch with visible f
   render({ canDispatch: true }); await flush(); expect(queue.ready).toBe(false);
   expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.writes).not.toHaveBeenCalled(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('could not be read'));
   expect(queue.error).toContain('could not be read'); harness.read.mockResolvedValue([]); queue.retryLoad(); await flush(); expect(queue.ready).toBe(true); expect(queue.error).toBeUndefined(); expect(send).not.toHaveBeenCalled();
+});
+
+it('keeps offline records and hides retry controls through the shared connection state', async () => {
+  render({ connected: false }); await flush(); queue.enqueue(draft()); await flush();
+  expect(queue.connected).toBe(false);
+  expect((harness.records.get('message-queue:pc:session') as CliQueuedMessage[])[0]?.state).toBe('queued');
+  expect(send).not.toHaveBeenCalled();
+  render({ connected: true, canDispatch: true }); await flush();
+  render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  expect(harness.records.get('message-queue:pc:session')).toEqual([]);
+  expect(queue.items[0]?.state).toBe('sent');
+});
+
+it('clears a failed local record when a late acknowledgement confirms delivery', async () => {
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
+  render({ results: [{requestId:'request-1',status:'failed',message:'Connection lost'}], connected:false, canDispatch:false }); await flush();
+  expect(queue.items[0]?.state).toBe('failed');
+  render({ results: [{requestId:'request-1',status:'completed'}] }); await flush();
+  expect(queue.items[0]?.state).toBe('sent');
+  expect(harness.records.get('message-queue:pc:session')).toEqual([]);
+  expect(send).toHaveBeenCalledOnce();
 });

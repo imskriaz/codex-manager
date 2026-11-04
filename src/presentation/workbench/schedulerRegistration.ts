@@ -1,3 +1,4 @@
+import { getQuotaIssueKind, isCredentialRejection } from '../../utils/quotaIssue';
 import { consumeAutoSwitchLockRelease } from "./autoSwitchState";
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
@@ -312,6 +313,9 @@ export function registerAutoRefreshScheduler(params: {
             });
             if (!refreshed) {
               failed = true;
+              const account = await params.repo.getAccount(current.id);
+              if (!disposed && scheduleVersion === currentScheduleVersion && account?.isActive && getQuotaIssueKind(account.quotaError) === 'auth')
+                await maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh }, { canUseAccount: params.canRefreshAccount });
               return;
             }
             if (disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshCurrentMinutes() <= 0) return;
@@ -535,8 +539,11 @@ export function registerTokenRefreshScheduler(params: {
               continue;
             }
             lastFailureMessage = error instanceof Error ? error.message : String(error);
-            if (!disposed && version === scheduleVersion)
+            if (!disposed && version === scheduleVersion) {
               markTokenAutomationRefreshFailure(account.id, lastFailureMessage);
+              if (account.isActive && isCredentialRejection(lastFailureMessage))
+                await maybeAutoSwitchForActiveQuota(params.repo, params.view, { canUseAccount: params.canRefreshAccount });
+            }
             console.warn(`[codexManager] background token refresh failed for ${account.email}:`, error);
           }
         }

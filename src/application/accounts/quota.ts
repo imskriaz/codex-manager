@@ -1,3 +1,5 @@
+import { isCredentialRejection } from '../../utils/quotaIssue';
+import { getTokenAutomationSnapshot } from '../../presentation/workbench/tokenAutomationState';
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { waitWithin } from "../../utils/concurrency";
@@ -615,6 +617,10 @@ export async function maybeAutoSwitchForActiveQuota(
   }
 }
 
+function needsReauthorization(account: CodexManagerAccountRecord): boolean {
+  return getQuotaIssueKind(account.quotaError) === 'auth' || isCredentialRejection(getTokenAutomationSnapshot().accounts[account.id]?.lastError);
+}
+
 async function evaluateAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
@@ -643,8 +649,9 @@ async function evaluateAutoSwitchForActiveQuota(
   const hourlyQuotaControlEnabled = true;
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);
+  const reauthorization = !!active && needsReauthorization(active);
   if (
-    active &&
+    active && !reauthorization &&
     !refreshedActive &&
     (options.ignoreEnabled || active.enabled !== false) &&
     (!hasFreshQuotaSnapshot(active) || active.quotaError || !active.quotaSummary)
@@ -665,10 +672,9 @@ async function evaluateAutoSwitchForActiveQuota(
       );
   }
   if (
-    !active?.quotaSummary ||
-    active.quotaError ||
+    !active ||
     (!options.ignoreEnabled && active.enabled === false) ||
-    !hasFreshQuotaSnapshot(active)
+    (!reauthorization && (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)))
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select unavailable — refresh the active account and retry.");
@@ -683,12 +689,12 @@ async function evaluateAutoSwitchForActiveQuota(
   }
 
   const activeHourlyTriggered =
-    hourlyQuotaControlEnabled &&
+    !reauthorization && hourlyQuotaControlEnabled &&
     hasComparableHourlyWindow(active) &&
-    active.quotaSummary.hourlyPercentage <= hourlyThreshold;
+    active.quotaSummary!.hourlyPercentage <= hourlyThreshold;
   const activeWeeklyTriggered =
-    hasComparableWeeklyWindow(active) && active.quotaSummary.weeklyPercentage <= weeklyThreshold;
-  const shouldSwitch = activeHourlyTriggered || activeWeeklyTriggered;
+    !reauthorization && hasComparableWeeklyWindow(active) && active.quotaSummary!.weeklyPercentage <= weeklyThreshold;
+  const shouldSwitch = reauthorization || activeHourlyTriggered || activeWeeklyTriggered;
   if (!shouldSwitch) {
     lastBlockedAutoSwitchKey = undefined;
     deferredForSessions = false;
@@ -699,7 +705,7 @@ async function evaluateAutoSwitchForActiveQuota(
     return false;
   }
 
-  if (await deferAutoSwitchForSessions(options.userInitiated)) return false;
+  if (!reauthorization && await deferAutoSwitchForSessions(options.userInitiated)) return false;
 
   const candidates = accounts
     .filter(
@@ -708,7 +714,7 @@ async function evaluateAutoSwitchForActiveQuota(
         (options.canUseAccount?.(account.id) ?? true) &&
         (options.ignoreEnabled || account.enabled !== false) &&
         !!account.quotaSummary &&
-        !account.quotaError &&
+        !account.quotaError && !needsReauthorization(account) &&
         isAutoQueueCandidateEligible(
           { ...toAutoQueueOrderValue(account), disabled: options.ignoreEnabled ? false : account.enabled === false },
           getAccountAutoQueuePolicy()
@@ -743,6 +749,15 @@ async function evaluateAutoSwitchForActiveQuota(
       return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed, true);
     }
 
+    if (reauthorization) {
+      const key = `reauthorize:${active.id}`;
+      if (lastBlockedAutoSwitchKey !== key) {
+        lastBlockedAutoSwitchKey = key;
+        recordAutoSwitchDashboardNotice('The active account needs reauthorization. No verified replacement account is available; session recovery is retained.', 'warning', { accountId: active.id });
+      }
+      return false;
+    }
+    if (!active.quotaSummary) return false;
     const ownedAccounts = accounts.filter(account => options.canUseAccount?.(account.id) ?? true);
     const optedInReset = getAccountAutoQueuePolicy().autoResetEnabled ? undefined : selectAccountResetOverride(ownedAccounts);
     if (optedInReset) {
@@ -754,7 +769,7 @@ async function evaluateAutoSwitchForActiveQuota(
       if (
         usableAutoQueueResetCount(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy()) > 0 &&
         hasComparableWeeklyWindow(active) &&
-        active.quotaSummary.weeklyPercentage <= resetThreshold
+        active.quotaSummary!.weeklyPercentage <= resetThreshold
       ) {
         try {
           const resetResult = await executeActiveResetPlan(
@@ -893,11 +908,11 @@ async function evaluateAutoSwitchForActiveQuota(
   }
 
   lastBlockedAutoSwitchKey = undefined;
-  const matchedRules = buildMatchedRules();
+  const matchedRules = reauthorization ? ['reauthorize'] : buildMatchedRules();
   // Session inspection can await native process checks. Complete it before
   // reading the state used to authorize the switch, since the user can switch
   // accounts or change automation settings while that inspection is pending.
-  if (await deferAutoSwitchForSessions(options.userInitiated)) return false;
+  if (!reauthorization && await deferAutoSwitchForSessions(options.userInitiated)) return false;
   // Revalidate the active identity immediately before mutating auth state. A
   // manual/dashboard switch may have won a race while candidate selection was
   // running; never switch based on that stale list snapshot.
@@ -909,12 +924,12 @@ async function evaluateAutoSwitchForActiveQuota(
     !latestActive ||
     latestActive.id !== active.id ||
     isAutoSwitchLocked(active.id) ||
-    !isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true) ||
+    !(reauthorization ? needsReauthorization(latestActive) && (options.ignoreEnabled || latestActive.enabled !== false) && (options.ignoreEnabled || getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true)) : isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true)) ||
     !latestNext ||
     latestNext.isActive ||
     !(options.canUseAccount?.(latestNext.id) ?? true) ||
     (!options.ignoreEnabled && latestNext.enabled === false) ||
-    latestNext.quotaError ||
+    latestNext.quotaError || needsReauthorization(latestNext) ||
     latestNext.resetCreditAttempt ||
     !latestNext.quotaSummary ||
     !hasFreshQuotaSnapshot(latestNext) ||
@@ -930,7 +945,7 @@ async function evaluateAutoSwitchForActiveQuota(
   }
   await repo.switchAccount(latestNext.id, { expectedActiveAccountId: active.id });
   console.info("[codexManager] auto switch completed", {
-    trigger:
+    trigger: reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -944,7 +959,7 @@ async function evaluateAutoSwitchForActiveQuota(
     fromEmail: active.email,
     toAccountId: latestNext.id,
     toEmail: latestNext.email,
-    trigger:
+    trigger: reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -959,7 +974,8 @@ async function evaluateAutoSwitchForActiveQuota(
   view.refresh();
 
   const decisionReason = getCodexManagerAccountAutoQueueEfficiency(latestNext, autoQueueScoringOptions()).reason;
-  const switchMessage = buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
+  const switchMessage = reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
+  deferredForSessions = false; sessionWaitNotice = undefined;
 
   await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated);
   return true;

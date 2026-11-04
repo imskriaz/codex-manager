@@ -14,13 +14,14 @@ import type { AppServerRequest } from "./codexAppServerRpc";
 import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
 
 type Observation = {
-  home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number;
+  home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number; verifiedAt?: number;
   access?: CodexSessionAccess;
   prompts?: AppServerRequest[];
   promptResponses?: Map<string, Promise<void>>;
   waiters: Set<(running: boolean | undefined) => void>;
 };
 const observations = new Map<string, Observation>();
+const NATIVE_STATUS_LEASE_MS = 15_000;
 const readinessWaiters = new Map<string, number>();
 let socket: net.Socket | undefined;
 let connecting: Promise<void> | undefined;
@@ -42,7 +43,7 @@ function follow(entry: Observation, following: boolean): void {
     method: "thread-owner-discovery", version: 1, timeoutMs: 3000, params: { hostId: "local", conversationId: entry.id } });
 }
 function settle(entry: Observation, running: boolean | undefined): void {
-  entry.running = running;
+  entry.running = running; entry.verifiedAt = Date.now();
   if (running !== true) entry.turnId = undefined;
   if (running === undefined) { entry.ready = undefined; entry.access = undefined; }
   recordNativeSessionStatus(entry.home,entry.id,running);
@@ -202,7 +203,7 @@ export function getNativeCodexSessionTurnId(home: string, id: string): string | 
 export function getNativeCodexSessionRunning(home: string, id: string): boolean | undefined {
   const entry = socket ? observations.get(`${path.resolve(home)}:${id}`) : undefined;
   if (entry) entry.usedAt = Date.now();
-  return entry?.running;
+  return entry?.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS ? entry.running : undefined;
 }
 
 /** A published tab can still be loading; wait for its verified native runtime before recovery. */
@@ -214,8 +215,11 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
   let connected = false;
   try {
     while (Date.now() < deadline) {
-      await readNativeCodexSessionRunning(home, id, signal);
+      await waitWithin(readNativeCodexSessionRunning(home, id, signal), Math.max(1, deadline - Date.now()), 'Native readiness check timed out.', signal).catch(error => {
+        signal?.throwIfAborted(); if (Date.now() < deadline) throw error;
+      });
       signal?.throwIfAborted();
+      if (Date.now() >= deadline) break;
       const entry = observations.get(key);
       connected ||= Boolean(socket);
       if (entry?.ready) return true;
@@ -460,7 +464,11 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
     if (!entry.waiters.size && entry.running === undefined) { follow(entry, false); observations.delete(key); }
     return undefined;
   }
-  if (entry.running !== undefined) return entry.running;
+  if (entry.running !== undefined && entry.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS) return entry.running;
+  if (entry.running !== undefined) {
+    // Refresh missed completion events without trusting a retained writer handle.
+    entry.needsTurnSnapshot = true; settle(entry, undefined); follow(entry, true);
+  }
   return new Promise(resolve => {
     let settled = false;
     const cleanup = (drop = false) => {

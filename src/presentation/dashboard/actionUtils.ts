@@ -57,5 +57,8 @@ export function toImportActionPayload(
 }
 
 export function toFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b1385\b/.test(message) && /CreateProcessWithLogonW|logon failure|sandbox/i.test(message)
+    ? `${message} Windows denied the Codex sandbox user's logon rights. Repair Codex's Windows sandbox setup or ask the device administrator to correct those rights. Workspace access settings have not been changed.`
+    : message;
 }

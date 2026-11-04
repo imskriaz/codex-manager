@@ -22,7 +22,7 @@ import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./code
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
 import { publishDashboardRealtime } from "./dashboardRealtime";
-import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, removeDeletedSessionCache } from "../storage/sqliteSessions";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, removeDeletedSessionCache, isConfirmedSessionDeleted } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -255,6 +255,7 @@ export async function readCodexCliSessions(
     return await refresh();
   } catch (error) {
     recordPersistentEvent("warning", "session-list", "Session cache unavailable; reading local history", undefined, error);
+    if (error instanceof Error && error.message.startsWith("Codex history storage is unavailable.")) throw error;
     return readLocalSessionList(codexHome, limit);
   }
 }
@@ -308,12 +309,32 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   const records = new Map(state.map((record) => [record.id, record]));
   const entries = new Map(index.map((entry) => [entry.id, entry]));
   for (const record of state) entries.set(record.id, mergeSessionIndexEntry(record, entries.get(record.id)));
+  const storeForCleanup = getSqliteStateStore();
+  if (generation && storeForCleanup && !statusError) {
+    const known = new Map((readSessionCatalogue(storeForCleanup, codexHome)?.rows ?? []).map(row => [row.id, row.title]));
+    const nativeFiles = await fs.readdir(codexHome);
+    const nativeStorageAvailable = nativeFiles.some(file => file === 'session_index.jsonl' || /^state_\d+\.sqlite$/.test(file));
+    if (!nativeStorageAvailable && known.size) throw new Error('Codex history storage is unavailable. Saved sessions were kept; reconnect the original storage before refreshing.');
+    if (nativeStorageAvailable && storeForCleanup.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_tasks'").get()) {
+      const prefix = `${getCodexHomeStateKey(codexHome)}:`;
+      for (const row of storeForCleanup.prepare("SELECT source,data FROM project_tasks WHERE substr(source,1,?)=? LIMIT 30000").all(prefix.length, prefix)) {
+        const task = JSON.parse(String(row['data'])) as { sessionId?: string; title?: string };
+        if (task.sessionId && SESSION_ID_PATTERN.test(task.sessionId)) known.set(task.sessionId, task.title ?? task.sessionId);
+      }
+    }
+    await runWithConcurrencyLimit([...known].filter(([id]) => !entries.has(id)).slice(0,512), 8, async ([id, title]) => {
+      const record = (await readStateSessionRecords(codexHome, id, undefined, 1, true))[0];
+      if (record) { records.set(id, record); state.push(record); }
+      entries.set(id, record ? mergeSessionIndexEntry(record, { id, thread_name: title }) : { id, thread_name: title });
+    });
+  }
   const runningIds = new Set(await readRunningCodexSessionIds(codexHome).catch((error: unknown) => {
     statusError = (error instanceof Error ? error.message : String(error)) || "Session inspection failed.";
     recordPersistentEvent("warning", "session-list", "Running state unavailable; showing local history", { reason: statusError });
     return [];
   }));
   for (const id of runningIds) if (!entries.has(id)) entries.set(id, { id });
+  if (storeForCleanup) for (const id of entries.keys()) if (isConfirmedSessionDeleted(storeForCleanup,codexHome,id)) { entries.delete(id); runningIds.delete(id); }
   if (!entries.size) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
   for (const record of state) { if (record.archived) archivedIds.add(record.id); else if (record.archived === false) archivedIds.delete(record.id); }
@@ -346,7 +367,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   });
   const store = getSqliteStateStore();
   if (!statusError && store && generation && deleted.length) {
-    try { removeDeletedSessionCache(store, codexHome, deleted, generation, startedAt); }
+    try { removeDeletedSessionCache(store, codexHome, deleted, generation, startedAt, true); }
     catch (error) { recordPersistentEvent("warning", "session-list", "Deleted session cache cleanup deferred", undefined, error); }
   }
   const preferences = readCodexSessionPreferences(codexHome, summaries.filter(Boolean).map((summary) => summary.id));
@@ -493,6 +514,8 @@ export async function readCodexCliSessionSummary(
   requireNativeRuntime: boolean | "display" = false
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
+  const deletionStore = getSqliteStateStore();
+  if (deletionStore && isConfirmedSessionDeleted(deletionStore,codexHome,sessionId)) return undefined;
   const recent = getRecentNewSession(sessionId, codexHome)?.summary;
   if (requireNativeRuntime !== true && recent && ownsSessionTurn(codexHome, sessionId)) {
     const access = getNativeCodexSessionAccess(codexHome, sessionId) ?? readSavedCodexSessionAccess(codexHome,sessionId)?.access ?? recent.access;
@@ -700,7 +723,7 @@ function withStoredSessionAccess(home: string, session: DashboardCliSessionSumma
 }
 
 export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
-  const unknown = sessions.find(session => session.status === "unknown");
+  const unknown = sessions.find(session => session.status === "unknown" && session.statusError !== "Running state is being checked. Conversation history remains available.");
   if (unknown) return { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${unknown.statusError ?? "Session inspection is unavailable."}` };
   return undefined;
 }
@@ -1810,7 +1833,14 @@ export async function deleteCodexCliSession(sessionId: string, options: { archiv
     if (options.archivedOnly && !archived?.archived) throw new Error("This conversation is no longer archived. It was kept.");
     if (archived ? archived.status !== "idle" : await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
-    await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
+    const deletionStartedAt = Date.now();
+    try { await runCodexAppServerRequest("thread/delete", { threadId: sessionId }); }
+    catch (error) {
+      if (!(error instanceof Error) || !/\b(?:thread|conversation|session) (?:not found|does not exist|has (?:already )?been deleted)\b|\bno (?:thread|conversation|session) found\b/i.test(error.message)) throw error;
+    }
+    if (resolveCodexHome() !== home) throw new Error('Codex deletion completed, but the active home changed. Refresh the original home before retrying cleanup.');
+    const store = getSqliteStateStore();
+    if (store) removeDeletedSessionCache(store, home, [sessionId], undefined, deletionStartedAt, true);
     recentNewSessions.delete(sessionId);
     newSessionFailures.delete(sessionId);
     try { retireCodexSessionQueue(home, sessionId); }
@@ -2930,6 +2960,7 @@ async function runCodexAppServerRequest<T = unknown>(
   signal?: AbortSignal
 ): Promise<T> {
   signal?.throwIfAborted();
+  const requestHome = resolveCodexHome();
   const maintenance = maintenanceConnection.getStore();
   if (maintenance && ["thread/delete", "thread/unarchive", "thread/goal/clear"].includes(method)) {
     const id = (params as { threadId?: string } | null)?.threadId;
@@ -2948,7 +2979,10 @@ async function runCodexAppServerRequest<T = unknown>(
   const executable = await resolveCodexCliExecutable();
   const sessionId = (params as { threadId?: unknown } | null)?.threadId;
   let cwd: string;
-  try { cwd = typeof sessionId === "string" ? await resolveRecordedSessionProject(sessionId) : resolveCliProjectPath(undefined); }
+  try {
+    cwd = method === "thread/delete" ? requestHome : typeof sessionId === "string" ? await resolveRecordedSessionProject(sessionId) : resolveCliProjectPath(undefined);
+    if (method === "thread/delete") await assertUsableCliProjectPath(cwd);
+  }
   catch (error) {
     if (typeof sessionId !== "string" || !["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete", "thread/goal/clear"].includes(method)) throw error;
     const home = resolveCodexHome();
@@ -2962,10 +2996,11 @@ async function runCodexAppServerRequest<T = unknown>(
     await assertUsableCliProjectPath(cwd);
     recordPersistentEvent("debug", "session-maintenance", "Using Codex storage for an unavailable session project", { sessionRef: toSessionLogRef(sessionId), method });
   }
+  if (resolveCodexHome() !== requestHome) throw new Error('Codex home changed. The request was not sent.');
   const rpc = await openCodexAppServer(executable, cwd, signal);
   const abort = () => { void rpc.close(); };
   signal?.addEventListener("abort", abort, { once: true });
-  try { signal?.throwIfAborted(); return await rpc.request<T>(method, params, timeoutMs); }
+  try { signal?.throwIfAborted(); if (resolveCodexHome() !== requestHome) throw new Error('Codex home changed. The request was not sent.'); return await rpc.request<T>(method, params, timeoutMs); }
   finally { signal?.removeEventListener("abort", abort); await rpc.close(); }
 }
 

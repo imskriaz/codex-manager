@@ -39,6 +39,7 @@ import {
   readCodexCliSessionMessages,
   renameCodexCliSession,
   setCodexSessionGoalStatus,
+  clearCodexSessionGoal,
   resumeCodexSessionGoal,
   setCodexSessionAutoResume,
   setCodexSessionQueue,
@@ -2109,6 +2110,14 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
 
 async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload) {
   ensureCliIntegrationEnabled();
+  if (payload?.goalStatus === 'clear') {
+    if (!payload.sessionId || payload.confirmed !== true) throw new Error('Confirm deletion of this goal before retrying.');
+    const session = await ensureCliSessionIsActive(payload.sessionId);
+    if (session.subAgent || session.parentSessionId) throw new Error('Open the parent session to delete its goal.');
+    if (session.status !== 'idle') throw new Error('Stop this conversation before deleting its goal.');
+    if (session.goal) await clearCodexSessionGoal(session.id);
+    return { cliSession: { ...session, goal: null }, notice: { level: 'info' as const, message: 'Goal deleted. Conversation kept.' } };
+  }
   if (!payload?.sessionId || !["active", "paused"].includes(payload.goalStatus ?? "")) throw new Error("Choose a session and Pause or Resume for its goal.");
   const status = payload.goalStatus!;
   const session = await ensureCliSessionIsActive(payload.sessionId);

@@ -5,7 +5,7 @@ import type { CodexAppServerRpc } from "./codexAppServerRpc";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { captureSessionAccount, recordSessionLive } from "./sessionRecording";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { listStoredSessionLive, readStoredSessionLive } from "../storage/sqliteSessions";
+import { listStoredSessionLive, readStoredSessionLive, isConfirmedSessionDeleted } from "../storage/sqliteSessions";
 import { getCodexHome } from "../codex/authFile";
 
 const MAX_STREAMS = 30;
@@ -16,6 +16,8 @@ const streams = new Map<string, { reducer: CodexSessionLiveReducer; timer?: Node
 
 export function getCodexSessionLiveState(sessionId: string): DashboardCodexSessionLiveState | undefined {
   prune();
+  const deletionStore = getSqliteStateStore();
+  if (deletionStore && isConfirmedSessionDeleted(deletionStore,getCodexHome(),sessionId)) return undefined;
   const current = streams.get(sessionId.toLowerCase())?.reducer.snapshot();
   if (current?.status === "running" || current?.status === "starting") return current;
   const store = getSqliteStateStore();
@@ -31,7 +33,7 @@ export function listCodexSessionLiveStates(): DashboardCodexSessionLiveState[] {
     const current = stream.reducer.snapshot();
     if (isNewerCodexSessionLiveState(current,states.get(id))) states.set(id,current);
   }
-  return [...states.values()];
+  return [...states.values()].filter(state => state.deviceId || !store || !isConfirmedSessionDeleted(store,getCodexHome(),state.sessionId));
 }
 
 export function onDidReleaseCodexSessionLiveSlot(listener: () => void): () => void {

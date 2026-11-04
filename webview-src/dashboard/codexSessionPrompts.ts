@@ -65,3 +65,16 @@ export function updateCodexPrompts(state: CodexPromptState, update: CodexPromptU
     : state.entries.map(entry => codexPromptKey(entry.request) === key && (entry.responseId === update.responseId || !entry.responseId)
       ? { ...entry, responseId: undefined, uncertain: false, error: update.error || "Codex could not receive this response. Your answer is kept." } : entry) };
 }
+
+
+const DISMISSED_REQUESTS_KEY = 'codexManager.dismissedRequests.v1';
+export function readDismissedCodexRequests(): string[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(DISMISSED_REQUESTS_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter((key): key is string => typeof key === 'string' && key.length <= 512).slice(-128) : [];
+  } catch { return []; }
+}
+export function saveDismissedCodexRequests(keys: string[]): boolean {
+  try { localStorage.setItem(DISMISSED_REQUESTS_KEY, JSON.stringify(keys.slice(-128))); return true; }
+  catch { return false; }
+}

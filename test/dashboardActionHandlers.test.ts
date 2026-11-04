@@ -116,6 +116,20 @@ describe("manual Codex navigation and recovery", () => {
     expect(result.status).toBe("completed");
     expect(open).toHaveBeenCalledOnce();
   });
+  it('deletes a confirmed idle goal, keeps its conversation and reports failures', async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: 'Goal task', status: 'idle', goal: { objective: 'Finish work', status: 'active' } });
+    const clear = vi.spyOn(sessionEditors, 'clearCodexSessionGoal').mockResolvedValue(undefined);
+    const request = { type: 'dashboard:action' as const, requestId: 'clear-goal', action: 'setCodexSessionGoalStatus' as const, payload: { sessionId: id, goalStatus: 'clear' as const, confirmed: true } };
+    expect(await executeDashboardActionMessage(createContext(), { ...request, requestId: 'unconfirmed', payload: { ...request.payload, confirmed: false } })).toMatchObject({status:'failed'});
+    expect(clear).not.toHaveBeenCalled();
+    expect(await executeDashboardActionMessage(createContext(), request)).toMatchObject({status:'completed',payload:{cliSession:{id,goal:null},notice:{message:'Goal deleted. Conversation kept.'}}});
+    expect(clear).toHaveBeenCalledWith(id);
+    clear.mockRejectedValueOnce(new Error('Goal storage unavailable'));
+    expect(await executeDashboardActionMessage(createContext(), {...request,requestId:'failed-clear'})).toMatchObject({status:'failed',errorMessage:expect.stringContaining('Goal storage unavailable')});
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title:'Running',status:'running',goal:{objective:'Work',status:'active'} });
+    expect(await executeDashboardActionMessage(createContext(), {...request,requestId:'running-clear'})).toMatchObject({status:'failed',errorMessage:expect.stringContaining('Stop')});
+  });
   it("pauses a running goal from the browser and keeps the explicit result visible", async () => {
     enableSessions();
     readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Goal task", status: "running", goal: { objective: "Finish work", status: "active" } });

@@ -17,7 +17,10 @@ describe("account token health", () => {
     ["Token refresh failed (invalid_grant).", "reauthorize"],
     ["Token refresh failed (refresh_token_reused).", "reauthorize"],
     ["API returned 401 - Unauthorized", "reauthorize"],
-    ["Refresh token has expired", "reauthorize"]
+    ["Refresh token has expired", "reauthorize"],
+    ["Please sign in again", "reauthorize"],
+    ["Reauthentication is required", "reauthorize"],
+    ["Refresh token was already used", "reauthorize"]
   ])("classifies %s without confusing transport errors with invalid credentials", (message, kind) => {
     expect(resolveAccountHealth({ id: "account" } as never, { accessToken: "access", idToken: "id" }, {
       accounts: { account: { lastError: message } }

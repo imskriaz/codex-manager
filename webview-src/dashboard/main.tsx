@@ -1,3 +1,4 @@
+import { dashboardPageTitle } from './pageTitle';
 import { codexModelLabel } from "./helpers";
 import { isCodexSessionAccess } from '../../src/domain/codexSessionAccess';
 import { codexPromptKey } from "./codexSessionPrompts";
@@ -237,6 +238,7 @@ function App() {
   const usageGraphSourceRef = useRef<string>();
   const usageGraphDataSourceRef = useRef<string>();
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
+  const [taskTitleItem, setTaskTitleItem] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("agreement");
@@ -624,12 +626,20 @@ function App() {
   if (selectedPeerId !== "local" && !pcOptions.some(peer => peer.id === selectedPeerId))
     pcOptions.push({ id: selectedPeerId, name: "Remote PC", sessionCount: 0, connected: false, local: false });
   const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
+  useEffect(() => {
+    if (!isBrowserDashboard) return;
+    const workspace = isCliSessionsPath(browserPath);
+    const screen = state.settingsOpen ? 'Settings' : logConsoleOpen ? 'System log' : apiTokenOpen ? 'API' : aboutOpen ? 'About' : browserPath === '/tasks' ? 'Tasks' : workspace ? 'Workspace' : 'Accounts';
+    const item = state.settingsOpen || logConsoleOpen || apiTokenOpen || aboutOpen ? undefined : browserPath === '/tasks' ? taskTitleItem : workspace ? selectedCliSession?.title : undefined;
+    document.title = dashboardPageTitle(workspace ? selectedCliSession?.deviceName ?? selectedPeer?.name : selectedPeer?.name, screen, item, state.privacyMode);
+  }, [isBrowserDashboard, browserPath, selectedPeer?.name, selectedCliSession?.deviceName, selectedCliSession?.title, taskTitleItem, state.privacyMode, state.settingsOpen, logConsoleOpen, apiTokenOpen, aboutOpen]);
   const browserPresenceTargetDeviceId = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local) ? undefined : selectedPeerId;
   cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
   const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
-  const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): void => {
+  const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): string | undefined => {
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
     if (requestId) sessionActionRequests.current.set(requestId, session);
+    return requestId;
   };
   const requestCliSessions = useCallback(
     (force = false, userInitiated = false): string | undefined => {
@@ -2421,6 +2431,7 @@ function App() {
             <div class="codex-request-background" role="alert">
               <span>Codex is waiting for input in another session.</span>
               <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
+              <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest))}>×</button>
             </div>,
             document.body
           )
@@ -2431,7 +2442,7 @@ function App() {
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
         {selectedPeerOffline ? <p class="settings-notice-warning dashboard-peer-offline" role="status">Selected system offline. Saved data is shown while reconnecting. Choose another system or wait for it to reconnect.</p> : null}
-        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onActionFeedback={showNotice} active={browserPath === '/tasks'}
+        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
           connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
@@ -3084,7 +3095,7 @@ function App() {
                 "deleteCodexCliSession"
               ].some((action) => isActionPending(action as DashboardActionName))}
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
-              onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status })}
+              onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status, ...(status === 'clear' ? { confirmed: true } : {}) })}
               onResume={(session) => requestSessionAction("resumeCodexSessions", session)}
               onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
               onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 3 })}

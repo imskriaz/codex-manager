@@ -6,7 +6,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 vi.mock("fs/promises", { spy: true });
 import { SqliteStateStore, configureSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexHomeStateKey } from "../src/codex/authFile";
-import { invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus } from "../src/storage/sqliteSessions";
+import { invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus, saveSessionLive, readStoredSessionLive } from "../src/storage/sqliteSessions";
 import { readCodexCliSessions } from "../src/services/codexSessionResume";
 import { writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import * as settings from '../src/infrastructure/config/extensionSettings';
@@ -127,4 +127,49 @@ it("rolls back an incomplete oversized cache replacement", () => {
   const generation = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, generation, [row], Date.now());
   expect(() => saveSessionCatalogue(store, root, generation, [{ ...row, projectPath: "x".repeat(9 * 1024 * 1024) }], Date.now())).toThrow("size limit");
   expect(readSessionCatalogue(store, root)?.rows).toEqual([row]);
+});
+
+it('clears confirmed deleted recovery records and derived tasks while preserving another home and newer ownership', () => {
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  const other = root+'-other'; const otherGeneration = invalidateSessionCatalogue(store,other);
+  saveSessionCatalogue(store,other,otherGeneration,[row],Date.now());
+  store.set('workspace:test','codexManager.autoResumeSessionIds',[row.id,'keep']);
+  store.database.exec("CREATE TABLE project_tasks(project TEXT,id TEXT,source TEXT,data TEXT); CREATE TABLE project_comments(project TEXT,task_id TEXT);");
+  store.prepare('INSERT INTO project_tasks VALUES(?,?,?,?)').run('old-project','derived',`${getCodexHomeStateKey(root)}:${row.id}`,'{}');
+  store.prepare('INSERT INTO project_tasks VALUES(?,?,?,?)').run('other-project','other',`${getCodexHomeStateKey(other)}:${row.id}`,'{}');
+  saveSessionStatus(store,root,row.id,'running',Date.now()+10);
+  removeDeletedSessionCache(store,root,[row.id],undefined,Date.now(),true);
+  expect(readSessionCatalogue(store,root)?.rows).toHaveLength(1);
+  saveSessionStatus(store,root,row.id,'idle',Date.now()+20);
+  removeDeletedSessionCache(store,root,[row.id],undefined,Date.now()+21,true);
+  expect(readSessionCatalogue(store,root)?.rows).toEqual([]);
+  expect(readSessionCatalogue(store,other)?.rows).toHaveLength(1);
+  expect(store.get('workspace:test','codexManager.autoResumeSessionIds')).toEqual(['keep']);
+  expect(store.prepare('SELECT id FROM project_tasks').all()).toEqual([{id:'other'}]);
+});
+it('reconciles a Manager-only session after complete local discovery without requiring its obsolete project', async () => {
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  store.set('workspace:test','codexManager.autoResumeSessionIds',[row.id]);
+  await writeFile(path.join(root,'session_index.jsonl'),'');
+  expect(await readCodexCliSessions(root,undefined,true)).toEqual([]);
+  expect(store.get('workspace:test','codexManager.autoResumeSessionIds')).toEqual([]);
+});
+
+it('retains Manager history when native history storage is missing rather than confirming a deletion', async () => {
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  await expect(readCodexCliSessions(root,undefined,true)).rejects.toThrow('history storage is unavailable');
+  expect(readSessionCatalogue(store,root)?.rows).toHaveLength(1);
+});
+
+it('does not restore deleted history from late status or live-recording writes', () => {
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  removeDeletedSessionCache(store,root,[row.id],undefined,Date.now()+1,true);
+  saveSessionStatus(store,root,row.id,'running',Date.now()+2);
+  expect(saveSessionLive(store,root,{sessionId:row.id,streamId:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',sequence:2,status:'running',updatedAt:Date.now()+3,messages:[]})).toBe(false);
+  expect(readStoredSessionLive(store,root,row.id)).toBeUndefined();
+  expect(store.prepare('SELECT 1 FROM session_status WHERE session_id=?').get(row.id)).toBeUndefined();
 });

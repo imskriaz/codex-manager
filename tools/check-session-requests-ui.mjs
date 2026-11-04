@@ -53,6 +53,10 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
     await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
     await page.locator('.codex-request-background').waitFor({state:'visible'});
   }
+  await page.getByRole('button',{name:'Dismiss request notification',exact:true}).click();
+  await page.locator('.codex-request-background').waitFor({state:'hidden'});
+  await page.evaluate(()=>dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:codex-requests',requests:window.__uiCodexRequests}})));
+  assert.equal(await page.locator('.codex-request-background').count(),0,'A reconnect snapshot does not restore a dismissed banner');
   await page.goBack();
   await panel.waitFor();
   assert.equal(await custom.inputValue(), "Custom compact answer", "Navigating between sessions retains the answer draft");

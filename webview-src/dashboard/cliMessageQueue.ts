@@ -33,14 +33,14 @@ export function queuedMessageView(item: CliQueuedMessage): DashboardCliSessionMe
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const current = useRef(items), options = useRef(props); options.current = props;
   const owned = useRef(false), draining = useRef(false), writes = useRef(Promise.resolve(true)), generation = useRef(0);
   const loadFailed = (message: string) => { setError(message); options.current.feedback(message); };
   const update = (next: CliQueuedMessage[]) => { current.current = next; setItems(next); };
   const save = (next: CliQueuedMessage[], scope = options.current.scope) => {
-    const snapshot = structuredClone(next);
+    const snapshot = structuredClone(next.filter(item => item.state !== 'sent'));
     const work = writes.current.catch(() => false).then(() => scope ? writeBrowserCache(`message-queue:${scope}`, snapshot) : true);
     writes.current = work; return work;
   };
@@ -75,7 +75,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     let changed = false;
     const next = current.current.map(item => {
       const result = item.requestId && results.get(item.requestId);
-      if (!result || !['sending','uncertain'].includes(item.state)) return item;
+      if (!result || !(['sending','uncertain'].includes(item.state) || item.state === 'failed' && result.status === 'completed')) return item;
       changed = true;
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'sendCodexCliSessionMessage', ...result, requestId: item.id } }));
       return { ...item, state: result.status === 'completed' ? 'sent' as const : 'failed' as const, error: result.message };
@@ -113,7 +113,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     }, Math.max(65_000, chatUploadTimeoutMs(pending.draft.attachments)));
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
-  return { items, ready, error, retryLoad: () => setLoadAttempt(value => value + 1),
+  return { items, ready, error, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
     enqueue: (draft: CliComposerDraft): string | undefined => {
       const normalized = normalizeCliComposerDraft(draft);
       if (!normalized || !normalized.text.trim() && !normalized.attachments.length) { props.feedback('This message could not be queued. Check its text and attachments.'); return; }

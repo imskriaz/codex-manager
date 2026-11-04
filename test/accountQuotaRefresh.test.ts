@@ -6,12 +6,13 @@ import type { CodexManagerAccountRecord, CodexTokens } from "../src/core/types";
 import type { AccountsRepository } from "../src/storage";
 import { clearQuotaCheckCoordination, recordPeerQuotaChecks } from "../src/services/quotaCheckCoordination";
 
-const { refreshQuotaMock, fetchResetCreditsMock, consumeResetCreditMock, clearTokenAutomationErrorMock } = vi.hoisted(
+const { refreshQuotaMock, fetchResetCreditsMock, consumeResetCreditMock, clearTokenAutomationErrorMock, getTokenAutomationSnapshotMock } = vi.hoisted(
   () => ({
     refreshQuotaMock: vi.fn(),
     fetchResetCreditsMock: vi.fn(),
     consumeResetCreditMock: vi.fn(),
-    clearTokenAutomationErrorMock: vi.fn()
+    clearTokenAutomationErrorMock: vi.fn(),
+    getTokenAutomationSnapshotMock: vi.fn(() => ({ accounts: {} as Record<string, { lastError?: string }> }))
   })
 );
 
@@ -40,6 +41,7 @@ vi.mock("../src/services/quota", async (importOriginal) => ({
 }));
 
 vi.mock("../src/presentation/workbench/tokenAutomationState", () => ({
+  getTokenAutomationSnapshot: getTokenAutomationSnapshotMock,
   clearTokenAutomationError: clearTokenAutomationErrorMock
 }));
 
@@ -86,6 +88,7 @@ describe("refreshSingleQuota token automation state", () => {
     fetchResetCreditsMock.mockReset();
     consumeResetCreditMock.mockReset();
     clearTokenAutomationErrorMock.mockReset();
+    getTokenAutomationSnapshotMock.mockReset().mockReturnValue({ accounts: {} });
     handleCodexAppRestartPreferenceMock.mockReset();
     autoReloadWindowForAccountMock.mockReset();
     promptWindowReloadForAccountMock.mockReset().mockResolvedValue(false);
@@ -523,6 +526,32 @@ describe("refreshSingleQuota token automation state", () => {
     expect(await work).toBe(true);
     expect((read.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
     expect(isAutoSwitchWaitingForSessions()).toBe(false);
+  });
+
+  it.each(['switch', 'token-error', 'no-candidate', 'foreign', 'recovered', 'identity-changed', 'locked'])("handles reauthorization during running sessions: %s", async scenario => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = { ...createAccount('reauth-active', true, 90, 90), quotaError: { code: 'unauthorized', message: 'Refresh token expired; please sign in again' } };
+    if (scenario === 'token-error') { active.quotaError = undefined as never; getTokenAutomationSnapshotMock.mockReturnValue({ accounts: { [active.id]: { lastError: 'Please sign in again' } } }); }
+    const candidate = createAccount('reauth-next', false, 90, 90);
+    setCurrentWindowRuntimeAccountId(candidate.id);
+    const read = vi.spyOn(runningSessions, 'readRunningCodexSessionIds').mockResolvedValue(['busy-turn']);
+    let calls = 0;
+    const repo = { listAccounts: vi.fn(async () => {
+      calls++;
+      if (calls > 1 && scenario === 'recovered') return [{ ...active, quotaError: undefined }, candidate];
+      if (calls > 1 && scenario === 'identity-changed') return [{ ...active, isActive: false }, { ...candidate, isActive: true }];
+      return scenario === 'no-candidate' ? [active] : [active, candidate];
+    }), switchAccount: vi.fn(async () => undefined) };
+    if (scenario === 'locked') setAutoSwitchLock(active.id, 60000);
+    try {
+      expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { canUseAccount: id => scenario !== 'foreign' || id !== candidate.id })).toBe(['switch','token-error'].includes(scenario));
+      expect(repo.switchAccount).toHaveBeenCalledTimes(['switch','token-error'].includes(scenario) ? 1 : 0);
+      expect(read).not.toHaveBeenCalled();
+      if (['switch','token-error'].includes(scenario)) {
+        expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id, { expectedActiveAccountId: active.id });
+        expect(getAutoSwitchRuntimeSnapshot().lastReason?.trigger).toBe('reauthorize');
+      }
+    } finally { clearAutoSwitchLock(active.id); }
   });
 
   it("waits for all running sessions, retries after completion, and rechecks before switching", async () => {

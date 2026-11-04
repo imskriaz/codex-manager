@@ -2,6 +2,24 @@
 
 ## 1.6.6
 
+- Keep dismissed or answered request notifications hidden across reconnects and reloads; retain the actual prompt in its session and notify for new requests.
+
+- Add the missing Delete goal icon with confirmation, native Codex deletion and guarded feedback, preserving the conversation.
+
+- Identify browser tabs as System Name - Screen - Item, updating for selected sessions, tasks and shared views while respecting privacy mode.
+
+- Delete obsolete-project and already-missing conversations through Codex storage, reconcile confirmed stale Manager records, and diagnose Windows sandbox logon errors without changing access settings.
+
+- Revalidate native session ownership so a missed stop event cannot leave the session locked until a PC restart.
+
+- Recover from active-account reauthorization by selecting a verified eligible account, preserving session recovery and account ownership guards.
+
+- Share task actions across Board, List, Gantt and Calendar views; retain disconnected messages locally until confirmation and clear confirmed send records.
+- Dock task details beside the board with a compact single-line title; hide the duplicate project title in shared boards. Keep composer feedback inside its border and routine background checks quiet.
+
+- Slide through images across the session, including earlier and collapsed messages; keep one top toolbar, image-only zoom and keyboard navigation. Keep short message bubbles on one line when they fit.
+- Show Play in an empty composer for interrupted, unfinished sessions, with confirmed Resume feedback and duplicate prevention.
+- Balance composer controls at 32px on desktop and 30px on mobile, with smaller mobile icons and model text while retaining the context indicator size.
 - Make View original an accessible icon in image previews and close previews by clicking outside the image, including workspace files.
 - Sync session access changes in both directions with the Codex owner, preserve inherited permissions on sends, and show permission push actions as Approve and Reject.
 - Use a compact two-row composer on every screen, including the empty state, with the full-width message field above its controls.

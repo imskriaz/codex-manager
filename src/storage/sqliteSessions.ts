@@ -113,12 +113,17 @@ export function currentSessionAccountId(store: SqliteStateStore, home: string): 
   return header?.activeAccountStateVersion === 1 ? header.activeAccountIdsByCodexHome?.[getCodexHomeStateKey(home)] : header?.currentAccountId;
 }
 
+export function isConfirmedSessionDeleted(store: SqliteStateStore, home: string, id: string): boolean {
+  return store.get('deleted-codex-sessions', `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`) !== undefined;
+}
+
 export function saveSessionLive(store: SqliteStateStore, home: string, state: DashboardCodexSessionLiveState, accountId?: string): boolean {
   if (!isCodexSessionLiveState(state)) throw new Error("Invalid live session state.");
   state = { ...state, sessionId: state.sessionId.toLowerCase(), streamId: state.streamId.toLowerCase() };
   initializeSessionStorage(store);
   const scope = getCodexHomeStateKey(home);
   const device = state.deviceId ?? "";
+  if (!device && isConfirmedSessionDeleted(store,home,state.sessionId)) return false;
   return store.transaction(() => {
     const own = store.prepare("SELECT data FROM session_turns WHERE home=? AND device_id=? AND stream_id=?").get(scope,device,state.streamId);
     if (own && !isNewerCodexSessionLiveState(state,JSON.parse(String(own["data"])) as DashboardCodexSessionLiveState)) return false;
@@ -145,6 +150,7 @@ export function saveSessionLive(store: SqliteStateStore, home: string, state: Da
 }
 
 export function saveSessionStatus(store: SqliteStateStore, home: string, id: string, status: "starting" | "running" | "idle" | "unknown", at = Date.now()): void {
+  if (isConfirmedSessionDeleted(store,home,id)) return;
   initializeSessionStorage(store);
   const scope = getCodexHomeStateKey(home);
   id = id.toLowerCase();
@@ -179,7 +185,7 @@ export function pruneSessionCache(store: SqliteStateStore, now = Date.now()): vo
 }
 
 /** Only a successful complete discovery may confirm these IDs as deleted. */
-export function removeDeletedSessionCache(store: SqliteStateStore, home: string, ids: readonly string[], generation?: string, startedAt = Date.now()): void {
+export function removeDeletedSessionCache(store: SqliteStateStore, home: string, ids: readonly string[], generation?: string, startedAt = Date.now(), confirmedDeletion = false): void {
   if (!ids.length) return;
   initializeSessionStorage(store);
   store.transaction(() => {
@@ -189,7 +195,22 @@ export function removeDeletedSessionCache(store: SqliteStateStore, home: string,
     }
     const pending = store.prepare("SELECT 1 FROM state,json_each(CASE WHEN json_valid(state.value) THEN state.value ELSE '[]' END) AS item WHERE state.key IN ('codexManager.autoResumeSessionIds','codexManager.autoResumeOpenSessionIds') AND item.value=? LIMIT 1");
     for (const id of ids) {
-      if (pending.get(id) || store.prepare("SELECT 1 FROM running_turns WHERE session_id=?").get(id) || store.prepare("SELECT 1 FROM session_turns WHERE home=? AND session_id=? AND status IN ('starting','running') AND updated_at>=? LIMIT 1").get(getCodexHomeStateKey(home), id, Date.now() - 24 * 60 * 60_000)) continue;
+      if (confirmedDeletion) {
+        if (store.prepare("SELECT 1 FROM session_status WHERE home=? AND session_id=? AND status IN ('starting','running') AND checked_at>=?").get(getCodexHomeStateKey(home), id, startedAt)) continue;
+        store.set("deleted-codex-sessions", `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`, Date.now());
+        store.prepare("DELETE FROM running_turns WHERE session_id=?").run(id);
+        for (const row of store.prepare("SELECT namespace,key,value FROM state WHERE key IN ('codexManager.autoResumeSessionIds','codexManager.autoResumeOpenSessionIds')").all()) {
+          const saved: unknown = JSON.parse(String(row['value']));
+          if (Array.isArray(saved) && saved.includes(id)) store.set(String(row['namespace']), String(row['key']), saved.filter(value => value !== id));
+        }
+        if (store.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_tasks'").get()) {
+          const source = `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`;
+          for (const row of store.prepare("SELECT project,id FROM project_tasks WHERE source=?").all(source)) {
+            store.prepare("DELETE FROM project_comments WHERE project=? AND task_id=?").run(String(row['project']), String(row['id']));
+            store.prepare("DELETE FROM project_tasks WHERE project=? AND id=?").run(String(row['project']), String(row['id']));
+          }
+        }
+      } else if (pending.get(id) || store.prepare("SELECT 1 FROM running_turns WHERE session_id=?").get(id) || store.prepare("SELECT 1 FROM session_turns WHERE home=? AND session_id=? AND status IN ('starting','running') AND updated_at>=? LIMIT 1").get(getCodexHomeStateKey(home), id, Date.now() - 24 * 60 * 60_000)) continue;
       store.prepare("DELETE FROM session_status WHERE home=? AND session_id=?").run(getCodexHomeStateKey(home), id);
       store.prepare("DELETE FROM session_turns WHERE home=? AND session_id=? AND device_id=''").run(getCodexHomeStateKey(home), id);
       store.prepare("DELETE FROM session_catalogue_rows WHERE home=? AND session_id=?").run(getCodexHomeStateKey(home), id);

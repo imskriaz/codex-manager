@@ -90,6 +90,26 @@ describe("auto refresh scheduler", () => {
     scheduler.dispose();
   });
 
+  it.each(['Please sign in again','Network disconnected'])("handles active token refresh rejection: %s", async message => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'backgroundTokenRefreshEnabled' ? true : fallback } as never);
+    const account = { id: 'token-reauth', enabled: true, tokenRefreshEnabled: true, isActive: true };
+    const repo = { listAccounts: vi.fn(async () => [account]), getAccount: vi.fn(async () => account), getTokens: vi.fn(async () => ({ accessToken: 'access', idToken: 'id', refreshToken: 'refresh' })), refreshAccountTokens: vi.fn().mockRejectedValue(new Error(message)) } as unknown as AccountsRepository;
+    const scheduler = registerTokenRefreshScheduler({ context: { subscriptions: [] } as never, repo, view: { refresh: vi.fn() }, checkIntervalMs: 60000, skewSeconds: 300 });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(message === 'Please sign in again' ? 1 : 0);
+    scheduler.dispose();
+  });
+
+  it.each(['unauthorized', 'network'])("evaluates replacement accounts after a failed current refresh only for %s", async failure => {
+    const current = { id: 'active-auth-failure', isActive: true, enabled: true, quotaError: { code: failure, message: failure === 'unauthorized' ? 'Please sign in again' : 'Network disconnected' } };
+    const repo = { listAccounts: vi.fn(async () => [current]), getAccount: vi.fn(async () => current) } as unknown as AccountsRepository;
+    refreshSingleQuotaSafelyMock.mockResolvedValue(false);
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(failure === 'unauthorized' ? 1 : 0);
+    scheduler.dispose();
+  });
+
   it("evaluates auto switch immediately after each timed current-account refresh", async () => {
     const current = { id: "active", isActive: true, enabled: true };
     const repo = { listAccounts: vi.fn(async () => [current]) } as unknown as AccountsRepository;

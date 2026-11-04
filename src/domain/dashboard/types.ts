@@ -663,7 +663,7 @@ export interface DashboardActionPayload {
   shareToken?: string;
   taskView?: 'activities' | 'files' | 'changes' | 'overview';
   comment?: import('../projectTasks').ProjectCommentInput;
-  goalStatus?: "active" | "paused";
+  goalStatus?: "active" | "paused" | "clear";
   autoResumeEnabled?: boolean;
   queueEnabled?: boolean;
   sessionQueuePriority?: number;

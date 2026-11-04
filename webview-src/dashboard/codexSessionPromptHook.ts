@@ -3,7 +3,7 @@ import type { DashboardHostMessage, DashboardNotice } from "../../src/domain/das
 import type { SendAction } from "./hookTypes";
 import { postMessageToHost } from "./host";
 import { sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
-import { canAnswerCodexPrompt, codexPromptKey, emptyCodexPrompts, updateCodexPrompts, type CodexPromptEntry, type CodexPromptUpdate } from "./codexSessionPrompts";
+import { canAnswerCodexPrompt, readDismissedCodexRequests, saveDismissedCodexRequests, codexPromptKey, emptyCodexPrompts, updateCodexPrompts, type CodexPromptEntry, type CodexPromptUpdate } from "./codexSessionPrompts";
 
 export function useCodexSessionPrompts(props: {
   target?: CliSessionTarget;
@@ -13,6 +13,14 @@ export function useCodexSessionPrompts(props: {
   sendAction: SendAction;
   onNotice: (notice: DashboardNotice) => void;
 }) {
+  const initialDismissed = useRef(readDismissedCodexRequests());
+  const [dismissed, setDismissed] = useState(initialDismissed.current);
+  const dismissedRef = useRef(dismissed); dismissedRef.current = dismissed;
+  const dismiss = (key: string): void => {
+    const next = [...dismissedRef.current.filter(value => value !== key), key].slice(-128);
+    dismissedRef.current = next; setDismissed(next);
+    if (!saveDismissedCodexRequests(next)) options.current.onNotice({level: "warning", message: "Request notification dismissed in this tab. Browser storage is unavailable."});
+  };
   const [state, setState] = useState(emptyCodexPrompts);
   const current = useRef(state);
   const options = useRef(props); options.current = props;
@@ -55,6 +63,7 @@ export function useCodexSessionPrompts(props: {
         update({ type: "resolved", key });
       } else if (message?.type === "dashboard:action-result" && message.action === "respondCodexServerRequest" && Object.hasOwn(current.current.responses, message.requestId)) {
         if (message.status === "completed" && checkTarget.current === current.current.responses[message.requestId]) stopCheck();
+        if (message.status === 'completed') dismiss(current.current.responses[message.requestId]!);
         update({ type: "result", responseId: message.requestId, success: message.status === "completed", error: message.error });
         options.current.onNotice(message.status === "completed" ? { level: "info", message: "Response sent to Codex." } : { level: "error", message: message.error || "Codex could not receive this response. Your answer is kept." });
       }
@@ -91,7 +100,7 @@ export function useCodexSessionPrompts(props: {
   };
   const active = state.entries.find(matches) ?? (!props.browser ? state.entries[0] : undefined);
   return {
-    active, background: state.entries.find(entry => entry !== active), entries: state.entries,
+    active, background: state.entries.find(entry => entry !== active && !dismissed.includes(codexPromptKey(entry.request))), dismiss, entries: state.entries,
     connectedTo, checking, check, respond,
     answer: (key: string, questionId: string, answer: string) => update({ type: "answer", key, questionId, answer }),
     timeout: (responseId: string) => update({ type: "timeout", responseId })

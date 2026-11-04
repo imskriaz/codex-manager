@@ -168,10 +168,10 @@ export function TaskDetailPanel(props: { open: boolean; title: string; onClose: 
     return () => { if (previous?.isConnected && (document.activeElement === document.body || ref.current?.contains(document.activeElement))) previous.focus({ preventScroll: true }); };
   }, [props.open]);
   if (!props.open) return null;
-  return createPortal(<aside ref={ref} class="task-detail-panel task-detail-modal" aria-label={props.title} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeRef.current(); } }}>
-    <header class="settings-modal-head"><strong class="settings-modal-title">{props.title}</strong><button type="button" class="settings-close" aria-label="Close task details" onClick={props.onClose}>×</button></header>
+  return <aside ref={ref} class="task-detail-panel task-detail-modal" aria-label={props.title} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeRef.current(); } }}>
+    <header class="settings-modal-head"><strong class="settings-modal-title" title={props.title}>{props.title}</strong><button type="button" class="settings-close" aria-label="Close task details" onClick={props.onClose}>×</button></header>
     <div class="task-detail-panel-body">{props.children}</div>
-  </aside>, document.body);
+  </aside>;
 }
 
 export function ModalShell(props: {

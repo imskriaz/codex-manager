@@ -114,6 +114,16 @@ describe("native App Server new sessions", () => {
     expect(() => setCodexSessionQueue(id, true)).toThrow('queue is full');
     expect(readCodexSessionPreferences(root, [id]).get(id)?.autoResume).toBe(true);
   });
+  it.each(['thread not found','conversation does not exist','session has already been deleted','network offline'])("deletes Manager-only entries from obsolete projects with result: %s", async message => {
+    const rpc = { request: vi.fn().mockRejectedValue(new Error(message)), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    const operation = deleteCodexCliSession(id);
+    if (message === 'network offline') await expect(operation).rejects.toThrow(message);
+    else await expect(operation).resolves.toBeUndefined();
+    expect(mocks.open.mock.calls[0]?.[1]).toBe(root);
+    expect(rpc.request).toHaveBeenCalledOnce();
+  });
+
   it.each(['archive', 'delete'] as const)('retires queue preferences only after confirmed native %s', async operation => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
@@ -472,13 +482,13 @@ describe("native App Server new sessions", () => {
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).toHaveBeenCalledTimes(["not-accepted", "unconfirmed"].includes(scenario) ? 1 : 0);
   });
-  it("uses the recorded closed project for all lifecycle operations", async () => {
+  it("uses the recorded project for lifecycle changes and storage for deletion", async () => {
     const project = path.join(root, "recorded-project"); await mkdir(project); await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: project } }) + "\n");
     const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
     await renameCodexCliSession(id, "Renamed task"); await archiveCodexCliSession(id); await unarchiveCodexCliSession(id); await deleteCodexCliSession(id);
     expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete"]);
-    expect(mocks.open.mock.calls.every(([, cwd]) => cwd === project)).toBe(true);
+    expect(mocks.open.mock.calls.map(([, cwd]) => cwd)).toEqual([project,project,project,root]);
     expect(mocks.spawn).not.toHaveBeenCalled(); expect(rpc.close).toHaveBeenCalledTimes(4);
   });
   it("rejects a different selected project instead of sending in an unrelated workspace", async () => {

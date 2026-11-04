@@ -29,6 +29,11 @@ export function isCodexSessionRunning(
   return Boolean(session && !session.archived && (session.status === "running" || session.status === "unknown" || session.locked));
 }
 
+export function canResumeCodexSession(session: DashboardCliSessionSummary | undefined): boolean {
+  return Boolean(session && session.status === 'idle' && !session.locked && !session.archived && session.interrupted &&
+    !session.subAgent && !session.parentSessionId && (!session.goal || ['active','paused','usage_limited'].includes(session.goal.status)));
+}
+
 export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "status" | "archived" | "interrupted" | "queueEnabled" | "queueError" | "goal" | "subAgent" | "parentSessionId">): boolean {
   return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' && session.goal?.status !== 'paused' && (session.status === "running" ||
     (session.status === "idle" && session.interrupted === true && !session.queueEnabled && !session.queueError));

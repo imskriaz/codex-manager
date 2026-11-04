@@ -1,3 +1,4 @@
+import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
 import { checkImagesUi } from './check-images-ui.mjs';
 import { checkSessionAccessUi } from './check-session-access-ui.mjs';
 import { checkUploadsUi } from './check-uploads-ui.mjs';
@@ -79,9 +80,11 @@ const messages = [
   { id: "assistant", kind: "message", role: "assistant", text: `The workspace is ready.\n\n\`\`\`ts\nconst answer = 42;\n\`\`\`\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |\n\n![Markdown preview](${previewImage})` }
 ];
 messages.at(-1).text+='\n\nInspect [Source file](src/app.ts:12), [Native source](file:///D:/demo/src/app.ts#L12), or [absolute source](/outside/example.ts).';
+if (process.argv.includes('--composer-resume')) messages.push({id:'short-bubble',kind:'message',role:'user',text:'30px'});
 if (process.argv.includes('--images')) {
   messages[0].images.push({src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100"><rect width="160" height="100" fill="steelblue"/></svg>'),alt:'Second image'});
   messages.at(-1).text+='\n\n[Image file](preview.png)';
+  messages.splice(1,0,{id:'earlier-gallery-image',kind:'image',text:'Earlier session image',images:[{src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="tomato"/></svg>'),alt:'Earlier session image'}]});
 }
 if(process.argv.includes('--docs'))prepareDocsSnapshot(snapshot,sessions,messages);
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
@@ -293,8 +296,8 @@ const mockHost = `(() => {
         else if(message.action === 'setCodexSessionGoalStatus') {
           if(window.__failNextGoal) {window.__failNextGoal=false;error='Goal storage unavailable.';}
           else {const session=sessions.find(s=>s.id===message.payload.sessionId);
-            session.goal={...session.goal,status:message.payload.goalStatus};
-            payload={cliSession:session,notice:{level:'info',message:message.payload.goalStatus==='paused'?'Goal paused.':'Goal resumed.'}};}
+            session.goal=message.payload.goalStatus==='clear'?null:{...session.goal,status:message.payload.goalStatus};
+            payload={cliSession:session,notice:{level:'info',message:message.payload.goalStatus==='clear'?'Goal deleted. Conversation kept.':message.payload.goalStatus==='paused'?'Goal paused.':'Goal resumed.'}};}
         }
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
@@ -360,7 +363,9 @@ const mockHost = `(() => {
         }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__fixtureTerminals||[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__fileTreeFixture || (window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0},{path:'src/other.ts',name:'other.ts',type:'file',depth:0}]:[]),workspaceFilesWarning:window.__fileTreeWarning,...(window.__fileTreeWarning?{notice:{level:'warning',message:window.__fileTreeWarning}}:{})};
-        else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
+        else if(message.action==='resumeCodexSessions' && window.__failResumeClick) error='Resume was not confirmed. Your work was kept.';
+        else if(message.action==='resumeCodexSessions') payload={notice:{level:'info',message:'Session resume confirmed.'}};
+        else if(['openNewCodexWebview','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else if(message.action === 'steerCodexCliSessionTurn') payload = {};
         else error = 'Simulated action failure. Your draft is preserved.';
         if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
@@ -371,6 +376,7 @@ const mockHost = `(() => {
         }
         if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'resumeCodexSessions' && window.__holdResumeClick) {window.__heldResumeResult=result;return;}
         if(message.action === 'steerCodexCliSessionTurn' && window.__holdNextSteer) {window.__holdNextSteer=false;window.__heldSteerResult=result;return;}
         if (message.action === 'listCodexCliSessions' && window.__catalogRace) {
           window.__catalogRace = false;
@@ -518,6 +524,12 @@ try {
       results.push({width,height,checks:'Wide shared transcript tables preserve columns, keyboard access and local scrolling'});
       await context.close();
       continue;
+    }
+    if (process.argv.includes('--composer-resume')) {
+      await checkComposerResumeUi(page,{origin,parentId,runningId,width,height,output});
+      assert.deepEqual(errors,[],'Composer Resume has no browser errors');
+      results.push({width,height,checks:'Resume eligibility, busy and duplicate protection, failure and offline behavior, unchanged drafts, Balanced composer controls'});
+      await context.close();continue;
     }
     if (process.argv.includes('--images')) {
       await checkImagesUi(page,{origin,parentId,width,height,output});

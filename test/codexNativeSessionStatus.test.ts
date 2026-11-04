@@ -172,7 +172,7 @@ it("keeps background native observations connected without dashboard reads", asy
   const reading = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot("active")); await reading;
   await vi.advanceTimersByTimeAsync(90_000);
   expect(socket.writable).toBe(true);
-  expect(getNativeCodexSessionRunning(home,id)).toBe(true);
+  expect(getNativeCodexSessionRunning(home,id)).toBeUndefined();
   message(snapshot("idle",2));
   expect(getNativeCodexSessionRunning(home,id)).toBe(false);
   expect(mocks.connect).toHaveBeenCalledOnce();
@@ -524,4 +524,15 @@ it.each(['confirmed','missing','timeout','disconnect'])('syncs native access thr
   else if(outcome==='disconnect')socket.destroy();
   else message({type:'response',requestId:sent.requestId,resultType:'success',result:outcome==='confirmed'?{applied:true}:{}});
   await result; expect(socket.sent.filter(value=>value.method==='thread-follower-update-thread-settings')).toHaveLength(1);
+});
+
+it.each(['idle','active','missing'])('refreshes stale native ownership without restarting after %s', async state => {
+  const initial = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot('active')); expect(await initial).toBe(true);
+  await vi.advanceTimersByTimeAsync(15001);
+  expect(getNativeCodexSessionRunning(home,id)).toBeUndefined();
+  const checking = readNativeCodexSessionRunning(home,id);
+  for(let i=0;i<30;i++) await Promise.resolve();
+  if(state === 'missing') { await vi.advanceTimersByTimeAsync(3001); expect(await checking).toBeUndefined(); }
+  else { message(snapshot(state)); expect(await checking).toBe(state === 'active'); }
+  expect(getNativeCodexSessionRunning(home,id)).toBe(state === 'missing' ? undefined : state === 'active');
 });

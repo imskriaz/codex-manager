@@ -23,24 +23,30 @@ try {
     await page.route('**/api/projects/share/ui-check', route => route.fulfill({ json: { title: 'Example project', permissions: [], expiresAt: 0, tasks: [{ id: 'idea', title: 'Public idea', stage: 'idea' }, { id: 'archived', title: 'Archived idea', stage: 'idea', archived: true }], boardConfig: config } }));
     await page.goto(`${origin}/projects/share/ui-check`);
     await page.getByText('Public idea', { exact: true }).waitFor();
-    assert.equal(await page.title(), 'Example project · Codex Manager');
-    assert.equal(await page.locator('.task-board-shared-heading').innerText(), 'Example project');
+    assert.equal(await page.title(), 'Codex Manager - Shared project - Example project');
+    assert.equal(await page.locator('.task-board-shared-heading').count(), 0, 'The page title already names the shared project');
     assert.equal(await page.getByLabel('Task project', { exact: true }).count(), 0);
     assert.equal(await page.locator('.task-board-column').count(), 1);
     assert.equal(await page.getByText('Archived idea', { exact: true }).count(), 0);
-    assert.equal(await page.getByRole('tab', { name: 'List', exact: true }).isDisabled(), true);
+    for(const name of ['List','Gantt','Calendar','Board']) {
+      const tab = page.getByRole('tab',{name,exact:true});
+      assert.equal(await tab.isEnabled(),true,'Shared project view tabs remain interactive');
+      await tab.click(); await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
+    }
     await page.getByRole('button', { name: 'Board actions', exact: true }).click();
     assert.equal(await page.getByRole('menuitemcheckbox').count(), 0);
     await page.keyboard.press('Escape');
     await page.screenshot({ path: path.join(output, `shared-board-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-    config = { ...config, view: 'list', showArchive: true };
+    config = { ...config, view: 'list', columns: ['idea','completed'], showArchive: true };
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await page.getByRole('tab', { name: 'List', exact: true, selected: true }).waitFor();
+    await page.getByText('Archived idea', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('tab', { name: 'Board', exact: true, selected: true }).count(), 1, 'Live updates preserve the visitor-selected view');
+    await page.getByRole('tab', { name: 'List', exact: true }).click();
     await page.locator('.task-list-view').waitFor();
     await page.getByText('Archived idea', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
-    console.log(`${width}px: public title, fixed display, live reshare and console passed`);
+    console.log(`${width}px: public title, interactive views, live reshare and console passed`);
     await page.close();
   }
   console.log(`Screenshots: ${output}`);

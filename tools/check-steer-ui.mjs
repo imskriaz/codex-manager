@@ -76,8 +76,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-status-refresh', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
     }, {sessionId:parentId,status});
     await page.waitForFunction(status => status === 'unknown'
-      ? document.querySelector('.cli-composer-state')?.textContent === 'Checking running state · messages wait locally'
-      : !document.querySelector('.cli-composer-state'), status);
+      ? document.querySelector('textarea[name="codex-message"]')?.placeholder === 'Checking running state · messages wait locally'
+      : document.querySelector('textarea[name="codex-message"]')?.placeholder !== 'Checking running state · messages wait locally', status);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Status refresh never unmounts the composer');
     assert.equal(await input.inputValue(), 'Native owner guidance', 'Status refresh preserves typed guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
@@ -86,8 +86,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
   for (const connected of [false,true]) {
     await page.evaluate(connected => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } })), connected);
     await page.waitForFunction(connected => connected
-      ? !document.querySelector('.cli-composer-state')
-      : document.querySelector('.cli-composer-state')?.textContent === 'Offline · messages save locally until reconnect', connected);
+      ? document.querySelector('textarea[name="codex-message"]')?.placeholder !== 'Reconnecting…'
+      : document.querySelector('textarea[name="codex-message"]')?.placeholder === 'Reconnecting…', connected);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Reconnect preserves the composer node');
     assert.equal(await input.inputValue(), 'Native owner guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
@@ -96,6 +96,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
       const before=await page.evaluate(()=>window.__uiActions.length);
       await input.press('Control+Enter');
       await page.locator('.cli-local-queue .is-queued').waitFor();
+      assert.equal(await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).count(),0,'Offline queued messages do not offer Resend');
+      assert.equal(await input.getAttribute('placeholder'),'Reconnecting…','Connection status replaces the normal placeholder');
       assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline Enter queues without host writes');
       await page.locator('.cli-local-queue').getByRole('button',{name:'Edit',exact:true}).click();
       assert.equal(await input.inputValue(),'Native owner guidance','Editing a queued message restores its text');

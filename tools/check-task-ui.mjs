@@ -21,12 +21,22 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await ideaColumn.getAttribute('aria-checked'),'true','Idea is shown by default');
   await page.keyboard.press('Escape');
   await page.locator('.task-board-card').filter({ hasText: 'Release work' }).waitFor();
+  const addBox=await page.getByRole('button',{name:'＋ Task',exact:true}).boundingBox(),menuBox=await page.getByRole('button',{name:'Board actions',exact:true}).boundingBox();
+  assert.ok(Math.abs(addBox.y-menuBox.y)<1&&Math.abs(addBox.height-menuBox.height)<1,'Task actions share a height and baseline: '+JSON.stringify({addBox,menuBox}));
+
   assert.deepEqual(await page.locator('.task-board-column-heading strong').evaluateAll(items=>items.map(item=>item.firstChild.textContent)), ['Idea','Planned','Running','Completed']);
   for (const name of ['List','Gantt','Calendar','Board']) {
     await page.getByRole('tab',{name,exact:true}).click();
     await page.reload();
     await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Task views keep overflow local');
+    const taskMenu = page.getByRole('button',{name:'Actions for Running workspace task',exact:true});
+    await taskMenu.first().scrollIntoViewIfNeeded();
+    await taskMenu.first().click();
+    const actions = page.getByRole('menu',{name:'Actions for Running workspace task',exact:true});
+    await actions.getByRole('menuitem',{name:'Archive conversation',exact:true}).waitFor();
+    assert.equal(await actions.getByRole('menuitem',{name:'Delete conversation',exact:true}).isDisabled(),true,'Running sessions cannot be deleted');
+    await page.keyboard.press('Escape');
     if(width<=390 && name!=='Board') {
       const surface=page.locator(name==='List'?'.task-list-view':name==='Gantt'?'.task-gantt-scroll':'.task-calendar-scroll');
       if(name==='List') await surface.locator('tbody tr').first().waitFor();
@@ -104,6 +114,14 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await child.count(), 1, 'Expanding the parent shows its session once');
   await child.click();
   const task = page.locator('.task-detail-modal');
+  assert.equal(await task.getAttribute('aria-modal'),null,'Task details are a nonmodal side panel');
+  assert.equal(await task.evaluate(element=>element.parentElement.classList.contains('task-board-section')),true,'Details dock inside the task workspace');
+  const panelBox=await task.boundingBox(),surfaceBox=await page.locator('.task-board-surface').boundingBox();
+  if(width>=1100) assert.ok(surfaceBox,'Wide layouts retain the board beside task details');
+  if(surfaceBox) assert.ok(surfaceBox.x+surfaceBox.width<=panelBox.x+1,'The board stays beside the panel');
+  else assert.ok(panelBox.width>=300 || width<320,'Narrow layouts give task details the available width');
+  const titleBox=await task.locator('.settings-modal-head').boundingBox();
+  assert.ok(titleBox.height<=36,'Task sidebar title remains one compact line');
   assert.ok(await task.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Task details have no horizontal overflow');
   await task.getByRole('tab',{name:'Overview',exact:true}).waitFor();
   assert.ok(await task.locator('.settings-modal-title').evaluate(element=>{const r=element.getBoundingClientRect();return !!document.elementFromPoint(r.x+2,r.y+4)?.closest('.task-detail-panel');}),'Task title stays above floating workspace controls');

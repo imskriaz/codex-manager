@@ -113,3 +113,23 @@ describe("session request routing and recovery", () => {
     hook = render({ peers: [] }); expect(hook.connectedTo(hook.active!)).toBe(false);
   });
 });
+
+
+it('keeps dismissed background requests hidden across reconnects and reloads without hiding their session prompt', () => {
+  const records = new Map<string,string>();
+  vi.stubGlobal('localStorage',{ getItem:(key:string)=>records.get(key)??null,setItem:(key:string,value:string)=>records.set(key,value) });
+  render({target:{id:'another'}});emit({type:'dashboard:codex-request',request:request()});
+  let hook=render();expect(hook.background?.request.id).toBe('question');hook.dismiss(codexPromptKey(request()));
+  emit({type:'dashboard:codex-requests',requests:[request()]});hook=render();expect(hook.background).toBeUndefined();
+  harness.cleanups.forEach(cleanup=>cleanup?.());harness.slots=[];harness.effects=[];harness.cleanups=[];
+  render();emit({type:'dashboard:codex-requests',requests:[request()]});expect(render().background).toBeUndefined();
+  expect(render({target:{id:'thread',deviceId:'worker'}}).active?.request.id).toBe('question');
+  emit({type:'dashboard:codex-request',request:{...request(),id:'new-question'}});
+  expect(render({target:{id:'another'}}).background?.request.id).toBe('new-question');
+});
+it('dismisses a request in memory when browser storage is full', () => {
+  vi.stubGlobal('localStorage',{getItem:()=>'{broken',setItem:()=>{throw Error('Full');}});
+  render({target:{id:'another'}});emit({type:'dashboard:codex-request',request:request()});
+  render().dismiss(codexPromptKey(request()));expect(render().background).toBeUndefined();
+  expect(notice).toHaveBeenCalledWith(expect.objectContaining({message:expect.stringContaining('this tab')}));
+});

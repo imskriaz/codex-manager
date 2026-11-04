@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import {
+  collectSessionImages,
   consolidateSessionMessages,
   groupCompletedTurns,
   summarizeChangedFiles,
@@ -23,6 +24,18 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it('shares task actions across every view and keeps task details docked with a single-line header', () => {
+    const source = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
+    const primitives = readFileSync('webview-src/dashboard/primitives.tsx', 'utf8');
+    expect(source).not.toContain('task-board-shared-heading');
+    expect(source.match(/<TaskActions /g)?.length).toBe(4);
+    expect(source.match(/onContextMenu={openTaskContextMenu}/g)?.length).toBe(4);
+    expect(source).toContain("'deleteCodexCliSession'");
+    expect(source).toContain("setConfirmation({ title: 'Delete conversation?'");
+    expect(primitives).toContain('return <aside ref={ref} class="task-detail-panel');
+    expect(primitives).toContain('title={props.title}');
+  });
+
   it('counts unique changed files in the current turn, retaining changes before steering', () => {
     const messages = [
       { id: 'old', kind: 'file-change' as const, turnId: 'old-turn', text: '', changes: [{ path: 'old.ts', kind: 'update' as const }] },
@@ -61,7 +74,9 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Checking running state");
-    expect(source).toContain('props.selectedSession.statusError}</span>');
+    expect(source).toContain('placeholder={composerHint || "Message Codex…"}');
+    expect(source).toContain('onRetryFeedback={sessionReadError ? props.onRefreshMessages : undefined}');
+    expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain("props.selectedSession.status !== 'unknown' && !props.stopping");
   });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
@@ -87,16 +102,16 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("function CopySnippet");
     expect(main).not.toContain('if (feedback.level === "info") return;');
     expect(source).not.toContain('notice.level !== "info"');
-    expect(source).toContain("const reportLocalFeedback = props.onActionFeedback;");
+    expect(source).toContain("setComposerFeedback(notice); props.onActionFeedback(notice);");
     expect(main).toContain("onActionFeedback={showNotice}");
     expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
     expect(css).toContain("touch-action: pan-x");
-    expect(source).toContain("Offline · messages save locally until reconnect");
+    expect(source).toContain("Reconnecting…");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
     expect(source).toContain("function ImageLightbox");
     expect(source).toContain('closest("summary,button,img")) followLatestRef.current = false');
-    expect(source).toContain('setPreview({ src: event.target.src, alt: event.target.alt })');
+    expect(source).toContain("setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt })");
     expect(source).toContain('aria-label="Close image preview"');
     expect(source).toContain('class="cli-code-surface"');
     expect(source).toContain('label={failed ? "Copy error" : "Copy result"}');
@@ -917,4 +932,20 @@ it('keeps startup visible in workspace routes and removes the remote transport b
   expect(startup).toContain('if (!snapshot)');
   expect(startup).toContain('"Starting…"');
   expect(source).not.toContain('actions are relayed over the secure connection');
+});
+
+
+describe('session image gallery', () => {
+  it('includes attachments, generated images and markdown from different messages in order', () => {
+    expect(collectSessionImages([
+      { id: 'one', role: 'user', kind: 'message', text: '![Plain text](https://example.com/plain.png)', images: [{ src: 'https://example.com/one.png', alt: 'Attachment' }] },
+      { id: 'two', kind: 'image', text: 'Generated', images: [{ src: 'https://example.com/two.png' }] },
+      { id: 'three', role: 'assistant', kind: 'message', text: '![Third](https://example.com/three.png) ![Duplicate](https://example.com/one.png)' },
+      { id: 'four', role: 'assistant', kind: 'message', text: '```md\n![Code](https://example.com/code.png)\n```' }
+    ])).toEqual([{ src: 'https://example.com/one.png', alt: 'Attachment' }, { src: 'https://example.com/two.png' }, { src: 'https://example.com/three.png', alt: 'Third' }]);
+  });
+  it('does not mix sessions or include unsafe markdown sources', () => {
+    expect(collectSessionImages([])).toEqual([]);
+    expect(collectSessionImages([{ id: 'other', role: 'assistant', text: '![Unsafe](javascript:alert(1))' }])).toEqual([]);
+  });
 });

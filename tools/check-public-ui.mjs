@@ -33,6 +33,7 @@ try {
     await page.route('**/api/share/fixture', route => route.fulfill({ json:{ title:'Shared conversation', messages:sharedMessages } }));
     await page.goto(`${origin}/share/fixture`);
     await page.locator('#conversation .cli-session-message').nth(1).waitFor();
+    assert.equal(await page.title(),'Codex Manager - Shared session - Shared conversation');
     assert.equal(await page.locator('#conversation table').count(), 1, 'Public conversation uses rich workspace markdown');
     assert.equal(await page.evaluate(() => window.bad), undefined, 'Shared markdown cannot execute HTML');
     await page.locator('#conversation .cli-activity-group-details>summary').click();
@@ -45,6 +46,7 @@ try {
     await page.getByText('Event-based shared update',{exact:true}).waitFor();
     await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('revoked')));
     await page.getByText('This link expired or was revoked.',{exact:true}).waitFor();
+    assert.equal(await page.title(),'Codex Manager - Shared session');
     assert.equal(await page.locator('#conversation .cli-session-message').count(),0,'Legacy share revocation removes the rendered conversation');
     let revoked = false, failWrites = false, holdWrite = false, releaseWrite, failFile = false, historyWarningsOnly = false;
     let permissions = ['messages','activities','files'];
@@ -80,8 +82,7 @@ try {
     });
     await page.goto(`${origin}/projects/share/fixture`);
     await page.getByRole('button',{name:'Board actions',exact:true}).click();
-    const ideaColumn=page.getByRole('menuitemcheckbox',{name:/^(?:✓ )?Idea$/});
-    assert.equal(await ideaColumn.getAttribute('aria-checked'),'true','Public board shows Idea by default');
+    assert.equal(await page.getByRole('menuitemcheckbox').count(),0,'Shared column configuration is controlled by the owner');
     await page.keyboard.press('Escape');
     assert.equal(await page.getByLabel('Task project',{exact:true}).count(),0,'Shared boards omit the project selector');
     assert.equal(await page.locator('.task-board-heading').count(),0,'Shared boards omit the unused context row');
@@ -90,7 +91,6 @@ try {
     await page.screenshot({path:path.join(output,`board-${width}.png`)});
     for(const name of ['List','Gantt','Calendar','Board']) {
       await page.getByRole('tab',{name,exact:true}).click();
-      await page.reload();
       await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
     }
     await page.locator('.task-board-card').filter({hasText:'Release work'}).click();
@@ -98,7 +98,7 @@ try {
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();
     assert.equal(await page.locator('.task-timeline').count(),1,'Public board uses the same task timeline');
     assert.equal(await page.getByText('Private reasoning noise',{exact:true}).count(),0);
-    assert.equal(await page.getByText('Failed attempt noise',{exact:true}).count(),0);
+    assert.equal(await page.getByText('Failed attempt noise',{exact:true}).count(),1,'Failed activities remain visible as session issues');
     assert.equal(await page.getByRole('tab', {name:'Messages',exact:true}).count(), 0, 'Task history has a combined Activities tab');
     assert.equal(await page.locator('.task-detail-panel table').count(), 1);
     await page.getByRole('button',{name:'Preview Shared attachment',exact:true}).click();
@@ -201,9 +201,7 @@ try {
     await ideaTitle.fill('Storage-full draft');await page.getByRole('status').filter({hasText:'Draft is kept in this tab only'}).waitFor();
     assert.equal(await ideaTitle.inputValue(),'Storage-full draft','Storage failures preserve the editable draft');
     await page.evaluate(()=>{Storage.prototype.setItem=window.__setItem;});await panel.getByRole('button',{name:'Close new task',exact:true}).click();
-    assert.equal(await page.getByText('Archived work',{exact:true}).count(), 1, 'Archived sessions stay in Completed');
-    await page.getByRole('button',{name:'Board actions',exact:true}).click(); await page.getByRole('menuitem',{name:/Archive ·/}).click();
-    await page.getByText('Archived work',{exact:true}).waitFor();
+    assert.equal(await page.getByText('Archived work',{exact:true}).count(), 0, 'Archived work follows the owner’s default visibility');
     holdRead = true;
     await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
     for (let attempt = 0; !releaseRead && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve,20));

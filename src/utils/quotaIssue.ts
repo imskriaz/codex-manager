@@ -32,5 +32,5 @@ export function getQuotaIssueKind(error?: CodexQuotaErrorInfo): QuotaIssueKind |
 
 /** Transport errors mentioning OAuth or refresh tokens do not require a new login. */
 export function isCredentialRejection(message = ""): boolean {
-  return /\b(?:401|unauthorized|invalid_grant|refresh_token_(?:expired|reused|invalidated)|token_(?:expired|invalid|revoked))\b|\b(?:access |refresh )?token (?:has (?:been )?)?(?:expired|invalid|revoked|missing)\b|\b(?:expired|invalid|revoked) (?:access |refresh )?token\b|no refresh token is available/i.test(message);
+  return /\b(?:401|unauthorized|invalid_grant|refresh_token_(?:expired|reused|invalidated)|token_(?:expired|invalid|revoked))\b|\b(?:access |refresh )?token (?:has (?:been )?)?(?:expired|invalid|revoked|missing)\b|\b(?:expired|invalid|revoked) (?:access |refresh )?token\b|no refresh token is available|\b(?:reauthentication|reauthorization|re-authentication) (?:is )?required\b|\b(?:please |must |need to )sign in again\b|\brefresh token (?:was |has (?:already )?been )?already used\b/i.test(message);
 }
