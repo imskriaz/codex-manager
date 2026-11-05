@@ -11,18 +11,24 @@ export function codexSandboxMode(value: unknown): DashboardCliSandboxMode | unde
 export function parseCodexSessionAccess(value: unknown, updatedAt = Date.now()): CodexSessionAccess | undefined {
   const raw = object(value);
   if (!raw) return undefined;
-  const policy = object(raw['sandboxPolicy'] ?? raw['sandbox_policy'] ?? raw['sandbox']);
+  let stored = raw['sandboxPolicy'] ?? raw['sandbox_policy'] ?? raw['sandbox'];
+  if (typeof stored === 'string' && stored.length <= 64_000) { try { stored = JSON.parse(stored); } catch { stored = undefined; } }
+  const policy = object(stored);
   const profile = object(raw['activePermissionProfile'] ?? raw['active_permission_profile']);
-  const permissions = object(raw['permission_profile']);
+  const permissions = object(raw['permissionProfile'] ?? raw['permission_profile']) ?? (['disabled','managed'].includes(String(policy?.['type'])) ? policy : undefined);
   const id = profile?.['id'];
   const profileId = typeof id === 'string' && id.length <= 256 && id.trim() ? id : undefined;
   let mode = codexSandboxMode(policy?.['type'] ?? raw['sandbox_mode']);
-  if (permissions?.['type'] === 'disabled' || profileId === ':danger-full-access') mode = 'danger-full-access';
-  else if (profileId === ':workspace') mode = 'workspace-write';
-  else if (profileId === ':read-only') mode = 'read-only';
-  if (!policy && !profile && !permissions && !mode) return undefined;
-  const network = policy?.['networkAccess'] ?? policy?.['network_access'];
-  return { ...(mode ? { mode } : {}), ...(profileId ? { profile: profileId } : {}), ...(typeof network === 'boolean' ? { networkAccess: network } : {}), updatedAt: Math.max(1, Math.trunc(updatedAt)) };
+  if (!mode && permissions?.['type'] === 'disabled') mode = 'danger-full-access';
+  const files = object(permissions?.['file_system'] ?? permissions?.['fileSystem']);
+  const entries = files?.['entries'];
+  if (!mode && permissions?.['type'] === 'managed' && files?.['type'] === 'restricted' && Array.isArray(entries) && entries.every(entry => ['read','write','none'].includes(String(object(entry)?.['access'])))) {
+    mode = entries.some(entry => object(entry)?.['access'] === 'write') ? 'workspace-write' : 'read-only';
+  }
+  if (!mode) mode = profileId === ':danger-full-access' ? 'danger-full-access' : profileId === ':workspace' ? 'workspace-write' : profileId === ':read-only' ? 'read-only' : undefined;
+  if (!policy && !profileId && !permissions && !mode) return undefined;
+  const network = policy?.['networkAccess'] ?? policy?.['network_access'] ?? (permissions?.['network'] === 'enabled' ? true : permissions?.['network'] === 'restricted' ? false : undefined);
+  return { ...(mode ? { mode } : {}), ...(profileId ? { profile: profileId } : {}), ...(typeof network === 'boolean' ? { networkAccess: network } : {}), updatedAt: Number.isSafeInteger(updatedAt) && updatedAt > 0 ? updatedAt : Date.now() };
 }
 export function isCodexSessionAccess(value: unknown): value is CodexSessionAccess {
   const raw = object(value);
@@ -43,6 +49,7 @@ export function recordedCodexSandboxPolicy(value: unknown): Record<string, unkno
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { return undefined; } }
   const raw = object(value);
   if (!raw || JSON.stringify(raw).length > 64_000) return undefined;
+  if (raw['type'] === 'disabled') return { type: 'dangerFullAccess' };
   const mode = codexSandboxMode(raw['type']);
   if (!mode && !['externalSandbox','external-sandbox'].includes(String(raw['type']))) return undefined;
   const keys: Record<string, string> = { network_access: 'networkAccess', writable_roots: 'writableRoots', read_only_access: 'readOnlyAccess', exclude_tmpdir_env_var: 'excludeTmpdirEnvVar', exclude_slash_tmp: 'excludeSlashTmp', include_platform_defaults: 'includePlatformDefaults', readable_roots: 'readableRoots' };

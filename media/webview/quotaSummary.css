@@ -16856,8 +16856,11 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .codex-request-background .codex-request-dismiss { flex:none; width:24px; height:24px; min-width:24px; padding:0; background:transparent; color:var(--text-muted); border:0; font-size:calc(18px * var(--dashboard-text-scale, 1)); }
 
 /* Transcript output and slash discovery remain readable inside narrow panes. */
-.cli-capacity-notice { padding: 12px 16px; border-left: 2px solid var(--vscode-descriptionForeground, #969ca6); }
-.cli-capacity-notice p { margin: 6px 0; }
+.cli-capacity-notice { min-width: 0; margin: 4px 0; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.5; }
+.cli-capacity-notice > summary { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; list-style: none; cursor: pointer; }
+.cli-capacity-notice > summary::-webkit-details-marker { display: none; }
+.cli-capacity-notice > summary svg { flex: none; width: 12px; height: 12px; }
+.cli-capacity-notice [role="status"] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cli-agent-activity-link:hover .cli-activity-heading strong { text-decoration: underline; text-underline-offset: 3px; }
 .cli-workspace .cli-agent-detail-toggle { display: grid; place-items: center; flex: 0 0 28px; width: 28px; min-height: 28px; padding: 4px; border: 0; background: transparent; color: inherit; }
 .cli-agent-detail-toggle svg { width: 12px; height: 12px; }
@@ -16875,3 +16878,10 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-turn-account:hover, .cli-turn-account:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .cli-account-footer.is-standalone { position: fixed; z-index: 10080; inset: 0; width: 0; height: 0; pointer-events: none; }
 .cli-account-menu.is-standalone { position: fixed !important; z-index: 10090; left: 50% !important; top: 50% !important; right: auto !important; bottom: auto !important; width: min(360px, calc(100vw - 24px)) !important; max-height: min(680px, calc(100dvh - 24px)); transform: translate(-50%, -50%); visibility: visible !important; pointer-events: auto; }
+
+.cli-composer-warning { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--vscode-editorWarning-foreground, #bf8700); }
+.cli-composer-warning svg { width: 14px; height: 14px; }
+
+.cli-workspace .cli-queue-status-button { display: flex; align-items: center; gap: 6px; min-height: 0; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: help; }
+.cli-queue-error-popover { font: inherit; max-width: min(420px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 12px 40px #0003; }
+.cli-queue-error-popover p { margin: 0 0 12px; overflow-wrap: anywhere; }

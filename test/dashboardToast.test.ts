@@ -9,6 +9,14 @@ import {
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
+  it('suppresses cached-session inspection progress even when an older host labels it as a warning', () => {
+    const changed=vi.fn(),controller=createDashboardToastController(changed);
+    for(const message of ['Checking saved running activity. Refresh before sending.','Session history is available, but running state could not be verified. Refresh before sending. Checking saved running activity. Refresh before sending.']) controller.show({level:'warning',message});
+    expect(changed).not.toHaveBeenCalled();
+    controller.show({level:'error',message:'Session inspection failed: storage unavailable.'});
+    expect(changed).toHaveBeenCalledOnce();controller.dispose();
+  });
+
   it('does not repeat a visible failure or replace it with informational progress', () => {
     const changed = vi.fn(); const controller = createDashboardToastController(changed);
     controller.show({ level: 'error', message: 'Failed' });

@@ -1,3 +1,4 @@
+import { syncCodexSessionAccess } from './codexSessionAccessSync';
 import { deleteCodexSessionFromStorage } from './codexSessionStorageDelete';
 import { readSavedCodexSessionAccess, saveCodexSessionAccess } from './codexSessionAccessState';
 import { parseCodexSessionAccess, recordedCodexSandboxPolicy, codexSessionAccessPolicy, type CodexSessionAccess } from '../domain/codexSessionAccess';
@@ -6,7 +7,7 @@ import { parseCodexTokenUsage } from '../domain/codexSessionLive';
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
-import { isCodexCapacityInterruption, isCodexQuotaInterruption } from "../domain/codexSessionState";
+import { isCodexCapacityInterruption, isCodexQuotaInterruption, isCodexSessionInspectionNotice } from "../domain/codexSessionState";
 import { getNativeCodexSessionAccess, updateNativeCodexSessionAccess, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -413,7 +414,7 @@ async function readStateSessionRecords(home: string, id?: string | string[], pro
       const name = typeof row["name"] === "string" ? row["name"].trim().slice(0, 256) : undefined;
       const updatedAt = typeof row["updated_at_ms"] === "number" ? row["updated_at_ms"] : typeof row["updated_at"] === "number" ? row["updated_at"] * 1000 : undefined;
       const sandboxPolicy = recordedCodexSandboxPolicy(row['sandbox_policy']);
-      const access = sandboxPolicy ? parseCodexSessionAccess({ sandboxPolicy }, updatedAt && Number.isFinite(updatedAt) ? updatedAt : 1) : undefined;
+      const access = parseCodexSessionAccess({ sandbox_policy: row['sandbox_policy'] }, updatedAt && Number.isFinite(updatedAt) ? updatedAt : 1);
       return [{ sandboxPolicy, access, approvalPolicy: typeof row['approval_mode'] === 'string' ? row['approval_mode'] : undefined, id: row["id"], name: name || undefined, title: name || (typeof row["title"] === "string" ? row["title"] : undefined),
         model: typeof row["model"] === "string" ? row["model"].slice(0, 256) : undefined,
         reasoningEffort: typeof row["reasoning_effort"] === "string" ? row["reasoning_effort"].slice(0, 64) : undefined,
@@ -733,7 +734,7 @@ function withStoredSessionAccess(home: string, session: DashboardCliSessionSumma
 }
 
 export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
-  const unknown = sessions.find(session => session.status === "unknown" && session.statusError !== "Running state is being checked. Conversation history remains available.");
+  const unknown = sessions.find(session => session.status === "unknown" && !isCodexSessionInspectionNotice(session.statusError ?? ""));
   if (unknown) return { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${unknown.statusError ?? "Session inspection is unavailable."}` };
   return undefined;
 }
@@ -920,7 +921,6 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
   }
   const configuredModel = readTomlString(configRaw, "model");
   const configuredEffort = readTomlString(configRaw, "model_reasoning_effort");
-  const configuredSandbox = readTomlString(configRaw, "sandbox_mode");
   const projects = (vscode.workspace.workspaceFolders ?? []).map(folder => ({ id: folder.uri.fsPath, label: folder.name, path: folder.uri.fsPath }));
   for (const root of await readKnownProjectRoots(codexHome)) {
     const same = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
@@ -933,7 +933,7 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
     defaultReasoningEffort: REASONING_EFFORT_PATTERN.test(configuredEffort ?? "")
       ? configuredEffort
       : models[0]?.defaultReasoningEffort,
-    defaultSandboxMode: isCliSandboxMode(configuredSandbox) ? configuredSandbox : "workspace-write"
+    defaultSandboxMode: "danger-full-access"
   };
 }
 
@@ -1067,8 +1067,10 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
 export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSessionSummary | undefined {
   const summary = getRecentNewSession(sessionId)?.summary;
   if (!summary) return undefined;
-  const running = ownsSessionTurn(resolveCodexHome(), sessionId);
-  return { ...summary, status: running ? "running" : "idle", canStop: running, steerTurnId: running ? steerableSessionTurn(resolveCodexHome(), sessionId) : undefined };
+  const home = resolveCodexHome();
+  const running = ownsSessionTurn(home, sessionId);
+  const access = getNativeCodexSessionAccess(home, sessionId) ?? readSavedCodexSessionAccess(home, sessionId)?.access ?? summary.access;
+  return { ...summary, ...(access ? { access, sandboxMode: access.mode } : {}), status: running ? "running" : "idle", canStop: running, steerTurnId: running ? steerableSessionTurn(home, sessionId) : undefined };
 }
 
 async function runNewCodexCliSession(options: {
@@ -1079,6 +1081,7 @@ async function runNewCodexCliSession(options: {
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
 }, onStarted: (sessionId: string) => void): Promise<string> {
+  options = { ...options, sandboxMode: options.sandboxMode ?? 'danger-full-access' };
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
   options = { ...options, ...prepared };
@@ -1129,7 +1132,8 @@ async function startAppServerSession(options: {
     threadId = candidateThreadId;
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, threadId);
-    rememberSessionAccess(home, threadId, parseCodexSessionAccess(result), result);
+    const applied = await syncCodexSessionAccess(rpc, threadId, { sandboxPolicy: toAppServerSandbox(options.sandboxMode!, cwd) }, result);
+    rememberSessionAccess(home, threadId, applied.access, applied.settings);
     activeAppServerTurns.set(threadId, { home, rpc });
     await rpc.startAndWaitForTurn(threadId, {
       threadId: candidateThreadId,
@@ -1237,13 +1241,14 @@ async function sendAppServerSessionMessage(options: {
       const inherited = remembered && remembered.updatedAt >= (recorded?.updatedAt ?? 0) ? remembered : recorded;
       const transcriptPolicy = transcript ? cliTranscriptTurnStateCache.get(transcript)?.sandboxPolicy : undefined;
       const sandboxPolicy = stored?.sandboxPolicy && (stored.access?.updatedAt ?? 0) >= (inherited?.updatedAt ?? 0) ? stored.sandboxPolicy
-        : recorded && inherited === recorded && transcriptPolicy ? transcriptPolicy : inherited?.mode ? codexSessionAccessPolicy(inherited.mode, cwd, inherited.networkAccess ?? false) : undefined;
+        : recorded && inherited === recorded && transcriptPolicy ? transcriptPolicy : remembered && inherited === remembered ? savedAccess?.settings.sandboxPolicy : undefined;
       const permissions = inherited?.profile && inherited.updatedAt >= (stored?.access?.updatedAt ?? 0) ? inherited.profile : undefined;
       const preserved = savedAccess && inherited === savedAccess.access ? savedAccess.settings : undefined;
-      const restore = !options.sandboxMode ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
+      const opaqueProfile = Boolean(recorded && !transcriptPolicy || stored?.access && !stored.sandboxPolicy);
+      const restore = !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
-      if (!options.sandboxMode) Object.assign(params, preserved ?? (permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {}));
-      if (!preserved) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
+      if (!options.sandboxMode) Object.assign(params, preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
+      if (!preserved && !opaqueProfile) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
     }
     catch (error) {
       if (options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
@@ -1537,24 +1542,29 @@ export async function setCodexSessionAccess(id: string, mode: DashboardCliSandbo
     const sandboxPolicy = codexSessionAccessPolicy(mode, cwd, session.access?.networkAccess ?? false);
     const attemptedAt = Date.now();
     const active = activeAppServerTurns.get(id);
+    let applied: Awaited<ReturnType<typeof syncCodexSessionAccess>> | undefined;
     if (active) {
       if (active.home !== path.resolve(home) || active.cancelRequested) throw new Error('The active session changed. Refresh before changing access.');
-      await active.rpc.request('thread/settings/update', { threadId: id, sandboxPolicy });
+      const saved = readSavedCodexSessionAccess(home, id);
+      applied = await syncCodexSessionAccess(active.rpc, id, { sandboxPolicy }, saved?.settings);
     } else if (!await updateNativeCodexSessionAccess(home, id, { sandboxPolicy })) {
       if (session.status !== 'idle' || session.locked) throw new Error('The Codex owner is unavailable. Access was not changed. Reconnect and refresh.');
       const rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd);
       try {
-        await rpc.request('thread/resume', { threadId: id, cwd, excludeTurns: true });
+        const current = await rpc.request('thread/resume', { threadId: id, cwd, excludeTurns: true });
         if (resolveCodexHome() !== home) throw new Error('Codex home changed. No access change was sent.');
-        await rpc.request('thread/settings/update', { threadId: id, sandboxPolicy });
+        applied = await syncCodexSessionAccess(rpc, id, { sandboxPolicy }, current);
       } finally { await rpc.close(); }
     }
     if (resolveCodexHome() !== home) throw new Error('Codex accepted the access change in the previous home. Refresh before changing it again.');
     const nativeAccess = getNativeCodexSessionAccess(home, id);
     if (nativeAccess && nativeAccess.updatedAt > attemptedAt && nativeAccess.mode !== mode) throw new Error('Codex settings changed concurrently. Its current access is shown; review it before retrying.');
-    const access = parseCodexSessionAccess({ sandboxPolicy })!;
-    if (!rememberSessionAccess(home, id, access, { sandboxPolicy })) throw new Error('Codex applied the access change, but recovery storage could not save it. Refresh before changing it again.');
-    return readSavedCodexSessionAccess(home,id)?.access ?? access;
+    const access = applied?.access ?? nativeAccess;
+    if (!access || access.mode !== mode) throw new Error('Codex permissions are unconfirmed. Refresh before retrying.');
+    if (!rememberSessionAccess(home, id, access, applied?.settings ?? { sandboxPolicy })) throw new Error('Codex applied the access change, but recovery storage could not save it. Refresh before changing it again.');
+    const confirmed = readSavedCodexSessionAccess(home,id)?.access ?? access;
+    if (confirmed.mode !== mode) throw new Error('Codex permissions changed concurrently. Review its current access before retrying.');
+    return confirmed;
   });
 }
 
@@ -2031,7 +2041,7 @@ type AppServerThreadReadResponse = {
     turns?: Array<{
       id?: unknown;
       status?: unknown;
-      error?: { message?: unknown } | null;
+      error?: { message?: unknown; codexErrorInfo?: unknown; additionalDetails?: unknown } | null;
       startedAt?: unknown;
       completedAt?: unknown;
       durationMs?: unknown;
@@ -2053,10 +2063,11 @@ export function parseCodexAppServerThreadItems(value: unknown): DashboardCliSess
     if (turn.error?.message && typeof turn.error.message === "string") {
       const turnId = typeof turn.id === "string" || typeof turn.id === "number" ? String(turn.id) : String(turnIndex);
       output.push({
-        id: `${turnId}-error`,
+        id: `${turnId.slice(0, 250)}-error`,
         kind: "error",
         text: turn.error.message.slice(0, MAX_SESSION_MESSAGE_CHARS),
         title: "Turn failed",
+        debug: safeDisplayJson(turn.error),
         status: "failed",
         ...(typeof turn.id === "string" ? { turnId: turn.id } : {}),
         timestamp: unixSecondsToIso(turn.completedAt) ?? timestamp
@@ -2310,13 +2321,14 @@ function parseAppServerThreadItem(
     };
   }
   if (type === "error" || type === "Error") {
+    const retrying = item["willRetry"] === true || item["will_retry"] === true;
     return {
       id,
       kind: "error",
-      title: "Tool error",
+      title: retrying ? "Retry attempt" : "Tool error",
       text: readHumanError(item["error"] ?? item["message"] ?? item["text"]) ?? "Codex reported an error.",
       debug: safeDisplayJson(item),
-      status: "failed",
+      status: retrying ? (status === "inProgress" ? "inProgress" : "interrupted") : "failed",
       timestamp
     };
   }
@@ -3416,9 +3428,9 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     for (const [index, line] of lines.entries()) {
       if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; resumeAccess = access; resumeSandboxPolicy = sandboxPolicy; }
       try {
-        const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown; sandbox_policy?: { type?: unknown }; sandbox_mode?: unknown; info?: unknown } };
+        const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown; sandbox_policy?: { type?: unknown }; sandbox_mode?: unknown; permission_profile?: { type?: unknown }; info?: unknown } };
         if (record?.type === "turn_context") {
-          sandboxPolicy = recordedCodexSandboxPolicy(record.payload?.sandbox_policy);
+          sandboxPolicy = record.payload?.permission_profile?.type === 'managed' ? undefined : recordedCodexSandboxPolicy(record.payload?.sandbox_policy);
           access = parseCodexSessionAccess(record.payload, Date.parse(record.timestamp ?? '') || snapshot.mtimeMs) ?? access;
           sandboxMode = access?.mode;
           if (typeof record.payload?.model === "string" && record.payload.model.trim()) model = record.payload.model.slice(0, 256);
@@ -3439,7 +3451,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             state = cancelled && !quota && !capacity ? "stopped" : quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : failed && !cancelled ? "failed" : "terminal";
             turnId = eventTurnId ?? turnId;
           }
-        } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId)) {
+        } else if (type === "error" && record.will_retry !== true && record.willRetry !== true && record.payload?.will_retry !== true && record.payload?.willRetry !== true && (!eventTurnId || !turnId || eventTurnId === turnId)) {
           if (isCodexQuotaInterruption(JSON.stringify(record))) {
             state = "quota-paused";
             turnId = eventTurnId ?? turnId;
@@ -3785,16 +3797,20 @@ function parseCliTranscriptLines(raw: string, startingSequence: number, turnCont
 
 function parseTaggedCliSessionMessage(line: string, sequence: number, context: { turnId?: string }): DashboardCliSessionMessage | undefined {
   let endsTurn = false;
+  let eventTurnId: string | undefined;
   try {
-    const value = JSON.parse(line) as { type?: string; payload?: { type?: string; turn_id?: string; turnId?: string; id?: string } };
+    const value = JSON.parse(line) as { type?: string; turn_id?: string; turnId?: string; payload?: { type?: string; turn_id?: string; turnId?: string; id?: string } };
     const payload = value.payload;
-    const id = payload?.turn_id ?? payload?.turnId;
-    if (typeof id === "string" && id.length <= 256 && (value.type === "turn_context" || payload?.type === "task_started")) context.turnId = id;
+    const id = payload?.turn_id ?? payload?.turnId ?? value.turn_id ?? value.turnId;
+    if (typeof id === "string" && id.length <= 256) eventTurnId = id;
+    if (eventTurnId && (value.type === "turn_context" || payload?.type === "task_started")) context.turnId = eventTurnId;
     endsTurn = value.type === "event_msg" && ["task_complete", "task_completed", "turn_aborted"].includes(payload?.type ?? "");
   } catch { /* Partial and malformed JSON records do not change turn ownership. */ }
   const message = parseCliSessionMessage(line, sequence);
-  const tagged = message && context.turnId ? { ...message, turnId: context.turnId } : message;
-  if (endsTurn) context.turnId = undefined;
+  const turnId = eventTurnId ?? context.turnId;
+  const tagged = message && turnId ? { ...message, turnId } : message;
+  if (tagged?.kind === "error" && tagged.title === "Model at capacity" && tagged.status === "failed" && turnId) tagged.id = `${turnId.slice(0, 250)}-error`;
+  if (endsTurn && (!eventTurnId || eventTurnId === context.turnId)) context.turnId = undefined;
   return tagged;
 }
 
@@ -3826,6 +3842,7 @@ function mergeCliTranscriptMessage(
     message.kind !== "message" &&
     message.kind !== "reasoning" &&
     message.kind !== "compaction" &&
+    message.kind !== "error" &&
     message.kind !== "tool-call"
   ) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 2); index -= 1) {
@@ -3899,6 +3916,9 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     const value = JSON.parse(line) as {
       timestamp?: unknown;
       type?: unknown;
+      error?: unknown;
+      willRetry?: unknown;
+      will_retry?: unknown;
       payload?: Record<string, unknown>;
     };
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
@@ -3908,8 +3928,14 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       return { id: `${value.type === "compacted" ? "compacted" : "context-compacted"}-${sequence}`, kind: "compaction", title: "Context compacted",
         text: "Codex condensed earlier context to continue working.", status: "completed", timestamp };
     }
+    if (eventType === "error") {
+      const error = eventPayload ?? value.payload ?? value;
+      if (error["willRetry"] === true || error["will_retry"] === true) {
+        return parseAppServerThreadItem({ ...error, type: "error", status: "interrupted" }, `${sequence}-${timestamp ?? "retry"}`, "completed", timestamp);
+      }
+    }
     if (["error", "task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventType)) && isCodexCapacityInterruption(JSON.stringify(eventPayload ?? value))) {
-      return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: "Selected model is at capacity. Try a different model, then retry.", status: "failed", timestamp };
+      return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: readHumanError(eventPayload?.["error"] ?? eventPayload?.["message"] ?? value.payload ?? value.error) ?? "Selected model is at capacity. Try a different model, then retry.", debug: safeDisplayJson(eventPayload ?? value), status: "failed", timestamp };
     }
     if (eventPayload?.["type"] === "user_message") {
       return parsePersistedUserMessage(

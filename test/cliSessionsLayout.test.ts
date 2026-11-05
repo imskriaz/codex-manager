@@ -77,7 +77,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Checking running state");
     expect(source).toContain('placeholder="Message Codex…"');
-    expect(source).toContain('onRetryFeedback={sessionReadError ? props.onRefreshMessages : undefined}');
+    expect(source).toContain('onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain("props.selectedSession.status !== 'unknown' && !props.stopping");
   });

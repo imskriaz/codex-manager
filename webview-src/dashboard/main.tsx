@@ -92,7 +92,7 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
-import { filterCliSessionsBySection, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { isCodexSessionInspectionNotice, filterCliSessionsBySection, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -439,9 +439,10 @@ function App() {
     const timer = window.setTimeout(() => setConnectionIssue(browserOffline ? "offline" : "unreachable"), 3_000);
     return () => window.clearTimeout(timer);
   }, [isBrowserDashboard, realtimeConnected, connectionUnavailable, browserOffline]);
+  const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardNotice) => {
-      if (next.level === "info" && !next.actions?.length && !next.actionPrompt) return;
+      if (isCodexSessionInspectionNotice(next.message) || next.level === "info" && (isCliSessionsPath(noticeRoute.current) || !next.actions?.length && !next.actionPrompt)) return;
       noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
     },
@@ -2438,7 +2439,7 @@ function App() {
       {connectionBannerStage && isCliSessionsPath(browserPath)
         ? createPortal(<BrowserConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
-      {notice
+      {notice && (!isCliSessionsPath(browserPath) || notice.level !== 'info')
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
               <div

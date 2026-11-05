@@ -94,6 +94,7 @@ export class CodexSessionLiveReducer {
   private readonly itemBytes = new Map<string, number>();
   private retainedItemBytes = 0;
   private snapshotJson: string | undefined;
+  private errorItem: Record<string, unknown> | undefined;
   private readonly earlyCompletions = new Map<string, unknown>();
   private state: DashboardCodexSessionLiveState;
 
@@ -117,7 +118,9 @@ export class CodexSessionLiveReducer {
       if (method === "turn/started") this.state.status = "running";
       else {
         this.state.status = turn["status"] === "completed" ? "completed" : turn["status"] === "interrupted" ? "cancelled" : "failed";
-        this.state.error = string(record(turn["error"])?.["message"]);
+        this.errorItem = undefined;
+        this.state.error = undefined;
+        this.setError(turn["error"], false);
       }
     } else if (method === "item/started" || method === "item/completed") {
       const item = record(params["item"]);
@@ -169,8 +172,9 @@ export class CodexSessionLiveReducer {
       const window = (value: unknown) => { const limit = record(value); const usedPercent = number(limit?.["usedPercent"]); return usedPercent !== undefined && usedPercent <= 100 ? { usedPercent, windowDurationMins: number(limit?.["windowDurationMins"]), resetsAt: number(limit?.["resetsAt"]) } : undefined; };
       this.state.rateLimits = { primary: window(limits["primary"]), secondary: window(limits["secondary"]) };
     } else if (method === "error") {
-      this.state.error = string(record(params["error"])?.["message"]);
+      if (!this.setError(params["error"], params["willRetry"] === true)) return false;
     } else return false;
+    if (this.errorItem?.["willRetry"] === true && (method === "item/started" || method === "item/completed" || (method.startsWith("item/") && (method.endsWith("Delta") || method.endsWith("/delta"))))) this.errorItem = undefined;
     this.changed();
     return true;
   }
@@ -188,13 +192,16 @@ export class CodexSessionLiveReducer {
   finish(status: "completed" | "cancelled" | "failed" | "disconnected", error?: string): void {
     if (terminal(this.state.status)) return;
     this.state.status = status;
-    this.state.error = string(error);
+    if (this.errorItem?.["willRetry"] === true) this.errorItem = undefined;
+    this.state.error = string(error) ?? (status === "failed" ? this.state.error : undefined);
+    if (status === "failed" && !this.errorItem) this.setError({ message: error }, false);
     this.changed();
   }
 
   snapshot(): DashboardCodexSessionLiveState {
     if (this.snapshotJson) return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
-    const state = { ...this.state, messages: this.parseItems({ thread: { turns: [{ id: this.state.turnId, status: this.state.status === "running" ? "inProgress" : this.state.status, items: [...this.items.values()] }] } }) };
+    const state = { ...this.state, messages: this.parseItems({ thread: { turns: [{ id: this.state.turnId, status: this.state.status === "running" ? "inProgress" : this.state.status, items: [...this.items.values(), ...(this.errorItem ? [this.errorItem] : [])] }] } }) };
+    if (state.messages.length > MAX_CODEX_LIVE_ITEMS) { state.messages = state.messages.slice(-MAX_CODEX_LIVE_ITEMS); state.truncated = true; }
     const sizes = state.messages.map(jsonBytes);
     let bytes = jsonBytes({ ...state, messages: [], truncated: true }) + sizes.reduce((sum, size) => sum + size, 0) + Math.max(0, sizes.length - 1);
     let start = 0;
@@ -205,6 +212,15 @@ export class CodexSessionLiveReducer {
     state.messages = state.messages.slice(start);
     this.snapshotJson = JSON.stringify(state);
     return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
+  }
+
+  private setError(value: unknown, retrying: boolean): boolean {
+    const error = record(value);
+    const message = string(error?.["message"]);
+    if (!message?.trim()) return false;
+    this.state.error = retrying ? undefined : message;
+    this.errorItem = { id: retrying ? `retry-${this.state.streamId}` : `${(this.state.turnId ?? this.state.streamId).slice(0, 250)}-error`, type: "error", error: bounded(error, 0, () => { this.state.truncated = true; }), willRetry: retrying, status: retrying ? "inProgress" : "failed" };
+    return true;
   }
 
   private changed(): void { this.snapshotJson = undefined; this.state.sequence += 1; this.state.updatedAt = Math.max(this.state.updatedAt + 1, Date.now()); }
@@ -246,7 +262,10 @@ function bounded(value: unknown, depth = 0, onTruncated: () => void = () => unde
 
 /** Replace the current turn suffix instead of accumulating duplicate streamed/transcript items. */
 export function combineCliLiveMessages(history: DashboardCliSessionMessage[], live: DashboardCodexSessionLiveState | undefined): DashboardCliSessionMessage[] {
-  if (!live?.messages.length) return history;
+  if (!live) return history;
+  // A merged task snapshot must not retain a transient retry after recovery.
+  history = history.filter(item => !(item.kind === "error" && item.status === "inProgress" && item.id.startsWith("retry-") && UUID.test(item.id.slice(6))) || live.messages.some(current => current.id === item.id));
+  if (!live.messages.length) return history;
   const saved = new Map(history.map(item => [item.id, item]));
   const messages = live.messages.map(item => {
     const previous = saved.get(item.id);

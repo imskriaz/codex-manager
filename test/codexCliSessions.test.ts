@@ -1013,7 +1013,7 @@ describe("Codex session integration", () => {
       }],
       defaultModel: "gpt-demo",
       defaultReasoningEffort: "medium",
-      defaultSandboxMode: "read-only"
+      defaultSandboxMode: "danger-full-access"
     });
   });
 

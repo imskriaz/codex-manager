@@ -54,7 +54,7 @@ type WorkspaceFileDraft = { text: string; revision: string };
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
-import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 async function copyWorkspaceText(text: string): Promise<void> {
@@ -357,7 +357,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [draftReadyKeys, setDraftReadyKeys] = useState<Set<string>>(new Set());
   const loadedDraftKeys = useRef(new Set<string>());
   const scheduledDrafts = useRef(new Map<string, ComposerDraft>());
-  const draftStorageWarned = useRef(false);
+  const [draftStorageError, setDraftStorageError] = useState<{ key: string; notice: DashboardNotice }>();
   const [legacyDraft, setLegacyDraft] = useState<{ key: string; value: ComposerDraft }>();
   const dirtyDraftFields = useRef(new Map<string, Set<keyof ComposerDraft>>());
   const markDraftFields = (fields: Array<keyof ComposerDraft>): void => {
@@ -428,7 +428,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const timer = setTimeout(() => setComposerFeedback(undefined), 4000);
     return () => clearTimeout(timer);
   }, [composerFeedback]);
-  const sessionReadError = props.selectedSession?.status === "unknown" && props.selectedSession.statusError !== "Running state is being checked. Conversation history remains available." ? props.selectedSession.statusError : undefined;
+  const sessionReadError = props.selectedSession?.status === "unknown" && !isCodexSessionInspectionNotice(props.selectedSession.statusError ?? "") ? props.selectedSession.statusError : undefined;
   useEffect(() => { if (sessionReadError) props.onActionFeedback({ level: 'warning', message: sessionReadError }); }, [sessionReadError]);
   const [shareOpen, setShareOpen] = useState(false);
   const messageViewportRef = useRef<HTMLElement>(null);
@@ -457,12 +457,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const pending = [...submittedDrafts.current.values()].reverse().find(submitted => submitted.key === key && !submitted.failedDraft);
       const durable = pending && !value.text && !value.attachments.length ? { ...value, text: pending.text, attachments: pending.attachments } : value;
       void writeCliComposerDraft(key, durable).then((saved) => {
-        if (!saved && !draftStorageWarned.current) {
-          draftStorageWarned.current = true;
-          reportLocalFeedback({ level: 'warning', message: durable.text || durable.attachments.length
-            ? 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.'
-            : 'Browser storage could not clear the saved draft. It may reappear after reopening.' }, key);
-        }
+        if (saved || !durable.text && !durable.attachments.length) setDraftStorageError(previous => previous?.key === key ? undefined : previous);
+        else setDraftStorageError({ key, notice: { level: 'warning', message: 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.' } });
       });
     }
   }, [composerDrafts, draftReadyKeys]);
@@ -1258,8 +1254,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   sending={currentTurnRunning}
                   onResume={resume.available ? resume.resume : undefined}
                   resuming={resume.pending}
-                  feedback={composerFeedback ?? (sessionReadError ? { level: "warning", message: sessionReadError } : undefined)}
-                  onRetryFeedback={sessionReadError ? props.onRefreshMessages : undefined}
+                  feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined) ?? (sessionReadError ? { level: "warning", message: sessionReadError } : undefined)}
+                  onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}
                   retryFeedbackDisabled={props.messagesLoading}
                   resumeDisabled={props.connected === false || props.mutating || access.pending || !messageQueue.ready || messageQueue.items.length > 0}
                   tokenUsage={props.liveState?.tokenUsage ?? props.selectedSession?.tokenUsage}
@@ -1292,7 +1288,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1517,12 +1513,13 @@ export function Composer(props: {
 
     </div><div class="cli-composer-submit">
       <div class="cli-composer-options-wrap" ref={optionsRef}>
-        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[codexModelLabel(selectedModel?.label) ?? "Default model", reasoningLabel, accessLabel].join(" · ")} onClick={() => setOptionsOpen((open) => !open)}><ContextMeter usage={props.tokenUsage} inButton /><span class="cli-composer-model">{codexModelLabel(selectedModel?.label) ?? "Default"}</span><small class="cli-composer-effort">{reasoningLabel}</small><span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span><ChevronIcon /></button>
+        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[props.feedback?.level !== "info" ? props.feedback?.message : undefined, codexModelLabel(selectedModel?.label) ?? "Default model", reasoningLabel, accessLabel].filter(Boolean).join(" · ")} onClick={() => setOptionsOpen((open) => !open)}><ContextMeter usage={props.tokenUsage} inButton /><span class="cli-composer-model">{codexModelLabel(selectedModel?.label) ?? "Default"}</span><small class="cli-composer-effort">{reasoningLabel}</small><span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span>{props.feedback && props.feedback.level !== "info" ? <span class="cli-composer-warning" aria-label={props.feedback.message}><WarningIcon /></span> : <ChevronIcon />}</button>
         {optionsOpen ? <div ref={optionsPanelRef} id={optionsId} class="cli-composer-options" popover="manual" role="group" aria-label="Message settings">
           <header><strong>{props.sending ? "Next turn settings" : "Message settings"}</strong><button type="button" aria-label="Close message settings" onClick={closeOptions}><CloseIcon /></button></header>
           <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
           <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+          {props.feedback && props.feedback.level !== 'info' ? <small class="cli-access-status" role="alert">{props.feedback.message}{props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}</small> : null}
           {props.accessStatus ? <small class="cli-access-status" role="status">{props.accessStatus}</small> : props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
       </div>
@@ -1727,6 +1724,10 @@ function ActivityCode({ text, label, copyLabel }: { text: string; label: string;
   return <div class="cli-code-surface"><div class="cli-code-surface-head"><strong>{label}</strong><CopySnippet text={text} label={copyLabel} /></div><pre tabIndex={0} aria-label={label}><code>{formatted || 'No output.'}</code></pre></div>;
 }
 
+function isCapacityMessage(message: DashboardCliSessionMessage): boolean {
+  return message.kind !== 'command' && isCodexCapacityInterruption([message.text, message.result, message.kind === 'error' ? message.debug : undefined].filter(Boolean).join(' '));
+}
+
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const openAgent = useContext(SessionAgentContext);
   const agentIds = useMemo(() => messageAgentIds(message), [message]);
@@ -1734,8 +1735,18 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   const agentLabel = agentIds.length === 1 ? `${openAgent?.names[agentIds[0]!] || 'Agent'} conversation` : 'agent list';
   const running = message.status === "inProgress";
   const failed = message.status === "failed" || message.kind === "error";
-  const capacity = isCodexCapacityInterruption([message.text, message.result].filter(Boolean).join(" "));
-  if (capacity && message.kind !== 'command') return <div class="cli-activity-copy cli-capacity-notice" role="status"><strong>Model at capacity</strong><p>Selected model is at capacity. Choose another model or retry later.</p>{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+  const capacity = isCapacityMessage(message);
+  const retrying = message.kind === 'error' && running;
+  if (capacity || retrying || (message.kind === 'error' && message.title === 'Retry attempt')) {
+    const attempt = /^Reconnecting(?:\.\.\.)?\s+(\d{1,3})\/(\d{1,3})$/i.exec(message.text.trim());
+    const delay = /\bretry(?:ing)?(?:\s+request)?\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(?:seconds?|s)\b/i.exec(message.text);
+    const seconds = delay && Number(delay[1]);
+    let retryLabel = retrying ? 'Retrying…' : 'Retry attempt';
+    if (attempt) retryLabel = `Reconnecting ${attempt[1]}/${attempt[2]}`;
+    else if (retrying && seconds && seconds > 0 && seconds <= 86400) retryLabel = `Retrying · ${seconds}s delay`;
+    const label = <span role="status" title={capacity ? "Selected model is at capacity. Choose another model or retry later." : message.text}>{capacity ? `Model at capacity${retrying ? ` · ${retryLabel}` : ''}` : retryLabel}</span>;
+    return message.debug ? <details class="cli-capacity-notice"><summary>{label}<ChevronIcon /></summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : <div class="cli-capacity-notice">{label}</div>;
+  }
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
@@ -1776,9 +1787,9 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
     case "compaction":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-compaction"><strong>{message.status === "inProgress" ? "Compacting context" : "Context compacted"}</strong><span>{message.text || (message.status === "inProgress" ? "Codex is condensing earlier context before continuing." : "Codex condensed earlier context to continue working.")}</span></div>;
     case "error":
-      return <div class="cli-activity-copy cli-activity-detail cli-activity-error">{isCodexCapacityInterruption([message.text, message.result].filter(Boolean).join(" ")) ? <><strong>Model at capacity</strong><span>Selected model is at capacity. Try a different model, then retry.</span></> : <><strong>Error</strong><span>{message.text || "Codex reported an error."}</span></>}{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-error"><strong>Error</strong><span>{message.text || "Codex reported an error."}</span>{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
     default:
-      return <div class="cli-activity-copy cli-activity-detail">{isCodexCapacityInterruption([message.text, message.result].filter(Boolean).join(" ")) ? <><strong>Model at capacity</strong><span>Selected model is at capacity. Try a different model, then retry.</span></> : <span>{message.text}</span>}</div>;
+      return <div class="cli-activity-copy cli-activity-detail"><span>{message.text}</span></div>;
   }
 }
 
@@ -1888,7 +1899,7 @@ export function groupCompletedTurns(items: ConsolidatedSessionItem[], running: b
     turn = [];
   };
   for (const item of items) {
-    if (!("messages" in item) && (item.kind === "compaction" || item.kind !== "command" && isCodexCapacityInterruption([item.text, item.result].filter(Boolean).join(" ")))) {
+    if (!("messages" in item) && (item.kind === "compaction" || isCapacityMessage(item))) {
       flush(false);
       result.push(item);
       continue;
@@ -1988,7 +1999,7 @@ function CompletedTurnChanges({ messages, onOpenReviews }: { messages: Dashboard
 
 
 function isTurnActivity(message: DashboardCliSessionMessage): boolean {
-  if (message.kind !== 'command' && isCodexCapacityInterruption([message.text, message.result].filter(Boolean).join(' '))) return false;
+  if (isCapacityMessage(message)) return false;
   return message.kind === "reasoning"
     || message.kind === "plan"
     || message.kind === "command"
@@ -2702,12 +2713,12 @@ function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
 export function QueuedMessages({ queue, onFeedback, onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; onFeedback: (notice: DashboardNotice) => void; onRefresh: () => void }) {
-  return <div class="cli-local-queue" aria-label="Local message queue">{queue.error ? <div class="cli-queue-load-warning" role="alert"><span>{queue.error}</span><button type="button" onClick={queue.retryLoad}>Retry queue</button></div> : !queue.ready ? <small class="cli-queued-status" role="status"><span class="cli-live-spinner" aria-hidden="true" />Loading saved messages…</small> : null}{queue.items.map((item, index) => <div key={item.id} class={`cli-pending-message is-${item.state}`}>
+  return <div class="cli-local-queue" aria-label="Local message queue">{queue.items.map((item, index) => <div key={item.id} class={`cli-pending-message is-${item.state}`}>
     <SessionMessage message={queuedMessageView(item)} onActionFeedback={onFeedback} />
     <div class="cli-queued-footer">
-      <span class="cli-queued-status" role="status">{item.state === 'sending' ? <span class="cli-live-spinner" aria-hidden="true" /> : null}{!queue.connected && item.state !== 'sent' ? item.state === 'sending' || item.state === 'uncertain' ? 'Waiting for connection · confirmation pending' : 'Waiting for connection' : item.state === 'queued' ? `Queued · ${index + 1}` : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Send failed'}</span>
+      <button type="button" class="cli-queued-status cli-queue-status-button" aria-live="polite" aria-label={item.error ? `Message status: ${item.error}` : undefined} tabIndex={item.error ? 0 : -1} popovertarget={item.error ? `queue-error-${encodeURIComponent(item.id)}` : undefined} title={item.error}>{item.state === 'sending' ? <span class="cli-live-spinner" aria-hidden="true" /> : null}{!queue.connected && item.state !== 'sent' ? item.state === 'sending' || item.state === 'uncertain' ? 'Waiting for connection · confirmation pending' : 'Waiting for connection' : item.state === 'queued' ? `Queued · ${index + 1}` : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : item.error?.startsWith('The saved message could not be removed.') ? 'Remove failed' : 'Send failed'}</button>
       {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <><button type="button" class="cli-queue-resend" onClick={() => queue.resend(item.id)}>Resend</button><button type="button" aria-label="Remove queued message" title="Remove message" onClick={() => queue.remove(item.id)}>×</button>{item.state === 'uncertain' ? <button type="button" class="cli-queue-refresh" onClick={onRefresh}>Check session</button> : null}</> : item.state === 'queued' ? <span class="cli-queue-actions"><button type="button" onClick={() => queue.remove(item.id, true)}>Edit</button><button type="button" onClick={() => queue.remove(item.id)}>Remove</button></span> : null}
     </div>
-    {queue.connected && item.error ? <small class="cli-queue-error" role="status">{item.error}</small> : null}
+    {item.error ? <div id={`queue-error-${encodeURIComponent(item.id)}`} popover="auto" class="cli-queue-error-popover" role="dialog" aria-label="Message failure details"><p>{item.error}</p><button type="button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} popovertargetaction="hide">Close</button></div> : null}
   </div>)}</div>;
 }

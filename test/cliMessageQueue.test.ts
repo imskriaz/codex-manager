@@ -84,7 +84,7 @@ it('keeps failed sends in the conversation and resends in place without changing
 
 it('does not send on full storage and preserves the message in the conversation', async () => {
   harness.writes.mockResolvedValue(false); render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
-  expect(send).not.toHaveBeenCalled(); expect(restore).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed'); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('storage'));
+  expect(send).not.toHaveBeenCalled(); expect(restore).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed'); expect(feedback).not.toHaveBeenCalled(); expect(queue.items[0]?.error).toContain('storage');
 });
 
 it('does not dispatch when the durable send fence fails', async () => {
@@ -145,7 +145,7 @@ it('keeps a large document send pending through slow upload and exposes timeout 
 it('keeps an unreadable saved queue untouched and blocks dispatch with visible feedback', async () => {
   harness.read.mockRejectedValue(new Error('Saved queue could not be read'));
   render({ canDispatch: true }); await flush(); expect(queue.ready).toBe(false);
-  expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.writes).not.toHaveBeenCalled(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('could not be read'));
+  expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.writes).not.toHaveBeenCalled(); expect(feedback).toHaveBeenCalledExactlyOnceWith('The saved message queue is not ready. Your composer draft is kept.');
   expect(queue.error).toContain('could not be read'); harness.read.mockResolvedValue([]); queue.retryLoad(); await flush(); expect(queue.ready).toBe(true); expect(queue.error).toBeUndefined(); expect(send).not.toHaveBeenCalled();
 });
 
@@ -168,4 +168,11 @@ it('clears a failed local record when a late acknowledgement confirms delivery',
   expect(queue.items[0]?.state).toBe('sent');
   expect(harness.records.get('message-queue:pc:session')).toEqual([]);
   expect(send).toHaveBeenCalledOnce();
+});
+
+it('rolls back an unconfirmed removal inline without a storage toast or automatic resend',async()=>{
+  render();await flush();queue.enqueue(draft());await flush();const id=queue.items[0]!.id;
+  harness.writes.mockResolvedValue(false);feedback.mockClear();queue.remove(id);await flush();
+  expect(queue.items[0]).toMatchObject({id,state:'failed',error:expect.stringContaining('could not be removed')});expect(feedback).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled();
+  harness.writes.mockResolvedValue(true);queue.remove(id);await flush();expect(queue.items).toEqual([]);
 });

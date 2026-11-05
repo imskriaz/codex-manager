@@ -89,7 +89,7 @@ if (process.argv.includes('--images')) {
   messages.splice(1,0,{id:'earlier-gallery-image',kind:'image',text:'Earlier session image',images:[{src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="tomato"/></svg>'),alt:'Earlier session image'}]});
 }
 if(process.argv.includes('--docs'))prepareDocsSnapshot(snapshot,sessions,messages);
-const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
+const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "danger-full-access" };
 const mockHost = `(() => {
   const state = ${JSON.stringify(snapshot)};
   if(window.__historyFixture) state.usageSummary={revision:1,count:3};
@@ -547,11 +547,14 @@ try {
     if (process.argv.includes('--storage-unavailable')) {
       await page.goto(`${origin}/workspace/${parentId}`);
       const input = page.getByRole('textbox',{name:'Message Codex',exact:true}); await input.fill('Keep my message');
-      await page.getByText(/Saved queue is unavailable/).first().waitFor();
+      await page.locator('.cli-composer-warning').waitFor();
+      await page.getByRole('button',{name:'Message settings',exact:true}).click();
+      await page.getByRole('alert').filter({hasText:/Saved queue is unavailable/}).waitFor();
       assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true,'An unreadable queue cannot be overwritten by a send');
       assert.equal(await input.inputValue(),'Keep my message');
       await page.evaluate(()=>Object.defineProperty(window,'indexedDB',{configurable:true,value:window.__workingIndexedDB}));
-      await page.getByRole('button',{name:'Retry queue',exact:true}).click();
+      await page.getByRole('button',{name:'Retry',exact:true}).click();
+      await page.keyboard.press('Escape');
       await page.waitForFunction(()=>document.querySelector('.cli-send-button')?.disabled===false);
       assert.equal(await input.inputValue(),'Keep my message','Retrying storage leaves the composer intact');
       assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(item.action)).length),0);

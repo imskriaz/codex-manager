@@ -479,6 +479,7 @@ export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_
   return structuredClone(await pending) as T | undefined;
 }
 export async function writeBrowserCache(key: string, value: unknown): Promise<boolean> {
+  if (key.startsWith('message-queue:') && Array.isArray(value) && value.length === 0) return deleteBrowserCache(key);
   const previous = browserReadMemory.get(key);
   browserReadLoads.delete(key);
   rememberBrowserRead(key, value);
@@ -507,6 +508,7 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
       if (row) {
         const prior = row.value as CacheRecord;
         if (typeof prior?.key !== 'string') { row.continue(); return; }
+        if (prior.key.startsWith('browser:message-queue:') && Array.isArray(prior.value) && prior.value.length === 0) { row.delete(); row.continue(); return; }
         if (prior.key !== record.key) {
           const bytes = prior.sizeBytes ?? JSON.stringify(prior).length * 2;
           if (prior.key.startsWith('browser:outbox:') || prior.key.startsWith('browser:message-queue:')) { draftCount++; draftBytes += bytes; }

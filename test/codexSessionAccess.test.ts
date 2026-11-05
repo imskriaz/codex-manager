@@ -25,3 +25,14 @@ it('bounds peer access updates and rejects malformed or future permissions', () 
   expect(isCodexSessionAccess(access)).toBe(true);
   for (const patch of [{ mode: 'root' },{ profile: 'x'.repeat(257) },{ networkAccess: 'yes' },{ updatedAt: Date.now()+600000 },{ unknown: true }]) expect(isCodexSessionAccess({ ...access, ...patch })).toBe(false);
 });
+
+it('reads modern database permission profiles and preserves effective policy over profile provenance', () => {
+  expect(parseCodexSessionAccess({ sandbox_policy: '{"type":"disabled"}' })?.mode).toBe('danger-full-access');
+  const managed = { type: 'managed', file_system: { type: 'restricted', entries: [{ path: { type: 'special', value: { kind: 'root' } }, access: 'read' }, { path: { type: 'path', path: 'D:/work' }, access: 'write' }, { path: { type: 'path', path: 'D:/work/private' }, access: 'none' }] }, network: 'restricted' };
+  expect(parseCodexSessionAccess({ sandbox_policy: JSON.stringify(managed) })).toMatchObject({ mode: 'workspace-write', networkAccess: false });
+  expect(recordedCodexSandboxPolicy(managed)).toBeUndefined();
+  expect(recordedCodexSandboxPolicy('{"type":"disabled"}')).toEqual({ type: 'dangerFullAccess' });
+  expect(parseCodexSessionAccess({ permissionProfile: { ...managed, file_system: { type: 'restricted', entries: [{ access: 'read' }] }, network: 'enabled' } })).toMatchObject({ mode: 'read-only', networkAccess: true });
+  expect(parseCodexSessionAccess({ sandboxPolicy: { type: 'readOnly' }, activePermissionProfile: { id: ':danger-full-access' } })?.mode).toBe('read-only');
+  expect(parseCodexSessionAccess({ sandbox_policy: 'broken' })).toBeUndefined();
+});

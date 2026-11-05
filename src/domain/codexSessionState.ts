@@ -1,8 +1,13 @@
 import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState, DashboardCodexSessionGoal, DashboardPeerView } from "./dashboard/types";
 import { readSubAgentMetadata } from "./sessionSource";
 
+export function isCodexSessionInspectionNotice(message: string): boolean {
+  const pending = message.replace(/^Session history is available, but running state could not be verified\. Refresh before sending\. /, '');
+  return pending === 'Running state is being checked. Conversation history remains available.' || pending === 'Checking saved running activity. Refresh before sending.';
+}
+
 export function isCodexQuotaInterruption(message: string): boolean {
-  return /usage[_ -]?limit(?:[_ -]?reached|ed)|usageLimitReached|hit (?:your |the )?usage limit|(?:quota|usage limit) (?:has been )?(?:exceeded|exhausted|reached)|insufficient_quota|quota_exceeded|out of quota/i.test(message);
+  return /usage[_ -]?limit(?:[_ -]?(?:reached|exceeded)|ed)|usageLimitReached|hit (?:your |the )?usage limit|(?:quota|usage limit) (?:has been )?(?:exceeded|exhausted|reached)|insufficient_quota|quota_exceeded|out of quota/i.test(message);
 }
 
 export function isCodexCapacityInterruption(message: string): boolean {

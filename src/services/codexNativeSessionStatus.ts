@@ -15,7 +15,7 @@ import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompt
 
 type Observation = {
   home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number; verifiedAt?: number;
-  access?: CodexSessionAccess;
+  access?: CodexSessionAccess; threadSettings?: unknown; accessWaiters?: Set<() => void>;
   prompts?: AppServerRequest[];
   promptResponses?: Map<string, Promise<void>>;
   waiters: Set<(running: boolean | undefined) => void>;
@@ -46,6 +46,8 @@ function settle(entry: Observation, running: boolean | undefined): void {
   entry.running = running; entry.verifiedAt = Date.now();
   if (running !== true) entry.turnId = undefined;
   if (running === undefined) { entry.ready = undefined; entry.access = undefined; }
+  if (running === undefined) entry.threadSettings = undefined;
+  for (const changed of entry.accessWaiters ?? []) changed();
   recordNativeSessionStatus(entry.home,entry.id,running);
   for (const resolve of entry.waiters) resolve(running);
   entry.waiters.clear();
@@ -150,7 +152,7 @@ function receive(message: NativeMessage): void {
         }
         if (patch.path[0] === 'latestThreadSettings') {
           if (patch.path.length === 1) updateAccess(entry, patch.op === 'remove' ? undefined : parseCodexSessionAccess(patch.value), patch.value);
-          else { entry.access = undefined; entry.needsTurnSnapshot = true; follow(entry, true); }
+          else if (!applySettingsPatch(entry, patch)) { entry.access = undefined; entry.threadSettings = undefined; entry.needsTurnSnapshot = true; follow(entry, true); }
         }
         if (patch.path[0] === "requests") {
           if (!applyPromptPatch(entry, patch)) {
@@ -175,9 +177,11 @@ function receive(message: NativeMessage): void {
 }
 
 function updateAccess(entry: Observation, access: CodexSessionAccess | undefined, settings?: unknown): void {
+  entry.threadSettings = settings && JSON.stringify(settings).length <= 64_000 ? structuredClone(settings) : undefined;
   if (JSON.stringify(access && { ...access, updatedAt: 0 }) === JSON.stringify(entry.access && { ...entry.access, updatedAt: 0 })) return;
   if (access) access = { ...access, updatedAt: Math.max(access.updatedAt, (entry.access?.updatedAt ?? 0) + 1) };
   entry.access = access;
+  for (const changed of entry.accessWaiters ?? []) changed();
   if (access) saveCodexSessionAccess(entry.home,entry.id,access,settings);
   if (access) publishDashboardRealtime({ type: 'dashboard:codex-session-access', sessionId: entry.id, access });
 }
@@ -188,10 +192,45 @@ export function getNativeCodexSessionAccess(home: string, id: string): CodexSess
 export async function updateNativeCodexSessionAccess(home: string, id: string, settings: Record<string, unknown>): Promise<boolean> {
   await readNativeCodexSessionRunning(home, id);
   const entry = observations.get(`${path.resolve(home)}:${id}`), owner = entry?.owner, revision = connectionRevision;
-  const reply = await requestNativeOwner(home, id, 'thread-follower-update-thread-settings', { conversationId: id, threadSettings: settings });
-  if (!reply) return false;
-  if (entry?.owner !== owner || connectionRevision !== revision || observations.get(`${path.resolve(home)}:${id}`) !== entry) throw new Error('The Codex owner changed while applying access. Refresh before changing it again.');
-  if (reply.result?.applied !== true) throw new Error('Codex did not confirm the access change. Refresh its settings before retrying.');
+  const expected = parseCodexSessionAccess(settings);
+  if (!expected?.mode) throw new Error('The requested access mode is invalid.');
+  let changed!: () => void;
+  const initialAccess = entry?.access;
+  const confirmation = new Promise<void>(resolve => { changed = () => { if (!socket?.writable || entry?.owner !== owner || entry?.access !== initialAccess) resolve(); }; });
+  if (entry) (entry.accessWaiters ??= new Set()).add(changed);
+  try {
+    const reply = await requestNativeOwner(home, id, 'thread-follower-update-thread-settings', { conversationId: id, threadSettings: settings });
+    if (!reply) return false;
+    if (entry?.owner !== owner || connectionRevision !== revision || observations.get(`${path.resolve(home)}:${id}`) !== entry) throw new Error('The Codex owner changed while applying access. Refresh before changing it again.');
+    if (reply.result?.applied !== true) throw new Error('Codex did not confirm the access change. Refresh its settings before retrying.');
+    if (entry?.access?.mode !== expected.mode) await waitWithin(confirmation, 3000, 'Codex did not report its applied permissions. Refresh before retrying.');
+    if (!socket?.writable || entry?.owner !== owner || connectionRevision !== revision || entry?.access?.mode !== expected.mode) throw new Error('Codex permissions changed or could not be confirmed. Refresh before retrying.');
+    return true;
+  } finally { entry?.accessWaiters?.delete(changed); }
+}
+
+function applySettingsPatch(entry: Observation, patch: { path?: unknown; op?: unknown; value?: unknown }): boolean {
+  const keys = (patch.path as unknown[]).slice(1);
+  if (!entry.threadSettings || keys.length > 8 || keys.some(key => typeof key !== 'string' && typeof key !== 'number' || ['__proto__','constructor','prototype'].includes(String(key))) || !['add','replace','remove'].includes(String(patch.op))) return false;
+  const settings = structuredClone(entry.threadSettings);
+  let target: unknown = settings;
+  for (const key of keys.slice(0,-1)) {
+    if (!target || typeof target !== 'object' || !Object.hasOwn(target,key as string)) return false;
+    target = (target as Record<string, unknown>)[String(key)];
+  }
+  const key = keys.at(-1) as string | number;
+  if (!target || typeof target !== 'object') return false;
+  if (Array.isArray(target)) {
+    if (!Number.isInteger(key) || Number(key) < 0 || Number(key) > target.length || patch.op !== 'add' && Number(key) === target.length) return false;
+    if (patch.op === 'add') target.splice(Number(key),0,patch.value);
+    else if (patch.op === 'remove') target.splice(Number(key),1);
+    else target[Number(key)] = patch.value;
+  } else {
+    const fields = target as Record<string, unknown>;
+    if (patch.op !== 'add' && !Object.hasOwn(fields,key)) return false;
+    if (patch.op === 'remove') delete fields[String(key)]; else fields[String(key)] = patch.value;
+  }
+  updateAccess(entry,parseCodexSessionAccess(settings),settings);
   return true;
 }
 

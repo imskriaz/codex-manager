@@ -10,6 +10,11 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   assert.ok(Math.abs(centerBounds.x + centerBounds.width / 2 - width / 2) < 2, 'Account center opens in the middle');
   await page.getByRole('button', {name:'Close account menu',exact:true}).click();
   await center.waitFor({state:'hidden'});
+  await page.evaluate(() => {
+    for(const notice of [{level:'warning',message:'Session history is available, but running state could not be verified. Refresh before sending. Checking saved running activity. Refresh before sending.'},{level:'info',message:'Checking sessions',actions:['Review']}]) dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:notice',...notice}}));
+  });
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('.dashboard-notice-stack').count(),0,'Workspace never shows information or routine inspection toasts');
   const composer = page.locator('.cli-composer');
   const stableBounds = await composer.boundingBox();
   await page.evaluate(() => { dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})); dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'offline'}})); });
@@ -54,8 +59,20 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   }, { messages: fixtures, sessionId: parentId });
   await page.locator('.cli-capacity-notice').waitFor();
   await page.waitForFunction(() => { const tools = document.querySelectorAll('.cli-session-messages .cli-activity.is-tool-call'); return tools.length === 2 && tools[0].textContent.includes('Formatted output'); });
-  assert.match(await page.locator('.cli-capacity-notice').innerText(), /Selected model is at capacity/);
-  assert.equal(await page.locator('.cli-capacity-notice > .cli-code-surface').count(), 0, 'Capacity is a text notice');
+  const capacity = page.locator('.cli-capacity-notice');
+  assert.equal((await capacity.innerText()).trim(), 'Model at capacity', 'Capacity uses one short status line');
+  assert.ok(await capacity.evaluate(element => element.getBoundingClientRect().height <= Math.max(32, parseFloat(getComputedStyle(element).lineHeight) + 8)), 'Capacity does not reserve a multi-line block');
+  assert.equal(await capacity.locator('pre').isVisible(), false, 'Capacity diagnostics start collapsed');
+  await capacity.locator('summary').click();
+  assert.deepEqual(JSON.parse(await capacity.locator('pre').innerText()), { error: 'model_overloaded' }, 'Original diagnostics stay available');
+  await capacity.locator('summary').click();
+  assert.equal((await capacity.innerText()).trim(), 'Model at capacity');
+  await page.evaluate(({ messages, sessionId }) => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '77777777-7777-4777-8777-777777777777', sequence: 2, status: 'running', updatedAt: Date.now(), messages: [...messages, { id: 'native-retry', kind: 'error', text: 'Reconnecting... 2/5', status: 'inProgress' }] } } })), { messages: fixtures, sessionId: parentId });
+  const retry = page.getByRole('status').filter({ hasText: /^Reconnecting 2\/5$/ });
+  await retry.waitFor();
+  assert.ok(await retry.evaluate(element => element.getBoundingClientRect().height <= parseFloat(getComputedStyle(element).lineHeight) + 2), 'Native retry stays on one line');
+  await page.evaluate(({ messages, sessionId }) => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '77777777-7777-4777-8777-777777777777', sequence: 3, status: 'completed', updatedAt: Date.now(), messages } } })), { messages: fixtures, sessionId: parentId });
+  await retry.waitFor({ state: 'hidden' });
   for (const group of await page.locator('.cli-activity-group-details').all()) if (!await group.evaluate(element => element.open)) await group.locator(':scope > summary').click();
   for (const kind of ['plan', 'command', 'tool-call', 'web-search', 'review', 'compaction', 'error', 'collaboration']) {
     const row = page.locator(`.cli-session-messages > .cli-activity.is-${kind}, .cli-activity-group-body > .cli-activity.is-${kind}`).first();

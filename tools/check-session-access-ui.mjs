@@ -39,4 +39,25 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   assert.equal(await access.isDisabled(),true,'Offline access changes are blocked');
   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
   await page.keyboard.press('Escape');
+  const sidebar=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+  if(await sidebar.isVisible())await sidebar.click();
+  await page.getByRole('button',{name:'New chat',exact:true}).click();
+  await page.getByRole('button',{name:'Message settings',exact:true}).click();
+  assert.equal(await page.getByRole('combobox',{name:'Access mode',exact:true}).inputValue(),'danger-full-access','New workspace sessions default to Full access');
+  await page.keyboard.press('Escape');
+  const dismiss=page.getByRole('button',{name:'Dismiss notification',exact:true});
+  if(await dismiss.isVisible())await dismiss.click();
+  const beforeStorage=await form.boundingBox();
+  await page.evaluate(()=>{window.__realStorageTransaction=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]==='readwrite')throw new DOMException('Storage full','QuotaExceededError');return window.__realStorageTransaction.apply(this,args);};});
+  await input.fill('Draft');
+  await page.locator('.cli-composer-warning').waitFor();
+  assert.equal(await page.locator('.dashboard-notice-stack').count(),0,'Draft storage failures do not create a toast');
+  assert.deepEqual(await form.boundingBox(),beforeStorage,'Storage feedback does not shift the composer');
+  await page.getByRole('button',{name:'Message settings',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Browser storage could not save your draft.'}).waitFor();
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.__realStorageTransaction;});
+  await input.fill('Recovered');
+  await page.locator('.cli-composer-warning').waitFor({state:'hidden'});
+
 }

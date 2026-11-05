@@ -522,7 +522,7 @@ it.each(['confirmed','missing','timeout','disconnect'])('syncs native access thr
   expect(sent).toMatchObject({version:2,targetClientId:'owner',params:{conversationId:id,threadSettings:settings}});
   if(outcome==='timeout')await vi.advanceTimersByTimeAsync(10001);
   else if(outcome==='disconnect')socket.destroy();
-  else message({type:'response',requestId:sent.requestId,resultType:'success',result:outcome==='confirmed'?{applied:true}:{}});
+  else { if(outcome==='confirmed') { const confirmed=snapshot('active',2) as any; confirmed.params.change.conversationState.latestThreadSettings=settings; message(confirmed); } message({type:'response',requestId:sent.requestId,resultType:'success',result:outcome==='confirmed'?{applied:true}:{}}); }
   await result; expect(socket.sent.filter(value=>value.method==='thread-follower-update-thread-settings')).toHaveLength(1);
 });
 
@@ -535,4 +535,26 @@ it.each(['idle','active','missing'])('refreshes stale native ownership without r
   if(state === 'missing') { await vi.advanceTimersByTimeAsync(3001); expect(await checking).toBeUndefined(); }
   else { message(snapshot(state)); expect(await checking).toBe(state === 'active'); }
   expect(getNativeCodexSessionRunning(home,id)).toBe(state === 'missing' ? undefined : state === 'active');
+});
+
+it('applies nested permission patches immediately and resynchronizes malformed paths', async () => {
+  const reading=readNativeCodexSessionRunning(home,id); await initialize();
+  const first=snapshot('idle') as any; first.params.change.conversationState.latestThreadSettings={sandboxPolicy:{type:'readOnly',networkAccess:false}};
+  message(first); await reading;
+  const patch=(revision: number, path: unknown[], value: unknown)=>message({type:'broadcast',version:11,sourceClientId:'owner',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:id,change:{type:'patches',baseRevision:revision-1,revision,patches:[{op:'replace',path,value}]}}});
+  patch(2,['latestThreadSettings','sandboxPolicy','type'],'workspaceWrite');
+  expect(getNativeCodexSessionAccess(home,id)?.mode).toBe('workspace-write');
+  patch(3,['latestThreadSettings','sandboxPolicy','networkAccess'],true);
+  expect(getNativeCodexSessionAccess(home,id)?.networkAccess).toBe(true);
+  patch(4,['latestThreadSettings','__proto__','polluted'],true);
+  expect(getNativeCodexSessionAccess(home,id)).toBeUndefined();
+  expect(({} as any).polluted).toBeUndefined();
+});
+it('does not accept a native settings acknowledgment without the applied permission state', async () => {
+  const reading=readNativeCodexSessionRunning(home,id);await initialize();message(snapshot('active'));await reading;
+  const result=expect(updateNativeCodexSessionAccess(home,id,{sandboxPolicy:{type:'dangerFullAccess'}})).rejects.toThrow('applied permissions');
+  for(let i=0;i<70;i++)await Promise.resolve();
+  const sent=socket.sent.find(value=>value.method==='thread-follower-update-thread-settings');
+  message({type:'response',requestId:sent.requestId,resultType:'success',result:{applied:true}});
+  await vi.advanceTimersByTimeAsync(3001);await result;
 });

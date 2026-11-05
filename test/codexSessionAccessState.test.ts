@@ -23,3 +23,10 @@ it('reports storage failure while retaining the already accepted state in memory
   expect(cache.readSavedCodexSessionAccess('D:/home','session')?.access).toEqual(mode);
   expect(state.records.size).toBe(0);
 });
+
+it('preserves effective restrictions when a builtin profile label disagrees with the applied policy',async()=>{
+  const cache=await import('../src/services/codexSessionAccessState');
+  const access={mode:'read-only' as const,profile:':danger-full-access',updatedAt:Date.now()};
+  cache.saveCodexSessionAccess('D:/home','session',access,{sandboxPolicy:{type:'readOnly'}});
+  expect(cache.readSavedCodexSessionAccess('D:/home','session')?.settings).toEqual({sandboxPolicy:{type:'readOnly'}});
+});

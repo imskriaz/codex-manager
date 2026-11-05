@@ -38,7 +38,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const current = useRef(items), options = useRef(props); options.current = props;
   const owned = useRef(false), draining = useRef(false), writes = useRef(Promise.resolve(true)), generation = useRef(0);
-  const loadFailed = (message: string) => { setError(message); options.current.feedback(message); };
+  const loadFailed = (message: string) => { setError(message); };
   const update = (next: CliQueuedMessage[]) => { current.current = next; setItems(next); };
   const save = (next: CliQueuedMessage[], scope = options.current.scope) => {
     const snapshot = structuredClone(next.filter(item => item.state !== 'sent'));
@@ -102,7 +102,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       if (epoch !== generation.current) return;
       const message = (error as Error).message;
       const failed = current.current.map(item => item.id === next.id ? { ...item, state: 'failed' as const, error: message } : item);
-      update(failed); void save(failed); options.current.feedback(message);
+      update(failed); void save(failed);
     }).finally(() => { if (epoch === generation.current) { draining.current = false; setItems([...current.current]); } });
   }, [items, ready, props.canDispatch, props.turnId]);
   useEffect(() => {
@@ -134,7 +134,6 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
         if (epoch !== generation.current) return;
         const updated = current.current.map(entry => entry.id === item.id ? { ...entry, durable: saved, ...(saved ? {} : { state: 'failed' as const, error: 'Local storage is unavailable. Your message was not sent; copy it from the conversation before closing.' }) } : entry);
         update(updated);
-        if (!saved) props.feedback('Local storage could not save this message. It is kept in this conversation for Resend; copy it before closing.');
       });
       return item.id;
     },
@@ -148,14 +147,20 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
         if (epoch !== generation.current) return;
         const updated = current.current.map(entry => entry.id === id ? { ...entry, durable: saved, ...(saved ? {} : { state: 'failed' as const, error: 'Storage could not save the resend. It was not sent. Free storage and try Resend again.' }) } : entry);
         update(updated);
-        if (!saved) props.feedback('Storage could not save the resend. Your message is kept in this conversation.');
       });
     },
     remove: (id: string, restore = false) => {
       const item = current.current.find(item => item.id === id);
       if (!owned.current || !item || item.state === 'sending') return;
       if (restore && !props.restore(item.draft)) return;
-      const next = current.current.filter(item => item.id !== id); update(next); void save(next).then(saved => { if (!saved) props.feedback('Browser storage could not confirm queue removal. The message may reappear after reopening; verify it before retrying.'); });
+      const index = current.current.indexOf(item), epoch = generation.current;
+      const next = current.current.filter(item => item.id !== id); update(next);
+      void save(next).then(saved => {
+        if (saved || epoch !== generation.current || current.current.some(item => item.id === id)) return;
+        const restored = [...current.current];
+        restored.splice(Math.min(index,restored.length),0,{...item,state:'failed',error:'The saved message could not be removed. It was kept here; verify it before reopening or resending.'});
+        update(restored);
+      });
     }
   };
 }

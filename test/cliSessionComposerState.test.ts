@@ -67,3 +67,10 @@ it('uses Codex session access rather than a stale saved composer override or glo
   expect(resolveCliComposerSettings(draft,config,{}).sandboxMode).toBeUndefined();
   expect(resolveCliComposerSettings(draft,config).sandboxMode).toBe('workspace-write');
 });
+
+it('defaults new workspaces to Full while preserving explicit drafts and reported session access', () => {
+  expect(resolveCliComposerSettings(undefined, undefined).sandboxMode).toBe('danger-full-access');
+  expect(resolveCliComposerSettings({ text: '', attachments: [], sandboxMode: 'read-only' }, undefined).sandboxMode).toBe('read-only');
+  expect(resolveCliComposerSettings(undefined, undefined, { sandboxMode: 'workspace-write' }).sandboxMode).toBe('workspace-write');
+  expect(resolveCliComposerSettings(undefined, undefined, {}).sandboxMode).toBeUndefined();
+});

@@ -1,3 +1,4 @@
+import { isCodexSessionInspectionNotice } from '../../src/domain/codexSessionState';
 import type { DashboardNotice } from "../../src/domain/dashboard/types";
 
 export const DASHBOARD_TOAST_DURATION_MS = 10_000;
@@ -24,7 +25,7 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
 
   return {
     show(notice: DashboardNotice): void {
-      if (disposed || notice.level === "info" && !notice.actions?.length && !notice.actionPrompt) {
+      if (disposed || isCodexSessionInspectionNotice(notice.message) || notice.level === "info" && !notice.actions?.length && !notice.actionPrompt) {
         return;
       }
       if (current?.level === notice.level && current.message === notice.message && current.notificationId === notice.notificationId && current.systemName === notice.systemName) return;

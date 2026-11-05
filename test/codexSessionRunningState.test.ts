@@ -60,9 +60,52 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it.each(['disabled','managed'])('detects %s permission profiles directly from the native database',async type=>{
+    const database=new DatabaseSync(path.join(home,'state_5.sqlite'));
+    const policy=type==='disabled'?{type}:{type,file_system:{type:'restricted',entries:[{path:{type:'path',path:home},access:'write'}]},network:'restricted'};
+    database.exec('CREATE TABLE threads (id TEXT PRIMARY KEY,cwd TEXT,sandbox_policy TEXT,updated_at INTEGER)');
+    database.prepare('INSERT INTO threads VALUES (?,?,?,?)').run(id,home,JSON.stringify(policy),Math.floor(Date.now()/1000));database.close();
+    expect((await readCodexCliSessionSummary(id,home))?.access?.mode).toBe(type==='disabled'?'danger-full-access':'workspace-write');
+  });
+
+  it("keeps retry errors separate from tools and deduplicates capacity errors within their own turn", async () => {
+    const record = (payload: unknown) => JSON.stringify({ type: "event_msg", payload }) + "\n";
+    const error = { message: "Selected model is at capacity.", codex_error_info: "server_overloaded" };
+    await appendFile(transcript, record({ type: "item_started", item: { id: "active-tool", type: "mcpToolCall", server: "mcp", tool: "check" } }) + record({ type: "error", turn_id: "turn-1", error, will_retry: true }));
+    const retry = await readCodexCliSessionMessages(id, home);
+    expect(retry).toContainEqual(expect.objectContaining({ id: "active-tool", kind: "tool-call", status: "inProgress" }));
+    expect(retry).toContainEqual(expect.objectContaining({ kind: "error", title: "Retry attempt" }));
+    await appendFile(transcript, record({ type: "error", turn_id: "turn-1", error, will_retry: false }) + record({ type: "task_complete", turn_id: "turn-1", error }));
+    expect((await readCodexCliSessionMessages(id, home)).filter(message => message.title === "Model at capacity")).toHaveLength(1);
+    await appendFile(transcript, event("task_started", "turn-2") + record({ type: "error", turn_id: "turn-2", error }) + record({ type: "error", turn_id: "turn-1", error }));
+    const failures = (await readCodexCliSessionMessages(id, home)).filter(message => message.title === "Model at capacity");
+    expect(failures.map(message => message.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+
+  it("recognizes the native usageLimitExceeded code without treating temporary rate limits as exhausted quota", async () => {
+    const error = (code: string) => JSON.stringify({ type: "event_msg", payload: { type: "error", turn_id: "turn-1", error: { message: "Request could not complete", codex_error_info: code } } }) + "\n";
+    await appendFile(transcript, error("rateLimitExceeded"));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "running" });
+    await appendFile(transcript, error("usageLimitExceeded"));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await readQuotaInterruptedCodexSessionIds(home, [id])).toEqual([id]);
+  });
+
+  it.each(["will_retry", "willRetry"])("keeps retryable capacity errors active with %s and restores history without a live retry", async flag => {
+    for (const topLevel of [false, true]) {
+      const payload = { type: "error", turn_id: "turn-1", error: { message: "Selected model is at capacity. Retry in 2s." }, [flag]: true };
+      await appendFile(transcript, JSON.stringify(topLevel ? payload : { type: "event_msg", payload }) + "\n");
+      expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "running" });
+      expect(await readCodexCliSessionMessages(id, home)).toContainEqual(expect.objectContaining({ kind: "error", title: "Retry attempt", status: "interrupted", text: payload.error.message }));
+    }
+    await appendFile(transcript, event("task_complete"));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: false });
+  });
+
   it("keeps routine background inspection quiet while retaining real inspection failures", () => {
     const pending = { id: "pending", title: "Pending", status: "unknown" as const, statusError: "Running state is being checked. Conversation history remains available." };
     expect(getCodexSessionReadNotice([pending])).toBeUndefined();
+    expect(getCodexSessionReadNotice([{ ...pending, statusError: 'Checking saved running activity. Refresh before sending.' }])).toBeUndefined();
     expect(getCodexSessionReadNotice([pending, { ...pending, id: "failed", statusError: "Inspection timeout" }])?.message).toContain("Inspection timeout");
     expect(getCodexSessionReadNotice([{ ...pending, statusError: undefined }])).toBeDefined();
   });

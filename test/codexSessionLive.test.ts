@@ -12,6 +12,73 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it("removes a previously merged retry from task history after recovery or stream replacement", () => {
+    const live = reducer(); live.started("turn-1");
+    live.accept("error", params({ error: { message: "Reconnecting... 1/5" }, willRetry: true }));
+    const history = combineCliLiveMessages([], live.snapshot());
+    expect(history).toHaveLength(1);
+    expect(combineCliLiveMessages(history, undefined)).toEqual(history);
+    live.finish("completed");
+    expect(combineCliLiveMessages(history, live.snapshot())).toEqual([]);
+    expect(combineCliLiveMessages(history, new CodexSessionLiveReducer(sessionId, sessionId, parseCodexAppServerThreadItems).snapshot())).toEqual([]);
+  });
+  it("shows terminal errors immediately and matches saved turn error IDs without duplicates", () => {
+    const live = reducer(); live.started("turn-1");
+    const error = { message: "Service unavailable", codexErrorInfo: "serverOverloaded", additionalDetails: "Keep diagnostics" };
+    live.accept("error", params({ error, willRetry: false }));
+    const first = live.snapshot();
+    expect(first.messages[0]).toMatchObject({ id: "turn-1-error", status: "failed", text: error.message });
+    expect(first.messages[0]?.debug).toContain("serverOverloaded");
+    live.accept("turn/completed", params({ turn: { id: "turn-1", status: "failed", error } }));
+    const saved = parseCodexAppServerThreadItems({ thread: { turns: [{ id: "turn-1", status: "failed", error, items: [] }] } });
+    expect(combineCliLiveMessages(saved, live.snapshot())).toHaveLength(1);
+    expect(saved[0]?.debug).toContain("Keep diagnostics");
+  });
+
+  it("updates one native retry notice without failing the turn and removes it on recovery", () => {
+    const live = reducer(); live.started("turn-1");
+    for (const attempt of [1, 2, 2]) {
+      expect(live.accept("error", params({ error: { message: `Reconnecting... ${attempt}/5` }, willRetry: true }))).toBe(true);
+      const state = live.snapshot();
+      expect(state.status).toBe("running"); expect(state.error).toBeUndefined();
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0]).toMatchObject({ text: `Reconnecting... ${attempt}/5`, status: "inProgress" });
+      expect(isCodexSessionLiveState(state)).toBe(true);
+    }
+    expect(live.accept("error", params({ turnId: "old", error: { message: "unrelated" }, willRetry: true }))).toBe(false);
+    expect(live.accept("error", params({ error: { message: " " }, willRetry: true }))).toBe(false);
+    live.accept("thread/tokenUsage/updated", { threadId: sessionId, tokenUsage: { total: { totalTokens: 10 } } });
+    expect(live.snapshot().messages).toHaveLength(1);
+    live.accept("item/started", params({ item: { id: "reply", type: "agentMessage", text: "Resumed" } }));
+    expect(live.snapshot().messages.map(item => item.id)).toEqual(["reply"]);
+  });
+  it.each(["completed", "cancelled", "failed", "disconnected"] as const)("clears retry notices on %s and ignores late errors", status => {
+    const live = reducer(); live.started("turn-1");
+    live.accept("error", params({ error: { message: "Selected model is at capacity." }, willRetry: true }));
+    live.finish(status, status === "failed" ? "Final failure" : undefined);
+    expect(live.snapshot().messages).toHaveLength(status === "failed" ? 1 : 0);
+    expect(live.accept("error", params({ error: { message: "Retry in 2s" }, willRetry: true }))).toBe(false);
+    expect(live.snapshot().status).toBe(status);
+  });
+  it("ends retries on terminal notifications and preserves the final error", () => {
+    const live = reducer(); live.started("turn-1");
+    const error = { message: "Selected model is at capacity." };
+    live.accept("error", params({ error, willRetry: true }));
+    live.accept("error", params({ error, willRetry: false }));
+    expect(live.snapshot()).toMatchObject({ error: error.message, messages: [{ id: "turn-1-error", text: error.message, status: "failed" }] });
+    live.accept("error", params({ error, willRetry: true }));
+    live.accept("turn/completed", params({ turn: { id: "turn-1", status: "failed", error } }));
+    expect(live.snapshot()).toMatchObject({ status: "failed", error: error.message, messages: [{ id: "turn-1-error", text: error.message, status: "failed" }] });
+  });
+  it("keeps a retry notice within item and byte limits even when the turn is full", () => {
+    const live = reducer(); live.started("turn-1");
+    for (let i = 0; i < 200; i++) live.accept("item/completed", params({ item: { id: String(i), type: "agentMessage", text: "Done" } }));
+    live.accept("error", params({ error: { message: "Retrying", additionalDetails: "x".repeat(20000) }, willRetry: true }));
+    const state = live.snapshot();
+    expect(state.messages).toHaveLength(200); expect(state.messages.at(-1)?.status).toBe("inProgress");
+    expect(state.truncated).toBe(true); expect(isCodexSessionLiveState(state)).toBe(true);
+  });
+
   it('retains bounded text uploads while keeping message text and total live-state limits', () => {
     const live = reducer(), text = 'x'.repeat(20000); live.started('turn-1');
     live.accept('item/completed', params({ item: { id: 'upload', type: 'userMessage', content: [{ type: 'text', text: '<attached_file name="brief.txt">\n' + text + '\n</attached_file>' }] } }));

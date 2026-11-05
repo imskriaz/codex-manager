@@ -109,3 +109,12 @@ it('refuses to replace unreadable or future-dated durable queues with an empty q
   const unavailable = await import('../webview-src/dashboard/cliSessionCache');
   await expect(unavailable.readBrowserCache('message-queue:unavailable')).rejects.toThrow('storage is unavailable');
 });
+
+it('deletes empty queues directly and recovers capacity consumed by legacy empty records',async()=>{
+  const cache=await fixture();
+  for(let i=0;i<101;i++)cache.records.set(`browser:message-queue:empty-${i}`,{key:`browser:message-queue:empty-${i}`,value:[],updatedAt:Date.now()});
+  expect(await cache.writeBrowserCache('message-queue:new',[{id:'keep'}])).toBe(true);
+  expect([...cache.records.keys()].filter(key=>key.startsWith('browser:message-queue:empty-'))).toHaveLength(0);
+  const writes=cache.writes();expect(await cache.writeBrowserCache('message-queue:new',[])).toBe(true);
+  expect(cache.records.has('browser:message-queue:new')).toBe(false);expect(cache.writes()).toBe(writes);
+});

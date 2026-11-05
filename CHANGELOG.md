@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.8
+
+- Delete empty browser queues directly and reclaim legacy empty records that consumed queue capacity. Keep storage failures with their message or composer settings instead of duplicate toasts; restore unconfirmed removals in place.
+
+- Suppress all workspace information toasts and routine saved-session inspection notices, including progress mislabeled as warnings by older hosts. Preserve actionable failures.
+
+- Detect modern disabled and managed Codex permission profiles from native storage. Preserve effective folder and network restrictions across resume and restart.
+- Default new workspace sessions to Full access. Verify actual applied permissions before sending the first turn or confirming a change, and apply native permission patches in realtime.
+
+- Show model-capacity interruptions as one compact line across session activity types. Keep guidance in the tooltip and diagnostic details collapsed until opened.
+- Keep retry errors separate from active tool calls and bind delayed errors to their original turn. Deduplicate capacity errors within a turn.
+- Render terminal errors immediately, preserve structured capacity diagnostics, and match live and saved error rows to prevent duplicate failures.
+- Recognize the native `usageLimitExceeded` error code for quota recovery without treating temporary rate limits as exhausted quota.
+- Show Codex automatic retry and reconnect attempts in the same compact row. Clear the live retry notice when output resumes or the turn ends; retryable capacity errors no longer mark an active turn as failed.
+
 ## 1.6.7
 
 - Wrap and format tool arguments, results, commands, and debug output; preserve original copy text and diff alignment. Show model capacity failures as readable notices and open agent conversations by clicking their activity titles, with the chevron reserved for details.
