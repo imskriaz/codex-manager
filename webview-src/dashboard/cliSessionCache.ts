@@ -129,50 +129,69 @@ let flushingDrafts: Promise<void> | undefined;
 
 function openCache(): Promise<IDBDatabase | undefined> {
   if (typeof indexedDB === "undefined") return Promise.resolve(undefined);
-  cacheDatabase ??= new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      cacheDatabase = undefined;
-      resolve(undefined);
-    }, 2_000);
-    let request: IDBOpenDBRequest;
-    try { request = indexedDB.open(DB_NAME, DB_VERSION); }
-    catch { clearTimeout(timer); settled = true; cacheDatabase = undefined; resolve(undefined); return; }
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE_NAME))
-        request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
-    };
-    request.onsuccess = () => {
-      clearTimeout(timer);
-      if (settled) { request.result.close(); return; }
-      settled = true;
-      request.result.onversionchange = () => {
-        request.result.close();
-        cacheDatabase = undefined;
+  if (!cacheDatabase) {
+    const opening = new Promise<IDBDatabase | undefined>((resolve) => {
+      const invalidate = (): void => { if (cacheDatabase === opening) cacheDatabase = undefined; };
+      let settled = false;
+      const timer = setTimeout(() => {
+        settled = true;
+        invalidate();
+        resolve(undefined);
+      }, 2_000);
+      let request: IDBOpenDBRequest;
+      try { request = indexedDB.open(DB_NAME, DB_VERSION); }
+      catch { clearTimeout(timer); settled = true; resolve(undefined); return; }
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(STORE_NAME))
+          request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
       };
-      resolve(request.result);
-    };
-    request.onerror = () => {
-      if (settled) return;
-      clearTimeout(timer);
-      settled = true;
-      cacheDatabase = undefined;
-      resolve(undefined);
-    };
-    request.onblocked = () => {
-      if (settled) return;
-      clearTimeout(timer);
-      settled = true;
-      cacheDatabase = undefined;
-      resolve(undefined);
-    };
-  });
+      request.onsuccess = () => {
+        clearTimeout(timer);
+        if (settled) { request.result.close(); return; }
+        settled = true;
+        const db = request.result;
+        db.onclose = invalidate;
+        db.onversionchange = () => { invalidate(); db.close(); };
+        resolve(db);
+      };
+      request.onerror = () => {
+        if (settled) return;
+        clearTimeout(timer);
+        settled = true;
+        invalidate();
+        resolve(undefined);
+      };
+      request.onblocked = () => {
+        if (settled) return;
+        clearTimeout(timer);
+        settled = true;
+        invalidate();
+        resolve(undefined);
+      };
+    });
+    cacheDatabase = opening;
+  }
   const opening = cacheDatabase;
   return opening.then((db) => {
     if (!db && cacheDatabase === opening) cacheDatabase = undefined;
     return db;
   }, () => { if (cacheDatabase === opening) cacheDatabase = undefined; return undefined; });
+}
+
+async function openCacheTransaction(mode: IDBTransactionMode): Promise<IDBTransaction | undefined> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const pending = openCache(), opening = cacheDatabase;
+    const db = await pending;
+    if (!db) return undefined;
+    try { return db.transaction(STORE_NAME, mode); }
+    catch (error) {
+      // Retry only before a transaction exists; replaying writes after an abort could duplicate work.
+      if ((error as DOMException).name !== 'InvalidStateError') return undefined;
+      if (cacheDatabase === opening) cacheDatabase = undefined;
+      try { db.close(); } catch { /* already closed */ }
+    }
+  }
+  return undefined;
 }
 
 export async function readCliSessionListCache(deviceId?: string): Promise<CliSessionListCache | undefined> {
@@ -239,10 +258,9 @@ async function flushComposerWrites(): Promise<void> {
 async function saveCliComposerDraft(key: string, value: CliComposerDraft): Promise<boolean> {
   const normalized = normalizeCliComposerDraft(value);
   if (!normalized) return false;
-  const db = await openCache();
-  if (!db) return false;
+  const transaction = await openCacheTransaction("readwrite");
+  if (!transaction) return false;
   return new Promise<boolean>((resolve) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
     const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } resolve(false); }, chatUploadTimeoutMs(normalized.attachments) ? 15_000 : 3_000);
     const store = transaction.objectStore(STORE_NAME);
     const target = `composer:${key}`;
@@ -360,10 +378,9 @@ export async function invalidateCliSessionCache(sessionId?: string, deviceId?: s
   const listKey = `list:${systemId}`, messagesKey = `messages:${JSON.stringify([systemId, sessionId])}`;
   listWriteVersions.set(listKey, (listWriteVersions.get(listKey) ?? 0) + 1);
   recentSessionLists.delete(systemId);
-  const db = await openCache();
-  if (!db) return;
+  const transaction = await openCacheTransaction("readwrite");
+  if (!transaction) return;
   await new Promise<void>((resolve) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
     const finish = (): void => { clearTimeout(timer); resolve(); };
     const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
     transaction.objectStore(STORE_NAME).delete(listKey);
@@ -396,10 +413,9 @@ async function readFreshRecord<T>(key: string, maxAgeMs: number): Promise<{ valu
 
 async function readRecord(key: string): Promise<CacheRecord | undefined> {
   const strict = key.startsWith('browser:message-queue:');
-  const db = await openCache();
-  if (!db) { if (strict) throw new Error('Browser storage is unavailable. The saved queue was kept; refresh when storage is available.'); return undefined; }
+  const transaction = await openCacheTransaction("readonly");
+  if (!transaction) { if (strict) throw new Error('Browser storage is unavailable. The saved queue was kept; retry when storage is available.'); return undefined; }
   return new Promise<CacheRecord | undefined>((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readonly");
     const finish = (record?: CacheRecord): void => { clearTimeout(timer); resolve(record); };
     const failed = () => { clearTimeout(timer); if (strict) reject(new Error('Saved queue could not be read. It was kept; refresh before sending.')); else resolve(undefined); };
     const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } failed(); }, strict || key.startsWith('composer:') ? 15_000 : 3_000);
@@ -411,11 +427,11 @@ async function readRecord(key: string): Promise<CacheRecord | undefined> {
 }
 
 async function writeRecord(record: CacheRecord): Promise<void> {
-  const db = await openCache(); if (!db) return;
   record.sizeBytes = JSON.stringify(record).length * 2;
   if (record.sizeBytes > 4 * 1024 * 1024) return;
+  const tx = await openCacheTransaction('readwrite'); if (!tx) return;
   await new Promise<void>(resolve => {
-    const tx = db.transaction(STORE_NAME, 'readwrite'), store = tx.objectStore(STORE_NAME);
+    const store = tx.objectStore(STORE_NAME);
     const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(); }, 3000);
     const prior: Array<{ key: string; at: number; bytes: number }> = [];
     const cursor = store.openCursor();
@@ -448,7 +464,7 @@ const browserReadMemory = new Map<string, { value: unknown; signature: string; b
 const browserReadLoads = new Map<string, Promise<unknown>>();
 function rememberBrowserRead(key: string, value: unknown, persistedAt = 0): void {
   browserReadMemory.delete(key);
-  if (key.startsWith('outbox:')) return;
+  if (key.startsWith('outbox:') || key.startsWith('message-queue:')) return;
   let signature: string;
   try { signature = JSON.stringify(value); if (typeof signature !== 'string') return; value = structuredClone(value); } catch { return; }
   const bytes = signature.length * 2;
@@ -492,13 +508,13 @@ export async function writeBrowserCache(key: string, value: unknown): Promise<bo
   return saved;
 }
 async function persistBrowserCache(key: string, value: unknown): Promise<boolean> {
-  const db = await openCache(); if (!db) return false;
   const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
   try { record.sizeBytes = JSON.stringify(record).length * 2; } catch { return false; }
   if (record.sizeBytes > (key.startsWith('message-queue:') || key.startsWith('outbox:') ? MAX_DRAFT_BYTES : 2 * 1024 * 1024)) return false;
   const durable = record.key.startsWith('browser:outbox:') || record.key.startsWith('browser:message-queue:');
+  const tx = await openCacheTransaction('readwrite'); if (!tx) return false;
   return new Promise<boolean>(resolve => {
-    const tx = db.transaction(STORE_NAME, 'readwrite'), store = tx.objectStore(STORE_NAME);
+    const store = tx.objectStore(STORE_NAME);
     const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, record.sizeBytes! > 2 * 1024 * 1024 ? 15_000 : 3000);
     const cached: Array<{ key: string; bytes: number; at: number }> = [];
     let draftCount = 0, draftBytes = durable ? record.sizeBytes! : 0;
@@ -533,9 +549,9 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
 }
 
 export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value: T }>> {
-  const db = await openCache(); if (!db) return [];
+  const tx = await openCacheTransaction('readonly'); if (!tx) return [];
   return new Promise<Array<{ key: string; value: T }>>(resolve => {
-    const tx = db.transaction(STORE_NAME, 'readonly'), rows: Array<{ key: string; value: T }> = [];
+    const rows: Array<{ key: string; value: T }> = [];
     const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve([]); }, 3000);
     const cursor = tx.objectStore(STORE_NAME).openCursor(IDBKeyRange.bound('browser:outbox:', 'browser:outbox:\uffff'));
     cursor.onsuccess = () => {
@@ -551,9 +567,8 @@ export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value
 export async function deleteBrowserCache(key: string): Promise<boolean> {
   browserReadMemory.delete(key);
   browserReadLoads.delete(key);
-  const db = await openCache(); if (!db) return false;
+  const tx = await openCacheTransaction('readwrite'); if (!tx) return false;
   return new Promise<boolean>(resolve => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
     const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, 3000);
     tx.objectStore(STORE_NAME).delete(`browser:${key}`);
     tx.oncomplete = () => { clearTimeout(timer); resolve(true); };

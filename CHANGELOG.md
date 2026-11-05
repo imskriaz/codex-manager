@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.10-pre.1
+
+- Reopen closing browser database connections before cache transactions so saved queues and message sending recover without losing drafts or replaying sends. Always reload durable queues from storage across tab ownership changes.
+- Make the saved-queue Retry action text-only with visible keyboard focus.
+
 ## 1.6.9
 
 - Fixed steering and queued messages that stayed in a processing state when confirmation arrived before the request ID was recorded.

@@ -125,8 +125,10 @@ describe("browser cache recovery", () => {
     let complete = false;
     const abort = vi.fn();
     const db = { transaction: () => {
-      const transaction = { abort, oncomplete: undefined as undefined | (() => void), objectStore: () => ({ openCursor: () => ({}), put: () => undefined, delete: () => undefined }) };
-      if (complete) queueMicrotask(() => transaction.oncomplete?.());
+      const transaction = { abort, oncomplete: undefined as undefined | (() => void), objectStore: () => ({
+        openCursor: () => { if (complete) queueMicrotask(() => transaction.oncomplete?.()); return {}; },
+        put: () => undefined, delete: () => undefined
+      }) };
       return transaction;
     } };
     vi.stubGlobal("indexedDB", { open: () => {

@@ -160,6 +160,21 @@ it('keeps offline records and hides retry controls through the shared connection
   expect(queue.items[0]?.state).toBe('sent');
 });
 
+it('recovers a failed queue load without replaying an in-flight message or losing the offline backlog', async () => {
+  const saved = [entry({ requestId: 'before-restart' }), entry({ id: 'two', draft: draft('Later'), state: 'queued' })];
+  harness.records.set('message-queue:pc:session', saved);
+  harness.read.mockRejectedValueOnce(new DOMException('The database connection is closing', 'InvalidStateError'));
+  render({ canDispatch: true }); await flush();
+  expect(queue.ready).toBe(false); expect(queue.error).toContain('connection is closing');
+  expect(harness.writes).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  queue.retryLoad(); await flush();
+  expect(queue.ready).toBe(true); expect(queue.error).toBeUndefined();
+  expect(queue.items.map(item => item.state)).toEqual(['uncertain', 'queued']);
+  expect(send).not.toHaveBeenCalled();
+  render({ messages: [{ id: 'late-echo', role: 'user', text: 'First' }] }); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft('Later'));
+});
+
 it('settles a send when confirmation arrived before the request id was recorded', async () => {
   render({ canDispatch: true, results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
   queue.enqueue(draft()); await flush();

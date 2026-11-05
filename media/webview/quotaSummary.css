@@ -16751,6 +16751,11 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-queue-load-warning button { flex:none; padding:4px 6px; border:1px solid var(--border-default); border-radius:5px; color:var(--text-primary); background:var(--bg-surface); font:inherit; cursor:pointer; }
 
 .cli-access-status { grid-column: 1 / -1; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
+.cli-composer .cli-composer-options .cli-access-status > button { min-height: 28px; margin-inline-start: 6px; padding: 2px 4px; border: 0; background: transparent; box-shadow: none; color: var(--accent-blue); font: inherit; cursor: pointer; }
+.cli-composer .cli-composer-options .cli-access-status > button:hover { background: transparent; text-decoration: underline; }
+.cli-composer .cli-composer-options .cli-access-status > button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.cli-composer .cli-composer-options .cli-access-status > button:disabled:hover,
+.cli-composer .cli-composer-options .cli-access-status > button:disabled { background: transparent; opacity: .5; cursor: default; }
 
 .task-session-compose .cli-composer.is-empty { grid-template-columns: minmax(0,1fr); }
 .task-session-compose .cli-composer.is-empty textarea,.task-session-compose .cli-composer.is-empty .cli-composer-toolbar { grid-column: 1; grid-row: auto; }

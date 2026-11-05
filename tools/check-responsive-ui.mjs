@@ -550,10 +550,19 @@ try {
       await page.locator('.cli-composer-warning').waitFor();
       await page.getByRole('button',{name:'Message settings',exact:true}).click();
       await page.getByRole('alert').filter({hasText:/Saved queue is unavailable/}).waitFor();
+      const retry = page.getByRole('button',{name:'Retry',exact:true});
+      assert.deepEqual(await retry.evaluate(element => {
+        const style = getComputedStyle(element);
+        return { border: style.borderTopWidth, background: style.backgroundColor };
+      }), { border: '0px', background: 'rgba(0, 0, 0, 0)' }, 'Retry is a text-only action');
+      await page.keyboard.press('Tab');
+      await retry.focus();
+      assert.equal(await retry.evaluate(element => getComputedStyle(element).outlineStyle), 'solid', 'Keyboard focus stays visible');
+      await page.screenshot({path:path.join(output,`queue-storage-retry-${width}.png`)});
       assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true,'An unreadable queue cannot be overwritten by a send');
       assert.equal(await input.inputValue(),'Keep my message');
       await page.evaluate(()=>Object.defineProperty(window,'indexedDB',{configurable:true,value:window.__workingIndexedDB}));
-      await page.getByRole('button',{name:'Retry',exact:true}).click();
+      await retry.click();
       await page.keyboard.press('Escape');
       await page.waitForFunction(()=>document.querySelector('.cli-send-button')?.disabled===false);
       assert.equal(await input.inputValue(),'Keep my message','Retrying storage leaves the composer intact');
@@ -614,65 +623,64 @@ try {
       await page.goto(`${origin}/workspace/${parentId}`);
       const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
       await composer.waitFor();
-      const waitForStoredDraft = (text, count) => page.waitForFunction(({ sessionId, text, count }) => new Promise(resolve => {
-        const request = indexedDB.open('codex-manager-cache');
-        request.onsuccess = () => {
-          const read = request.result.transaction('cli-sessions').objectStore('cli-sessions').getAll();
-          read.onsuccess = () => { request.result.close(); resolve(read.result.some(row => row.key.startsWith('composer:') && row.key.includes(sessionId) && row.value.text === text && row.value.attachments.length === count)); };
-        };
-      }), { sessionId: parentId, text, count });
-      for (const scenario of ['unchanged', 'cancelled', 'edited', 'identical-edit', 'storage-full']) {
+      const dispatchCount = () => page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length);
+      for (const scenario of ['failed', 'cancelled', 'closing']) {
         const text = `Submitted ${scenario}`;
         await composer.fill(text);
         await page.locator('.cli-composer input[type="file"]').setInputFiles({ name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep until confirmed') });
         await page.getByRole('button', { name: 'Remove note.txt', exact: true }).waitFor();
+        if (scenario === 'closing') await page.evaluate(() => {
+          const transaction = IDBDatabase.prototype.transaction;
+          IDBDatabase.prototype.transaction = function (...args) {
+            IDBDatabase.prototype.transaction = transaction;
+            this.close();
+            return transaction.apply(this, args);
+          };
+        });
         await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });
+        const before = await dispatchCount();
         await page.getByRole('button', { name: 'Send message', exact: true }).click();
         await page.waitForFunction(() => window.__heldSendResult);
         assert.equal(await composer.inputValue(), '', 'Send immediately clears the message');
         assert.equal(await page.locator('.cli-attachment-list').count(), 0, 'Send immediately clears attachments');
+        await composer.fill('Keep this newer draft');
         await page.evaluate(scenario => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, status: scenario === 'cancelled' ? 'cancelled' : 'failed', error: 'Connection closed before confirmation. Verify before retrying.' } })), scenario);
-        await page.waitForFunction(text => document.querySelector('textarea[name="codex-message"]')?.value === text, text);
-        assert.equal(await page.getByRole('button', { name: 'Remove note.txt', exact: true }).count(), 1, 'Unconfirmed sends restore attachments');
-        const edited = scenario === 'edited' || scenario === 'identical-edit';
-        const expected = scenario === 'edited' ? 'Keep this newer draft' : text;
-        if (edited) await composer.fill(expected);
-        if (scenario === 'storage-full' && width !== 320) {
-          await waitForStoredDraft(text, 1);
-          await page.evaluate(() => {
-            window.__composerTransaction = IDBDatabase.prototype.transaction;
-            IDBDatabase.prototype.transaction = function(stores, mode, ...rest) {
-              if (mode === 'readwrite') throw new DOMException('Storage full', 'QuotaExceededError');
-              return window.__composerTransaction.call(this, stores, mode, ...rest);
-            };
-          });
-        }
-        await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult })));
-        await page.waitForFunction(text => document.querySelector('textarea[name="codex-message"]')?.value === text, edited ? expected : '');
-        assert.equal(await page.locator('.cli-attachment-list').count(), edited ? 1 : 0, 'A late success clears only an unchanged restored draft');
-        if (scenario === 'storage-full' && width !== 320) {
-          await page.locator('.dashboard-notice').filter({ hasText: /Browser storage could not (clear the saved draft|save your draft)/ }).waitFor();
-          await page.evaluate(() => { IDBDatabase.prototype.transaction = window.__composerTransaction; });
-        }
+        const pending = page.locator('.cli-local-queue .cli-pending-message').filter({ hasText: text });
+        await pending.locator('.cli-queue-resend').waitFor();
+        assert.equal(await composer.inputValue(), 'Keep this newer draft', 'Unconfirmed sends stay inline and preserve the newer composer');
+        assert.ok((await pending.textContent()).includes('note.txt'), 'Failed messages retain attachments in the conversation');
+        await page.evaluate(() => {
+          window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult }));
+        });
+        await pending.locator('.cli-queued-status').filter({ hasText: 'Sent' }).waitFor();
         await page.evaluate(() => {
           window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult }));
           window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, status: 'failed', error: 'Duplicate failure' } }));
         });
-        assert.equal(await composer.inputValue(), edited ? expected : '', 'Duplicate results do not resurrect or overwrite the draft');
-        if (!edited && scenario !== 'storage-full' && width !== 320) await waitForStoredDraft('', 0);
-        if (scenario === 'unchanged' && width !== 320) {
-          await page.reload();
-          await composer.waitFor();
-          assert.equal(await composer.inputValue(), '', 'A confirmed sent draft stays cleared after reopening');
-        }
-        await composer.fill('Clear fixture draft');
-        await composer.fill('');
-        if (edited) await page.getByRole('button', { name: 'Remove note.txt', exact: true }).click();
-        if (width !== 320) await waitForStoredDraft('', 0);
+        await pending.locator('.cli-queued-status').filter({ hasText: 'Sent' }).waitFor();
+        assert.equal(await composer.inputValue(), 'Keep this newer draft', 'Late and duplicate results preserve the newer draft');
+        assert.equal(await dispatchCount(), before + 1, 'Connection recovery and duplicate results never replay a send');
       }
+      await page.evaluate(() => {
+        window.__composerTransaction = IDBDatabase.prototype.transaction;
+        IDBDatabase.prototype.transaction = function (...args) {
+          if (args[1] === 'readwrite') throw new DOMException('Storage full', 'QuotaExceededError');
+          return window.__composerTransaction.apply(this, args);
+        };
+      });
+      const before = await dispatchCount();
+      await composer.fill('Keep on storage failure');
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      const failed = page.locator('.cli-local-queue .cli-pending-message').filter({ hasText: 'Keep on storage failure' });
+      await failed.locator('.cli-queue-resend').waitFor();
+      assert.equal(await dispatchCount(), before, 'A failed durable write never sends the message');
+      await page.evaluate(() => { IDBDatabase.prototype.transaction = window.__composerTransaction; window.__holdNextSend = true; window.__heldSendResult = undefined; });
+      await failed.getByRole('button', { name: 'Resend', exact: true }).click();
+      await page.waitForFunction(() => window.__heldSendResult);
+      assert.equal(await dispatchCount(), before + 1, 'Explicit Resend recovers after storage becomes available');
       assert.deepEqual(errors, [], 'Composer recovery has no browser errors');
       await page.screenshot({ path: path.join(output, `composer-confirmed-${width}.png`) });
-      results.push({ width, height, checks: 'Immediate clear, unconfirmed recovery, late completion, newer and identical edits, duplicate results, storage-full warning, durable clear and reopen' });
+      results.push({ width, height, checks: 'Immediate clear, inline failure/cancellation, attachments, newer drafts, late/duplicate results, closing database recovery, storage-full fence and explicit Resend' });
       await context.close(); continue;
     }
     if (process.argv.includes('--auto-resume')) {

@@ -6,9 +6,12 @@ async function fixture() {
   const records = new Map<string, { key: string; value: unknown; updatedAt: number }>();
   const reads: Array<() => void> = [];
   let held = false, writes = 0, fail = false;
+  let transactionError: string | undefined, failuresLeft = 0, openMode = 'success';
+  const connections: Array<{ close(): void; onclose?: () => void; onversionchange?: () => void }> = [];
+  const opens: Array<{ result: unknown; onsuccess?: () => void; onerror?: () => void; onblocked?: () => void }> = [];
   const database = {
-    close() {},
     transaction(_store: string, mode: string) {
+      if (failuresLeft-- > 0) throw new DOMException('Transaction unavailable', transactionError);
       const tx = { oncomplete: undefined as (() => void) | undefined, onabort: undefined as (() => void) | undefined, onerror: undefined as (() => void) | undefined,
         abort() { queueMicrotask(() => tx.onabort?.()); },
         objectStore() { return {
@@ -40,11 +43,29 @@ async function fixture() {
       return tx;
     }
   };
-  vi.stubGlobal('indexedDB', { open() { const request = { result: database, onsuccess: undefined as (() => void) | undefined }; queueMicrotask(() => request.onsuccess?.()); return request; } });
+  vi.stubGlobal('IDBKeyRange', { bound: () => ({}) });
+  vi.stubGlobal('indexedDB', { open() {
+    if (openMode === 'throw') throw new DOMException('Unavailable', 'SecurityError');
+    let closed = false;
+    const connection = { ...database, onclose: undefined as (() => void) | undefined, onversionchange: undefined as (() => void) | undefined,
+      close() { closed = true; },
+      transaction(store: string, mode: string) { if (closed) throw new DOMException('The database connection is closing', 'InvalidStateError'); return database.transaction(store, mode); }
+    };
+    connections.push(connection);
+    const request = { result: connection, onsuccess: undefined as (() => void) | undefined, onerror: undefined as (() => void) | undefined, onblocked: undefined as (() => void) | undefined };
+    opens.push(request);
+    const mode = openMode;
+    queueMicrotask(() => { if (mode === 'success') request.onsuccess?.(); else if (mode === 'error') request.onerror?.(); else if (mode === 'blocked') request.onblocked?.(); });
+    return request;
+  } });
   const cache = await import('../webview-src/dashboard/cliSessionCache');
-  return { ...cache, records, reads, hold: () => { held = true; }, fail: () => { fail = true; }, writes: () => writes };
+  return { ...cache, records, reads, connections, opens,
+    close: (notify = true) => { const connection = connections.at(-1)!; connection.close(); if (notify) connection.onclose?.(); },
+    failTransactions: (name: string, count = 1) => { transactionError = name; failuresLeft = count; },
+    opening: (mode: string) => { openMode = mode; },
+    hold: () => { held = true; }, fail: () => { fail = true; }, writes: () => writes };
 }
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('reuses unchanged browser views and writes only changed entries', async () => {
   const cache = await fixture();
@@ -117,4 +138,93 @@ it('deletes empty queues directly and recovers capacity consumed by legacy empty
   expect([...cache.records.keys()].filter(key=>key.startsWith('browser:message-queue:empty-'))).toHaveLength(0);
   const writes=cache.writes();expect(await cache.writeBrowserCache('message-queue:new',[])).toBe(true);
   expect(cache.records.has('browser:message-queue:new')).toBe(false);expect(cache.writes()).toBe(writes);
+});
+
+it.each([false, true])('reopens a closed connection (close event: %s) and preserves the durable queue', async notify => {
+  const cache = await fixture(), key = 'message-queue:pc:session', value = [{ id: 'keep', state: 'sending' }];
+  expect(await cache.writeBrowserCache(key, value)).toBe(true);
+  cache.close(notify);
+  expect(await cache.readBrowserCache(key)).toEqual(value);
+  expect(cache.connections).toHaveLength(2);
+  expect(await cache.writeBrowserCache(key, [{ id: 'later' }])).toBe(true);
+  expect(await cache.deleteBrowserCache(key)).toBe(true);
+  expect(cache.records.has(`browser:${key}`)).toBe(false);
+});
+
+it('reopens the shared connection for drafts, cache writes, outbox reads and deletion', async () => {
+  const cache = await fixture();
+  const operations = [
+    () => cache.writeBrowserCache('message-queue:one', [{ id: 'keep' }]),
+    () => cache.writeCliComposerDraft('draft', { text: 'Keep this', attachments: [] }),
+    () => cache.writeCliSessionMessagesCache('session', []),
+    () => cache.invalidateCliSessionCache('session'),
+    () => cache.listBrowserOutbox(),
+    () => cache.deleteBrowserCache('message-queue:one')
+  ];
+  await cache.writeBrowserCache('prime', []);
+  for (const operation of operations) {
+    cache.close(false);
+    const count = cache.connections.length;
+    await operation();
+    expect(cache.connections).toHaveLength(count + 1);
+  }
+  expect(await cache.readCliComposerDraft('draft')).toEqual({ text: 'Keep this', attachments: [] });
+});
+
+it('reads queues from disk across ownership changes and never acknowledges a failed queue write from memory', async () => {
+  const cache = await fixture(), key = 'message-queue:one';
+  expect(await cache.writeBrowserCache(key, [{ id: 'old' }])).toBe(true);
+  cache.records.set(`browser:${key}`, { key: `browser:${key}`, value: [{ id: 'other-tab' }], updatedAt: Date.now() });
+  expect(await cache.readBrowserCache(key)).toEqual([{ id: 'other-tab' }]);
+  cache.fail();
+  expect(await cache.writeBrowserCache(key, [{ id: 'unsaved' }])).toBe(false);
+  expect(await cache.writeBrowserCache(key, [{ id: 'old' }])).toBe(false);
+  expect(await cache.readBrowserCache(key)).toEqual([{ id: 'other-tab' }]);
+});
+
+it('bounds repeated closing failures and lets a later retry recover without overwriting saved work', async () => {
+  const cache = await fixture(), key = 'message-queue:one';
+  await cache.writeBrowserCache(key, [{ id: 'keep' }]);
+  cache.failTransactions('InvalidStateError', 2);
+  await expect(cache.readBrowserCache(key)).rejects.toThrow('storage is unavailable');
+  expect(cache.connections).toHaveLength(2);
+  expect(await cache.readBrowserCache(key)).toEqual([{ id: 'keep' }]);
+  expect(cache.connections).toHaveLength(3);
+});
+
+it('does not replay transactions for permission errors or failed writes', async () => {
+  const cache = await fixture();
+  await cache.writeBrowserCache('prime', []);
+  cache.failTransactions('SecurityError');
+  await expect(cache.readBrowserCache('message-queue:one')).rejects.toThrow('storage is unavailable');
+  cache.fail();
+  expect(await cache.writeBrowserCache('message-queue:one', [{ id: 'keep' }])).toBe(false);
+  expect(cache.connections).toHaveLength(1);
+});
+
+it.each(['throw', 'error', 'blocked', 'stalled'])('recovers after an unavailable database open (%s)', async mode => {
+  const cache = await fixture();
+  vi.useFakeTimers(); cache.opening(mode);
+  const failed = expect(cache.readBrowserCache('message-queue:one')).rejects.toThrow('storage is unavailable');
+  await vi.advanceTimersByTimeAsync(2000); await failed;
+  const old = cache.connections.at(-1);
+  cache.opening('success');
+  expect(await cache.readBrowserCache('message-queue:one')).toBeUndefined();
+  const count = cache.connections.length;
+  if (mode === 'stalled') cache.opens[0].onsuccess?.();
+  old?.onclose?.(); old?.onversionchange?.();
+  expect(await cache.readBrowserCache('message-queue:one')).toBeUndefined();
+  expect(cache.connections).toHaveLength(count);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('ignores close and version-change events from an obsolete connection', async () => {
+  const cache = await fixture();
+  await cache.readBrowserCache('message-queue:one');
+  const old = cache.connections[0];
+  cache.close(false);
+  await cache.readBrowserCache('message-queue:one');
+  old.onclose?.(); old.onversionchange?.();
+  await cache.readBrowserCache('message-queue:one');
+  expect(cache.connections).toHaveLength(2);
 });
