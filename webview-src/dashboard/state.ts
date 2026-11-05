@@ -6,6 +6,7 @@ export type PendingActionRequest = {
   accountId?: string;
   requestedAt: number;
   timeoutMs?: number;
+  accountEdit?: { deviceId?: string; patch: Partial<Pick<DashboardState["accounts"][number], "tags" | "queuePriority" | "enabled">> };
 };
 
 export type AppState = {
@@ -30,7 +31,7 @@ export type AppAction =
   | { type: "tick"; now: number }
   | { type: "toggle-select"; accountId: string }
   | { type: "request-action"; request: PendingActionRequest }
-  | { type: "resolve-action"; requestId: string };
+  | { type: "resolve-action"; requestId: string; commit?: boolean };
 
 export function createInitialState(): AppState {
   return {
@@ -51,6 +52,18 @@ const retainTags = (incoming: DashboardState['accounts'], previous: DashboardSta
     return prior?.tags !== undefined && (prior.updatedAt ?? 0) > (account.updatedAt ?? 0) ? { ...account, tags: prior.tags, updatedAt: prior.updatedAt } : account;
   });
 };
+
+function applyAccountEdit(snapshot: DashboardState, request: PendingActionRequest | undefined): DashboardState {
+  if (!request?.accountEdit || !request.accountId) return snapshot;
+  const { deviceId, patch } = request.accountEdit;
+  const update = (accounts: DashboardState['accounts']) => accounts.map(account => account.id === request.accountId ? { ...account, ...patch } : account);
+  return deviceId ? { ...snapshot, peerAccounts: { ...snapshot.peerAccounts, [deviceId]: update(snapshot.peerAccounts?.[deviceId] ?? []) } } : { ...snapshot, accounts: update(snapshot.accounts) };
+}
+
+/** Keep pending edits visible without putting unconfirmed values in the saved snapshot. */
+export function visibleDashboardSnapshot(state: AppState): DashboardState | undefined {
+  return state.snapshot && state.pendingActions.reduce(applyAccountEdit, state.snapshot);
+}
 
 export function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -152,6 +165,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "resolve-action":
       return {
         ...state,
+        ...(state.snapshot && action.commit ? { snapshot: applyAccountEdit(state.snapshot, state.pendingActions.find(request => request.requestId === action.requestId)) } : {}),
         pendingActions: state.pendingActions.filter((request) => request.requestId !== action.requestId)
       };
     default:

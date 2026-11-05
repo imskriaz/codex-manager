@@ -51,6 +51,17 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it('defaults unconfigured resumed sessions to Full and keeps Full on later turns', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + "\n");
+    const rpc = { request: vi.fn(async () => ({ sandboxPolicy: { type: 'dangerFullAccess' } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('full-turn'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', projectPath: root });
+    expect(rpc.request).toHaveBeenCalledWith('thread/resume', expect.objectContaining({ sandbox: 'danger-full-access' }));
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue again', projectPath: root });
+    for (const call of rpc.startAndWaitForTurn.mock.calls) expect(call[1]).toMatchObject({ sandboxPolicy: { type: 'dangerFullAccess' } });
+  });
+
   it('deletes a stored session without waiting for renderer IPC or project discovery', async () => {
     const db = new DatabaseSync(path.join(root, 'state_1.sqlite'));
     db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)');

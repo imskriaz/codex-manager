@@ -1399,6 +1399,7 @@ export class AccountsRepository {
         throw createError.accountNotFound(accountId);
       }
       this.writeIndex(index, { notifyAccountSync: false });
+      await this.flush();
       return account;
     });
   }

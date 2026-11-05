@@ -112,9 +112,14 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
     expect(source).toContain("function ImageLightbox");
+      expect(source).toContain("Math.hypot(dx, dy)");
+      expect(source).toContain("touchGesture");
+      expect(css).toContain("touch-action: none");
     expect(source).toContain('closest("summary,button,img")) followLatestRef.current = false');
     expect(source).toContain("setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt })");
     expect(source).toContain('aria-label="Close image preview"');
+      expect(source).toContain('aria-label="Download image"');
+      expect(source).toContain('download={`codex-image-${index + 1}`}');
     expect(source).toContain('class="cli-code-surface"');
     expect(source).toContain('copyLabel={failed ? "Copy error" : "Copy result"}');
     expect(css).toContain("overflow-x: auto");
@@ -434,7 +439,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('aria-label="Account center"');
     expect(source).toContain('aria-label="Account system"');
     expect(source).toContain('aria-label="Search accounts on selected system"');
-    expect(source).toContain('aria-current={active ? "true" : undefined}');
+    expect(source).toContain('class="cli-account-grid dashboard-view-cards"');
+    expect(source).toContain("props.renderAccountGrid?.(filtered");
     expect(source).toContain('props.onSwitchAccount(peer.local ? "local" : peer.id, accountId)');
     expect(source).not.toContain('class="cli-account-submenu"');
     expect(css).toContain('.cli-account-center-header');

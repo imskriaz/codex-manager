@@ -29,7 +29,7 @@ export function compactNotificationMessage(message: string, maxLength = 180): st
     [/^Codex Manager proxy setup failed\..*$/i, "Proxy setup failed. The app will continue."],
     [/^The dashboard could not be reopened\..*$/i, "The dashboard could not reopen. Open it again from Codex Manager."],
     [/^(.+) was not confirmed in time\..*$/i, "$1 is still running. Refresh to check before trying again."],
-    [/^Cross-PC claim sync did not complete\..*$/i, "Sync did not finish. Try again."],
+    [/^Cross-PC claim sync did not complete\..*$/i, "Cross-PC sync has no authenticated connection. In VS Code, open Accounts > Turn on Settings Sync, or check the shared address and password in Manager > Settings > General."],
     [/^Dashboard login expired\..*$/i, "Your session expired. Sign in again."],
     [/^Notification setup was not confirmed in time\..*$/i, "Notifications took too long. Check your connection and try again."]
   ];

@@ -6,11 +6,10 @@ export async function checkImagesUi(page,{origin,parentId,width,height,output}) 
   const trigger=page.getByRole('button',{name:'Preview Attachment preview',exact:true});
   const box=page.locator('.cli-image-lightbox');
   await trigger.click(); await box.waitFor();
-  const original=box.getByRole('link',{name:'View original image',exact:true});
+  const original=box.getByRole('link',{name:'Download image',exact:true});
   assert.equal(await original.innerText(),'','Original image is an accessible icon');
   assert.equal(await original.locator('svg').count(),1);
-  assert.equal(await original.getAttribute('target'),'_blank');
-  assert.match(await original.getAttribute('rel'),/noopener/);
+  assert.ok(await original.getAttribute('download'), 'Image preview exposes a download filename');
   const first=await original.getAttribute('href');
   await box.locator('img').click(); assert.equal(await box.isVisible(),true,'Clicking the image keeps the preview open');
   assert.equal(await box.locator('.cli-image-lightbox-toolbar').count(),1,'There is one toolbar at the top');

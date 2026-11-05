@@ -49,12 +49,21 @@ export function agentActivityLabel(message: DashboardCliSessionMessage, names: R
   const ids = messageAgentIds(message);
   if (ids.length !== 1) return;
   let name = names[ids[0]!];
-  if (!name && message.debug && message.debug.length <= 64_000) {
-    try {
-      const detail = JSON.parse(message.debug) as Record<string, unknown>;
-      const raw = detail['agentName'] ?? detail['agentNickname'] ?? detail['name'];
-      if (typeof raw === 'string' && raw.trim()) name = raw;
-    } catch { /* Partial payloads keep their activity label. */ }
+  if (!name) {
+    const readName = (value: unknown, depth = 0): string | undefined => {
+      if (depth > 5 || !value || typeof value !== 'object') return undefined;
+      for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+        if (/^(?:agentName|agentNickname|agent_nickname|agent_role|agentRole|name)$/i.test(key) && typeof item === 'string' && item.trim()) return item.trim();
+        const nested = readName(item, depth + 1);
+        if (nested) return nested;
+      }
+      return undefined;
+    };
+    for (const raw of [message.debug, message.arguments, message.result]) {
+      if (!raw || raw.length > 64_000) continue;
+      try { name = readName(JSON.parse(raw)); } catch { /* Partial payloads keep their activity label. */ }
+      if (name) break;
+    }
   }
   name ||= 'agent';
   if (/send[_-]?(?:input|message)/i.test([message.subtitle, message.title].join(' '))) {
@@ -71,5 +80,6 @@ export function agentActivityLabel(message: DashboardCliSessionMessage, names: R
       if (state === 'completed' || state && typeof state === 'object' && ('completed' in state || 'status' in state && state.status === 'completed')) return `Completed ${name}`;
     } catch { /* A completed wait is not proof that the agent finished. */ }
   }
+  if (message.kind === 'collaboration' && name !== 'agent') return `${name} · ${message.status === 'inProgress' ? 'Working' : message.status === 'failed' ? 'Failed' : 'Agent activity'}`;
   return undefined;
 }

@@ -620,6 +620,17 @@ describe("Codex session integration", () => {
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "user-image", role: "user", text: "Review this", images: [{ src: "data:image/png;base64,AA==" }] }]);
   });
 
+  it("merges an unavailable-image mirror on incremental reads without losing the attachment", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-image-mirror-")); roots.push(root);
+    await mkdir(path.join(root, "sessions"));
+    const file = path.join(root, "sessions", `rollout-${sessionId}.jsonl`);
+    await writeFile(file, JSON.stringify({ type: "event_msg", payload: { type: "item_completed", item: { type: "UserMessage", id: "image-user", content: [{ type: "text", text: "Review this" }, { type: "image", image_url: "data:image/png;base64,AA==" }] } } }) + "\n");
+    expect(await readCodexCliSessionMessages(sessionId, root)).toHaveLength(1);
+    await writeFile(file, JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Review this\n\n[Image unavailable]" }] } }) + "\n", { flag: "a" });
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ role: "user", text: "Review this", images: [{ src: "data:image/png;base64,AA==" }] }]);
+    expect(await readCodexCliSessionMessages(sessionId, root)).toHaveLength(1);
+  });
+
   it("deduplicates mirrored item messages and hides injected session context", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-message-dedupe-"));
     roots.push(root);

@@ -16,6 +16,38 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it('checks an idle stream and keeps a confirmed long turn alive without replaying it', async () => {
+    vi.useFakeTimers();
+    const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n');
+    const rpc = await opening;
+    const request = vi.spyOn(rpc, 'request');
+    const turn = rpc.startAndWaitForTurn('thread', {}, 1000);
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turn: { id: 'long' } } }) + '\n');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(request).toHaveBeenLastCalledWith('thread/read', { threadId: 'thread', includeTurns: true });
+    processChild.stdout.write(JSON.stringify({ id: 3, result: { thread: { turns: [{ id: 'long', status: 'inProgress' }] } } }) + '\n');
+    await vi.advanceTimersByTimeAsync(500);
+    processChild.stdout.write(JSON.stringify({ method: 'item/updated', params: { threadId: 'thread', turnId: 'long' } }) + '\n');
+    await vi.advanceTimersByTimeAsync(900);
+    expect(request.mock.calls.filter(([method]) => method === 'thread/read')).toHaveLength(1);
+    processChild.stdout.write(JSON.stringify({ method: 'turn/completed', params: { threadId: 'thread', turn: { id: 'long', status: 'completed' } } }) + '\n');
+    await expect(turn).resolves.toBeUndefined();
+    expect(request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+    await rpc.close();
+  });
+  it.each(['completed', 'missing', 'offline'])('recovers a silent %s turn without resending its prompt', async state => {
+    vi.useFakeTimers(); const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n'); const rpc = await opening;
+    const turn = rpc.startAndWaitForTurn('thread', {}, 1000);
+    const settled = state === 'completed' ? expect(turn).resolves.toBeUndefined() : expect(turn).rejects.toThrow(state === 'offline' ? 'Offline' : 'could not be verified');
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turn: { id: 'long' } } }) + '\n');
+    await vi.advanceTimersByTimeAsync(1000);
+    processChild.stdout.write(JSON.stringify(state === 'offline' ? { id: 3, error: { message: 'Offline' } } : { id: 3, result: { thread: { turns: state === 'missing' ? [] : [{ id: 'long', status: 'completed' }] } } }) + '\n');
+    await settled; await rpc.close();
+  });
   it('sends image attachment inputs larger than the previous 2 MB protocol limit', async () => {
     const processChild = child(); processChild.stdin.resume();
     const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());
@@ -42,6 +74,20 @@ describe("app-server initialization recovery", () => {
       processChild.emit("exit", 0); killer.emit("exit", 0); await closing;
       await rpc.close(); expect(mocks.spawn).toHaveBeenCalledTimes(2);
       expect(processChild.stdin.destroyed).toBe(true);
+    } finally { Object.defineProperty(process, "platform", platform); }
+  });
+  it("finishes successful Windows tree cleanup even when its wrapper did not exit", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const processChild = Object.assign(child(), { pid: 12345 });
+    const killer = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    mocks.spawn.mockReturnValueOnce(processChild).mockReturnValueOnce(killer);
+    try {
+      const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+      processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+      const rpc = await opening; const closing = rpc.close();
+      killer.emit("exit", 0); await closing;
+      expect(processChild.kill).toHaveBeenCalledOnce();
     } finally { Object.defineProperty(process, "platform", platform); }
   });
   it("never targets an exited child PID for process-tree cleanup", async () => {

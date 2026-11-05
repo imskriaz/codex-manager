@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0-pre.1
+
+- Reuse dashboard account cards in a compact Account Center grid, with manual switching for disabled and exhausted accounts and the same automatic queue order.
+- Apply account tags, favorites and automation toggles immediately while saving in the background, with visible failures and saved tag drafts. Keep tags and favorites consistent across browser and VS Code updates, account refreshes, and restart.
+- Offer app installation and a compact work monitor, improve conversation menus and touch targets, and preserve explicit access choices while defaulting new session access to Full.
+- Restore named agent links, merge mirrored image prompts, and verify silent long-running turns before marking the connection interrupted without replaying messages.
+- Explain connection and sync failures with the affected page and the setting or action that can resolve them.
+
 ## 1.7.0
 
 - Match the Account Center system selector to the surrounding small text. List all accounts with quota remaining and separate quota bars, keep disabled accounts gray, and place claimed accounts last with a red border and status label.

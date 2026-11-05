@@ -263,6 +263,7 @@ export function mergeFreshPeerAccountStates(
         isCurrentWindowAccount: local.isCurrentWindowAccount,
         enabled: local.enabled,
         queuePriority: local.queuePriority,
+        tags: local.tags,
         tokenRefreshEnabled: local.tokenRefreshEnabled,
         autoResetAllowed: local.autoResetAllowed,
         showInStatusBar: local.showInStatusBar,

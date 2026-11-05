@@ -31,7 +31,7 @@ export function useDashboardModals(params: {
         params.dispatch({ type: "snapshot", snapshot: message.state });
         return;
       case "dashboard:action-result":
-        params.dispatch({ type: "resolve-action", requestId: message.requestId });
+        params.dispatch({ type: "resolve-action", requestId: message.requestId, commit: message.status === "completed" });
         const notice = noticeFromActionResult(message, isAutomaticRequest(message.requestId));
         if (notice) {
           params.onNotice(notice);

@@ -52,6 +52,7 @@ describe("dashboard action feedback", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "manual", action: "getCodexCliSessionMessages", status: "failed",
       error: "The session transcript was not found on this PC." })).toBeUndefined();
     expect(formatSessionReadError("getCodexCliSessionMessages", "Permission denied.")).toBe("Permission denied.");
+    expect(formatSessionReadError("sendCodexCliSessionMessage", "The first response failed: private app-server process stopped.")).toContain("Stop could not be confirmed");
   });
   it('evicts only confirmed missing conversations while preserving transient read failures', () => {
     expect(isMissingCliSessionError('This session was not found.')).toBe(true);

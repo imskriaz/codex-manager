@@ -619,7 +619,7 @@ async function runDashboardAction(
         if (!(await ctx.syncEncryptedAccounts())) {
           throw new Error(
             getEncryptedSyncSettingsFailure() ??
-              "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+              "Cross-PC sync has no authenticated connection. In VS Code, open Accounts > Turn on Settings Sync; or check the shared address and password in Codex Manager > Settings > General."
           );
         }
         ctx.schedulePublishState();
@@ -629,7 +629,7 @@ async function runDashboardAction(
         ctx.schedulePublishState();
         throw new Error(
           getEncryptedSyncSettingsFailure() ??
-            "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+            "Cross-PC sync has no authenticated connection. In VS Code, open Accounts > Turn on Settings Sync; or check the shared address and password in Codex Manager > Settings > General."
         );
       }
       ctx.schedulePublishState();

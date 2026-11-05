@@ -170,18 +170,19 @@ export function SavedAccountCard(props: {
     account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false
   );
   const claimedByOtherDevice = Boolean(account.runningDeviceName && !account.runningOnThisDevice);
+  const runningDeviceDisplay = getSensitiveDisplayValue(account.runningDeviceName, privacyMode, "name", "another system");
   const registryOverrideEnabled = settings.encryptedSyncRegistryOverrideEnabled;
   const claimIsLocked = shouldOpenClaimPopover(runningOnOtherDevice, registryOverrideEnabled);
   const runningDeviceLabel = claimedByOtherDevice
-    ? resolveRunningDeviceLabel(account.runningDeviceName ?? "")
+    ? resolveRunningDeviceLabel(runningDeviceDisplay)
     : undefined;
   const compactIdentityBadge = resolveCompactIdentityBadge(runningDeviceLabel);
   const cardPlanBadge = resolveCardPlanBadge(account.planTypeLabel);
   const enablementToggleLabel =
     runningOnOtherDevice && !registryOverrideEnabled
-      ? resolveClaimedToggleLabel(account.runningDeviceName ?? "", props.lang)
+      ? resolveClaimedToggleLabel(runningDeviceDisplay, props.lang)
       : runningOnOtherDevice
-        ? resolveOverrideToggleLabel(account.runningDeviceName ?? "", props.lang)
+        ? resolveOverrideToggleLabel(runningDeviceDisplay, props.lang)
         : account.enabled
           ? copy.accountDisableTip
           : copy.accountEnableTip;
@@ -272,7 +273,7 @@ export function SavedAccountCard(props: {
         ? props.reloadPromptPending
         : props.unloadAuthPending;
   const accessActionDisabled =
-    accessAction === "switch" ? !canRunAccountOnThisPc(account, accessActionPending, registryOverrideEnabled) : accessActionPending;
+    props.connected === false || props.busy || (accessAction === "switch" ? !canRunAccountOnThisPc(account, accessActionPending, registryOverrideEnabled) : accessActionPending);
   const runAccessAction = (): void => {
     onAction(accessAction, accessAction === "unloadAuth" ? undefined : account.id);
   };
@@ -340,13 +341,13 @@ export function SavedAccountCard(props: {
             ref={claimPopoverContentRef}
             class="claim-popover claim-popover-portal"
             role="dialog"
-            aria-label={resolveClaimPopoverText("title", account.runningDeviceName ?? "", props.lang)}
+            aria-label={resolveClaimPopoverText("title", runningDeviceDisplay, props.lang)}
             onClick={stopFlip}
 
           >
             <div class="claim-popover-head">
               <div class="claim-popover-title">
-                {resolveClaimPopoverText("title", account.runningDeviceName ?? "", props.lang)}
+                {resolveClaimPopoverText("title", runningDeviceDisplay, props.lang)}
               </div>
               <button
                 class="claim-popover-close"
@@ -358,7 +359,7 @@ export function SavedAccountCard(props: {
               </button>
             </div>
             <div class="claim-popover-body">
-              {resolveClaimPopoverText("body", account.runningDeviceName ?? "", props.lang)}
+              {resolveClaimPopoverText("body", runningDeviceDisplay, props.lang)}
             </div>
             <div class="claim-popover-actions">
               <button
@@ -522,14 +523,11 @@ export function SavedAccountCard(props: {
               title={queuePriorityLabel}
               aria-label={queuePriorityLabel}
               aria-pressed={account.queuePriority}
+              aria-busy={props.queuePriorityPending}
               disabled={props.queuePriorityPending}
               onClick={() => onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })}
             >
-              {props.queuePriorityPending ? (
-                <span class="saved-toggle-spinner" aria-hidden="true"></span>
-              ) : (
-                <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
-              )}
+              <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
             </button>
             {renderPrimaryAccountControl()}
             <ActionButton
@@ -726,16 +724,13 @@ export function SavedAccountCard(props: {
                   title={queuePriorityLabel}
                   aria-label={queuePriorityLabel}
                   aria-pressed={account.queuePriority}
+              aria-busy={props.queuePriorityPending}
                   disabled={props.queuePriorityPending}
                   onClick={() =>
                     onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })
                   }
                 >
-                  {props.queuePriorityPending ? (
-                    <span class="saved-toggle-spinner" aria-hidden="true"></span>
-                  ) : (
-                    <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
-                  )}
+                  <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
                 </button>
                 {renderPrimaryAccountControl()}
               </div>

@@ -1245,9 +1245,10 @@ async function sendAppServerSessionMessage(options: {
       const permissions = inherited?.profile && inherited.updatedAt >= (stored?.access?.updatedAt ?? 0) ? inherited.profile : undefined;
       const preserved = savedAccess && inherited === savedAccess.access ? savedAccess.settings : undefined;
       const opaqueProfile = Boolean(recorded && !transcriptPolicy || stored?.access && !stored.sandboxPolicy);
-      const restore = !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
+      const defaultSandbox = !options.sandboxMode && !inherited && !stored?.access;
+      const restore = defaultSandbox ? { sandbox: 'danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
-      if (!options.sandboxMode) Object.assign(params, preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
+      if (!options.sandboxMode) Object.assign(params, defaultSandbox ? { sandboxPolicy: toAppServerSandbox('danger-full-access', cwd) } : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
       if (!preserved && !opaqueProfile) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
     }
     catch (error) {
@@ -1420,13 +1421,14 @@ export function observeRunningCodexSession(session: DashboardCliSessionSummary):
 }
 
 async function waitForNativeSessionTurn(sessionId: string, transcript: string | undefined, previous: string | undefined, expectedTurnId?: string, home = resolveCodexHome(), streamId?: string): Promise<void> {
-  const startedAt = Date.now(), deadline = startedAt + CLI_TURN_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let deadline = startedAt + CLI_TURN_TIMEOUT_MS;
   let status: "completed" | "cancelled" | "failed" | "disconnected" = "disconnected";
   let failure: unknown;
   const owned = ownedNativeTurn(home, sessionId);
   const observer = nativeTurnObservers.get(`${home}:${sessionId}`);
   try {
-    while (Date.now() < deadline) {
+    while (true) {
       if ((owned && owned.turnId === expectedTurnId && owned.cancelled) || (observer && observer.turnId === expectedTurnId && observer.cancelled)) {
         status = "cancelled";
         throw new CodexCliTurnCancelledError();
@@ -1439,9 +1441,12 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
         if (transcript && cliTranscriptTurnStateCache.get(transcript)?.cancelled) { status = "cancelled"; throw new CodexCliTurnCancelledError(); }
         if (state === "terminal") { status = "completed"; return; }
       }
+      if (Date.now() >= deadline) {
+        if (await readNativeCodexSessionRunning(home, sessionId) !== true) throw new Error("The Codex turn outcome is unconfirmed. Check the conversation before retrying.");
+        deadline = Date.now() + CLI_TURN_TIMEOUT_MS;
+      }
       await new Promise(resolve => setTimeout(resolve, 150));
     }
-    throw new Error("The Codex turn outcome is unconfirmed. Check the conversation before retrying.");
   } catch (error) {
     failure = error;
     throw error;
@@ -3856,7 +3861,9 @@ function mergeCliTranscriptMessage(
   if (existingIndex < 0 && (!message.kind || message.kind === "message")) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 3); index -= 1) {
       const candidate = messages[index]!;
-      if (candidate.role === message.role && candidate.turnId === message.turnId && candidate.text.trim() === message.text.trim()) {
+      const imageEcho = message.role === 'user' && ((candidate.images?.length ?? 0) > 0 || (message.images?.length ?? 0) > 0) &&
+        candidate.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === message.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim();
+      if (candidate.role === message.role && candidate.turnId === message.turnId && (candidate.text.trim() === message.text.trim() || imageEcho)) {
         existingIndex = index;
         break;
       }
@@ -3867,6 +3874,7 @@ function mergeCliTranscriptMessage(
     const images = [...(existing.images ?? [])];
     for (const image of message.images ?? [])
       if (!images.some((candidate) => candidate.src === image.src)) images.push(image);
+    if (message.role === 'user' && images.length) message = { ...message, text: message.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() };
     const keepConcreteActivity = existing.kind && existing.kind !== "tool-call" && message.kind === "tool-call";
     const terminalStatus =
       existing.status === "failed" || existing.status === "declined" || existing.status === "interrupted"

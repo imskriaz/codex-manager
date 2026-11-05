@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isAccountTagResult, isAccountTagUpdate, normalizeAccountTags } from '../src/domain/accountTags';
 import { filterAccounts } from '../webview-src/dashboard/accountSorting';
-import { createInitialState, reducer } from '../webview-src/dashboard/state';
+import { createInitialState, reducer, visibleDashboardSnapshot } from '../webview-src/dashboard/state';
 
 describe('account tags', () => {
   it('trims and deduplicates case-insensitively and supports clearing', () => {
@@ -46,4 +46,20 @@ describe('account tags', () => {
     state = reducer(state, { type: 'snapshot', snapshot: { ...state.snapshot!, peerAccounts: { remote: [] } } });
     expect(state.snapshot?.peerAccounts?.remote).toEqual([]);
   });
+});
+
+it('shows metadata immediately, keeps it through stale snapshots, and reconciles background save outcomes', () => {
+  const snapshot = { accounts: [{ id: 'same', tags: ['Old'], queuePriority: false }], peerAccounts: { remote: [{ id: 'same', tags: ['Remote'], queuePriority: false }] }, settings: { autoRefreshMinutes: 0, autoRefreshCurrentMinutes: 0 } } as never;
+  let state = reducer(createInitialState(), { type: 'snapshot', snapshot });
+  state = reducer(state, { type: 'request-action', request: { requestId: 'tags', action: 'setAccountTags', accountId: 'same', requestedAt: 1, accountEdit: { patch: { tags: ['Work'] } } } });
+  state = reducer(state, { type: 'request-action', request: { requestId: 'star', action: 'setAccountQueuePriority', accountId: 'same', requestedAt: 2, accountEdit: { deviceId: 'remote', patch: { queuePriority: true } } } });
+  expect(visibleDashboardSnapshot(state)?.accounts[0].tags).toEqual(['Work']);
+  expect(state.snapshot?.accounts[0].tags).toEqual(['Old']);
+  state = reducer(state, { type: 'snapshot', snapshot });
+  expect(visibleDashboardSnapshot(state)?.peerAccounts?.remote[0].queuePriority).toBe(true);
+  expect(visibleDashboardSnapshot(state)?.accounts[0].queuePriority).toBe(false);
+  state = reducer(state, { type: 'resolve-action', requestId: 'star', commit: true });
+  expect(state.snapshot?.peerAccounts?.remote[0].queuePriority).toBe(true);
+  state = reducer(state, { type: 'resolve-action', requestId: 'tags' });
+  expect(visibleDashboardSnapshot(state)?.accounts[0].tags).toEqual(['Old']);
 });

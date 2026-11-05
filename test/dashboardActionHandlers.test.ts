@@ -1559,7 +1559,9 @@ describe("executeDashboardActionMessage", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.errorMessage).toMatch(/did not complete/i);
+    expect(result.errorMessage).toMatch(/no authenticated connection/i);
+    expect(result.errorMessage).toContain("Accounts > Turn on Settings Sync");
+    expect(result.errorMessage).toContain("Settings > General");
     expect(context.schedulePublishState).toHaveBeenCalled();
   });
 

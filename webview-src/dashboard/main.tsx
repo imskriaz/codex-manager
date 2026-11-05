@@ -1,3 +1,4 @@
+import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { dashboardPageTitle } from './pageTitle';
 import { codexModelLabel } from "./helpers";
 import { isCodexSessionAccess } from '../../src/domain/codexSessionAccess';
@@ -78,7 +79,7 @@ import {
   ApiTokenModal
 } from "./panels";
 import { SavedAccountCard } from "./savedAccountCard";
-import { createInitialState, reducer } from "./state";
+import { createInitialState, reducer, visibleDashboardSnapshot } from "./state";
 import { resolveDashboardThemeFromMedia } from "./theme";
 import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
 import { useSessionQuestionNotifications } from './sessionQuestionNotifications';
@@ -253,7 +254,8 @@ function App() {
   const switchPopoverAnchor = useRef<DOMRect>();
   const [browserActionRequest, setBrowserActionRequest] = useState<BrowserActionRequest>();
   const resetCreditRequests = useRef(new Map<string, { accountId: string; targetDeviceId?: string }>());
-  const [tagEditor, setTagEditor] = useState<{ account: DashboardAccountViewModel; targetDeviceId?: string }>();
+  const [tagEditor, setTagEditor] = useState<{ account: DashboardAccountViewModel; targetDeviceId?: string; initialTags?: string[] }>();
+  const tagDrafts = useRef(new Map<string, string[]>());
   const tagRequests = useRef(new Map<string, { accountId: string; deviceId?: string }>());
   const [tagManager, setTagManager] = useState<{ deviceId?: string }>();
   const tagManagementRequests = useRef(new Map<string, { deviceId?: string }>());
@@ -289,6 +291,7 @@ function App() {
   const messageRequestStreams = useRef(new Map<string, string | undefined>());
   const historicalStreams = useRef(new Set<string>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
+  const steerRequests = useRef(new Set<string>());
   const sessionActionRequests = useRef(new Map<string, CliSessionTarget>());
   const messageViewRevision = useRef(0);
   const liveSessionListReceived = useRef(false);
@@ -443,6 +446,7 @@ function App() {
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardNotice) => {
+      if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info" && (isCliSessionsPath(noticeRoute.current) || !next.actions?.length && !next.actionPrompt)) return;
       noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
@@ -583,7 +587,7 @@ function App() {
     if (!opened) showNotice({ level: "warning", message: "The browser blocked this link. Allow pop-ups for this dashboard and try again." });
   }, [isBrowserDashboard, sendAction, showNotice]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
-  const snapshot = state.snapshot;
+  const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
   const localCacheSystemId = snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
   useEffect(() => {
@@ -618,8 +622,8 @@ function App() {
     };
   }, [isBrowserDashboard]);
   useEffect(() => {
-    if (isBrowserDashboard && snapshot) void writeDashboardStateCache(snapshot);
-  }, [isBrowserDashboard, snapshot]);
+    if (isBrowserDashboard && state.snapshot) void writeDashboardStateCache(state.snapshot);
+  }, [isBrowserDashboard, state.snapshot]);
   const refreshLogConsole = useCallback(() => {
     if (logConsoleRequestRef.current) return;
     logConsoleRequestRef.current = sendAction("viewLogs", undefined, { automatic: true });
@@ -1115,6 +1119,10 @@ function App() {
       }
       if (message.type === "dashboard:action-result" && message.action === "getCodexSubAgentMessages") {
         const id = agentRequests.current.get(message.requestId);
+        if (message.status === 'completed' && message.payload?.cliSubAgentSession) {
+          const agent = message.payload.cliSubAgentSession;
+          setCliSessions(current => [...current.filter(session => !sameCliSessionTarget(session, agent)), agent]);
+        }
         if (id) {
           agentRequests.current.delete(message.requestId);
           setAgentMessages((current) => ({ ...current, [id]: message.status === "completed"
@@ -1196,6 +1204,7 @@ function App() {
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         const target = turnRequests.current.get(message.requestId);
         turnRequests.current.delete(message.requestId);
+        steerRequests.current.delete(message.requestId);
         if (!target) return;
         if (message.status === "completed" && !message.payload?.cliSession) {
           showCliSessionFeedback({ key: Date.now(), level: "warning", message: "The send response was incomplete. Your draft is saved; refresh the original conversation before sending again." });
@@ -1207,7 +1216,7 @@ function App() {
             if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current, message.payload?.cliSessionsDeviceId), cliLiveStatesRef.current));
             if (message.payload?.cliSessionMessages) void writeCliSessionMessagesCache(target.id, message.payload.cliSessionMessages, target.deviceId);
           }
-          showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
+          showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : formatSessionReadError(message.action, message.error ?? "The turn in the original chat did not complete. Return to that chat and retry.") });
           return;
         }
         messageViewRevision.current++;
@@ -1234,7 +1243,7 @@ function App() {
           showCliSessionFeedback({
             key: Date.now(),
             level,
-            message: message.error ?? "Codex could not complete the turn."
+            message: formatSessionReadError(message.action, message.error ?? "Codex could not complete the turn.")
           });
           if (selectedCliSession) requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true);
         }
@@ -1271,7 +1280,7 @@ function App() {
           showCliSessionFeedback({
             key: Date.now(),
             level: "error",
-            message: message.error ?? "New Codex chat could not be started."
+            message: formatSessionReadError(message.action, message.error ?? "New Codex chat could not be started.")
           });
         }
       }
@@ -1280,13 +1289,14 @@ function App() {
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         const target = turnRequests.current.get(message.requestId);
         turnRequests.current.delete(message.requestId);
+        steerRequests.current.delete(message.requestId);
         if (target && !sameCliSessionTarget(target, currentSessionTarget())) {
           if (message.status !== "completed") {
-            showCliSessionFeedback({ key: Date.now(), level: message.status === "cancelled" ? "warning" : "error", message: message.error ?? "The follow-up could not be confirmed in the original chat." });
+            showCliSessionFeedback({ key: Date.now(), level: message.status === "cancelled" ? "warning" : "error", message: formatSessionReadError(message.action, message.error ?? "The follow-up could not be confirmed in the original chat.") });
           }
           return;
         }
-        showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.") });
+        showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? formatSessionReadError(message.action, message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.")) });
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
         showCliSessionFeedback({
@@ -1295,7 +1305,7 @@ function App() {
           message:
             message.status === "completed"
               ? (message.payload?.notice?.message ?? "Stop requested. Waiting for Codex to end the turn.")
-              : (message.error ?? "The turn could not be stopped.")
+              : formatSessionReadError(message.action, message.error ?? "The turn could not be stopped.")
         });
       }
       if (message.type === 'dashboard:action-result') {
@@ -2144,6 +2154,47 @@ function App() {
     sendAction("exportBackup");
   };
 
+  const renderSavedAccount = (account: DashboardAccountViewModel, compactRow: boolean, beforeAction?: () => void) => (
+    <SavedAccountCard
+                  key={account.id}
+                  account={account}
+                  lang={snapshot.lang}
+                  copy={snapshot.copy}
+                  settings={snapshot.settings}
+                  now={state.now}
+                  privacyMode={state.privacyMode}
+                  busy={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => request.action === "switch")}
+                  lockPending={isActionPending('setAutoSwitchLock', account.id)}
+                  connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
+                  unloadAuthPending={isActionPending("unloadAuth")}
+                  reloadPromptPending={isActionPending("reloadPrompt", account.id)}
+                  switchPending={isActionPending("switch", account.id)}
+                  reauthorizePending={isActionPending("reauthorize", account.id)}
+                  resyncProfilePending={isActionPending("resyncProfile", account.id)}
+                  refreshPending={isActionPending("refresh", account.id)}
+                  detailsPending={isActionPending("details", account.id)}
+                  removePending={isActionPending("remove", account.id)}
+                  enabledPending={isActionPending("toggleAccountEnabled", account.id)}
+                  queuePriorityPending={isActionPending("setAccountQueuePriority", account.id)}
+                  tokenRefreshPending={isActionPending("setAccountTokenRefreshEnabled", account.id)}
+                  manualTokenRefreshPending={isActionPending("refreshToken", account.id)}
+                  consumeResetCreditPending={isActionPending("consumeResetCredit", account.id)}
+                  exportPending={isActionPending("shareTokens") || isActionPending("exportAuthFile")}
+                  selected={selectedAccountIds.has(account.id)}
+                  metricPriority={uiPreferences.metricPriority}
+                  compactRow={compactRow}
+                  onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
+                  onExportAuth={() => handleExportAccount(account.id)}
+                  onEditTags={() => {
+                    if (state.pendingActions.some(request => request.accountId === account.id && request.action === 'setAccountTags')) { showNotice({ level: 'warning', message: 'These tags are saving in the background. You can keep working; reopen Edit tags after saving finishes.' }); return; }
+                    beforeAction?.();
+                    const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
+                    setTagEditor({ account: { ...account, tags: [...(account.tags ?? [])] }, targetDeviceId, initialTags: tagDrafts.current.get(`${targetDeviceId ?? 'local'}:${account.id}`) });
+                  }}
+                  onAction={(action, id, payload) => { if (['switch', 'details', 'reauthorize', 'remove', 'consumeResetCredit', 'unloadAuth', 'reloadPrompt'].includes(action)) beforeAction?.(); handleAccountAction(action, id, payload); }}
+                />
+  );
+
   const openBrowserSwitchPicker = (targetDeviceId?: string, preferredAccountId?: string): void => {
     switchPopoverAnchor.current = document.activeElement instanceof HTMLElement ? document.activeElement.getBoundingClientRect() : undefined;
     const targetPeer = targetDeviceId === "local" ? pcOptions.find(peer => peer.local) : targetDeviceId ? pcOptions.find(peer => peer.id === targetDeviceId) : selectedPeer;
@@ -2159,8 +2210,6 @@ function App() {
           (!preferredAccountId || account.id === preferredAccountId) &&
           !account.isActive &&
           !account.switchQueued &&
-          account.enabled &&
-          hasDashboardAutoQueueCapability(account, capabilityThresholds) &&
           canRunAccountOnThisPc(account, isActionPending("switch", account.id), snapshot.settings.encryptedSyncRegistryOverrideEnabled)
       )
       .sort((left, right) => compareDashboardAutoQueueAccounts(left, right, capabilityThresholds))
@@ -2173,7 +2222,7 @@ function App() {
             ? "没有可切换的账号——所有账号配额都已用完。"
             : snapshot.lang === "zh-hant"
               ? "沒有可切換的帳號——所有帳號配額都已用完。"
-                : preferredAccountId ? "This account is not ready to switch. Check its status and quota on the dashboard." : "No account to switch — no capable account has enough quota remaining."
+                : preferredAccountId ? "This account is already active or switching. Check its status in Dashboard." : "No other saved account is available. Add an account in Dashboard or wait for the current switch to finish."
       });
       return;
     }
@@ -2479,7 +2528,7 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {dashboardUnavailable && !isCliSessionsPath(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}><BrowserConnectionRecovery stage={connectionBannerStage ?? 'unreachable'} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /></div>, document.body) : null}
+        {dashboardUnavailable && !isCliSessionsPath(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}><BrowserConnectionRecovery page={browserPath === "/tasks" ? "Task management" : "Dashboard"} stage={connectionBannerStage ?? 'unreachable'} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /></div>, document.body) : null}
         <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
@@ -2893,39 +2942,7 @@ function App() {
             </div>
             <div class="accounts-grid">
               {sortedAccounts.map((account) => (
-                <SavedAccountCard
-                  key={account.id}
-                  account={account}
-                  lang={snapshot.lang}
-                  copy={snapshot.copy}
-                  settings={snapshot.settings}
-                  now={state.now}
-                  privacyMode={state.privacyMode}
-                  busy={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => request.accountId === account.id)}
-                  lockPending={isActionPending('setAutoSwitchLock', account.id)}
-                  connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
-                  unloadAuthPending={isActionPending("unloadAuth")}
-                  reloadPromptPending={isActionPending("reloadPrompt", account.id)}
-                  switchPending={isActionPending("switch", account.id)}
-                  reauthorizePending={isActionPending("reauthorize", account.id)}
-                  resyncProfilePending={isActionPending("resyncProfile", account.id)}
-                  refreshPending={isActionPending("refresh", account.id)}
-                  detailsPending={isActionPending("details", account.id)}
-                  removePending={isActionPending("remove", account.id)}
-                  enabledPending={isActionPending("toggleAccountEnabled", account.id)}
-                  queuePriorityPending={isActionPending("setAccountQueuePriority", account.id)}
-                  tokenRefreshPending={isActionPending("setAccountTokenRefreshEnabled", account.id)}
-                  manualTokenRefreshPending={isActionPending("refreshToken", account.id)}
-                  consumeResetCreditPending={isActionPending("consumeResetCredit", account.id)}
-                  exportPending={isActionPending("shareTokens") || isActionPending("exportAuthFile")}
-                  selected={selectedAccountIds.has(account.id)}
-                  metricPriority={uiPreferences.metricPriority}
-                  compactRow={uiPreferences.view === "list"}
-                  onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
-                  onExportAuth={() => handleExportAccount(account.id)}
-                  onEditTags={() => setTagEditor({ account: { ...account, tags: [...(account.tags ?? [])] }, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
-                  onAction={handleAccountAction}
-                />
+                renderSavedAccount(account, uiPreferences.view === "list")
               ))}
               {sortedAccounts.length === 0 ? (
                 <div class="accounts-empty-filter">{resolveUiText("noResults", snapshot.lang)}</div>
@@ -3048,11 +3065,13 @@ function App() {
         onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
       />
 
-      {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} privacyMode={state.privacyMode}
+      {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} initialTags={tagEditor.initialTags} privacyMode={state.privacyMode}
         connected={(!isBrowserDashboard || realtimeConnected) && (!tagEditor.targetDeviceId || snapshot.connectedPeers?.some(peer => peer.id === tagEditor.targetDeviceId && peer.connected) === true)}
         results={submissionResults} onClose={() => setTagEditor(undefined)} onSave={(tags, expectedTags) => {
+          tagDrafts.current.set(`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`, [...tags]);
           const requestId = sendAction('setAccountTags', tagEditor.account.id, { tags, expectedTags, targetDeviceId: tagEditor.targetDeviceId });
           tagRequests.current.set(requestId, { accountId: tagEditor.account.id, deviceId: tagEditor.targetDeviceId });
+          setTagEditor(undefined);
           while (tagRequests.current.size > 32) tagRequests.current.delete(tagRequests.current.keys().next().value!);
           return requestId;
         }} /> : null}
@@ -3115,7 +3134,7 @@ function App() {
               liveStates={cliLiveStates}
               connected={realtimeConnected && selectedPeer?.connected !== false && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
               submissionResults={submissionResults}
-              steering={isActionPending("steerCodexCliSessionTurn")}
+              steering={Boolean(selectedCliSession && [...steerRequests.current].some(requestId => sameCliSessionTarget(turnRequests.current.get(requestId), selectedCliSession)))}
               composerConfig={cliComposerConfig}
               loading={cliListLoading}
               starting={isActionPending("startCodexCliSession")}
@@ -3166,6 +3185,7 @@ function App() {
               account={overviewAccount}
               localAccounts={snapshot.accounts}
               onSwitchAccount={openBrowserSwitchPicker}
+              renderAccountGrid={(accounts, beforeAction) => sortAccounts(accounts, "auto-queue", uiPreferences.metricPriority, capabilityThresholds, snapshot.settings.encryptedSyncRegistryOverrideEnabled).map(account => renderSavedAccount(account, false, beforeAction))}
               onSettings={() => dispatch({ type: "open-settings" })}
               switchingAccount={state.pendingActions.some(request => request.action === "switch")}
               peers={pcOptions}
@@ -3259,7 +3279,7 @@ function App() {
               onSteer={(input) => {
                 if (!selectedCliSession) return undefined;
                 const requestId = sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath });
-                if (requestId) turnRequests.current.set(requestId, selectedCliSession);
+                if (requestId) { turnRequests.current.set(requestId, selectedCliSession); steerRequests.current.add(requestId); }
                 if (turnRequests.current.size > 128) turnRequests.current.delete(turnRequests.current.keys().next().value!);
                 return requestId;
               }}
@@ -3425,8 +3445,8 @@ type BrowserConnectionIssue = "unreachable" | "offline";
 
 function BrowserConnectionBanner(props: { stage: BrowserConnectionIssue; lastSyncAt?: number; onRetry: () => void }) {
   const copy = {
-    unreachable: ["Dashboard host unavailable", "Displayed data may be stale. Check that VS Code is running."],
-    offline: ["Browser reports offline", "The local dashboard may still work; check VS Code and retry."]
+    unreachable: ["Connection Interrupted in Workspace", "Checking automatically. On the selected system, open VS Code and check Codex Manager in Extensions."],
+    offline: ["Connection Interrupted in Workspace", "Your browser reports offline. Check this device’s network; we’re checking automatically."]
   }[props.stage];
   return <aside class={`dashboard-connection-banner is-${props.stage}`} role="alert" aria-live="polite">
     <span class="dashboard-connection-indicator" aria-hidden="true" />
@@ -3435,12 +3455,12 @@ function BrowserConnectionBanner(props: { stage: BrowserConnectionIssue; lastSyn
   </aside>;
 }
 
-function BrowserConnectionRecovery(props: { stage: "unreachable" | "offline"; onRetry: () => void }) {
+function BrowserConnectionRecovery(props: { stage: "unreachable" | "offline"; page?: string; onRetry: () => void }) {
   return <div class="dashboard-connection-recovery" role="alert">
     <span class="dashboard-connection-recovery-mark" aria-hidden="true"><img src="/assets/codex.svg" alt="" width="38" height="38" /></span>
-    <small>Connection paused</small>
-    <h1>{props.stage === "offline" ? "Your browser is offline." : "The dashboard host is unavailable."}</h1>
-    <p>Keep VS Code and the Codex Manager extension running to see live sessions and account data. This app never stores that data in its offline cache.</p>
+    <small>Connection Interrupted</small>
+    <h1>Connection Interrupted in {props.page ?? "Dashboard"}</h1>
+    <p>{props.stage === "offline" ? "Your browser reports that it is offline. Check this device’s network connection." : "The selected system is not responding. On that system, open VS Code and check that Codex Manager is enabled in Extensions."} We’re checking automatically and will reconnect when it is available.</p>
     <button type="button" onClick={props.onRetry}>Try connecting again</button>
   </div>;
 }

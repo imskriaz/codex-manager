@@ -44,6 +44,16 @@ it("saves an account when optional profile loading stalls", async () => {
   expect(JSON.parse(await readFile(repo.accountsIndexPath, "utf8")).accounts).toHaveLength(1);
 });
 
+it('keeps tags and favorites through account reauthorization', async () => {
+  const repo = await repository(); profile.mockResolvedValue(undefined);
+  const saved = await repo.upsertFromTokens(tokens('tagged@example.test'));
+  await repo.setAccountTags(saved.id, ['Work']);
+  await repo.setAccountQueuePriority(saved.id, true);
+  await repo.upsertFromTokens(tokens(saved.email));
+  await repo.flush();
+  expect(await repo.getAccount(saved.id)).toMatchObject({ tags: ['Work'], queuePriority: true });
+});
+
 it("preserves account edits and additions made during a slow profile refresh", async () => {
   const repo = await repository();
   profile.mockResolvedValue(undefined);

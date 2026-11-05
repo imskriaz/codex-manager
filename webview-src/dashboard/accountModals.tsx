@@ -61,13 +61,14 @@ export function TagManagerModal(props: {
 
 export function AccountTagsModal(props: {
   account: DashboardAccountViewModel;
+  initialTags?: string[];
   privacyMode: boolean;
   connected: boolean;
   results: CliSubmissionResult[];
   onSave: (tags: string[], expectedTags: string[]) => string;
   onClose: () => void;
 }) {
-  const [text, setText] = useState(() => (props.account.tags ?? []).join(', '));
+  const [text, setText] = useState(() => (props.initialTags ?? props.account.tags ?? []).join(', '));
   const [requestId, setRequestId] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); }, []);

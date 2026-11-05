@@ -1308,7 +1308,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (interactive) {
         void vscode.window.showErrorMessage(
           encryptedSyncSettingsFailure ??
-            "Cross-PC sync is unavailable. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+            "Cross-PC sync has no authenticated connection. In VS Code, open Accounts > Turn on Settings Sync; or check the shared address and password in Codex Manager > Settings > General."
         );
       }
       return false;

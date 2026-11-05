@@ -109,7 +109,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const [feedback, setFeedback] = useState("");
   const [failed, setFailed] = useState(false);
   const [install, setInstall] = useState((window as InstallWindow).codexInstallPrompt);
-  const [initialized, setInitialized] = useState(!props.offerOnLoad);
+  const [initialized, setInitialized] = useState(!props.offerOnLoad || !supported);
   const [dismissed, setDismissed] = useState(false);
   const revision = useRef(0);
   useEffect(() => {
@@ -126,7 +126,6 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
         if (!disposed && revision.current === initialRevision) {
           setEnabled(subscribed);
           document.documentElement.dataset["pushSubscribed"] = String(subscribed);
-          if (props.offerOnLoad && subscribed) setDismissed(true);
         }
       } catch (error) {
         console.debug("[codex-manager] notification registration will retry when connected", error);
@@ -139,19 +138,22 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     const reconnect = () => { void refresh(); };
     window.addEventListener("online", reconnect);
     document.addEventListener("visibilitychange", reconnect);
-    const prompt = (event: Event) => setInstall(event as InstallPrompt);
+    const prompt = (event: Event) => { event.preventDefault(); setInstall(event as InstallPrompt); setDismissed(false); };
+    const installed = () => { (window as InstallWindow).codexInstallPrompt = undefined; setInstall(undefined); setFailed(false); setDismissed(false); setFeedback('App installed.'); };
     const changed = () => {
       revision.current++;
       setEnabled(document.documentElement.dataset["pushSubscribed"] === "true");
       if (props.offerOnLoad && document.documentElement.dataset["pushSubscribed"] !== "true") setDismissed(true);
     };
     window.addEventListener("beforeinstallprompt", prompt);
+    window.addEventListener("appinstalled", installed);
     window.addEventListener("codex:push-subscription-changed", changed);
     return () => {
       disposed = true;
       window.removeEventListener("online", reconnect);
       document.removeEventListener("visibilitychange", reconnect);
       window.removeEventListener("beforeinstallprompt", prompt);
+      window.removeEventListener("appinstalled", installed);
       window.removeEventListener("codex:push-subscription-changed", changed);
     };
   }, [supported]);
@@ -210,7 +212,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
       const result = await notificationDeadline(install.userChoice);
       setFeedback(
         result.outcome === "accepted"
-          ? "App installed."
+          ? "Installation requested. Finish in your browser."
           : "Installation cancelled."
       );
       (window as InstallWindow).codexInstallPrompt = undefined;
@@ -241,13 +243,15 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     } finally { setTestBusy(false); }
   };
 
-  if (props.offerOnLoad && (!initialized || dismissed || (enabled && !feedback))) return null;
+  const installAvailable = Boolean(install);
+  if (props.offerOnLoad && !supported && !installAvailable) return null;
+  if (props.offerOnLoad && (!initialized || dismissed || (enabled && !feedback && !installAvailable))) return null;
   const bell = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>;
   const feedbackView = feedback ? <p class={`browser-notification-feedback ${failed ? "is-failed" : ""}`} role={failed ? "alert" : "status"}>{feedback}</p> : null;
-  if (props.offerOnLoad) return <aside class={`browser-notification-offer ${enabled ? "is-enabled" : ""}`} aria-label="Notification subscription" role="region">
-    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={() => setDismissed(true)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+  if (props.offerOnLoad) return <aside class={`browser-notification-offer ${enabled ? "is-enabled" : ""}`} aria-label="Notification and app install offer" role="region">
+    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{installAvailable && enabled ? "Install Codex Manager" : enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{installAvailable && enabled ? "Keep the dashboard ready while you work." : enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={() => setDismissed(true)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
     {feedbackView}
-    <div class="browser-notification-actions">{enabled ? <button type="button" class="browser-notification-button is-primary" onClick={() => setDismissed(true)}>Done</button> : <><button type="button" class="browser-notification-button is-primary" aria-label="Subscribe to browser notifications" aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? <><span class="browser-notification-spinner" aria-hidden="true"/> Please wait…</> : "Enable notifications"}</button><button type="button" class="browser-notification-button is-quiet" disabled={busy} onClick={() => setDismissed(true)}>Not now</button></>}</div>
+    <div class="browser-notification-actions">{enabled ? <button type="button" class="browser-notification-button is-primary" onClick={() => setDismissed(true)}>Done</button> : <><button type="button" class="browser-notification-button is-primary" aria-label="Subscribe to browser notifications" aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? <><span class="browser-notification-spinner" aria-hidden="true"/> Please wait…</> : "Enable notifications"}</button><button type="button" class="browser-notification-button is-quiet" disabled={busy} onClick={() => setDismissed(true)}>Not now</button></>}{installAvailable ? <button type="button" class="browser-notification-button" disabled={busy} onClick={() => void installApp()}>Install app</button> : null}</div>
   </aside>;
   return <div class="settings-block settings-block-wide browser-notification-settings">
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications</div><p class="settings-block-sub" title="Get account switches and alerts on this device.">{enabled ? "Notifications are on for this device." : "Get account switches and alerts on this device."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>

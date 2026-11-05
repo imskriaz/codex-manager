@@ -30,7 +30,7 @@ describe("shared browser/native live turn reconciliation", () => {
     expect(reconcile("completed")).toMatchObject({ status: "idle", interrupted: false, runningSince: undefined });
     expect(reconcile("cancelled").interrupted).toBe(false);
     expect(reconcile("failed")).toMatchObject({ status: "idle", interrupted: true, runningSince: undefined });
-    expect(reconcile("disconnected")).toBe(row);
+    expect(reconcile("disconnected")).toMatchObject({ status: "unknown", interrupted: true, canStop: false, steerTurnId: undefined });
   });
   it("uses a newer verified idle row over an old running snapshot for counts, spinners, and steering", () => {
     const row = { id: "chat", title: "Task", status: "idle" as const, locked: false, updatedAt: new Date(2000).toISOString() };
@@ -47,7 +47,7 @@ describe("shared browser/native live turn reconciliation", () => {
     const newer = { ...row, updatedAt: new Date(2000).toISOString() };
     expect(reconcileCliSessionStatus(newer, states)).toBe(newer);
     expect(reconcileCliSessionStatus({ ...row, deviceId: "remote" }, states).status).toBe("running");
-    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: "disconnected" }) })).toBe(row);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: "disconnected" }) })).toMatchObject({ status: "unknown", interrupted: true });
   });
   it("reconciles remote completion and local aliases using the live registry's target keys", () => {
     const remote = { id: "chat", deviceId: "pc:remote", title: "Task", status: "running" as const, locked: true };

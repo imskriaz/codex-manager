@@ -193,6 +193,7 @@ export function buildAccountRecordDraft(params: {
     isActive: params.forceActive,
     enabled: params.forceActive ? true : (params.existing?.enabled ?? true),
     queuePriority: params.existing?.queuePriority ?? false,
+    tags: params.existing?.tags ? [...params.existing.tags] : undefined,
     tokenRefreshEnabled: params.existing?.tokenRefreshEnabled ?? false,
     autoResetAllowed: params.existing?.autoResetAllowed ?? false,
     // New accounts should not silently opt into the status popup.

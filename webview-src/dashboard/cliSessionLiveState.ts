@@ -28,6 +28,7 @@ export function reconcileCliSessionStatus(
   if (!live || !isCliLiveStateCurrent(session, live)) return session;
   if (isCliTurnActive(live)) return { ...session, status: "running", interrupted: false };
   if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed" };
+  if (live.status === 'disconnected') return { ...session, status: 'unknown', canStop: false, steerTurnId: undefined, interrupted: true };
   return session;
 }
 

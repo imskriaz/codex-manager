@@ -656,7 +656,7 @@ function TaskTree(props: TaskTreeProps) {
   const { task } = props, children = props.children.get(task.id) ?? [];
   const canGroup = !!props.onGroup && !task.sessionId && !task.sourceKey;
   const running = task.session?.status === 'running' || task.sessionStatus === 'running' || children.some(child => child.session?.status === 'running' || child.sessionStatus === 'running');
-  const status = task.launchPending ? 'Unconfirmed' : props.pendingIds.has(task.id) ? 'Pending sync' : task.archived || task.sessionArchived ? 'Archived' : running ? 'Running' : task.session?.interrupted ? 'Interrupted' : task.sessionStatus === 'unknown' ? 'Unverified' : label(task.stage);
+  const status = task.launchPending ? 'Unconfirmed' : props.pendingIds.has(task.id) ? 'Pending sync' : task.archived || task.sessionArchived ? 'Archived' : task.session?.interrupted && task.session.status !== 'running' ? 'Interrupted' : running ? 'Running' : task.sessionStatus === 'unknown' ? 'Unverified' : label(task.stage);
   const agents = task.sessionId ? props.agentCounts.get(`${task.session?.deviceId ?? 'local'}:${task.sessionId}`) ?? 0 : 0;
   const updated = task.session?.updatedAt ?? (task.updatedAt ? new Date(task.updatedAt).toISOString() : undefined);
   return <article class="task-tree-item"><div class="task-card-row" onContextMenu={openTaskContextMenu}>

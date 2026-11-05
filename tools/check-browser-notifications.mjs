@@ -9,7 +9,7 @@ const origin = process.env.CODEX_MANAGER_UI_URL || "http://127.0.0.1:39875";
 const response = await fetch(`${origin}/api/state`);
 assert.ok(response.ok);
 const state = await response.json();
-const host = `window.acquireVsCodeApi=()=>({getState(){},setState(){},postMessage(m){setTimeout(()=>window.dispatchEvent(new MessageEvent('message',{data:m.type==='dashboard:ready'?{type:'dashboard:snapshot',state:${JSON.stringify(state)}}:{type:'dashboard:action-result',requestId:m.requestId,action:m.action,status:'completed',payload:{cliSessions:[]}}})),0)}});`;
+const host = `window.acquireVsCodeApi=()=>({getState(){},setState(){},postMessage(m){setTimeout(()=>{const send=data=>window.dispatchEvent(new MessageEvent('message',{data}));if(m.type==='dashboard:ready'){send({type:'dashboard:snapshot',state:${JSON.stringify(state)}});send({type:'dashboard:connection',connected:true});send({type:'dashboard:host-status',stage:'live'});}else if(m.type==='dashboard:action') send({type:'dashboard:action-result',requestId:m.requestId,action:m.action,status:'completed',payload:m.action==='listCodexCliSessions'?{cliSessions:[]}:{}});},0)}});`;
 const screenshots = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(screenshots, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
@@ -60,10 +60,25 @@ try {
     console.log(`${scenario}: dashboard loaded`);
     await page.locator("#dashboard-main").waitFor();
     console.log(`${scenario}: dashboard ready`);
-    const offer = page.getByRole("region", { name: "Notification subscription", exact: true });
+    const offer = page.getByRole("region", { name: "Notification and app install offer", exact: true });
     if (["registered", "login-conflict"].includes(scenario)) {
       await page.waitForFunction(() => document.documentElement.dataset.pushSubscribed === "true");
       assert.equal(await offer.count(), 0, "Registered devices are not prompted again");
+      if (scenario === "registered") {
+        for (const outcome of ['dismissed', 'accepted', 'failure']) {
+          await page.evaluate(outcome => {
+            const event = new Event('beforeinstallprompt', { cancelable: true });
+            Object.assign(event, { prompt: async () => { window.__installRequests = (window.__installRequests ?? 0) + 1; if (outcome === 'failure') throw new Error('blocked'); }, userChoice: Promise.resolve({ outcome }) });
+            window.dispatchEvent(event);
+          }, outcome);
+          await offer.getByRole('button', { name: 'Install app', exact: true }).click();
+          await offer.getByRole(outcome === 'failure' ? 'alert' : 'status').filter({ hasText: outcome === 'accepted' ? 'Installation requested' : outcome === 'dismissed' ? 'Installation cancelled' : 'Installation failed' }).waitFor();
+          assert.equal(await page.evaluate(() => window.__permissionRequests), 0, 'Installing never requests notification permission');
+        }
+        await page.evaluate(() => window.dispatchEvent(new Event('appinstalled')));
+        await offer.getByRole('status').filter({ hasText: 'App installed.' }).waitFor();
+        assert.equal(await offer.getByRole('button', { name: 'Install app', exact: true }).count(), 0);
+      }
       if (scenario === "login-conflict") assert.equal(await page.evaluate(() => window.__unsubscribes), 1, "Login conflict is repaired quietly in this browser");
     } else {
       await offer.waitFor().catch(async error => { console.log("Offer state", calls, await page.locator('[aria-modal="true"]').evaluateAll(items => items.map(item => ({ className: item.className, visible: !!item.getClientRects().length }))), errors); throw error; });

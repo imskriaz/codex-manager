@@ -110,6 +110,13 @@ describe("VS Code notification mirror", () => {
     quietNotices.dispose();
     stop(); subscription.dispose();
   });
+  it('names where to repair a missing cross-PC sync connection', () => {
+    const text = compactNotificationMessage('Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again.');
+    expect(text).toContain('no authenticated connection');
+    expect(text).toContain('Accounts > Turn on Settings Sync');
+    expect(text).toContain('Settings > General');
+    expect(text).not.toContain('WebSocket');
+  });
 
   it("keeps actionable notifications native and surfaces Command Palette errors", async () => {
     const nativeInfo = vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce("Reload" as never);

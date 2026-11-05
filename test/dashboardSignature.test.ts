@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { buildDashboardStateSignature } from "../src/presentation/dashboard/signature";
 import type { DashboardState } from "../src/domain/dashboard/types";
 
+it('publishes tag-only and favorite-only changes, including removals', () => {
+  const state = createState(), original = buildDashboardStateSignature(state);
+  state.accounts[0]!.tags = ['Work'];
+  expect(buildDashboardStateSignature(state)).not.toBe(original);
+  state.accounts[0]!.tags = [];
+  expect(buildDashboardStateSignature(state)).toBe(original);
+  state.accounts[0]!.queuePriority = true;
+  expect(buildDashboardStateSignature(state)).not.toBe(original);
+  state.accounts[0]!.queuePriority = false;
+  expect(buildDashboardStateSignature(state)).toBe(original);
+});
+
 it("refreshes both dashboards when peer presence or remote accounts change", () => {
   const state = createState();
   const peers = [{ id: "other", name: "Other system", connected: true, sessionCount: 1 }];

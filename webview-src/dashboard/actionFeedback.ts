@@ -1,4 +1,5 @@
 import type { DashboardActionName, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
+import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 
 export function noticeFromActionResult(
   message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>,
@@ -66,9 +67,9 @@ export function isMissingCliSessionError(message: string): boolean {
 }
 
 export function formatSessionReadError(action: DashboardActionName, message: string): string {
-  return action === "getCodexCliSessionMessages" && /(?:session|transcript).*not found/i.test(message)
-    ? "This conversation is unavailable. Refresh the session list or choose another conversation."
-    : message;
+  if (action === "getCodexCliSessionMessages" && /(?:session|transcript).*not found/i.test(message))
+    return "This conversation is unavailable. Refresh the session list or choose another conversation.";
+  return sessionFailureMessage(message);
 }
 
 export function noticeFromActionTimeout(action: DashboardActionName): DashboardNotice {

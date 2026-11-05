@@ -1,3 +1,4 @@
+import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { isCodexSessionRunning } from '../../src/domain/codexSessionState';
 import { useSessionResume } from './sessionResume';
 import { isCliLiveStateCurrent, reconcileCliSessionStatus } from './cliSessionLiveState';
@@ -32,7 +33,7 @@ export function TaskSessionConversation(props: {
   const currentScope = useRef(scope); currentScope.current = scope;
   const mounted = useRef(true);
   useEffect(() => { if (props.connected !== false) setNotice(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
-  const report = (value: DashboardNotice) => { if (currentScope.current === scope) setNotice(value); props.onFeedback(value); };
+  const report = (input: DashboardNotice) => { const value = { ...input, message: sessionFailureMessage(input.message, 'Task management') }; if (currentScope.current === scope) setNotice(value); props.onFeedback(value); };
   useEffect(() => setNotice(undefined), [scope]);
   useEffect(() => {
     if (notice?.level !== 'info') return;
@@ -43,6 +44,14 @@ export function TaskSessionConversation(props: {
   const access = useSessionAccess({ session: props.session, connected: props.connected,
     send: sandboxMode => props.sendAction('setCodexSessionAccess', undefined, { sessionId: props.session.id, sandboxMode, targetDeviceId: props.session.deviceId, projectPath: props.session.projectPath }), feedback: report });
   const messages = combineCliLiveMessages(props.messages, props.liveState);
+  const recoveryRead = useRef(props.onRefresh); recoveryRead.current = props.onRefresh;
+  const connectionInterrupted = props.liveState?.status === 'disconnected' || isSessionConnectionFailure(messages.at(-1)?.kind === 'error' ? messages.at(-1)!.text : '');
+  useEffect(() => {
+    if (!connectionInterrupted || !props.connected) return;
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') recoveryRead.current(); }, 15_000);
+    return () => clearInterval(timer);
+  }, [connectionInterrupted, props.connected, scope]);
+
   const session = reconcileCliSessionStatus(props.session, props.liveState ? { [cliSessionTargetKey(props.session)]: props.liveState } : {});
   const running = isCodexSessionRunning(session);
   const resume = useSessionResume({ session, connected: props.connected,
@@ -106,7 +115,7 @@ export function TaskSessionConversation(props: {
   const files = summarizeChangedFiles(messages);
   const patch = (value: Partial<CliComposerDraft>) => setDraft(previous => ({ ...previous, ...value }));
   return <section class="task-session-conversation cli-workspace cli-message-surface" aria-label="Session conversation">
-    <div class="task-session-transcript cli-session-messages"><SessionTranscript messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
+    <div class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
       <QueuedMessages queue={queue} onFeedback={report} onRefresh={props.onRefresh} />
       {props.liveState?.plan ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
     </div>

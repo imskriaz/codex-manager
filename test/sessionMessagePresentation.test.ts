@@ -45,4 +45,9 @@ describe('readable activity payloads', () => {
     expect(agentActivityLabel({ ...wait, result: JSON.stringify({ status: { [id]: 'running' } }) }, {})).toBeUndefined();
     expect(messageAgentIds({ ...message, arguments: '{broken' })).toEqual([]);
   });
+  it('uses agent names embedded in arguments when the session list is incomplete', () => {
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const message = { id: 'call', kind: 'collaboration' as const, title: 'Agent finished', text: '', arguments: JSON.stringify({ receiverThreadIds: [id], agentNickname: 'Reviewer' }), status: 'completed' as const };
+    expect(agentActivityLabel(message, {})).toBe('Completed Reviewer');
+  });
 });

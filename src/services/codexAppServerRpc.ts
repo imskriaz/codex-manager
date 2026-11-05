@@ -254,6 +254,13 @@ export class CodexAppServerRpc {
       else if (eventTurn?.["id"] === turnId) settle(payload);
     });
     let timeout: NodeJS.Timeout | undefined;
+    let waiting = true;
+    let resetDeadline: (() => void) | undefined;
+    const offProgress = this.onNotification((_method, raw) => {
+      if (!turnId || !raw || typeof raw !== 'object') return;
+      const event = raw as { threadId?: string; turnId?: string };
+      if (event.threadId === threadId && (!event.turnId || event.turnId === turnId)) resetDeadline?.();
+    });
     try {
       const started = await this.request<{ turn?: { id?: unknown } }>("turn/start", params);
       turnId = typeof started.turn?.id === "string" ? started.turn.id : undefined;
@@ -265,12 +272,27 @@ export class CodexAppServerRpc {
       await Promise.race([
         completed,
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new CodexAppServerDisconnectedError("Codex did not finish the turn within 15 minutes. Refresh the session before retrying.")), timeoutMs);
+          resetDeadline = () => {
+            if (timeout) clearTimeout(timeout);
+            timeout = setTimeout(() => {
+              // Verify an idle stream before closing it; long active turns need no replay.
+              void this.request<{ thread?: { turns?: Array<{ id?: string; status?: string }> } }>('thread/read', { threadId, includeTurns: true }).then(result => {
+                if (!waiting) return;
+                const turn = result.thread?.turns?.find(value => value.id === turnId);
+                if (turn && ['inProgress', 'running'].includes(turn.status ?? '')) resetDeadline?.();
+                else if (turn && ['completed', 'failed', 'interrupted'].includes(turn.status ?? '')) settle({ turn });
+                else reject(new CodexAppServerDisconnectedError('The turn status could not be verified after the connection stopped responding.'));
+              }, error => { if (waiting) reject(new CodexAppServerDisconnectedError(`The turn status could not be verified: ${error instanceof Error ? error.message : String(error)}`)); });
+            }, timeoutMs);
+          };
+          resetDeadline();
         })
       ]);
     } finally {
+      waiting = false;
       if (timeout) clearTimeout(timeout);
       off();
+      offProgress();
       this.disconnects.delete(failTurn);
     }
   }
@@ -382,7 +404,7 @@ export class CodexAppServerRpc {
         try {
           const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
           killer.once("error", failed);
-          killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; finish(); } });
+          killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; kill(); finish(); } });
           killer.unref();
         } catch { failed(); }
       } else {

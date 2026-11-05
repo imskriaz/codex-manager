@@ -1,3 +1,4 @@
+import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { useComposerCommands } from './composerCommands';
 import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
 import { useSessionResume } from './sessionResume';
@@ -7,6 +8,7 @@ import { activeSessionQuestion, answeredSessionQuestionIds } from '../../src/dom
 import { useCliMessageQueue, queuedMessageView } from './cliMessageQueue';
 import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
+import { BrowserWorkWindow } from './browserWorkWindow';
 import { ScrollMore } from './scrollMore';
 import { AccountQuota, getAccountQuotaMetrics } from './accountQuota';
 import { deferredPanel } from './deferredPanel';
@@ -42,8 +44,8 @@ import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
-import { getSensitiveDisplayValue, isAccountClaimedByAnotherDevice } from "./helpers";
-import { hasDashboardQuotaRemaining } from "./accountSorting";
+import { getSensitiveDisplayValue } from "./helpers";
+import { compareDashboardAutoQueueAccounts, sortWithQueuedAccount } from "./accountSorting";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
@@ -213,6 +215,7 @@ export type CliSessionsPageProps = {
   account?: DashboardAccountViewModel;
   localAccounts?: DashboardAccountViewModel[];
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
+  renderAccountGrid?: (accounts: DashboardAccountViewModel[], beforeAction: () => void) => preact.ComponentChildren;
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
   selectedPeerId?: string;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
@@ -336,6 +339,14 @@ function SessionRowMenu(props: {
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [accountCenterOpen, setAccountCenterOpen] = useState(false);
+  const recoveryRead = useRef(props.onRefreshMessages); recoveryRead.current = props.onRefreshMessages;
+  const connectionInterrupted = props.liveState?.status === 'disconnected' || isSessionConnectionFailure(props.messagesError ?? '') || isSessionConnectionFailure(props.messages.at(-1)?.kind === 'error' ? props.messages.at(-1)!.text : '');
+  useEffect(() => {
+    if (!connectionInterrupted || props.connected === false || !props.selectedSession) return;
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') recoveryRead.current(); }, 15_000);
+    return () => clearInterval(timer);
+  }, [connectionInterrupted, props.connected, props.selectedSession?.id, props.selectedSession?.deviceId]);
+
   const [goalDeleteTarget, setGoalDeleteTarget] = useState<string>();
   const [section, setSection] = useState<CliSessionSection>("active");
   const sessionRunningOrder = useRef(new Map<string, boolean>());
@@ -832,11 +843,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const relatedAgents = useMemo(() => {
     const candidates = props.sessions.map(session => ({ ...session, ...readSubAgentMetadata(session) })).filter(session => session.subAgent && (session.deviceId ?? 'local') === (props.selectedSession?.deviceId ?? 'local'));
-    const ids = new Set([props.selectedSession?.id]);
+    const ids = new Set([props.selectedSession?.id, ...props.messages.flatMap(messageAgentIds)]);
     let changed = true;
     while (changed) { changed = false; for (const agent of candidates) if (agent.parentSessionId && ids.has(agent.parentSessionId) && !ids.has(agent.id)) { ids.add(agent.id); changed = true; } }
     return candidates.filter(agent => ids.has(agent.id));
-  }, [props.sessions, props.selectedSession?.id, props.selectedSession?.deviceId]);
+  }, [props.sessions, props.messages, props.selectedSession?.id, props.selectedSession?.deviceId]);
   const selectContextTab = (tab: WorkspaceTab): void => {
     setActiveContextTab(tab);
     if (toolProjectPath && (tab === 'env' || tab === 'git')) props.onRefreshEnvironment(toolProjectPath);
@@ -1001,8 +1012,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const onMove = (moveEvent: PointerEvent): void => {
       const delta = moveEvent.clientX - startX;
       setLayout((current) => panel === "rail"
-        ? { ...current, railWidth: clamp(startValue + delta, 200) }
-        : { ...current, terminalWidth: clamp(startValue - delta, 280) });
+        ? { ...current, railWidth: clamp(startValue + delta, 160) }
+        : { ...current, terminalWidth: clamp(startValue - delta, 220) });
     };
     const onUp = (): void => {
       document.body.classList.remove("is-resizing-workspace");
@@ -1018,8 +1029,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const direction = key === "ArrowRight" ? 1 : -1;
     const step = large ? 40 : 10;
     setLayout((current) => panel === "rail"
-      ? { ...current, railWidth: clamp(current.railWidth + direction * step, 200) }
-      : { ...current, terminalWidth: clamp(current.terminalWidth - direction * step, 280) });
+      ? { ...current, railWidth: clamp(current.railWidth + direction * step, 160) }
+      : { ...current, terminalWidth: clamp(current.terminalWidth - direction * step, 220) });
   };
   const beginComposerResize = (event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
     event.preventDefault();
@@ -1164,14 +1175,15 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             switching={props.switchingAccount}
             onDashboard={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}
             onSettings={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}
+            renderAccountGrid={props.renderAccountGrid}
             onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
-        {accountCenterOpen ? <SessionAccountFooter connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} /> : null}
+        {accountCenterOpen ? <SessionAccountFooter connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccountGrid={props.renderAccountGrid} /> : null}
         <PanelResizeHandle
           label="Resize sessions sidebar"
           value={layout.railWidth}
-          minimum={200}
+          minimum={160}
           onPointerDown={(event) => beginPanelResize("rail", event)}
           onKeyDown={(event) => adjustPanelWithKeyboard("rail", event.key, event.shiftKey)}
           onReset={() => setLayout((current) => ({ ...current, railWidth: DEFAULT_WORKSPACE_LAYOUT.railWidth }))}
@@ -1186,6 +1198,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {props.selectedSession ? (
             <>
               <ConversationHeader
+                workWindow={props.browser ? <BrowserWorkWindow title={props.selectedSession.title} onFeedback={reportLocalFeedback}><p role="status">{props.connected === false ? 'Connection Interrupted · reconnecting' : currentTurnRunning ? 'Working' : props.selectedSession.interrupted ? 'Interrupted · check this conversation in Workspace' : 'Ready'}</p><div class="browser-work-messages">{props.messages.filter(message => message.role === 'assistant' && (!message.kind || message.kind === 'message')).slice(-4).map(message => <p key={message.id}>{message.text}</p>)}</div></BrowserWorkWindow> : undefined}
                 session={props.selectedSession}
                 archived={selectedArchived}
                 busy={props.mutating}
@@ -1296,7 +1309,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <PanelResizeHandle
           label="Resize terminal panel"
           value={layout.terminalWidth}
-          minimum={280}
+          minimum={220}
           onPointerDown={(event) => beginPanelResize("terminal", event)}
           onKeyDown={(event) => adjustPanelWithKeyboard("terminal", event.key, event.shiftKey)}
           onReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
@@ -1386,6 +1399,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 }
 
 export function ConversationHeader(props: {
+  workWindow?: preact.ComponentChildren;
   session: DashboardCliSessionSummary; readOnly?: boolean; archived?: boolean; busy?: boolean; sending?: boolean;
   onBack?: () => void; onRefresh: () => void;
   onRename?: (name: string) => void; onFork?: () => void; onCopyLink?: () => void; onShare?: () => void;
@@ -1409,6 +1423,7 @@ export function ConversationHeader(props: {
   return <header class="cli-conversation-header">
     {!props.readOnly ? <span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /> : null}<div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1>{!props.readOnly || props.session.status !== 'unknown' ? <span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span> : null}</div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.session.projectPath}><EmptyFolderIcon /><strong>{projectDisplayName(props.session.projectPath)}</strong><span>{props.session.projectPath}</span></div> : null}</div>
     <div class="cli-conversation-actions">
+      {props.workWindow}
       {props.readOnly || !props.archived ? <IconButton label="Refresh conversation" disabled={props.busy} onClick={props.onRefresh}><RefreshIcon /></IconButton> : <button type="button" class="cli-secondary-button" disabled={props.busy} onClick={props.onRestore}><RestoreIcon /> Restore</button>}
       {!props.readOnly ? <><button type="button" class="cli-icon-button cli-inspector-toggle" aria-label={props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"} title="Workspace tools" aria-expanded={!props.terminalCollapsed} onClick={() => props.onToggleTerminal?.()}><PanelIcon /></button>
       <div class="cli-session-menu-wrap" ref={menuRef}>
@@ -1460,7 +1475,7 @@ export function Composer(props: {
   const optionsPanelRef = useRef<HTMLDivElement>(null);
   const optionsId = useId();
   const commands = useComposerCommands({ draft: props.draft, projectPath: props.projectPath, deviceId: props.deviceId, onDraft: props.onDraft, onSettings: () => setOptionsOpen(true), onFocus: () => textarea.current?.focus() });
-  useAnchoredPopover(optionsOpen, composerRef, optionsPanelRef);
+  useAnchoredPopover(optionsOpen, composerRef, optionsPanelRef, 'start');
   const closeOptions = (): void => { setOptionsOpen(false); optionsToggleRef.current?.focus(); };
   useEffect(() => {
     if (!optionsOpen) return;
@@ -1556,17 +1571,40 @@ export function TurnUsageStrip({ account, privacyMode, saved, changedFiles, addi
 
 export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews, questionContent }: { questionContent?: JSX.Element; message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onRetryPrompt?: () => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const renderedText = (!message.kind || message.kind === 'message') && message.role !== 'user' ? <MarkdownMessage text={message.text} onOpenFile={onOpenFile} /> : message.text;
+  const images = uniqueMessageImages(message);
   const questionReplies = useMemo(() => message.role === "user" ? parseQuestionReply(message.text) : undefined, [message.text, message.role]);
   if (!message.kind || message.kind === "message") {
     const isUser = message.role === "user";
-    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{questionContent}{message.textAttachments?.length ? <div class="cli-message-text-attachments">{message.textAttachments.map((file, index) => <details key={index}><summary>{file.name}</summary><pre>{file.text}</pre></details>)}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={message.images} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu"><TurnCopyButton text={turnCopyText || message.text} label={turnCopyText && turnCopyText !== message.text ? "Copy turn" : "Copy message"} onActionFeedback={onActionFeedback} />{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
+    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{questionContent}{message.textAttachments?.length ? <div class="cli-message-text-attachments">{message.textAttachments.map((file, index) => <details key={index}><summary>{file.name}</summary><pre>{file.text}</pre></details>)}</div> : null}{images.length ? <div class="cli-session-images">{images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={images} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu"><TurnCopyButton text={turnCopyText || message.text} label={turnCopyText && turnCopyText !== message.text ? "Copy turn" : "Copy message"} onActionFeedback={onActionFeedback} />{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
   }
   return <ActivityMessage message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />;
 }
 
 type SessionImage = { src: string; alt?: string };
+const SessionPageContext = createContext('Workspace');
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
+
+function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
+  const seen = new Set<string>();
+  const inline = new Set<string>();
+  if ((!message.kind || message.kind === 'message') && message.role !== 'user' && message.text.includes('![')) {
+    const visit = (tokens: ReturnType<typeof markdownRenderer.parse>) => {
+      for (const token of tokens) {
+        if (token.type === 'image') { const src = token.attrGet('src'); if (typeof src === 'string' && src) inline.add(src); }
+        if (token.children) visit(token.children);
+      }
+    };
+    visit(markdownRenderer.parse(message.text, {}));
+  }
+  const result: SessionImage[] = [];
+  for (const image of message.images ?? []) {
+    if (!image.src || inline.has(image.src) || seen.has(image.src)) continue;
+    seen.add(image.src);
+    result.push(image);
+  }
+  return result;
+}
 
 export function collectSessionImages(messages: DashboardCliSessionMessage[]): SessionImage[] {
   const images = new Map<string, SessionImage>();
@@ -1604,26 +1642,48 @@ export function ImageLightbox({ image: initialImage, images, initialIndex = 0, o
   const index = Math.max(0, gallery.findIndex(image => image.src === selectedSrc));
   const [zoomed, setZoomed] = useState(false);
   const [zoomSize, setZoomSize] = useState<{ width: number; height: number }>();
+  const [gestureTransform, setGestureTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const touchGesture = useRef<{ distance: number; scale: number; x: number; y: number; clientX: number; clientY: number }>();
   const [imageReady, setImageReady] = useState(false);
   const preview = useRef<HTMLImageElement>(null);
   const toggleZoom = () => {
-    if (zoomed) { setZoomed(false); return; }
+    if (zoomed) { setZoomed(false); setGestureTransform({ scale: 1, x: 0, y: 0 }); return; }
     const element = preview.current;
     if (!element?.naturalWidth) return;
     setZoomSize({ width: element.clientWidth * 2, height: element.clientHeight * 2 });
+    setGestureTransform({ scale: 2, x: 0, y: 0 });
     setZoomed(true);
   };
   const touch = useRef<number>();
   const image = gallery[index] ?? initialImage;
   const move = (delta: number) => { setSelectedSrc(gallery[(index + delta + gallery.length) % gallery.length]!.src); setZoomed(false); };
-  useLayoutEffect(() => { setFailed(false); setImageReady(false); setZoomed(false); setZoomSize(undefined); }, [image.src]);
+  useLayoutEffect(() => { setFailed(false); setImageReady(false); setZoomed(false); setZoomSize(undefined); setGestureTransform({ scale: 1, x: 0, y: 0 }); touchGesture.current = undefined; }, [image.src]);
   const accessibility = useModalAccessibility(true, onClose);
   const [failed, setFailed] = useState(false);
   const alt = image.alt || "Image preview";
   return createPortal(
       <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); move(event.key === 'ArrowLeft' ? -1 : 1); } else accessibility.onKeyDown(event); }} onTouchStart={event => { touch.current = event.touches[0]?.clientX; }} onTouchEnd={event => { const end = event.changedTouches[0]?.clientX; if (!zoomed && touch.current !== undefined && end !== undefined && Math.abs(end - touch.current) > 50) move(end < touch.current ? 1 : -1); touch.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
-        <div class="cli-image-lightbox-toolbar"><strong title={alt}>{alt}</strong><span class="cli-image-lightbox-actions" role="group" aria-label="Image controls">{gallery.length > 1 ? <><button type="button" aria-label="Previous image" title="Previous image" onClick={() => move(-1)}><Icon><path d="m14 6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" title="Next image" onClick={() => move(1)}><Icon><path d="m10 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} disabled={!imageReady || failed} title={zoomed ? "Fit image" : "Zoom image"} onClick={toggleZoom}><Icon><path d={zoomed ? "M5 12h14" : "M5 12h14M12 5v14"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon></button><a href={image.src} target="_blank" rel="noopener noreferrer" aria-label="View original image" title="View original image"><Icon><path d="M14 3h7v7m0-7L10 14M10 3H3v18h18v-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" title="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
-        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><img ref={preview} key={image.src} src={image.src} alt={alt} style={zoomed && zoomSize ? { width: `${zoomSize.width}px`, height: `${zoomSize.height}px` } : undefined} onLoad={() => setImageReady(true)} onError={() => setFailed(true)} onDblClick={toggleZoom} /></div>}
+        <div class="cli-image-lightbox-toolbar"><strong title={alt}>{alt}</strong><span class="cli-image-lightbox-actions" role="group" aria-label="Image controls">{gallery.length > 1 ? <><button type="button" aria-label="Previous image" title="Previous image" onClick={() => move(-1)}><Icon><path d="m14 6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" title="Next image" onClick={() => move(1)}><Icon><path d="m10 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} disabled={!imageReady || failed} title={zoomed ? "Fit image" : "Zoom image"} onClick={toggleZoom}><Icon><path d={zoomed ? "M5 12h14" : "M5 12h14M12 5v14"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon></button><a href={image.src} download={`codex-image-${index + 1}`} aria-label="Download image" title="Download image"><Icon><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" title="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
+        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onTouchStart={event => {
+          event.stopPropagation();
+          const first = event.touches[0], second = event.touches[1];
+          if (first && second) {
+            const dx = second.clientX - first.clientX, dy = second.clientY - first.clientY;
+            touchGesture.current = { distance: Math.hypot(dx, dy), scale: gestureTransform.scale, x: gestureTransform.x, y: gestureTransform.y, clientX: (first.clientX + second.clientX) / 2, clientY: (first.clientY + second.clientY) / 2 };
+          } else if (first && gestureTransform.scale > 1) touchGesture.current = { distance: 0, scale: gestureTransform.scale, x: gestureTransform.x, y: gestureTransform.y, clientX: first.clientX, clientY: first.clientY };
+        }} onTouchMove={event => {
+          const gesture = touchGesture.current;
+          if (!gesture) return;
+          event.preventDefault(); event.stopPropagation();
+          const first = event.touches[0], second = event.touches[1];
+          if (first && second && gesture.distance > 0) {
+            const dx = second.clientX - first.clientX, dy = second.clientY - first.clientY;
+            const scale = Math.min(4, Math.max(1, gesture.scale * Math.hypot(dx, dy) / gesture.distance));
+            setGestureTransform({ scale, x: gesture.x, y: gesture.y }); setZoomed(scale > 1.01);
+          } else if (first && gesture.distance === 0) {
+            setGestureTransform(current => ({ ...current, x: gesture.x + first.clientX - gesture.clientX, y: gesture.y + first.clientY - gesture.clientY }));
+          }
+        }} onTouchEnd={() => { touchGesture.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><img ref={preview} key={image.src} src={image.src} alt={alt} style={{ ...(zoomed && zoomSize ? { width: `${zoomSize.width}px`, height: `${zoomSize.height}px` } : {}), transform: `translate3d(${gestureTransform.x}px, ${gestureTransform.y}px, 0) scale(${gestureTransform.scale})`, transformOrigin: 'center center' }} onLoad={() => setImageReady(true)} onError={() => setFailed(true)} onDblClick={toggleZoom} /></div>}
       </div>,
       document.body
     );
@@ -1732,7 +1792,8 @@ function isCapacityMessage(message: DashboardCliSessionMessage): boolean {
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const openAgent = useContext(SessionAgentContext);
   const agentIds = useMemo(() => messageAgentIds(message), [message]);
-  const agentLink = Boolean(openAgent && agentIds.length);
+  const images = uniqueMessageImages(message);
+  const agentLink = Boolean(openAgent && (agentIds.length || message.kind === 'collaboration'));
   const agentLabel = agentIds.length === 1 ? `${openAgent?.names[agentIds[0]!] || 'Agent'} conversation` : 'agent list';
   const running = message.status === "inProgress";
   const failed = message.status === "failed" || message.kind === "error";
@@ -1749,9 +1810,9 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
     return message.debug ? <details class="cli-capacity-notice"><summary>{label}<ChevronIcon /></summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : <div class="cli-capacity-notice">{label}</div>;
   }
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
-    <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
+    <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.kind === "error" ? sessionFailureMessage(message.text) : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
-      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
+      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? (message.kind === "error" && isSessionConnectionFailure(message.text) ? "Connection Interrupted" : activityLabel(message))}</strong><small>{activityMeta(message)}</small></span>
       <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : capacity ? "Capacity" : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
       {agentLink ? <button type="button" class="cli-agent-detail-toggle" aria-label={`${message.title || 'Agent activity'} details`} title="Expand activity details" onClick={event => { event.preventDefault(); event.stopPropagation(); const details = event.currentTarget.closest('details'); if (details) details.open = !details.open; }}><ChevronIcon /></button> : <ChevronIcon />}
     </summary>
@@ -1763,7 +1824,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
         {message.arguments ? <div class="cli-activity-result"><ActivityCode text={message.arguments} label="Arguments" /></div> : null}
         {message.result ? <div class={`cli-activity-result ${failed ? "is-error" : ""}`}><ActivityCode text={message.result} label={failed ? "Error" : "Result"} copyLabel={failed ? "Copy error" : "Copy result"} /></div> : null}
         {message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}
-      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={message.images} />)}</div> : null}</> : <ActivityDetail message={message} />}
+      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{images.length ? <div class="cli-session-images cli-activity-images">{images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} images={images} />)}</div> : null}</> : <ActivityDetail message={message} />}
     </div>
   </details>;
 }
@@ -1774,6 +1835,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
  * context that otherwise used to fall through to an unlabelled text blob.
  */
 function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
+  const page = useContext(SessionPageContext);
   switch (message.kind) {
     case "reasoning":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-reasoning"><strong>Thinking</strong><span>{message.text || "Codex is reasoning about the next step."}</span></div>;
@@ -1788,7 +1850,7 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
     case "compaction":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-compaction"><strong>{message.status === "inProgress" ? "Compacting context" : "Context compacted"}</strong><span>{message.text || (message.status === "inProgress" ? "Codex is condensing earlier context before continuing." : "Codex condensed earlier context to continue working.")}</span></div>;
     case "error":
-      return <div class="cli-activity-copy cli-activity-detail cli-activity-error"><strong>Error</strong><span>{message.text || "Codex reported an error."}</span>{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-error"><strong>{isSessionConnectionFailure(message.text) ? 'Connection Interrupted' : 'Failed'}</strong><span>{sessionFailureMessage(message.text, page) || 'The activity could not be completed.'}</span></div>;
     default:
       return <div class="cli-activity-copy cli-activity-detail"><span>{message.text}</span></div>;
   }
@@ -1975,7 +2037,7 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
 }
 
 /** One transcript renderer; public views omit callbacks for private operations. */
-export function SessionTranscript({ messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+export function SessionTranscript({ page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const inheritedAgents = useContext(SessionAgentContext);
   const images = useMemo(() => collectSessionImages(messages), [messages]);
   const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(messages), running), [messages, running]);
@@ -1986,7 +2048,7 @@ export function SessionTranscript({ messages, running = false, logoUri, onAction
   const active = candidate && !queuedAnswers.some(message => Date.parse(message.timestamp ?? '') >= Date.parse(candidate.timestamp!)) ? candidate : undefined;
   const pending = answeredSessionQuestionIds(queuedAnswers);
   const browser = document.documentElement.dataset['dashboardHost'] === 'browser';
-  return <SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider>;
+  return <SessionPageContext.Provider value={page}><SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider></SessionPageContext.Provider>;
 }
 
 function CompletedTurnChanges({ messages, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenReviews: (path?: string) => void }) {
@@ -2178,7 +2240,7 @@ function WorkspaceContextPanel(props: {
   const activeKind = workspaceTabKind(props.activeTab);
   const activePath = workspaceTabPath(props.activeTab);
   return <aside class="cli-terminal-panel cli-context-panel-v3" aria-label="Workspace tools">
-    <div class="cli-context-edge-resizer" role="separator" aria-label="Resize terminal panel" aria-orientation="vertical" aria-valuemin={280} aria-valuenow={Math.round(props.terminalWidth)} tabIndex={0} onPointerDown={props.onResizePointerDown} onKeyDown={props.onResizeKeyDown} onDblClick={props.onResizeReset}><span /></div>
+    <div class="cli-context-edge-resizer" role="separator" aria-label="Resize terminal panel" aria-orientation="vertical" aria-valuemin={220} aria-valuenow={Math.round(props.terminalWidth)} tabIndex={0} onPointerDown={props.onResizePointerDown} onKeyDown={props.onResizeKeyDown} onDblClick={props.onResizeReset}><span /></div>
     <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={event => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab, index) => {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
@@ -2392,6 +2454,7 @@ function SessionAccountFooter(props: {
   onPeerChange?: (peerId: string) => void;
   switching: boolean;
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
+  renderAccountGrid?: (accounts: DashboardAccountViewModel[], beforeAction: () => void) => preact.ComponentChildren;
   onDashboard: () => void;
   onSettings: () => void;
   standalone?: boolean;
@@ -2417,8 +2480,9 @@ function SessionAccountFooter(props: {
   const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
   const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
   const currentName = name(currentAccount);
-  const quotaAccounts = accounts.filter(hasDashboardQuotaRemaining).sort((left, right) => Number(isAccountClaimedByAnotherDevice(left)) - Number(isAccountClaimedByAnotherDevice(right)));
-  const filtered = quotaAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  // Manual selection includes disabled and exhausted accounts.
+  const orderedAccounts = sortWithQueuedAccount(accounts, compareDashboardAutoQueueAccounts, false);
+  const filtered = orderedAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel} ${(account.tags ?? []).join(" ")}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   useEffect(() => {
     setSearch("");
   }, [peer.id]);
@@ -2438,6 +2502,7 @@ function SessionAccountFooter(props: {
     if (!open) return;
     const outside = (event: Event): void => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest('.saved-overflow-menu-portal, .claim-popover-portal')) return;
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
     const keydown = (event: KeyboardEvent): void => {
@@ -2461,7 +2526,7 @@ function SessionAccountFooter(props: {
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </button>}
-    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" style={{ width: "320px" }}>
+    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" >
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
       <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
@@ -2471,20 +2536,13 @@ function SessionAccountFooter(props: {
         {currentAccount?.planTypeLabel ? <span class="cli-account-plan">{currentAccount.planTypeLabel}</span> : null}
       </section>
       <div class="cli-account-quota-grid"><AccountQuota account={currentAccount} saved={!connected} /></div>
-      <div class="cli-account-list-heading"><strong>Accounts <span>{quotaAccounts.length}</span></strong></div>
+      <div class="cli-account-list-heading"><strong>Accounts <span>{orderedAccounts.length}</span></strong></div>
       <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account…" value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
-      <div class="cli-account-list" role="group" aria-label="Saved accounts">
-        {filtered.map(account => {
-          const active = account.isActive || account.isCurrentWindowAccount;
-          const claimed = isAccountClaimedByAnotherDevice(account);
-          const accountName = name(account, true);
-          return <button type="button" class={`cli-account-choice ${active ? "is-current" : ""} ${!account.enabled ? "is-disabled" : ""} ${claimed ? "is-claimed" : ""}`} key={account.id} aria-label={`Switch to ${accountName}`} aria-current={active ? "true" : undefined} disabled={active || !account.enabled || !connected || props.switching} title={!account.enabled ? "Enable this account from the dashboard" : active ? "Current account" : !connected ? "System offline" : claimed ? `Claimed on ${getSensitiveDisplayValue(account.runningDeviceName!, props.privacyMode, "name")}. Choose ${accountName} to switch manually.` : `Choose ${accountName}`} onClick={() => choose(account.id)}>
-            <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"}</small><AccountQuota account={account} saved={!connected} /></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{claimed ? `${!account.enabled ? "Disabled · " : ""}Claimed` : !account.enabled ? "Disabled" : active ? <><CheckIcon />Active</> : <SwitchAccountIcon />}</span>
-          </button>;
-        })}
-        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : accounts.length ? "No accounts with quota remaining" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : accounts.length ? "Refresh quotas from the dashboard or wait for a reset." : "Add an account from the dashboard to get started."}</small></div> : null}
+      <div class="cli-account-grid dashboard-view-cards" role="group" aria-label="Saved accounts">
+        <div class="accounts-grid">{props.renderAccountGrid?.(filtered, () => closeMenu())}</div>
+        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name, email or tag." : "Add an account from the dashboard to get started."}</small></div> : null}
       </div>
-      <button type="button" class="cli-account-switch-action" disabled={!connected || props.switching || !quotaAccounts.some(account => account.enabled)} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
+      <button type="button" class="cli-account-switch-action" disabled={!connected || props.switching || !accounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
       <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { closeMenu(); props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
     </div>, document.body) : null}
   </footer>;
@@ -2637,8 +2695,8 @@ function loadWorkspaceLayout(): WorkspaceLayout {
     const parsed = JSON.parse(window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) ?? "{}") as Partial<WorkspaceLayout>;
     return {
       sessionView: parsed.sessionView === "projects" ? "projects" : "compact",
-      railWidth: clamp(Number(parsed.railWidth) || DEFAULT_WORKSPACE_LAYOUT.railWidth, 200),
-      terminalWidth: clamp(Number(parsed.terminalWidth) || DEFAULT_WORKSPACE_LAYOUT.terminalWidth, 280),
+      railWidth: clamp(Number(parsed.railWidth) || DEFAULT_WORKSPACE_LAYOUT.railWidth, 160),
+      terminalWidth: clamp(Number(parsed.terminalWidth) || DEFAULT_WORKSPACE_LAYOUT.terminalWidth, 220),
       composerHeight: clamp(Number(parsed.composerHeight) || DEFAULT_WORKSPACE_LAYOUT.composerHeight, 120)
     };
   } catch {

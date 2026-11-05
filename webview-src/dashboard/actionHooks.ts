@@ -111,7 +111,7 @@ export function useDashboardActions(
 
   const sendAction = useCallback<SendAction>((action, accountId, payload) => {
     const requestId = createActionRequestId(payload?.automatic);
-    const routedPayload = payload && Object.hasOwn(payload, 'targetDeviceId') ? payload : { ...payload, targetDeviceId: targetDeviceId && targetDeviceId !== 'local' ? targetDeviceId : undefined };
+    const routedPayload = action === 'setPrivacyMode' || action === 'setCrossPcSyncEnabled' ? { ...payload, targetDeviceId: undefined } : payload && Object.hasOwn(payload, 'targetDeviceId') ? payload : { ...payload, targetDeviceId: targetDeviceId && targetDeviceId !== 'local' && !snapshot.current?.connectedPeers?.some(item => item.id === targetDeviceId && item.local) ? targetDeviceId : undefined };
     const peer = routedPayload?.targetDeviceId && routedPayload.targetDeviceId !== 'local'
       ? snapshot.current?.connectedPeers?.find(item => item.id === routedPayload.targetDeviceId) : undefined;
     dispatch({
@@ -121,6 +121,7 @@ export function useDashboardActions(
         action,
         accountId,
         requestedAt: Date.now(),
+        ...(accountId && (action === 'setAccountTags' || action === 'setAccountQueuePriority' || action === 'toggleAccountEnabled') ? { accountEdit: { deviceId: routedPayload?.targetDeviceId && routedPayload.targetDeviceId !== 'local' && !peer?.local ? routedPayload.targetDeviceId : undefined, patch: action === 'setAccountTags' ? { tags: payload?.tags } : action === 'setAccountQueuePriority' ? { queuePriority: payload?.queuePriority === true } : { enabled: payload?.enabled === true } } } : {}),
         timeoutMs: Math.max(getActionTimeoutMs(action, payload?.accountIds?.length ?? (peer && !peer.local ? snapshot.current?.peerAccounts?.[peer.id]?.length : undefined) ?? actionFeedbackRef.current.accountCount), chatUploadTimeoutMs(payload?.attachments ?? payload?.task?.uploads ?? payload?.comment?.uploads))
       }
     });
@@ -154,13 +155,7 @@ export function useDashboardActions(
         action,
         accountId,
         requestId,
-        payload: action === "setPrivacyMode" || action === "setCrossPcSyncEnabled"
-          ? payload
-          : payload && Object.hasOwn(payload, "targetDeviceId")
-            ? payload
-            : targetDeviceId && targetDeviceId !== "local"
-              ? { ...(payload ?? {}), targetDeviceId }
-              : payload
+        payload: routedPayload
       });
     } catch (error) {
       const detail = `The action could not be sent: ${error instanceof Error ? error.message : String(error)}`;
