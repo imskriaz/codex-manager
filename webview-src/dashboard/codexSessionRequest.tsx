@@ -50,7 +50,7 @@ export function CodexSessionRequest(props: {
           : <textarea id={question.options?.length ? id + "-custom" : id} name={"answer-" + index} autoComplete="off" aria-label={question.options?.length ? "Or type an answer for " + (question.header || question.question) : undefined} placeholder={question.options?.length ? "Or type your own answer…" : undefined} rows={2} value={selected ? "" : answer} disabled={Boolean(responseId)} maxLength={8_000} onInput={event => props.onAnswer(key, question.id, event.currentTarget.value)} />}
       </div>;
     })}
-    {!props.connected ? <p class="codex-request-connection" role="status">The owning system is offline. You can edit your answer; reconnect before sending.</p> : null}
+    {!props.connected ? <p class="codex-request-connection" role="status">The owning system is offline. Your answer is kept; reconnect before sending.</p> : null}
     {error ? <p class="codex-request-error" role="alert">{error}</p> : null}
     <div class="codex-request-actions">
       <button type="button" class="is-secondary" disabled={blocked} onClick={() => props.onRespond(key, "decline")}>{isQuestion ? "Dismiss question" : "Decline"}</button>

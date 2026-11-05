@@ -9,6 +9,17 @@ import {
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
+  it('keeps generic disconnected-action notices out of toasts without hiding other failures or action prompts', () => {
+    const changed = vi.fn(), controller = createDashboardToastController(changed);
+    for (const state of ['closed', 'failed']) controller.show({ level: 'error', message: `The connection ${state} before this action was confirmed. Its outcome is unknown; reconnect and verify before retrying.` });
+    controller.show({ level: 'warning', message: 'Stop requested. Waiting for Codex to end the turn.' });
+    expect(changed).not.toHaveBeenCalled();
+    controller.show({ level: 'error', message: 'Permission denied. Your changes were kept.' });
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Permission denied. Your changes were kept.' }));
+    controller.show({ level: 'warning', message: 'The connection closed before this action was confirmed.', actions: ['Review'] });
+    expect(changed).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
   it('suppresses cached-session inspection progress even when an older host labels it as a warning', () => {
     const changed=vi.fn(),controller=createDashboardToastController(changed);
     for(const message of ['Checking saved running activity. Refresh before sending.','Session history is available, but running state could not be verified. Refresh before sending. Checking saved running activity. Refresh before sending.']) controller.show({level:'warning',message});

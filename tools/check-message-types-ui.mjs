@@ -49,7 +49,7 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
     { id: 'capacity-types', kind: 'tool-call', text: 'Selected model is at capacity.', result: '{"error":"model_overloaded"}', debug: '{"error":"model_overloaded"}', status: 'failed' },
     { id: 'error-types', kind: 'error', text: 'Request failed. Reconnect before retrying.', debug: raw, status: 'failed' },
     { id: 'agent-types', kind: 'collaboration', title: 'Reviewer finished', text: 'Checked the changes.', debug: JSON.stringify({ receiverThreadIds: [agentId], agentsStates: { [agentId]: 'completed' } }), result: '{"status":"completed"}', status: 'completed' },
-    { id: 'agent-message-types', kind: 'tool-call', title: 'Used send_message', text: 'Sent review notes.', arguments: JSON.stringify({ target: agentId, message: 'Check the changes.' }), status: 'completed' },
+    { id: 'agent-message-types', kind: 'tool-call', title: 'Used send_input', text: 'Sent review notes.', arguments: JSON.stringify({ id: agentId, message: 'Check the changes.' }), status: 'completed' },
     { id: 'agent-wait-types', kind: 'collaboration', title: 'Waited for agents', text: 'Waiting finished.', debug: JSON.stringify({ receiverThreadIds: [agentId, parentId] }), status: 'completed' },
     { id: 'agent-missing-types', kind: 'collaboration', title: 'Missing agent', text: 'An older agent contributed.', debug: JSON.stringify({ receiverThreadIds: ['99999999-9999-4999-8999-999999999999'] }), status: 'completed' }
   ];
@@ -102,10 +102,10 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   await image.getByRole('button', {name:'Preview Reference image',exact:true}).click();
   await page.getByRole('button',{name:'Close image preview',exact:true}).click();
   assert.equal(await page.locator('.cli-agent-links').count(), 0, 'Agent activities have no separate open button');
-  await page.locator('.cli-activity.is-collaboration').filter({ hasText: 'Reviewer finished' }).locator(':scope > summary .cli-activity-heading').click();
+  await page.locator('.cli-activity.is-collaboration').filter({ hasText: 'Completed Reviewer' }).locator(':scope > summary .cli-activity-heading').click();
   await page.getByText('Agent reviewer message', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Close workspace tools', exact: true }).last().click();
-  await page.locator('.cli-activity.is-tool-call').filter({ hasText: 'Used send_message' }).locator(':scope > summary .cli-activity-heading').click();
+  await page.locator('.cli-activity.is-tool-call').filter({ hasText: 'Sent message to Reviewer' }).locator(':scope > summary .cli-activity-heading').click();
   await page.getByText('Agent reviewer message', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Close workspace tools', exact: true }).last().click();
   await page.locator('.cli-activity.is-collaboration').filter({ hasText: 'Waited for agents' }).locator(':scope > summary .cli-activity-heading').click();

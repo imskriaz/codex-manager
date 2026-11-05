@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatActivityCode, messageAgentIds } from '../src/domain/sessionMessagePresentation';
+import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../src/domain/sessionMessagePresentation';
 import { commandChoices } from '../webview-src/dashboard/composerCommands';
 
 describe('readable activity payloads', () => {
@@ -29,5 +29,20 @@ describe('readable activity payloads', () => {
     expect(commandChoices('/skills', skills)).toEqual([{ ...skills[0], skill: true }]);
     expect(commandChoices('/changes', skills)).toHaveLength(1);
     expect(commandChoices('/unknown', skills)).toEqual([]);
+  });
+  it('names recipient conversations for sent messages and confirmed completions without linking call IDs', () => {
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', call = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const message = { id: call, kind: 'tool-call' as const, title: 'Used send_input', text: '', arguments: JSON.stringify({ id, message: 'Review this' }), debug: JSON.stringify({ id: call }), status: 'completed' as const };
+    expect(messageAgentIds(message)).toEqual([id]);
+    expect(agentActivityLabel(message, { [id]: 'Correct BOM libraries' })).toBe('Sent message to Correct BOM libraries');
+    expect(agentActivityLabel({ ...message, status: 'inProgress' }, { [id]: 'Reviewer' })).toBe('Sending message to Reviewer');
+    expect(agentActivityLabel({ ...message, status: 'failed' }, { [id]: 'Reviewer' })).toBe('Message to Reviewer failed');
+    expect(agentActivityLabel({ ...message, status: 'unknown' }, { [id]: 'Reviewer' })).toBeUndefined();
+    const completed = { ...message, kind: 'collaboration' as const, title: 'Agent finished', arguments: undefined, debug: JSON.stringify({ receiverThreadIds: [id], agentName: 'Reviewer' }) };
+    expect(agentActivityLabel(completed, {})).toBe('Completed Reviewer');
+    const wait = { ...message, title: 'Used wait_agent', arguments: JSON.stringify({ ids: [id] }), result: JSON.stringify({ status: { [id]: { completed: 'Reviewed' } } }) };
+    expect(agentActivityLabel(wait, { [id]: 'Reviewer' })).toBe('Completed Reviewer');
+    expect(agentActivityLabel({ ...wait, result: JSON.stringify({ status: { [id]: 'running' } }) }, {})).toBeUndefined();
+    expect(messageAgentIds({ ...message, arguments: '{broken' })).toEqual([]);
   });
 });

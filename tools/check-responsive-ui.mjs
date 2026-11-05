@@ -428,6 +428,164 @@ async function selectSidebarSystem(page, width, id) {
   const hide = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
   if (width <= 760 && await hide.isVisible()) await hide.click();
 }
+async function checkAccountCenterUi(page, width, height) {
+  await page.goto(`${origin}/workspace/${parentId}`);
+  await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+  console.log(`Checking ${width}: account center`);
+  await page.evaluate(() => {
+    const state = window.__uiSnapshot;
+    window.__accountCenterSaved = { accounts: state.accounts, connectedPeers: state.connectedPeers, peerAccounts: state.peerAccounts };
+    const template = structuredClone(state.accounts.find(account => account.isActive) ?? state.accounts[0]);
+    const active = { ...template, id: "center-active", email: "active@example.com", displayName: "Personal", isActive: true, isCurrentWindowAccount: true, runningOnThisDevice: true, runningDeviceName: undefined, enabled: true, switchQueued: false, hasQuota402: false, healthKind: "healthy", metrics: [{ key: "hourly", period: "hourly", label: "5h", visible: true, percentage: 0 }, { key: "weekly", period: "weekly", label: "Weekly", visible: true, percentage: 75 }] };
+    const ready = { ...active, id: "center-ready", email: "ready@example.com", displayName: "Ready account", isActive: false, isCurrentWindowAccount: false, runningOnThisDevice: false, creditsBalance: 0, creditsUnlimited: false, metrics: active.metrics.map(metric => ({ ...metric, percentage: 90 })) };
+    const disabled = { ...ready, id: "center-disabled", email: "disabled@example.com", displayName: "Disabled account", enabled: false, lastQuotaAt: 1, metrics: [ready.metrics[1]] };
+    const claimed = { ...ready, id: "center-claimed", email: "claimed@example.com", runningDeviceName: "Claim owner workstation", runningDeviceOnline: true };
+    state.accounts = [active, claimed, ready, disabled,
+      { ...claimed, id: "center-stale-claim", email: "stale@example.com", runningDeviceOnline: false },
+      { ...ready, id: "center-unknown", email: "unknown@example.com", metrics: [] },
+      { ...ready, id: "center-invalid", email: "invalid@example.com", metrics: [{ ...ready.metrics[0], percentage: NaN }] },
+      { ...ready, id: "center-exhausted", email: "exhausted@example.com", metrics: [{ ...ready.metrics[1], percentage: 0 }] },
+      { ...claimed, id: "center-disabled-claim", email: "blocked@example.com", enabled: false }];
+    state.connectedPeers = [{ id: "fixture-local", name: "This PC", connected: true, local: true, sessionCount: 2 }, { id: "account-remote", name: "Remote workstation", connected: true, sessionCount: 0 }, { id: "account-offline", name: "Offline workstation", connected: false, sessionCount: 0 }, { id: "account-empty", name: "Empty workstation", connected: true, sessionCount: 0 }, { id: "account-disabled", name: "Disabled accounts", connected: true, sessionCount: 0 }, { id: "account-exhausted", name: "No remaining quota", connected: true, sessionCount: 0 }];
+    state.peerAccounts = { "account-remote": [{ ...active, id: "remote-active", displayName: "Remote account", email: "remote-active@example.com" }, { ...ready, id: "remote-ready", email: "remote-ready@example.com" }], "account-offline": [ready], "account-disabled": [disabled], "account-exhausted": [active] };
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state } }));
+  });
+  await selectSidebarSystem(page, width, 'account-remote');
+  assert.equal(new URL(page.url()).pathname, '/workspace', 'Changing systems keeps Workspace open');
+  if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
+  const showAccountRail = async () => { if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click(); };
+  await showAccountRail();
+  const accountTrigger = page.getByRole("button", { name: "Open account center", exact: true });
+  await accountTrigger.hover();
+  assert.equal(await page.locator(".cli-account-center").count(), 0, "The account center opens intentionally instead of on hover");
+  await accountTrigger.click();
+  const accountCenter = page.getByRole("dialog", { name: "Account center", exact: true });
+  const currentQuota = accountCenter.locator('.cli-account-quota-grid');
+  await accountCenter.waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Search accounts on selected system"), false, "Opening the account center by pointer does not summon the mobile keyboard");
+  const systemSelect = accountCenter.getByRole("combobox", { name: "Account system", exact: true });
+  assert.equal(await systemSelect.inputValue(), "account-remote", "The account center starts on the selected dashboard system");
+  await systemSelect.selectOption("fixture-local");
+  assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
+  assert.equal(await systemSelect.evaluate(node => getComputedStyle(node).fontSize), await accountCenter.locator('.cli-account-system > label').evaluate(node => getComputedStyle(node).fontSize), 'System text matches the small label');
+  assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').count(), 0, "Exhausted current accounts stay in the summary and are omitted from choices");
+  assert.equal(await currentQuota.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota stays visible in the current account summary");
+  assert.equal(await accountCenter.locator('.cli-account-choice').count(), 5, 'Choices include all accounts with quota, including disabled and claimed accounts');
+  assert.deepEqual(await accountCenter.locator('.cli-account-choice').evaluateAll(rows => rows.map(row => row.classList.contains('is-claimed'))), [false, false, false, true, true], 'Live claims always follow unclaimed accounts');
+  assert.equal(await accountCenter.locator('.cli-account-list-heading span').textContent(), '5');
+  assert.equal(await accountCenter.locator('.cli-account-list').getByRole('meter').count(), 9, 'Each recorded quota window gets its own bar');
+  assert.ok(await accountCenter.locator('.cli-account-list [role="meter"]').evaluateAll(meters => meters.every(meter => Math.abs(meter.firstElementChild.getBoundingClientRect().width - meter.getBoundingClientRect().width * Number(meter.getAttribute('aria-valuenow')) / 100) < 2)), 'Bar widths match their accessible percentages');
+  const disabledChoice = accountCenter.getByRole('button', { name: 'Switch to dis***com', exact: true });
+  assert.equal(await disabledChoice.isDisabled(), true, 'Disabled accounts are visible but cannot switch');
+  assert.equal(await disabledChoice.locator('.cli-account-choice-status').textContent(), 'Disabled');
+  assert.notEqual(await disabledChoice.evaluate(node => getComputedStyle(node).color), await accountCenter.getByRole('button', { name: 'Switch to rea***com', exact: true }).evaluate(node => getComputedStyle(node).color), 'Disabled accounts use muted gray text');
+  assert.ok(await accountCenter.locator('.is-claimed').evaluateAll(rows => rows.every(row => getComputedStyle(row).borderTopWidth === '1px' && Number(getComputedStyle(row).borderTopColor.match(/\d+/)[0]) > 150)), 'Claimed accounts have a red border');
+  assert.equal(await accountCenter.locator('.is-claimed').first().isEnabled(), true, 'Claims retain explicit manual switching');
+  assert.ok(!(await accountCenter.locator('.is-claimed').first().getAttribute('title')).includes('Claim owner workstation'), 'Claim owner names respect privacy mode');
+  assert.equal(await accountTrigger.getByRole('meter').count(), 2, 'Footer keeps each quota window separate');
+  await page.evaluate(() => {
+    const state = window.__uiSnapshot;
+    state.accounts[0].metrics[0].visible = false;
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 1);
+  const singleQuota = accountTrigger.locator('.cli-quota-meter');
+  assert.ok(await singleQuota.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), 'A single quota window fills the footer width');
+  assert.equal(await currentQuota.getByRole('meter').count(), 1, 'Account center summary also fills one quota window');
+  assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').isDisabled(), true, 'A current account with a remaining reported window is visible and cannot switch twice');
+  await page.evaluate(() => {
+    const state = window.__uiSnapshot;
+    state.accounts[0].metrics[0].visible = true;
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 2);
+  const accountSearch = accountCenter.getByRole("searchbox", { name: "Search accounts on selected system", exact: true });
+  await accountSearch.fill("ready@example.com");
+  assert.equal(await accountCenter.locator(".cli-account-choice").count(), 1);
+  await accountSearch.fill("account-that-does-not-exist");
+  await accountCenter.getByText("No matching accounts", { exact: true }).waitFor();
+  await accountSearch.fill("");
+  await accountSearch.fill('disabled@example.com');
+  assert.equal(await accountCenter.locator('.cli-account-choice').count(), 1, 'Search includes disabled accounts with remaining quota');
+  await accountSearch.fill('unknown@example.com');
+  await accountCenter.getByText('No matching accounts', { exact: true }).waitFor();
+  await accountSearch.fill('');
+  assert.ok(await accountCenter.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; }), "The account center fits every viewport");
+  if (width <= 760) assert.ok(await accountCenter.locator('input[type="search"]').evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile account search avoids automatic iOS zoom at the configured text scale");
+  assert.ok(await accountCenter.evaluate(element => element.scrollWidth <= element.clientWidth), "The account center has no horizontal overflow");
+  await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
+  await systemSelect.selectOption('account-disabled');
+  await accountCenter.getByRole('button', { name: 'Switch to dis***com', exact: true }).waitFor();
+  assert.equal(await accountCenter.locator('.cli-account-choice').count(), 1);
+  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(), true, 'All-disabled accounts remain visible without enabling switching');
+  await systemSelect.selectOption('account-exhausted');
+  await accountCenter.getByText('No accounts with quota remaining', { exact: true }).waitFor();
+  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(), true);
+  await systemSelect.selectOption('fixture-local');
+  if (width <= 760) {
+    await accountSearch.focus();
+    await page.setViewportSize({ width, height: Math.max(300, height - 300) });
+    await page.waitForFunction(() => { const bounds = document.querySelector('.cli-account-center')?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
+    await page.screenshot({ path: path.join(output, `account-center-keyboard-${width}.png`) });
+    await page.setViewportSize({ width, height });
+  }
+  await page.keyboard.press("Escape");
+  await page.locator(".cli-account-center").waitFor({ state: "detached" });
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open account center");
+  await accountTrigger.press("Enter");
+  await systemSelect.selectOption("fixture-local");
+  await page.evaluate(() => { window.__holdNextSwitch = true; });
+  await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).click();
+  const switchPicker = page.getByRole("dialog", { name: "Switch account", exact: true });
+  await switchPicker.waitFor();
+  assert.equal(await switchPicker.getByRole("option").count(), 1, "A chosen account keeps the existing switching confirmation");
+  await switchPicker.getByRole("option").click();
+  await page.waitForFunction(() => window.__heldSwitch);
+  assert.deepEqual(await page.evaluate(() => ({ accountId: window.__heldSwitch.accountId, target: window.__heldSwitch.payload?.targetDeviceId ?? "local" })), { accountId: "center-ready", target: "local" }, "Choosing a local account stays local even when a remote dashboard is selected");
+  await showAccountRail();
+  await accountTrigger.click();
+  assert.equal(await accountCenter.locator(".cli-account-switch-action").isDisabled(), true, "Duplicate switching is unavailable while its result is pending");
+  assert.equal(await accountCenter.getByRole("button", { name: "Settings", exact: true }).isEnabled(), true, "Independent navigation stays available");
+  await systemSelect.selectOption("account-offline");
+  await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
+  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'Offline account controls retain the saved view and prohibit switching');
+  await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
+  await systemSelect.selectOption("account-empty");
+  assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
+  await accountCenter.getByText("Quota unavailable", { exact: true }).waitFor();
+  await page.evaluate(() => { const request = window.__heldSwitch; window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", action: "switch", requestId: request.requestId, accountId: request.accountId, status: "failed", error: "Simulated switch failure. No account was changed." } })); });
+  await systemSelect.selectOption("fixture-local");
+  await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).waitFor();
+  assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
+  await systemSelect.selectOption("account-remote");
+  await page.evaluate(() => { window.__removedAccountPeer=window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-remote');window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
+  await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
+  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'A missing system cannot accept switches');
+  await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.push(window.__removedAccountPeer);window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
+  await systemSelect.selectOption("fixture-local");
+  await page.evaluate(() => {
+    const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
+    account.metrics = [{ key: "invalid", label: "Invalid", visible: true, percentage: NaN }, { key: "bounded", label: "Remaining", visible: true, percentage: 150 }];
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+  });
+  assert.equal(await currentQuota.getByRole("meter").count(), 1, "Partial quota records omit invalid values");
+  assert.equal(await currentQuota.getByRole("meter").getAttribute("aria-valuenow"), "100", "Quota meters stay within their range");
+  await accountCenter.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".overlay.open").waitFor();
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    for (const state of ['closed', 'failed']) window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'error', message: `The connection ${state} before this action was confirmed. Its outcome is unknown; reconnect and verify before retrying.` } }));
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'warning', message: 'Stop requested. Waiting for Codex to end the turn.' } }));
+  });
+  assert.equal(await page.locator('.dashboard-notice').filter({hasText:/The connection (closed|failed) before|Stop requested/}).count(), 0, 'Generic disconnected-action and Stop progress notices do not create a toast');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'error', message: 'Permission denied. Your work was kept.' } })));
+  await page.locator('.dashboard-notice').filter({hasText:'Permission denied. Your work was kept.'}).waitFor();
+  await page.evaluate(() => { Object.assign(window.__uiSnapshot, window.__accountCenterSaved); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
+  if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
+  if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "true") await page.locator(".cli-rail-toggle").click();
+  await page.goto(origin + '/');
+  await page.locator('.hero').waitFor();
+}
 async function checkClosedProject(page, width, errors) {
     await page.goto(`${origin}/workspace/${parentId}?closed-project`);
     if (width <= 1180) {
@@ -520,6 +678,14 @@ try {
       await page.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--account-center')) {
+      await page.goto(origin + '/');
+      await page.locator('#dashboard-main').waitFor();
+      await checkAccountCenterUi(page, width, height);
+      assert.deepEqual(errors, [], 'Account Center has no browser errors');
+      results.push({width,height,checks:'Small system selector, remaining quota only, disabled and claimed accounts, search, remote/offline/reconnect, switching and quiet disconnect notices'});
+      await context.close(); continue;
     }
     if (process.argv.includes('--wide-content')) {
       await checkWideContentUi(page, { origin, parentId, width, output });
@@ -2174,116 +2340,7 @@ try {
     await page.locator("#dashboard-main").waitFor({ state: "visible" });
     assert.equal(new URL(page.url()).pathname, "/", "Reload preserves the home dashboard");
     await page.locator(".hero").waitFor();
-    console.log(`Checking ${width}: account center`);
-    await page.evaluate(() => {
-      const state = window.__uiSnapshot;
-      window.__accountCenterSaved = { accounts: state.accounts, connectedPeers: state.connectedPeers, peerAccounts: state.peerAccounts };
-      const template = structuredClone(state.accounts.find(account => account.isActive) ?? state.accounts[0]);
-      const active = { ...template, id: "center-active", email: "active@example.com", displayName: "Personal", isActive: true, isCurrentWindowAccount: true, runningOnThisDevice: true, runningDeviceName: undefined, enabled: true, switchQueued: false, hasQuota402: false, healthKind: "healthy", metrics: [{ key: "hourly", period: "hourly", label: "5h", visible: true, percentage: 0 }, { key: "weekly", period: "weekly", label: "Weekly", visible: true, percentage: 75 }] };
-      const ready = { ...active, id: "center-ready", email: "ready@example.com", displayName: "Ready account", isActive: false, isCurrentWindowAccount: false, runningOnThisDevice: false, metrics: active.metrics.map(metric => ({ ...metric, percentage: 90 })) };
-      state.accounts = [active, ready, { ...ready, id: "center-disabled", email: "disabled@example.com", displayName: "Disabled account", enabled: false }];
-      state.connectedPeers = [{ id: "fixture-local", name: "This PC", connected: true, local: true, sessionCount: 2 }, { id: "account-remote", name: "Remote workstation", connected: true, sessionCount: 0 }, { id: "account-offline", name: "Offline workstation", connected: false, sessionCount: 0 }, { id: "account-empty", name: "Empty workstation", connected: true, sessionCount: 0 }];
-      state.peerAccounts = { "account-remote": [{ ...active, id: "remote-active", displayName: "Remote account", email: "remote-active@example.com" }, { ...ready, id: "remote-ready", email: "remote-ready@example.com" }] };
-      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state } }));
-    });
-    await selectSidebarSystem(page, width, 'account-remote');
-    if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-    const showAccountRail = async () => { if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click(); };
-    await showAccountRail();
-    const accountTrigger = page.getByRole("button", { name: "Open account center", exact: true });
-    await accountTrigger.hover();
-    assert.equal(await page.locator(".cli-account-center").count(), 0, "The account center opens intentionally instead of on hover");
-    await accountTrigger.click();
-    const accountCenter = page.getByRole("dialog", { name: "Account center", exact: true });
-    await accountCenter.waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Search accounts on selected system"), false, "Opening the account center by pointer does not summon the mobile keyboard");
-    const systemSelect = accountCenter.getByRole("combobox", { name: "Account system", exact: true });
-    assert.equal(await systemSelect.inputValue(), "account-remote", "The account center starts on the selected dashboard system");
-    await systemSelect.selectOption("fixture-local");
-    assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
-    assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').isDisabled(), true, "Current accounts are clearly marked without switching again");
-    assert.equal(await accountCenter.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota stays visible");
-    assert.equal(await accountTrigger.getByRole('meter').count(), 2, 'Footer keeps each quota window separate');
-    await page.evaluate(() => {
-      const state = window.__uiSnapshot;
-      state.accounts[0].metrics[0].visible = false;
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
-    });
-    await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 1);
-    const singleQuota = accountTrigger.locator('.cli-quota-meter');
-    assert.ok(await singleQuota.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), 'A single quota window fills the footer width');
-    assert.equal(await accountCenter.getByRole('meter').count(), 1, 'Account center also fills one quota window');
-    await page.evaluate(() => {
-      const state = window.__uiSnapshot;
-      state.accounts[0].metrics[0].visible = true;
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
-    });
-    await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 2);
-    const accountSearch = accountCenter.getByRole("searchbox", { name: "Search accounts on selected system", exact: true });
-    await accountSearch.fill("ready");
-    assert.equal(await accountCenter.locator(".cli-account-choice").count(), 1);
-    await accountSearch.fill("account-that-does-not-exist");
-    await accountCenter.getByText("No matching accounts", { exact: true }).waitFor();
-    await accountSearch.fill("");
-    assert.equal(await accountCenter.getByRole("button", { name: "Switch to dis***com", exact: true }).count(), 0, "Disabled accounts are omitted from switching choices");
-    assert.ok(await accountCenter.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; }), "The account center fits every viewport");
-    if (width <= 760) assert.ok(await accountCenter.locator('input[type="search"]').evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile account search avoids automatic iOS zoom at the configured text scale");
-    assert.ok(await accountCenter.evaluate(element => element.scrollWidth <= element.clientWidth), "The account center has no horizontal overflow");
-    await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
-    if (width <= 760) {
-      await accountSearch.focus();
-      await page.setViewportSize({ width, height: Math.max(300, height - 300) });
-      await page.waitForFunction(() => { const bounds = document.querySelector('.cli-account-center')?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
-      await page.screenshot({ path: path.join(output, `account-center-keyboard-${width}.png`) });
-      await page.setViewportSize({ width, height });
-    }
-    await page.keyboard.press("Escape");
-    await page.locator(".cli-account-center").waitFor({ state: "detached" });
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open account center");
-    await accountTrigger.press("Enter");
-    await systemSelect.selectOption("fixture-local");
-    await page.evaluate(() => { window.__holdNextSwitch = true; });
-    await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).click();
-    const switchPicker = page.getByRole("dialog", { name: "Switch account", exact: true });
-    await switchPicker.waitFor();
-    assert.equal(await switchPicker.getByRole("option").count(), 1, "A chosen account keeps the existing switching confirmation");
-    await switchPicker.getByRole("option").click();
-    await page.waitForFunction(() => window.__heldSwitch);
-    assert.deepEqual(await page.evaluate(() => ({ accountId: window.__heldSwitch.accountId, target: window.__heldSwitch.payload?.targetDeviceId ?? "local" })), { accountId: "center-ready", target: "local" }, "Choosing a local account stays local even when a remote dashboard is selected");
-    await showAccountRail();
-    await accountTrigger.click();
-    assert.equal(await accountCenter.locator(".cli-account-switch-action").isDisabled(), true, "Duplicate switching is unavailable while its result is pending");
-    assert.equal(await accountCenter.getByRole("button", { name: "Settings", exact: true }).isEnabled(), true, "Independent navigation stays available");
-    await systemSelect.selectOption("account-offline");
-    await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
-    assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'Offline account controls retain the saved view and prohibit switching');
-    await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-    await systemSelect.selectOption("account-empty");
-    assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
-    await accountCenter.getByText("Quota unavailable", { exact: true }).waitFor();
-    await page.evaluate(() => { const request = window.__heldSwitch; window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", action: "switch", requestId: request.requestId, accountId: request.accountId, status: "failed", error: "Simulated switch failure. No account was changed." } })); });
-    await systemSelect.selectOption("fixture-local");
-    await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).waitFor();
-    assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
-    await systemSelect.selectOption("account-remote");
-    await page.evaluate(() => { window.__removedAccountPeer=window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-remote');window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-    await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
-    assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'A missing system cannot accept switches');
-    await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.push(window.__removedAccountPeer);window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-    await systemSelect.selectOption("fixture-local");
-    await page.evaluate(() => {
-      const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
-      account.metrics = [{ key: "invalid", label: "Invalid", visible: true, percentage: NaN }, { key: "bounded", label: "Remaining", visible: true, percentage: 150 }];
-      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
-    });
-    assert.equal(await accountCenter.getByRole("meter").count(), 1, "Partial quota records omit invalid values");
-    assert.equal(await accountCenter.getByRole("meter").getAttribute("aria-valuenow"), "100", "Quota meters stay within their range");
-    await accountCenter.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.locator(".overlay.open").waitFor();
-    await page.keyboard.press("Escape");
-    await page.evaluate(() => { Object.assign(window.__uiSnapshot, window.__accountCenterSaved); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-    if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-    if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "true") await page.locator(".cli-rail-toggle").click();
+    await checkAccountCenterUi(page, width, height);
     if (width > 760) {
       await page.locator("#donateButton").click();
       const donation = page.getByRole("dialog", { name: "Donate to Codex Manager", exact: true });

@@ -36,6 +36,40 @@ export function messageAgentIds(message: DashboardCliSessionMessage): string[] {
       else read(item, depth + 1);
     }
   };
-  for (const raw of [message.debug, message.arguments, message.result]) if (raw && raw.length <= 64_000) { try { read(JSON.parse(raw)); } catch { /* Partial output remains readable. */ } }
+  for (const raw of [message.debug, message.arguments, message.result]) if (raw && raw.length <= 64_000) {
+    try {
+      const value: unknown = JSON.parse(raw); read(value);
+      if (raw === message.arguments && /(?:send_input|close_agent|resume_agent)/i.test([message.title, message.subtitle].join(' ')) && value && typeof value === 'object' && 'id' in value) add(value.id);
+    } catch { /* Partial output remains readable. */ }
+  }
   return [...ids];
+}
+
+export function agentActivityLabel(message: DashboardCliSessionMessage, names: Record<string, string>): string | undefined {
+  const ids = messageAgentIds(message);
+  if (ids.length !== 1) return;
+  let name = names[ids[0]!];
+  if (!name && message.debug && message.debug.length <= 64_000) {
+    try {
+      const detail = JSON.parse(message.debug) as Record<string, unknown>;
+      const raw = detail['agentName'] ?? detail['agentNickname'] ?? detail['name'];
+      if (typeof raw === 'string' && raw.trim()) name = raw;
+    } catch { /* Partial payloads keep their activity label. */ }
+  }
+  name ||= 'agent';
+  if (/send[_-]?(?:input|message)/i.test([message.subtitle, message.title].join(' '))) {
+    if (message.status === 'failed') return `Message to ${name} failed`;
+    if (message.status === 'inProgress') return `Sending message to ${name}`;
+    if (message.status === 'completed') return `Sent message to ${name}`;
+    return;
+  }
+  if (/\b(?:finished|completed)\b/i.test(message.title ?? '') && message.status === 'completed') return `Completed ${name}`;
+  if (/wait[_-]?agent/i.test([message.subtitle, message.title].join(' ')) && message.status === 'completed' && message.result && message.result.length <= 64_000) {
+    try {
+      const result = JSON.parse(message.result) as { status?: Record<string, unknown>; agentsStates?: Record<string, unknown> };
+      const state = (result.status ?? result.agentsStates)?.[ids[0]!];
+      if (state === 'completed' || state && typeof state === 'object' && ('completed' in state || 'status' in state && state.status === 'completed')) return `Completed ${name}`;
+    } catch { /* A completed wait is not proof that the agent finished. */ }
+  }
+  return undefined;
 }

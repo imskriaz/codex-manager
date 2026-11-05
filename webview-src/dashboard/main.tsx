@@ -81,6 +81,7 @@ import { SavedAccountCard } from "./savedAccountCard";
 import { createInitialState, reducer } from "./state";
 import { resolveDashboardThemeFromMedia } from "./theme";
 import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
+import { useSessionQuestionNotifications } from './sessionQuestionNotifications';
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { DonationDetails } from "./donationDetails";
@@ -563,6 +564,7 @@ function App() {
     peers: state.snapshot?.connectedPeers, sendAction, onNotice: showNotice
   });
   codexPromptTimeoutRef.current = codexPrompts.timeout;
+  const questionNotifications = useSessionQuestionNotifications(showNotice);
   const sendApiRequest = (action: 'generateApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
     const mutation=action!=='listApiTokens';
     if (mutation && (apiRequests.current.mutation || apiUncertainRef.current)) return;
@@ -2366,7 +2368,7 @@ function App() {
   };
 
   const activeCodexRequest = codexPrompts.active?.request;
-  const backgroundCodexRequest = codexPrompts.background?.request;
+  const backgroundCodexRequest = questionNotifications.active ?? codexPrompts.background?.request;
   const reviewBackgroundCodexRequest = (): void => {
     if (!backgroundCodexRequest) return;
     const session = cliSessionsRef.current.find((candidate) =>
@@ -2375,7 +2377,7 @@ function App() {
     if (session) {
       selectCliSession(session);
     } else {
-      selectCliSession({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId, remote: Boolean(backgroundCodexRequest.deviceId), title: "Session awaiting input", status: "unknown", projectPath: backgroundCodexRequest.cwd });
+      selectCliSession({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId, remote: Boolean(backgroundCodexRequest.deviceId), title: "Session awaiting input", status: "unknown", projectPath: 'cwd' in backgroundCodexRequest ? backgroundCodexRequest.cwd : undefined });
     }
   };
 
@@ -2463,12 +2465,12 @@ function App() {
             document.body
           )
         : null}
-      {backgroundCodexRequest && !activeCodexRequest
+      {isCliSessionsPath(browserPath) && backgroundCodexRequest && (backgroundCodexRequest.kind === 'question' || !activeCodexRequest)
         ? createPortal(
             <div class="codex-request-background" role="alert">
-              <span>Codex is waiting for input in another session.</span>
+              <span>{sameCliSessionTarget({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }, currentSessionTarget()) ? 'Codex has a question in this session.' : 'Codex is waiting for input in another session.'}</span>
               <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
-              <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest))}>×</button>
+              <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => { if (questionNotifications.active) { codexPrompts.dismiss(codexPromptKey(questionNotifications.active)); questionNotifications.dismiss(questionNotifications.active); } else codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest)); }}>×</button>
             </div>,
             document.body
           )
@@ -3175,7 +3177,7 @@ function App() {
                   selectedCliSessionRef.current = undefined;
                   setSelectedCliSession(undefined);
                   messageViewRevision.current++;
-                  navigateDashboardPath("/", setBrowserPath);
+                  navigateDashboardPath(isCliSessionsPath(browserPath) ? "/workspace" : "/", setBrowserPath);
                 }
               }}
               onDashboard={() => navigateDashboardPath("/", setBrowserPath)}

@@ -16423,14 +16423,22 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: calc(9px *
 .cli-account-center .cli-account-center-header { padding: 5px 10px; }
 .cli-account-center .cli-account-current { padding: 5px 10px 7px; }
 .cli-account-center .cli-account-system { padding: 0 10px 6px; }
+.cli-account-center .cli-account-system select { font-size: calc(10px * var(--dashboard-text-scale, 1)); }
 .cli-account-center .cli-account-list-heading { padding: 5px 10px; }
 .cli-account-center .cli-account-search { margin: 0 10px 5px; }
 .cli-account-center .cli-account-list { max-height: min(300px, 40dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 0; }
 .cli-account-center .cli-account-choice { min-height: 38px; padding: 4px 7px; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; box-shadow: none; }
 .cli-account-center .cli-account-choice:last-child { border-bottom: 0; }
 .cli-account-center .cli-account-choice-copy small { margin-top: 1px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-account-center .cli-account-choice-copy .cli-quota-summary { margin-top: 3px; }
+.cli-account-center .cli-account-choice-copy .cli-quota-label { font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-account-center .cli-account-choice-copy .cli-quota-label strong { font: inherit; color: inherit; }
 .cli-account-center .cli-account-choice-status svg { width: 16px; height: 16px; }
 .cli-account-center .cli-account-choice.is-current { opacity: 1; }
+.cli-account-center .cli-account-choice.is-disabled { background: var(--bg-elevated); color: var(--text-muted); opacity: 1; }
+.cli-account-center .cli-account-choice.is-disabled .cli-account-choice-status { color: var(--text-muted); }
+.cli-account-center .cli-account-choice.is-disabled .cli-account-quota-track i { background: var(--text-muted); }
+.cli-account-center .cli-account-choice.is-claimed { border: 1px solid var(--danger); }
 .cli-account-center .cli-account-switch-action { min-height: 30px; margin-bottom: 6px; padding: 4px 7px; }
 .cli-account-center .cli-account-navigation { flex-wrap: nowrap; padding: 4px; }
 .cli-account-center .cli-account-navigation button { gap: 4px; padding-inline: 4px; }
@@ -16859,6 +16867,7 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 }
 
 .codex-request-background .codex-request-dismiss { flex:none; width:24px; height:24px; min-width:24px; padding:0; background:transparent; color:var(--text-muted); border:0; font-size:calc(18px * var(--dashboard-text-scale, 1)); }
+@media (max-width:760px) { .codex-request-background .codex-request-dismiss { width:44px; height:44px; min-width:44px; min-height:44px; } }
 
 /* Transcript output and slash discovery remain readable inside narrow panes. */
 .cli-capacity-notice { min-width: 0; margin: 4px 0; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.5; }

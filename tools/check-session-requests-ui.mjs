@@ -29,6 +29,17 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
   assert.equal(declined.payload.codexRequestId, "permission-ui");
 
   await inject(question);
+  const banner = page.locator('.codex-request-background');
+  await banner.waitFor();
+  await page.evaluate(() => { history.pushState({}, '', '/'); dispatchEvent(new PopStateEvent('popstate')); });
+  await page.locator('.hero').waitFor();
+  assert.equal(await banner.count(), 0, 'Question banners never appear in Dashboard');
+  await page.evaluate(id => { history.pushState({}, '', '/workspace/' + id); dispatchEvent(new PopStateEvent('popstate')); }, threadId);
+  await banner.waitFor();
+  await page.reload();
+  await banner.waitFor();
+  assert.equal(await banner.getByText('Enter the secret value', { exact: true }).count(), 0, 'Persistent banners never expose secret question text');
+  await inject(question);
   const send = panel.getByRole("button", { name: "Send answer", exact: true });
   assert.equal(await send.isDisabled(), true);
   const choice = panel.locator('select[name="choice-0"]');
@@ -69,22 +80,23 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
   assert.equal(await send.isEnabled(), true, "An explicit failure permits a reviewed retry");
 
   await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:connection", connected: false } })));
-  await page.getByText("The owning system is offline. You can edit your answer; reconnect before sending.", { exact: true }).waitFor();
+  await page.getByText("The owning system is offline. Your answer is kept; reconnect before sending.", { exact: true }).waitFor();
   assert.equal(await send.isDisabled(), true);
-  await custom.fill("Edited while offline");
+  assert.equal(await custom.inputValue(), "Custom compact answer", 'Offline recovery preserves the answer draft');
   const beforeReconnect = await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").length);
   await page.evaluate(() => {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:connection", connected: true } }));
     window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-requests", requests: window.__uiCodexRequests } }));
   });
   await send.waitFor();
-  assert.equal(await custom.inputValue(), "Edited while offline");
+  assert.equal(await custom.inputValue(), "Custom compact answer");
   assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").length), beforeReconnect, "Reconnect never sends an answer automatically");
+  await custom.fill('Edited after reconnect');
   await page.screenshot({ path: path.join(output, "session-questions-" + width + ".png") });
   await send.click();
   await panel.waitFor({ state: "hidden" });
   const response = await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").at(-1));
-  assert.deepEqual(response.payload.codexAnswers, { layout: "Edited while offline", secret: "  private fixture value  ", notes: "Keep icons clear\nKeep quota inline" });
+  assert.deepEqual(response.payload.codexAnswers, { layout: "Edited after reconnect", secret: "  private fixture value  ", notes: "Keep icons clear\nKeep quota inline" });
   assert.equal(response.payload.codexDecision, "approve");
   await page.evaluate(request => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-request", request } })), question);
   assert.equal(await panel.count(), 0, "A late duplicate cannot reopen a resolved question");

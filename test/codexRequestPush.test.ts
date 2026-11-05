@@ -83,6 +83,20 @@ it('offers direct answers and inline text replies with a link to the owning sess
   expect(processMessage).not.toHaveBeenCalled();
 });
 
+it('keeps transcript question push identity stable across owner reconnects without merging different questions', () => {
+  const notify = vi.fn(); server.browserPush.notify = notify; server.peerSessions = new Map();
+  const request = { id: 'first-owner', threadId: 'session', sourceMessageId: 'question-message', createdAt: Date.now(), kind: 'question', title: 'Codex has a question', questions: [{ id: 'choice-0', question: 'Continue?', isSecret: false }] };
+  server.notifyCodexRequest(request);
+  const first = notify.mock.lastCall![0];
+  server.notifyCodexRequest({ ...request, id: 'reconnected-owner' });
+  expect(notify.mock.lastCall![0].notificationId).toBe(first.notificationId);
+  expect(server.codexPushActions.get(first.notificationId).requestId).toBe('reconnected-owner');
+  server.notifyCodexRequest({ ...request, questions: [{ ...request.questions[0], id: 'choice-1' }] });
+  expect(notify.mock.lastCall![0].notificationId).not.toBe(first.notificationId);
+  server.notifyCodexRequest({ ...request, questions: [{ ...request.questions[0], question: 'Changed question?' }] });
+  expect(notify.mock.lastCall![0].notificationId).not.toBe(first.notificationId);
+});
+
 it('never pushes expired or invalid-date questions', () => {
   const notify = vi.fn(); server.browserPush.notify = notify; server.peerSessions = new Map();
   for (const createdAt of [Date.now() - 120_000, Date.now() + 60_000, NaN]) server.notifyCodexRequest({ id: 'stale', threadId: 'session', kind: 'question', title: 'Old question', createdAt });

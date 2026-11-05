@@ -25,6 +25,7 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
 
   return {
     show(notice: DashboardNotice): void {
+      if (!notice.actions?.length && !notice.actionPrompt && (notice.message === "Stop requested. Waiting for Codex to end the turn." || /^The connection (?:closed|failed) before this action was confirmed\./.test(notice.message))) return;
       if (disposed || isCodexSessionInspectionNotice(notice.message) || notice.level === "info" && !notice.actions?.length && !notice.actionPrompt) {
         return;
       }

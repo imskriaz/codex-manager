@@ -1,5 +1,5 @@
 import { useComposerCommands } from './composerCommands';
-import { formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
+import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
 import { useSessionResume } from './sessionResume';
 import { codexModelLabel } from "./helpers";
 import { useSessionAccess } from './sessionAccess';
@@ -42,7 +42,8 @@ import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
-import { getSensitiveDisplayValue } from "./helpers";
+import { getSensitiveDisplayValue, isAccountClaimedByAnotherDevice } from "./helpers";
+import { hasDashboardQuotaRemaining } from "./accountSorting";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
@@ -1750,7 +1751,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
-      <span class="cli-activity-heading"><strong>{activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
+      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
       <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : capacity ? "Capacity" : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
       {agentLink ? <button type="button" class="cli-agent-detail-toggle" aria-label={`${message.title || 'Agent activity'} details`} title="Expand activity details" onClick={event => { event.preventDefault(); event.stopPropagation(); const details = event.currentTarget.closest('details'); if (details) details.open = !details.open; }}><ChevronIcon /></button> : <ChevronIcon />}
     </summary>
@@ -2405,6 +2406,7 @@ function SessionAccountFooter(props: {
   const focusSearchOnOpen = useRef(false);
   const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
   const peer = peers.find(item => item.id === props.selectedPeerId) ?? peers.find(item => item.local) ?? peers[0]!;
+  const connected = props.connected !== false && peer.connected;
   const accounts = peer.local ? (props.localAccounts ?? props.accounts ?? (props.account ? [props.account] : [])) : (props.peerAccounts?.[peer.id] ?? []);
   const name = (account: DashboardAccountViewModel | undefined, emailFirst = false): string => {
     const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
@@ -2415,8 +2417,8 @@ function SessionAccountFooter(props: {
   const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
   const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
   const currentName = name(currentAccount);
-  const enabledAccounts = accounts.filter(account => account.enabled);
-  const filtered = enabledAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const quotaAccounts = accounts.filter(hasDashboardQuotaRemaining).sort((left, right) => Number(isAccountClaimedByAnotherDevice(left)) - Number(isAccountClaimedByAnotherDevice(right)));
+  const filtered = quotaAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   useEffect(() => {
     setSearch("");
   }, [peer.id]);
@@ -2430,7 +2432,6 @@ function SessionAccountFooter(props: {
     setSearch("");
     setOpen(true);
   };
-  useEffect(() => { if (props.connected === false) closeMenu(); }, [props.connected]);
   const accessibility = useModalAccessibility(open && props.standalone === true, () => closeMenu(true));
   useAnchoredPopover(open && !props.standalone, triggerRef, menuRef, 'start');
   useLayoutEffect(() => {
@@ -2453,37 +2454,37 @@ function SessionAccountFooter(props: {
       window.removeEventListener("keydown", keydown, true);
     };
   }, [open]);
-  const choose = (accountId?: string): void => { closeMenu(); props.onSwitchAccount(peer.local ? "local" : peer.id, accountId); };
+  const choose = (accountId?: string): void => { if (!connected || props.switching) return; closeMenu(); props.onSwitchAccount(peer.local ? "local" : peer.id, accountId); };
   return <footer class={`cli-account-footer ${props.standalone ? 'is-standalone' : ''}`} ref={rootRef}>
     {props.standalone ? null : <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
-      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!peer.connected} /></span></span>
+      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </button>}
     {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" style={{ width: "320px" }}>
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
-      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={peer.connected ? "is-online" : "is-offline"}>{peer.connected ? "Online" : "Offline"}</span></div>
-      {!peer.connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
+      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
+      {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <section class="cli-account-current" aria-label="Current account">
         <span class="cli-account-avatar is-large" aria-hidden="true">{currentAccount ? currentName.slice(0, 1).toUpperCase() : "?"}</span>
         <div><strong title={currentName}>{currentName}</strong><small title={name(currentAccount, true)}>{currentAccount ? name(currentAccount, true) : "Add an account from the dashboard"}</small></div>
         {currentAccount?.planTypeLabel ? <span class="cli-account-plan">{currentAccount.planTypeLabel}</span> : null}
       </section>
-      <div class="cli-account-quota-grid"><AccountQuota account={currentAccount} saved={!peer.connected} /></div>
-      <div class="cli-account-list-heading"><strong>Accounts <span>{enabledAccounts.length}</span></strong></div>
+      <div class="cli-account-quota-grid"><AccountQuota account={currentAccount} saved={!connected} /></div>
+      <div class="cli-account-list-heading"><strong>Accounts <span>{quotaAccounts.length}</span></strong></div>
       <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account…" value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
       <div class="cli-account-list" role="group" aria-label="Saved accounts">
         {filtered.map(account => {
           const active = account.isActive || account.isCurrentWindowAccount;
+          const claimed = isAccountClaimedByAnotherDevice(account);
           const accountName = name(account, true);
-          const quota = getAccountQuotaMetrics(account);
-          return <button type="button" class={`cli-account-choice ${active ? "is-current" : ""}`} key={account.id} aria-label={`Switch to ${accountName}`} aria-current={active ? "true" : undefined} disabled={active || !account.enabled || !peer.connected || props.switching} title={active ? "Current account" : !peer.connected ? "System offline" : !account.enabled ? "Enable this account from the dashboard" : `Choose ${accountName}`} onClick={() => choose(account.id)}>
-            <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"} · {quota.length ? quota.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{active ? <><CheckIcon />Active</> : !account.enabled ? "Disabled" : <SwitchAccountIcon />}</span>
+          return <button type="button" class={`cli-account-choice ${active ? "is-current" : ""} ${!account.enabled ? "is-disabled" : ""} ${claimed ? "is-claimed" : ""}`} key={account.id} aria-label={`Switch to ${accountName}`} aria-current={active ? "true" : undefined} disabled={active || !account.enabled || !connected || props.switching} title={!account.enabled ? "Enable this account from the dashboard" : active ? "Current account" : !connected ? "System offline" : claimed ? `Claimed on ${getSensitiveDisplayValue(account.runningDeviceName!, props.privacyMode, "name")}. Choose ${accountName} to switch manually.` : `Choose ${accountName}`} onClick={() => choose(account.id)}>
+            <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"}</small><AccountQuota account={account} saved={!connected} /></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{claimed ? `${!account.enabled ? "Disabled · " : ""}Claimed` : !account.enabled ? "Disabled" : active ? <><CheckIcon />Active</> : <SwitchAccountIcon />}</span>
           </button>;
         })}
-        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : accounts.length ? "No enabled accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : accounts.length ? "Enable an account from the dashboard." : "Add an account from the dashboard to get started."}</small></div> : null}
+        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : accounts.length ? "No accounts with quota remaining" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : accounts.length ? "Refresh quotas from the dashboard or wait for a reset." : "Add an account from the dashboard to get started."}</small></div> : null}
       </div>
-      <button type="button" class="cli-account-switch-action" disabled={!peer.connected || props.switching || !enabledAccounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
+      <button type="button" class="cli-account-switch-action" disabled={!connected || props.switching || !quotaAccounts.some(account => account.enabled)} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
       <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { closeMenu(); props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
     </div>, document.body) : null}
   </footer>;

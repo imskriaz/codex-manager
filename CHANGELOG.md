@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0
+
+- Match the Account Center system selector to the surrounding small text. List all accounts with quota remaining and separate quota bars, keep disabled accounts gray, and place claimed accounts last with a red border and status label.
+- Remove generic connection-closed and Stop-requested toasts while retaining action errors and unconfirmed message states in their initiating controls.
+- Recover closing browser database connections automatically and read durable queues from storage across tab ownership changes, preserving drafts and preventing send replay. Keep Retry text-only with visible keyboard focus.
+- Keep question notifications in Workspace until dismissed, including across reconnects and reloads, without showing the banner on Dashboard. Preserve question push delivery and deduplicate transcript question pushes across owner reconnects.
+- Show named sent-message and completed subagent activity links that open the recipient conversation, while keeping activity details separately expandable.
+
 ## 1.6.10-pre.1
 
 - Reopen closing browser database connections before cache transactions so saved queues and message sending recover without losing drafts or replaying sends. Always reload durable queues from storage across tab ownership changes.

@@ -71,7 +71,7 @@ const DISMISSED_REQUESTS_KEY = 'codexManager.dismissedRequests.v1';
 export function readDismissedCodexRequests(): string[] {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(DISMISSED_REQUESTS_KEY) || '[]');
-    return Array.isArray(saved) ? saved.filter((key): key is string => typeof key === 'string' && key.length <= 512).slice(-128) : [];
+    return Array.isArray(saved) ? saved.filter((key): key is string => typeof key === 'string' && key.length <= 2048).slice(-128) : [];
   } catch { return []; }
 }
 export function saveDismissedCodexRequests(keys: string[]): boolean {

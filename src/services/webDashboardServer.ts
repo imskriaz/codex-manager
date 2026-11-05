@@ -1909,7 +1909,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private notifyCodexRequest(request: Extract<DashboardHostMessage, { type: "dashboard:codex-request" }>["request"]): void {
     if (request.kind === 'question' && request.createdAt !== undefined && (!Number.isFinite(request.createdAt) || Date.now() - request.createdAt >= 120_000 || request.createdAt > Date.now())) return;
     const targetDeviceId = request.deviceId;
-    const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${request.id}`;
+    const questionId = request.sourceMessageId ? crypto.createHash('sha256').update(JSON.stringify([request.sourceMessageId, request.questions])).digest('hex').slice(0, 32) : request.id;
+    const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${questionId}`;
     const question = request.kind === "question";
     const singleQuestion = question && request.questions?.length === 1 ? request.questions[0] : undefined;
     const options = singleQuestion && !singleQuestion.isSecret ? singleQuestion.options : undefined;

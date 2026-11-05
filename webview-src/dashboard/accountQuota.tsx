@@ -13,7 +13,7 @@ export function AccountQuota({ account, saved = false, inline = false }: { accou
     const label = metrics.length ? (saved || account?.hasQuotaError ? "Saved quota: " : "Current account quota: ") + metrics.map(metric => metric.label + " " + metric.value + "%").join(", ") : "Quota unavailable";
     return <span class="cli-quota-inline" role="group" aria-label={label} title={label}>{metrics.length ? metrics.map(metric => metric.value + "%").join("/") : "—"}</span>;
   }
-  return <span class="cli-quota-summary" role="group" aria-label="Current account quota">
+  return <span class="cli-quota-summary" role="group" aria-label="Account quota">
     <span class="cli-quota-meters">
       {metrics.length ? metrics.map(metric => <span class="cli-quota-meter" key={metric.key}>
         <span class="cli-quota-label"><span>{metric.label}</span><strong>{metric.value}%</strong></span>
