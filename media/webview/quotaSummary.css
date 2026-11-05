@@ -16683,6 +16683,26 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-question-prompt > button,.cli-queue-actions button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font: inherit; }
 .cli-question-prompt > button:disabled { opacity: .6; cursor: default; }
 .cli-local-queue:empty { display: none; }
+.cli-queue-summary { display:flex; align-items:center; gap:6px; margin:6px 0 8px auto; min-height:28px; padding:4px 8px; border:1px solid var(--border-default); border-radius:7px; background:var(--bg-surface); color:var(--text-secondary); font:inherit; font-size:calc(11px * var(--dashboard-text-scale, 1)); cursor:pointer; }
+.cli-queue-summary:hover { border-color:var(--accent-blue); color:var(--text-primary); }
+.cli-queue-summary svg { width:14px; height:14px; }
+.cli-queue-list-popover { width:min(390px,calc(100vw - 24px)); max-height:min(70vh,520px); margin:0; inset:auto 16px 72px auto; padding:10px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-elevated); color:var(--text-primary); box-shadow:0 16px 40px #0004; }
+.cli-queue-list-popover::backdrop { background:#0003; }
+.cli-queue-list-popover > header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 2px 8px; border-bottom:1px solid var(--border-muted); }
+.cli-queue-list-popover > header .cli-icon-button { width:26px; min-width:26px; height:26px; min-height:26px; padding:5px; }
+.cli-queue-list { display:grid; gap:6px; max-height:390px; overflow:auto; padding:8px 0; }
+.cli-queue-list-item { display:flex; align-items:flex-start; gap:8px; min-width:0; padding:8px; border:1px solid var(--border-muted); border-radius:7px; background:var(--bg-surface); }
+.cli-queue-list-copy { min-width:0; flex:1; }
+.cli-queue-list-copy strong,.cli-queue-list-copy p,.cli-queue-list-copy small { display:block; }
+.cli-queue-list-copy strong { color:var(--text-muted); font-size:calc(10px * var(--dashboard-text-scale, 1)); text-transform:uppercase; letter-spacing:.04em; }
+.cli-queue-list-copy p { margin:3px 0 0; overflow-wrap:anywhere; white-space:pre-wrap; font-size:calc(12px * var(--dashboard-text-scale, 1)); line-height:1.35; }
+.cli-queue-list-copy small { margin-top:3px; color:var(--text-muted); font-size:calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-queue-list-actions { display:flex; align-items:center; gap:2px; flex:none; }
+.cli-queue-list-actions .cli-icon-button,.cli-queue-list-actions .cli-queue-status-button { width:26px; min-width:26px; height:26px; min-height:26px; padding:5px; border:0; border-radius:5px; background:transparent; color:var(--text-muted); cursor:pointer; }
+.cli-queue-list-actions .cli-icon-button:hover,.cli-queue-list-actions .cli-queue-status-button:hover { background:var(--bg-hover); color:var(--text-primary); }
+.cli-queue-list-actions .is-danger:hover { color:var(--danger); }
+.cli-queue-clear { width:100%; min-height:28px; padding:4px 8px; border:1px solid var(--border-default); border-radius:6px; background:transparent; color:var(--text-secondary); font:inherit; font-size:calc(11px * var(--dashboard-text-scale, 1)); cursor:pointer; }
+.cli-queue-clear:disabled { opacity:.55; cursor:not-allowed; }
 .cli-pending-message { margin-block: 10px; }
 .cli-pending-message .cli-session-message { margin-bottom: 4px; }
 .cli-queued-status,.cli-pending-message > small { display: flex; justify-content: flex-end; align-items: center; gap: 6px; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); }

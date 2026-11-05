@@ -468,6 +468,7 @@ describe("sessions sidebar layout", () => {
 
   it("moves Files, Terminal, and Reviews into the tabbed right workbench", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const taskBoard = readFileSync("webview-src/dashboard/taskBoard.tsx", "utf8");
     const editor = readFileSync("webview-src/dashboard/workspaceCodeEditor.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
@@ -488,6 +489,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
     expect(source).toContain("steeringTurnId");
+    expect(taskBoard).toContain("const [sharedVisibleStages, setSharedVisibleStages] = useState<TaskStage[]>(stages)");
+    expect(taskBoard).toContain("if (props.shared) setSharedVisibleStages(next)");
     expect(source).not.toContain('<strong>Running elsewhere</strong>');
     expect(source).not.toContain('class="cli-account-footer-type"');
     expect(source).not.toContain('class="cli-running-quota-inline"');

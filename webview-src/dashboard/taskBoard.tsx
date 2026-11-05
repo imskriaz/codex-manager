@@ -70,11 +70,12 @@ export function TaskBoard(props: {
   const [localShowArchive, setShowArchive] = useState(() => props.shared?.board.boardConfig?.showArchive === true || (!props.shared && loadTaskBoardShowArchive()));
   const [hiddenOpen, setHiddenOpen] = useState(false), [hiddenSearch, setHiddenSearch] = useState(''), [hiddenLimit, setHiddenLimit] = useState(100);
   const [view, setView] = useState(() => props.shared ? props.shared.board.boardConfig?.view ?? 'board' : loadTaskBoardView());
-  const [localVisibleStages, setVisibleStages] = useState<TaskStage[]>(() => props.shared ? props.shared.board.boardConfig?.columns ?? stages : loadTaskBoardColumns());
-  const [localStageFilter, setStageFilter] = useState<TaskStage | 'all'>(() => props.shared?.board.boardConfig?.stageFilter ?? 'all');
+  const [localVisibleStages, setVisibleStages] = useState<TaskStage[]>(() => loadTaskBoardColumns());
+  const [sharedVisibleStages, setSharedVisibleStages] = useState<TaskStage[]>(stages);
+  const [localStageFilter, setStageFilter] = useState<TaskStage | 'all'>('all');
   const showArchive = props.shared ? props.shared.board.boardConfig?.showArchive === true : localShowArchive;
-  const visibleStages = props.shared ? props.shared.board.boardConfig?.columns ?? stages : localVisibleStages;
-  const stageFilter = props.shared ? props.shared.board.boardConfig?.stageFilter ?? 'all' : localStageFilter;
+  const visibleStages = props.shared ? sharedVisibleStages : localVisibleStages;
+  const stageFilter = props.shared ? 'all' : localStageFilter;
   const [tab, setTab] = useState<DetailTab | 'agents'>('overview'), [cursor, setCursor] = useState<string>();
   const [details, setDetails] = useState<ProjectTaskDetails>(), [detailLoading, setDetailLoading] = useState(false);
   const readTab: DetailTab = tab === 'agents' ? 'activities' : tab === 'overview' && props.shared ? can('activities') ? 'activities' : can('files') ? 'files' : 'changes' : tab;
@@ -515,11 +516,12 @@ export function TaskBoard(props: {
 
 <div class="task-board-view-actions">{can('submissions') ? <button type="button" class="task-add-button" aria-label="＋ Task" title="Add task" disabled={!project || busy} onClick={() => open({ id: '', title: '', prompt: '', stage: props.shared ? 'idea' : visibleStages[0] ?? 'planned', revision: 0, createdAt: 0, updatedAt: 0 })}><PlusIcon/><span>Add task</span></button> : null}</div>
       <TaskMenu label="Board actions">
-        {!props.shared ? <><strong class="task-menu-label">Show columns</strong>{stages.map(stage => <button type="button" role="menuitemcheckbox" aria-checked={visibleStages.includes(stage)} disabled={visibleStages.length === 1 && visibleStages.includes(stage)} onClick={() => {
+        <strong class="task-menu-label">Show columns</strong>{stages.map(stage => <button type="button" role="menuitemcheckbox" aria-checked={visibleStages.includes(stage)} disabled={visibleStages.length === 1 && visibleStages.includes(stage)} onClick={() => {
           const next = stages.filter(value => value === stage ? !visibleStages.includes(stage) : visibleStages.includes(value));
-          setVisibleStages(next); if (!saveTaskBoardColumns(next)) setStatus('Column choices are kept in this tab only. Browser storage is unavailable.');
+          if (props.shared) setSharedVisibleStages(next);
+          else { setVisibleStages(next); if (!saveTaskBoardColumns(next)) setStatus('Column choices are kept in this tab only. Browser storage is unavailable.'); }
         }}>{visibleStages.includes(stage) ? '✓ ' : ''}{label(stage)}</button>)}
-        <details class="task-status-options"><summary>Status filter</summary>{(['all',...stages] as const).map(value => <button type="button" role="menuitemradio" aria-checked={stageFilter === value} onClick={() => setStageFilter(value)}>{stageFilter === value ? '✓ ' : ''}{label(value)}</button>)}</details></> : null}
+        {!props.shared ? <details class="task-status-options"><summary>Status filter</summary>{(['all',...stages] as const).map(value => <button type="button" role="menuitemradio" aria-checked={stageFilter === value} onClick={() => setStageFilter(value)}>{stageFilter === value ? '✓ ' : ''}{label(value)}</button>)}</details> : null}
 
       {!props.shared ? <details class="task-project-picker"><summary>Add project</summary><label>Project folder<input aria-label="Project folder path" placeholder="Absolute folder path" value={projectInput} onInput={event => setProjectInput(event.currentTarget.value)} /></label><button type="button" disabled={!props.connected || busy || !projectInput.trim()} onClick={() => {
         const device = props.targetDeviceId, owner = ownerDeviceId, origin = scope; setBusy(true);

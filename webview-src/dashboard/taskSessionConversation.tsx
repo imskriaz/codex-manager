@@ -116,7 +116,7 @@ export function TaskSessionConversation(props: {
   const patch = (value: Partial<CliComposerDraft>) => setDraft(previous => ({ ...previous, ...value }));
   return <section class="task-session-conversation cli-workspace cli-message-surface" aria-label="Session conversation">
     <div class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
-      <QueuedMessages queue={queue} onFeedback={report} onRefresh={props.onRefresh} />
+      <QueuedMessages queue={queue} popoverId={`queued-message-list-${encodeURIComponent(scope)}`} onRefresh={props.onRefresh} />
       {props.liveState?.plan ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
     </div>
     <div class="task-session-compose">
