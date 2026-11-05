@@ -57,8 +57,14 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.locator('.cli-session-message-text').filter({ hasText: 'Working on the follow-up' }).waitFor();
   const messages = (await page.locator('.cli-session-message-text').allTextContents()).map(text => text.trim());
   assert.ok(messages.indexOf('Working on the follow-up') > messages.indexOf('My next draft'), 'Subsequent output follows the steering message');
+  await input.fill('Fast accepted steering');
+  await send.click();
+  await page.locator('.cli-local-queue .is-sent').waitFor();
+  assert.equal(await page.locator('.cli-local-queue .is-sending').count(), 0, 'Accepted guidance stops showing a pending send');
   await page.evaluate(sessionId => {
     window.__composerNode = document.querySelector('textarea[name="codex-message"]');
+    window.__steerState = { ...window.__steerState, sequence: 4, status: 'disconnected', updatedAt: Date.now() };
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
     const session = window.__uiSessions.find(item => item.id === sessionId);
     Object.assign(session, { status: 'running', locked: true, steerTurnId: 'native-follow-up', runningBy: 'another Codex process', updatedAt: new Date(Date.now()+2000).toISOString() });
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-native-owner', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
@@ -72,12 +78,12 @@ export async function checkSteerUi(page, { origin, parentId }) {
   for (const status of ['unknown', 'running', 'unknown', 'running']) {
     await page.evaluate(({sessionId,status}) => {
       const session = window.__uiSessions.find(item => item.id === sessionId);
-      Object.assign(session, { status, steerTurnId: status === 'unknown' ? undefined : 'native-follow-up', updatedAt: new Date(Date.now()-10000).toISOString() });
+      Object.assign(session, { status, steerTurnId: status === 'unknown' ? undefined : 'native-follow-up', updatedAt: new Date(Date.now()+3000).toISOString() });
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-status-refresh', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
     }, {sessionId:parentId,status});
     await page.waitForFunction(status => status === 'unknown'
-      ? document.querySelector('textarea[name="codex-message"]')?.placeholder === 'Checking running state · messages wait locally'
-      : document.querySelector('textarea[name="codex-message"]')?.placeholder !== 'Checking running state · messages wait locally', status);
+      ? document.querySelector('.cli-composer .sr-only[role="status"]')?.textContent === 'Checking running state · messages wait locally'
+      : document.querySelector('.cli-composer .sr-only[role="status"]')?.textContent !== 'Checking running state · messages wait locally', status);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Status refresh never unmounts the composer');
     assert.equal(await input.inputValue(), 'Native owner guidance', 'Status refresh preserves typed guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
@@ -86,21 +92,19 @@ export async function checkSteerUi(page, { origin, parentId }) {
   for (const connected of [false,true]) {
     await page.evaluate(connected => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } })), connected);
     await page.waitForFunction(connected => connected
-      ? document.querySelector('textarea[name="codex-message"]')?.placeholder !== 'Reconnecting…'
-      : document.querySelector('textarea[name="codex-message"]')?.placeholder === 'Reconnecting…', connected);
+      ? !document.querySelector('.cli-workspace')?.hasAttribute('disabled')
+      : document.querySelector('.cli-workspace')?.hasAttribute('disabled'), connected);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Reconnect preserves the composer node');
     assert.equal(await input.inputValue(), 'Native owner guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     if(!connected){
-      assert.equal(await send.isEnabled(),true,'Offline messages can save in the local queue');
+      assert.equal(await input.isDisabled(),true,'Offline composer actions are disabled');
       const before=await page.evaluate(()=>window.__uiActions.length);
       await input.press('Control+Enter');
-      await page.locator('.cli-local-queue .is-queued').waitFor();
       assert.equal(await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).count(),0,'Offline queued messages do not offer Resend');
-      assert.equal(await input.getAttribute('placeholder'),'Reconnecting…','Connection status replaces the normal placeholder');
-      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline Enter queues without host writes');
-      await page.locator('.cli-local-queue').getByRole('button',{name:'Edit',exact:true}).click();
-      assert.equal(await input.inputValue(),'Native owner guidance','Editing a queued message restores its text');
+      assert.equal(await input.getAttribute('placeholder'),'Message Codex…','Connection status keeps the default composer placeholder');
+      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline input sends no host actions');
+      assert.equal(await input.inputValue(),'Native owner guidance','Offline actions preserve the draft');
       await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     }
   }

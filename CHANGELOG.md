@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.9
+
+- Fixed steering and queued messages that stayed in a processing state when confirmation arrived before the request ID was recorded.
+
 ## 1.6.8
 
 - Delete empty browser queues directly and reclaim legacy empty records that consumed queue capacity. Keep storage failures with their message or composer settings instead of duplicate toasts; restore unconfirmed removals in place.

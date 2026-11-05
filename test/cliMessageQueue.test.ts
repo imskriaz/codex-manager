@@ -160,6 +160,13 @@ it('keeps offline records and hides retry controls through the shared connection
   expect(queue.items[0]?.state).toBe('sent');
 });
 
+it('settles a send when confirmation arrived before the request id was recorded', async () => {
+  render({ canDispatch: true, results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  queue.enqueue(draft()); await flush();
+  expect(send).toHaveBeenCalledOnce();
+  expect(queue.items[0]?.state).toBe('sent');
+});
+
 it('clears a failed local record when a late acknowledgement confirms delivery', async () => {
   render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
   render({ results: [{requestId:'request-1',status:'failed',message:'Connection lost'}], connected:false, canDispatch:false }); await flush();

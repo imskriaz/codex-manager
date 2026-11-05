@@ -82,7 +82,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       return { ...item, state: result.status === 'completed' ? 'sent' as const : 'failed' as const, error: result.message };
     });
     if (changed) { update(next); void save(next); }
-  }, [props.messages, props.results, ready]);
+  }, [props.messages, props.results, ready, items]);
   useEffect(() => {
     if (!ready || !owned.current || !props.canDispatch || draining.current) return;
     const next = current.current.find(item => item.state !== 'sent');
