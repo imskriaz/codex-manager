@@ -74,3 +74,11 @@ it('defaults new workspaces to Full while preserving explicit drafts and reporte
   expect(resolveCliComposerSettings(undefined, undefined, { sandboxMode: 'workspace-write' }).sandboxMode).toBe('workspace-write');
   expect(resolveCliComposerSettings(undefined, undefined, {}).sandboxMode).toBeUndefined();
 });
+
+it('defaults browser sessions to Full despite a restrictive host default and persists explicit approval choices', () => {
+  const config = { models: [], defaultSandboxMode: 'read-only' as const };
+  expect(resolveCliComposerSettings(undefined, config, undefined, 'danger-full-access').sandboxMode).toBe('danger-full-access');
+  const draft = { text: '', attachments: [], sandboxMode: 'workspace-write' as const, autoApprove: true };
+  expect(normalizeCliComposerDraft(draft)).toEqual(draft);
+  expect(resolveCliComposerSettings(draft, config, undefined, 'danger-full-access').sandboxMode).toBe('workspace-write');
+});

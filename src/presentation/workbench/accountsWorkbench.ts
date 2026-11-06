@@ -1,3 +1,4 @@
+import { registerModelCapacitySwitch } from '../../services/modelCapacitySwitch';
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { registerCommands, runRegisteredCommand } from "../../commands";
@@ -222,6 +223,7 @@ export class AccountsWorkbench {
       this.context.subscriptions.push(this.refreshCoordinator.registerAuthFileWatcher(refreshers));
     });
     await measureStep("registerAutoRefreshScheduler", () => {
+      this.context.subscriptions.push(registerModelCapacitySwitch(this.repo, refreshers, id => this.encryptedSync.canAutomateAccount(id)));
       this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id)));
       this.context.subscriptions.push(
         registerAutoRefreshScheduler({

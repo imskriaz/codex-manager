@@ -16661,8 +16661,8 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-turn-usage > .cli-activity-body { padding: 0; }
 .cli-image-lightbox { gap: 8px; padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); }
 .cli-image-stage { min-width: 0; min-height: 0; overflow: hidden; display: grid; place-items: center; touch-action: none; }
-.cli-image-stage img { max-width: 100%; max-height: calc(100dvh - 70px); object-fit: contain; }
-.cli-image-stage.is-zoomed { display: block; touch-action: none; cursor: grab; }
+.cli-image-stage img { user-select: none; max-width: 100%; max-height: calc(100dvh - 70px); object-fit: contain; }
+.cli-image-stage.is-zoomed { display: grid; touch-action: none; cursor: grab; }
 .cli-image-stage.is-zoomed:active { cursor: grabbing; }
 .cli-image-stage.is-zoomed img { max-width: none; max-height: none; width: auto; height: auto; will-change: transform; }
 .cli-image-lightbox-toolbar { font-size: calc(12px * var(--dashboard-text-scale, 1)); }
@@ -16921,15 +16921,42 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-queue-error-popover { font: inherit; max-width: min(420px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 12px 40px #0003; }
 .cli-queue-error-popover p { margin: 0 0 12px; overflow-wrap: anywhere; }
 
-/* Shared dashboard cards inside the compact account center. */
-.cli-account-menu.cli-account-center { width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
-.cli-account-menu.cli-account-center.is-standalone { width: min(680px, calc(100vw - 24px)) !important; }
-.cli-account-grid { max-height: min(50dvh, 440px); overflow-y: auto; overscroll-behavior: contain; padding: 6px 10px; }
-.cli-account-grid .accounts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(245px, 100%), 1fr)); gap: 6px; }
-.cli-account-grid .saved-card-container { min-width: 0; }
-.cli-account-grid :is(.saved-card-container, .saved-card-inner, .saved-card) { --saved-card-min-height: 0px; min-height: 0; }
-.cli-account-grid .saved-card-inner:not(.flipped) .saved-card-back { position: absolute; inset: 0; overflow: hidden; }
-.cli-account-grid .saved-select-toggle { display: none; }
+/* The account center renders the dashboard section in a narrow container. */
+.cli-account-menu.cli-account-center { display: flex; flex-direction: column; width: min(var(--account-center-width, 420px), calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.cli-account-menu.cli-account-center.is-standalone { max-height: calc(100dvh - 24px); width: min(var(--account-center-width, 420px), calc(100vw - 24px)) !important; }
+.cli-account-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 10px; }
+.cli-account-dashboard.section { margin: 0; padding: 0; border: 0; background: transparent; }
+.cli-account-dashboard .accounts-section-header { flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.cli-account-dashboard .header-title-with-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: calc(15px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .account-count-badges { flex-wrap: wrap; gap: 3px; }
+.cli-account-dashboard .dashboard-account-toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.cli-account-dashboard .account-search-control { flex: 1 1 135px; width: auto; min-width: 0; }
+.cli-account-dashboard .dashboard-select-control { flex: 0 1 auto; min-width: 0; max-width: 120px; }
+.cli-account-dashboard .account-search-control input { width: 100%; min-width: 0; }
+.cli-account-dashboard .accounts-grid { display: grid; grid-template-columns: 1fr; gap: 5px; }
+.cli-account-dashboard :is(.saved-card-container, .saved-card-inner, .saved-card) { --saved-card-min-height: 0px; min-height: 0; }
+.cli-account-dashboard .saved-card-inner:not(.flipped) .saved-card-back { position: absolute; inset: 0; overflow: hidden; }
+.cli-account-dashboard .saved-card-front { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "identity primary secondary" "meta primary secondary" "quota quota quota"; align-items: center; gap: 3px; padding: 6px; }
+.cli-account-dashboard :is(.saved-head, .saved-card-footer) { display: contents; }
+.cli-account-dashboard .saved-title { grid-area: identity; min-width: 0; }
+.cli-account-dashboard .saved-title h3 { margin: 0; gap: 3px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .saved-top-actions { grid-area: primary; position: static; gap: 2px; }
+.cli-account-dashboard .saved-actions { grid-area: secondary; gap: 2px; }
+.cli-account-dashboard .saved-credit-summary { grid-area: meta; min-width: 0; flex-wrap: wrap; gap: 3px; padding-left: 22px; }
+.cli-account-dashboard .saved-progress { grid-area: quota; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 3px 0 0; }
+.cli-account-dashboard .saved-progress .row { gap: 2px; min-width: 0; }
+.cli-account-dashboard .saved-progress .row-head { gap: 3px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .saved-progress .metric-reset-inline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(9px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .saved-progress .bar { height: 3px; }
+.cli-account-dashboard .saved-progress :is(.metric-requests-line, .foot) { display: none; }
+.cli-account-dashboard :is(.saved-control, .action-btn.icon-only, .saved-overflow-trigger) { position: static; box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 3px; }
+.cli-account-dashboard .saved-enabled-toggle { display: inline-flex; }
+.cli-account-dashboard .saved-select-toggle { display: inline-flex; width: 18px; min-width: 18px; height: 24px; min-height: 24px; }
+.cli-account-dashboard .saved-table-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "identity actions" "metrics metrics"; gap: 5px; }
+.cli-account-dashboard .saved-table-identity { grid-area: identity; }
+.cli-account-dashboard .saved-table-actions { grid-area: actions; }
+.cli-account-dashboard .saved-table-metrics { grid-area: metrics; }
+@media (max-width: 760px) { .cli-account-dashboard .account-search-control input { font-size: calc(16px * var(--dashboard-text-scale, 1)); } }
 .cli-workspace .cli-conversation-header { min-height: 52px; padding-block: 6px; }
 .cli-workspace .cli-conversation-header .cli-icon-button { width: 40px; min-height: 40px; }
 .cli-workspace .cli-conversation-header .cli-icon-button svg { width: 20px; height: 20px; }
@@ -16951,3 +16978,36 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .browser-work-monitor p { margin:8px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .browser-work-messages { overflow:auto; min-height:0; }
 .browser-work-messages p + p { border-top:1px solid var(--border-default); padding-top:8px; }
+
+.cli-account-resize-footer { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-left: 10px; min-height: 28px; }
+.cli-account-resize-footer small { flex: 1; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-account-resizer { flex: none; display: grid; place-items: center; width: 28px; height: 28px; cursor: nwse-resize; touch-action: none; }
+.cli-account-resizer:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+.cli-account-center > :is(header, .cli-account-system, .cli-account-status, nav) { flex: none; }
+
+/* Keep every account filter on one compact row in the narrow center. */
+.cli-account-center .cli-account-grid { padding: 4px 8px 0; }
+.cli-account-center .cli-account-dashboard .accounts-section-header { gap: 3px; margin-bottom: 4px; }
+.cli-account-center .cli-account-dashboard .header-title-with-meta { gap: 3px; font-size: inherit; }
+.cli-account-center .cli-account-dashboard .dashboard-account-toolbar { flex-wrap: nowrap; gap: 3px; margin-bottom: 4px; overflow: hidden; }
+.cli-account-center .cli-account-dashboard .account-search-control { flex: 1 1 80px; min-width: 0; width: auto; height: 28px; min-height: 28px; padding-inline: 4px; }
+.cli-account-center .cli-account-dashboard .account-search-control input,
+.cli-account-center .cli-account-dashboard .dashboard-select-control select { min-width: 0; font-size: inherit; }
+.cli-account-center .cli-account-dashboard .dashboard-select-control { flex: 0 1 auto; width: 56px; min-width: 0; max-width: 56px; min-height: 28px; }
+.cli-account-center .cli-account-dashboard .dashboard-select-control select { width: 100%; min-height: 28px; height: 28px; padding-inline: 3px 13px; }
+.cli-account-center .cli-account-dashboard .account-tag-filter { width: 52px; max-width: 52px; }
+.cli-account-center .cli-account-dashboard .metric-priority-control { width: 52px; max-width: 52px; }
+.cli-account-center .cli-account-dashboard .dashboard-view-controls,
+.cli-account-center .cli-account-dashboard .dashboard-view-toggle { flex: 0 0 28px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; margin: 0; }
+.cli-account-center .cli-account-dashboard .saved-card-front { padding: 4px 5px; }
+@media (max-width: 350px) {
+  .cli-account-center .cli-account-dashboard .account-search-control { flex-basis: 64px; }
+  .cli-account-center .cli-account-dashboard .dashboard-select-control { width: 48px; max-width: 48px; }
+  .cli-account-center .cli-account-dashboard .account-tag-filter,
+  .cli-account-center .cli-account-dashboard .metric-priority-control { width: 44px; max-width: 44px; }
+}
+
+.cli-composer-options .cli-approval-control > span:last-child { display: flex; align-items: center; gap: 6px; }
+.cli-composer-options .cli-approval-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-blue); }
+
+.saved-overflow-menu.saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover { z-index: 20050; }

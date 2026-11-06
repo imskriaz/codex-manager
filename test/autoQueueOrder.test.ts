@@ -51,6 +51,12 @@ describe("auto queue order", () => {
     expect(sortedIds(unstarred, starred)).toEqual(["starred", "unstarred"]);
   });
 
+  it("puts accounts marked Capacity behind otherwise equivalent accounts", () => {
+    const fresh = account("fresh", { hourly: 70, weekly: 70 });
+    const capacity = account("capacity", { hourly: 70, weekly: 70, tags: ["Capacity"] });
+    expect(sortedIds(capacity, fresh)).toEqual(["fresh", "capacity"]);
+  });
+
   it("honors a usable user star before a 5-hour reset within 20 minutes", () => {
     const now = NOW_MS / 1_000;
     const urgent = account("urgent", { hourly: 30, hourlyResetAt: now + 20 * 60, weekly: 60 });
@@ -244,6 +250,7 @@ type AccountOptions = {
   subscriptionExpiresAt?: number;
   planType?: string;
   queuePriority?: boolean;
+  tags?: string[];
   lastQuotaAt?: number;
 };
 
@@ -257,6 +264,7 @@ function account(id: string, options: AccountOptions): CodexManagerAccountRecord
     updatedAt: 1,
     planType: options.planType,
     queuePriority: options.queuePriority,
+    tags: options.tags,
     lastQuotaAt: options.lastQuotaAt ?? NOW_MS - 1_000,
     subscriptionActiveUntil:
       options.subscriptionExpiresAt === undefined ? undefined : String(options.subscriptionExpiresAt / 1_000),

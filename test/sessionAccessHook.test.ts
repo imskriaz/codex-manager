@@ -37,3 +37,11 @@ it('keeps a newer Codex change instead of replacing it with an older acknowledge
   expect(render().mode).toBe('danger-full-access');
   expect(render({session:{id:'other',title:'Other',status:'idle',deviceId:'pc',sandboxMode:'read-only'}}).mode).toBe('read-only');
 });
+
+it('changes approval independently, blocks duplicates, and waits for confirmation', () => {
+  const hook = render(); hook.change(undefined, true); hook.change(undefined, true);
+  expect(send).toHaveBeenCalledExactlyOnceWith(undefined, true);
+  expect(render().autoApprove).toBe(false);
+  emit({ type: 'dashboard:action-result', action: 'setCodexSessionAccess', requestId: 'access-1', status: 'completed', payload: { cliSession: { ...options.session!, access: { mode: 'workspace-write', approvalPolicy: 'never', updatedAt: 100001 } } } });
+  expect(render().autoApprove).toBe(true); expect(render().mode).toBe('workspace-write');
+});

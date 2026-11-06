@@ -36,3 +36,23 @@ it('keeps an already confirmed policy unchanged, including all folder restrictio
   const result=await syncCodexSessionAccess(c.rpc,'thread',{sandboxPolicy:{type:'workspaceWrite'}},current);
   expect(result.settings).toBe(current);expect(c.request).not.toHaveBeenCalled();
 });
+
+it('confirms approval-only changes without replacing sandbox restrictions', async () => {
+  const c = client();
+  const current = { sandboxPolicy: { type: 'readOnly' }, approvalPolicy: 'on-request' };
+  c.request.mockImplementation(async () => {
+    for (const listener of c.listeners) listener('thread/settings/updated', { threadId: 'thread', threadSettings: { ...current, approvalPolicy: 'never' } });
+    return {};
+  });
+  const result = await syncCodexSessionAccess(c.rpc, 'thread', { approvalPolicy: 'never' }, current);
+  expect(result.access).toMatchObject({ mode: 'read-only', approvalPolicy: 'never' });
+  expect(c.request).toHaveBeenCalledExactlyOnceWith('thread/settings/update', { threadId: 'thread', approvalPolicy: 'never' }, 10000);
+  c.request.mockClear();
+  await syncCodexSessionAccess(c.rpc, 'thread', { approvalPolicy: 'never' }, result.settings);
+  expect(c.request).not.toHaveBeenCalled();
+});
+
+it('does not claim auto approval when only the sandbox mode was confirmed', async () => {
+  const c = client(); c.request.mockImplementation(async () => { c.emit('thread', { type: 'dangerFullAccess' }); return {}; });
+  await expect(syncCodexSessionAccess(c.rpc, 'thread', { ...settings, approvalPolicy: 'never' }, settings)).rejects.toThrow('approval policy');
+});

@@ -12,6 +12,21 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it.each([false, true])("merges image mirrors with different IDs and missing previews (truncated %s)", truncated => {
+    const images = [{ src: 'data:image/png;base64,AA==', alt: 'Attached image' }];
+    const prompt = { id: 'saved-image', role: 'user' as const, text: 'Review this', turnId: 'turn-1', images };
+    const earlier = { ...prompt, id: 'earlier-image', turnId: 'earlier-turn' };
+    const reply = { id: 'reply', role: 'assistant' as const, text: 'Working', turnId: 'turn-1' };
+    const state = { ...reducer().snapshot(), turnId: 'turn-1', truncated, messages: [{ ...prompt, id: 'live-image', text: 'Review this\n\n[Image unavailable]', images: [] }, reply] };
+    for (const history of [[earlier, prompt], [earlier, prompt, reply]]) {
+      const merged = combineCliLiveMessages(history, state);
+      expect(merged.filter(message => message.role === 'user')).toEqual([earlier, { ...prompt, id: truncated || history.includes(reply) ? prompt.id : 'live-image' }]);
+      expect(combineCliLiveMessages(merged, state)).toEqual(merged);
+    }
+    expect(combineCliLiveMessages([earlier], state).filter(message => message.role === 'user')).toHaveLength(2);
+    const distinct = { ...prompt, id: 'different-image', images: [{ src: 'data:image/png;base64,AQ==' }] };
+    expect(combineCliLiveMessages([prompt, reply], { ...state, messages: [distinct, reply] }).filter(message => message.role === 'user')).toHaveLength(2);
+  });
   it("removes a previously merged retry from task history after recovery or stream replacement", () => {
     const live = reducer(); live.started("turn-1");
     live.accept("error", params({ error: { message: "Reconnecting... 1/5" }, willRetry: true }));

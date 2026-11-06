@@ -18,7 +18,7 @@ vi.mock('preact/hooks', () => ({
   }
 }));
 vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes }));
-import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
+import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, withAcceptedQueuedMessages, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
 import { canRestoreCliComposerDraft } from '../webview-src/dashboard/cliSessionComposerState';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 
@@ -114,6 +114,24 @@ it('keeps a failed message when a newer composer draft prevents restoration', as
   restore.mockReturnValue(false); queue.remove('one', true); await flush(); expect(queue.items).toHaveLength(1);
   expect(canRestoreCliComposerDraft(draft('Newer'), draft())).toBe(false);
   expect(canRestoreCliComposerDraft(draft(''), draft())).toBe(true);
+});
+
+it('shows accepted guidance immediately before subsequent output and replaces each transcript echo once', () => {
+  const old = { id: 'old', role: 'assistant' as const, text: 'Earlier output' };
+  const later = { id: 'later', role: 'assistant' as const, text: 'Later output' };
+  const first = entry({ state: 'sent', turnId: 'turn' });
+  const second = entry({ state: 'sent', id: 'two', turnId: 'turn' });
+  expect(withAcceptedQueuedMessages([old, later], [first, second]).map(message => message.id)).toEqual(['old', 'pending-one', 'pending-two', 'later']);
+  const echo = { id: 'echo', role: 'user' as const, turnId: 'turn', text: 'First' };
+  expect(withAcceptedQueuedMessages([old, echo, later], [first, second]).filter(message => message.role === 'user')).toHaveLength(2);
+  expect(withAcceptedQueuedMessages([old, echo, later], [first, second]).map(message => message.id)).toEqual(['old', 'echo', 'pending-two', 'later']);
+  expect(withAcceptedQueuedMessages([old, later], [entry({ state: 'uncertain' }), entry({ id: 'failed', state: 'failed' })])).toEqual([old, later]);
+  expect(withAcceptedQueuedMessages([], [first])[0]?.text).toBe('First');
+  expect(withAcceptedQueuedMessages([old, echo, later], [first])).toEqual([old, echo, later]);
+  expect(withAcceptedQueuedMessages([{ ...echo, turnId: 'native-next-turn' }], [first])).toEqual([{ ...echo, turnId: 'native-next-turn' }]);
+  const image = entry({ state: 'sent', draft: { text: 'First', attachments: [{ id: 'image', kind: 'image', name: 'one.png', mimeType: 'image/png', data: 'data:image/png;base64,AA==', size: 1 }] } });
+  const imageEcho = { id: 'image-echo', role: 'user' as const, text: 'First\n\n[Image unavailable]', images: [{ src: 'saved-image' }] };
+  expect(withAcceptedQueuedMessages([imageEcho], [image])).toEqual([imageEcho]);
 });
 
 it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {

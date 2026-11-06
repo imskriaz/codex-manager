@@ -278,6 +278,21 @@ describe("native App Server new sessions", () => {
     expect(mocks.open).toHaveBeenCalledOnce();
   });
 
+  it('preserves model-capacity failure details from native turns for account recovery', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);
+    const event = (type: string, error?: string) => JSON.stringify({ type: 'event_msg', payload: { type, turn_id: 'capacity-turn', ...(error ? { error: { message: error } } : {}) } }) + '\n';
+    await writeFile(transcript, event('task_started'));
+    const updates: Array<{ status: string; error?: string }> = [];
+    const stop = subscribeDashboardRealtime(message => { if (message.type === 'dashboard:codex-session-live' && message.state.sessionId === id) updates.push(message.state); });
+    try {
+      observeRunningCodexSession({ id, title: 'Native capacity failure', status: 'running' });
+      await vi.waitFor(() => expect(updates[0]?.status).toBe('running'));
+      await appendFile(transcript, event('error', 'Selected model is at capacity') + event('task_complete'));
+      await vi.waitFor(() => expect(updates.at(-1)).toMatchObject({ status: 'failed', error: expect.stringContaining('model is at capacity') }));
+    } finally { stop(); }
+  });
+
   it.each(["active", "finished", "delayed", "cancelled", "changed", "raced"])("observes restored native work without another prompt or Stop ownership (%s)", async scenario => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`), startedAt = Date.now();

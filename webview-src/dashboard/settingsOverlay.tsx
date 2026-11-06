@@ -497,6 +497,9 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
+                  <SettingsToggleBlock title="Switch after model-capacity failures" sub="Count consecutive model-capacity failures only when no other session is running. Switch only if another verified capable account is available." enabled={props.settings.modelCapacityAutoSwitchEnabled !== false} onToggle={enabled => patchAndSend('modelCapacityAutoSwitchEnabled', enabled)}>
+                    <label class="settings-number-control"><span>Consecutive failures</span><input type="number" min={1} max={100} step={1} aria-label="Model-capacity failure count" value={props.settings.modelCapacityFailureCount ?? 3} disabled={props.settings.modelCapacityAutoSwitchEnabled === false} onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) patchAndSend('modelCapacityFailureCount', Math.max(1, Math.min(100, Math.round(value)))); }} /></label>
+                  </SettingsToggleBlock>
                   <div class="settings-integration-grid settings-switch-options">
                     <SettingsToggleBlock
                       title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}

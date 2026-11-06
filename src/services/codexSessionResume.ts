@@ -1,3 +1,4 @@
+import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
 import { syncCodexSessionAccess } from './codexSessionAccessSync';
 import { deleteCodexSessionFromStorage } from './codexSessionStorageDelete';
 import { readSavedCodexSessionAccess, saveCodexSessionAccess } from './codexSessionAccessState';
@@ -150,12 +151,12 @@ function nativeTurnStarted(home: string, id: string, turnId: string): void {
   publishNativeTurnState(home, id, "running", turnId);
 }
 
-function publishNativeTurnState(home: string, sessionId: string, status: "running" | "completed" | "cancelled" | "failed" | "disconnected", turnId?: string, streamId?: string): void {
+function publishNativeTurnState(home: string, sessionId: string, status: "running" | "completed" | "cancelled" | "failed" | "disconnected", turnId?: string, streamId?: string, error?: string): void {
   if (home !== resolveCodexHome()) return;
   let updatedAt = Date.now();
   try { updatedAt = Math.max(updatedAt, (getCodexSessionLiveState(sessionId)?.updatedAt ?? 0) + 1); }
   catch (error) { recordPersistentEvent("debug", "session-resume", "Earlier live state unavailable for native update", { sessionRef: toSessionLogRef(sessionId) }, error); }
-  const state = { sessionId, streamId: streamId ?? ownedNativeTurn(home, sessionId)?.streamId ?? randomUUID(), sequence: status === "running" ? 1 : 2, status, turnId, updatedAt, messages: [] };
+  const state = { sessionId, streamId: streamId ?? ownedNativeTurn(home, sessionId)?.streamId ?? randomUUID(), sequence: status === "running" ? 1 : 2, status, turnId, updatedAt, messages: [], ...(error ? { error } : {}) };
   try { recordSessionLive(state); }
   catch (error) { recordPersistentEvent("warning", "session-resume", "Native update could not be saved", { sessionRef: toSessionLogRef(sessionId) }, error); }
   publishDashboardRealtime({ type: "dashboard:codex-session-live", state });
@@ -414,7 +415,7 @@ async function readStateSessionRecords(home: string, id?: string | string[], pro
       const name = typeof row["name"] === "string" ? row["name"].trim().slice(0, 256) : undefined;
       const updatedAt = typeof row["updated_at_ms"] === "number" ? row["updated_at_ms"] : typeof row["updated_at"] === "number" ? row["updated_at"] * 1000 : undefined;
       const sandboxPolicy = recordedCodexSandboxPolicy(row['sandbox_policy']);
-      const access = parseCodexSessionAccess({ sandbox_policy: row['sandbox_policy'] }, updatedAt && Number.isFinite(updatedAt) ? updatedAt : 1);
+      const access = parseCodexSessionAccess({ sandbox_policy: row['sandbox_policy'], approval_mode: row['approval_mode'] }, updatedAt && Number.isFinite(updatedAt) ? updatedAt : 1);
       return [{ sandboxPolicy, access, approvalPolicy: typeof row['approval_mode'] === 'string' ? row['approval_mode'] : undefined, id: row["id"], name: name || undefined, title: name || (typeof row["title"] === "string" ? row["title"] : undefined),
         model: typeof row["model"] === "string" ? row["model"].slice(0, 256) : undefined,
         reasoningEffort: typeof row["reasoning_effort"] === "string" ? row["reasoning_effort"].slice(0, 64) : undefined,
@@ -1079,9 +1080,11 @@ async function runNewCodexCliSession(options: {
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
+  autoApprove?: boolean;
   projectPath?: string;
 }, onStarted: (sessionId: string) => void): Promise<string> {
   options = { ...options, sandboxMode: options.sandboxMode ?? 'danger-full-access' };
+  if (options.autoApprove !== undefined && typeof options.autoApprove !== 'boolean') throw new Error('Auto approval must be on or off.');
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
   options = { ...options, ...prepared };
@@ -1107,6 +1110,7 @@ async function startAppServerSession(options: {
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
+  autoApprove?: boolean;
   projectPath?: string;
 }, onStarted: (sessionId: string) => void): Promise<string> {
   const home = path.resolve(resolveCodexHome());
@@ -1125,14 +1129,14 @@ async function startAppServerSession(options: {
       cwd,
       ...(options.model ? { model: options.model } : {}),
       ...(options.sandboxMode ? { sandbox: options.sandboxMode } : {}),
-      approvalPolicy: "on-request"
+      approvalPolicy: options.autoApprove ? "never" : "on-request"
     });
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
     if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
     threadId = candidateThreadId;
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, threadId);
-    const applied = await syncCodexSessionAccess(rpc, threadId, { sandboxPolicy: toAppServerSandbox(options.sandboxMode!, cwd) }, result);
+    const applied = await syncCodexSessionAccess(rpc, threadId, { sandboxPolicy: toAppServerSandbox(options.sandboxMode!, cwd), ...(options.autoApprove !== undefined ? { approvalPolicy: options.autoApprove ? "never" : "on-request" } : {}) }, result);
     rememberSessionAccess(home, threadId, applied.access, applied.settings);
     activeAppServerTurns.set(threadId, { home, rpc });
     await rpc.startAndWaitForTurn(threadId, {
@@ -1246,6 +1250,8 @@ async function sendAppServerSessionMessage(options: {
       const preserved = savedAccess && inherited === savedAccess.access ? savedAccess.settings : undefined;
       const opaqueProfile = Boolean(recorded && !transcriptPolicy || stored?.access && !stored.sandboxPolicy);
       const defaultSandbox = !options.sandboxMode && !inherited && !stored?.access;
+      const approvalPolicy = inherited?.approvalPolicy ?? stored?.approvalPolicy;
+      if (approvalPolicy) Object.assign(params, { approvalPolicy });
       const restore = defaultSandbox ? { sandbox: 'danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
       if (!options.sandboxMode) Object.assign(params, defaultSandbox ? { sandboxPolicy: toAppServerSandbox('danger-full-access', cwd) } : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
@@ -1437,7 +1443,7 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
       const turn = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
       if (turn && turn !== previous) {
         if (expectedTurnId && turn !== expectedTurnId) throw new Error("The native turn changed before its outcome could be verified. Refresh the conversation.");
-        if (state === "failed" || state === "quota-paused") { status = "failed"; throw new Error("Codex could not finish this turn. Check the conversation before retrying."); }
+        if (state === "failed" || state === "quota-paused") { status = "failed"; throw new Error(transcript && cliTranscriptTurnStateCache.get(transcript)?.capacity ? "Selected model is at capacity. Check the conversation before retrying." : "Codex could not finish this turn. Check the conversation before retrying."); }
         if (transcript && cliTranscriptTurnStateCache.get(transcript)?.cancelled) { status = "cancelled"; throw new CodexCliTurnCancelledError(); }
         if (state === "terminal") { status = "completed"; return; }
       }
@@ -1458,7 +1464,7 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
     }, failure);
     const newerNativeActivity = (owned?.cancelled || observer?.cancelled) && getNativeCodexSessionRunning(home, sessionId) === true;
     if (!newerNativeActivity && (streamId ? transcript && cliTranscriptTurnStateCache.get(transcript)?.turnId === expectedTurnId : ownedNativeTurn(home, sessionId) === owned))
-      publishNativeTurnState(home, sessionId, status, expectedTurnId, streamId);
+      publishNativeTurnState(home, sessionId, status, expectedTurnId, streamId, failure instanceof Error ? failure.message : undefined);
     if (!streamId && owned && ownedNativeTurn(home, sessionId) === owned && (!expectedTurnId || owned.turnId === expectedTurnId)) activeNativeTurns.delete(sessionId);
   }
 }
@@ -1534,41 +1540,43 @@ function attachSessionSettingsAndPrompts(rpc: CodexAppServerRpc, home: string, i
   return () => { settings(); prompts(); };
 }
 /** Change the owner's thread defaults; an in-flight turn keeps its captured policy. */
-export async function setCodexSessionAccess(id: string, mode: DashboardCliSandboxMode): Promise<CodexSessionAccess> {
+export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandboxMode, autoApprove?: boolean): Promise<CodexSessionAccess> {
   validateSessionId(id);
   id = id.toLowerCase();
-  if (!isCliSandboxMode(mode)) throw new Error('Choose Read only, Workspace write, or Full access.');
+  if (mode !== undefined && !isCliSandboxMode(mode)) throw new Error('Choose Read only, Workspace write, or Full access.');
+  if (autoApprove !== undefined && typeof autoApprove !== 'boolean' || mode === undefined && autoApprove === undefined) throw new Error('Choose permissions or an approval policy.');
   const home = resolveCodexHome();
   return runCrossWindowExclusive(`codex:session-settings:${id}`, 'Change Codex access', async () => {
     const session = await readCodexCliSessionSummary(id, home);
     if (!session || session.archived) throw new Error('This session is unavailable or archived. Refresh before changing access.');
     const cwd = await resolveRecordedSessionProject(id, session.projectPath);
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. No access change was sent.');
-    const sandboxPolicy = codexSessionAccessPolicy(mode, cwd, session.access?.networkAccess ?? false);
+    const settings = { ...(mode ? { sandboxPolicy: codexSessionAccessPolicy(mode, cwd, session.access?.networkAccess ?? false) } : {}), ...(autoApprove !== undefined ? { approvalPolicy: autoApprove ? 'never' : 'on-request' } : {}) };
+    const expected = parseCodexSessionAccess(settings)!;
     const attemptedAt = Date.now();
     const active = activeAppServerTurns.get(id);
     let applied: Awaited<ReturnType<typeof syncCodexSessionAccess>> | undefined;
     if (active) {
       if (active.home !== path.resolve(home) || active.cancelRequested) throw new Error('The active session changed. Refresh before changing access.');
       const saved = readSavedCodexSessionAccess(home, id);
-      applied = await syncCodexSessionAccess(active.rpc, id, { sandboxPolicy }, saved?.settings);
-    } else if (!await updateNativeCodexSessionAccess(home, id, { sandboxPolicy })) {
+      applied = await syncCodexSessionAccess(active.rpc, id, settings, saved?.settings);
+    } else if (!await updateNativeCodexSessionAccess(home, id, settings)) {
       if (session.status !== 'idle' || session.locked) throw new Error('The Codex owner is unavailable. Access was not changed. Reconnect and refresh.');
       const rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd);
       try {
         const current = await rpc.request('thread/resume', { threadId: id, cwd, excludeTurns: true });
         if (resolveCodexHome() !== home) throw new Error('Codex home changed. No access change was sent.');
-        applied = await syncCodexSessionAccess(rpc, id, { sandboxPolicy }, current);
+        applied = await syncCodexSessionAccess(rpc, id, settings, current);
       } finally { await rpc.close(); }
     }
     if (resolveCodexHome() !== home) throw new Error('Codex accepted the access change in the previous home. Refresh before changing it again.');
     const nativeAccess = getNativeCodexSessionAccess(home, id);
-    if (nativeAccess && nativeAccess.updatedAt > attemptedAt && nativeAccess.mode !== mode) throw new Error('Codex settings changed concurrently. Its current access is shown; review it before retrying.');
+    if (nativeAccess && nativeAccess.updatedAt > attemptedAt && !matchesCodexSessionAccess(nativeAccess, expected)) throw new Error('Codex settings changed concurrently. Its current access is shown; review it before retrying.');
     const access = applied?.access ?? nativeAccess;
-    if (!access || access.mode !== mode) throw new Error('Codex permissions are unconfirmed. Refresh before retrying.');
-    if (!rememberSessionAccess(home, id, access, applied?.settings ?? { sandboxPolicy })) throw new Error('Codex applied the access change, but recovery storage could not save it. Refresh before changing it again.');
+    if (!access || !matchesCodexSessionAccess(access, expected)) throw new Error('Codex permissions are unconfirmed. Refresh before retrying.');
+    if (!rememberSessionAccess(home, id, access, applied?.settings ?? settings)) throw new Error('Codex applied the access change, but recovery storage could not save it. Refresh before changing it again.');
     const confirmed = readSavedCodexSessionAccess(home,id)?.access ?? access;
-    if (confirmed.mode !== mode) throw new Error('Codex permissions changed concurrently. Review its current access before retrying.');
+    if (!matchesCodexSessionAccess(confirmed, expected)) throw new Error('Codex permissions changed concurrently. Review its current access before retrying.');
     return confirmed;
   });
 }
@@ -3380,6 +3388,7 @@ const cliTranscriptTurnStateCache = new Map<string, {
   state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
   turnId?: string; resumeTurnId?: string;
   cancelled?: boolean; resumeCancelled?: boolean;
+  capacity?: boolean; resumeCapacity?: boolean;
   startedAt?: number; resumeStartedAt?: number;
   access?: CodexSessionAccess; resumeAccess?: CodexSessionAccess; sandboxPolicy?: Record<string, unknown>; resumeSandboxPolicy?: Record<string, unknown>;
   model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; resumeModel?: string; resumeReasoningEffort?: string; resumeSandboxMode?: DashboardCliSandboxMode; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"]; resumeTokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
@@ -3415,6 +3424,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let state: RecentTranscriptTurnState = incremental ? previous!.resumeState : "unknown";
     let turnId = incremental ? previous!.resumeTurnId : undefined;
     let turnCancelled = incremental ? previous!.resumeCancelled : false;
+    let capacityError = incremental ? previous!.resumeCapacity : false;
     let startedAt = incremental ? previous!.resumeStartedAt : undefined;
     let model = incremental ? previous!.resumeModel : undefined;
     let reasoningEffort = incremental ? previous!.resumeReasoningEffort : undefined;
@@ -3428,10 +3438,11 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let resumeState = state;
     let resumeTurnId = turnId;
     let resumeCancelled = turnCancelled;
+    let resumeCapacity = capacityError;
     let resumeStartedAt = startedAt;
     let resumeModel = model, resumeReasoningEffort = reasoningEffort, resumeSandboxMode = sandboxMode, resumeTokenUsage = tokenUsage, resumeAccess = access, resumeSandboxPolicy = sandboxPolicy;
     for (const [index, line] of lines.entries()) {
-      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; resumeAccess = access; resumeSandboxPolicy = sandboxPolicy; }
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeCapacity = capacityError; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; resumeAccess = access; resumeSandboxPolicy = sandboxPolicy; }
       try {
         const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown; sandbox_policy?: { type?: unknown }; sandbox_mode?: unknown; permission_profile?: { type?: unknown }; info?: unknown } };
         if (record?.type === "turn_context") {
@@ -3449,6 +3460,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
           if (!eventTurnId || !turnId || eventTurnId === turnId) {
             const quota = isCodexQuotaInterruption(JSON.stringify([record.error,record.payload?.error, /failed|aborted/.test(type ?? "") ? record.payload?.message : undefined]));
             const capacity = isCodexCapacityInterruption(JSON.stringify([record.error, record.payload?.error, record.payload?.message]));
+            capacityError ||= capacity;
             const cancelled = typeof record.payload?.reason === "string" && /user|cancel/i.test(record.payload.reason);
             turnCancelled = cancelled || type === "turn_aborted";
             // Native task_complete can carry a provider error; it is unfinished work, not success.
@@ -3461,6 +3473,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             state = "quota-paused";
             turnId = eventTurnId ?? turnId;
           } else if (isCodexCapacityInterruption(JSON.stringify(record))) {
+            capacityError = true;
             state = "failed";
             turnId = eventTurnId ?? turnId;
           }
@@ -3471,6 +3484,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             if (startedAt === undefined && Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() + 5 * 60_000) startedAt = timestamp;
             state = "active"; turnId = eventTurnId;
             turnCancelled = false;
+            capacityError = false;
           }
         }
       } catch { /* Ignore partial records and quoted event text. */ }
@@ -3481,7 +3495,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     }
     cliTranscriptTurnStateCache.set(transcriptPath, {
       size: snapshot.size, mtimeMs: snapshot.mtimeMs,
-      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, startedAt, resumeStartedAt, access, resumeAccess, sandboxPolicy, resumeSandboxPolicy, model, reasoningEffort, sandboxMode, tokenUsage, resumeModel, resumeReasoningEffort, resumeSandboxMode, resumeTokenUsage
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, capacity: capacityError, resumeCapacity, startedAt, resumeStartedAt, access, resumeAccess, sandboxPolicy, resumeSandboxPolicy, model, reasoningEffort, sandboxMode, tokenUsage, resumeModel, resumeReasoningEffort, resumeSandboxMode, resumeTokenUsage
     });
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;
@@ -3863,7 +3877,8 @@ function mergeCliTranscriptMessage(
       const candidate = messages[index]!;
       const imageEcho = message.role === 'user' && ((candidate.images?.length ?? 0) > 0 || (message.images?.length ?? 0) > 0) &&
         candidate.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === message.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim();
-      if (candidate.role === message.role && candidate.turnId === message.turnId && (candidate.text.trim() === message.text.trim() || imageEcho)) {
+      const sameTurn = candidate.turnId === message.turnId || (imageEcho && (!candidate.turnId || !message.turnId) && candidate.timestamp !== undefined && candidate.timestamp === message.timestamp);
+      if ((!candidate.kind || candidate.kind === "message") && candidate.role === message.role && sameTurn && (candidate.text.trim() === message.text.trim() || imageEcho)) {
         existingIndex = index;
         break;
       }
@@ -3909,6 +3924,7 @@ function mergeCliTranscriptMessage(
           ...existing,
           ...message,
           id: message.kind === "compaction" ? message.id : existing.id,
+          turnId: message.turnId ?? existing.turnId,
           ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
           ...(images.length ? { images: images.slice(0, MAX_CHAT_ATTACHMENTS) } : {})
         };
@@ -4072,7 +4088,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     return {
       id: typeof payload["id"] === "string" ? payload["id"] : `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "message"}`,
       role,
-      text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
+      text: (role === 'user' ? withoutChatTextAttachments(text) : text).slice(0, MAX_SESSION_MESSAGE_CHARS),
       ...(images.length ? { images: images.slice(0, MAX_CHAT_ATTACHMENTS) } : {}),
       ...(questions.length ? { questions } : {}),
       ...(textAttachments.length ? { textAttachments } : {}),

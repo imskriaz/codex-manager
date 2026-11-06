@@ -559,6 +559,16 @@ describe("refreshSingleQuota token automation state", () => {
     } finally { clearAutoSwitchLock(active.id); }
   });
 
+  it.each(['switch', 'running', 'disabled', 'no-candidate', 'stale-trigger'])('gates model-capacity switching with healthy active quota (%s)', async scenario => {
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback: unknown) => key === 'autoSwitchWaitForSessionsEnabled' ? false : key === 'modelCapacityAutoSwitchEnabled' ? scenario !== 'disabled' : fallback } as never);
+    const active = createAccount('capacity-active', true, 90, 90), next = createAccount('capacity-next', false, 90, 90);
+    const repo = { listAccounts: vi.fn(async () => scenario === 'no-candidate' ? [active] : [active, next]), switchAccount: vi.fn(async () => undefined) };
+    vi.spyOn(runningSessions, 'readRunningCodexSessionIds').mockResolvedValue(scenario === 'running' ? ['another-session'] : []);
+    const switched = await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { modelCapacityAccountId: active.id, capacityStillNeeded: () => scenario !== 'stale-trigger' });
+    expect(switched).toBe(scenario === 'switch'); expect(repo.switchAccount).toHaveBeenCalledTimes(scenario === 'switch' ? 1 : 0);
+    if (switched) expect(getAutoSwitchRuntimeSnapshot().lastReason?.trigger).toBe('model_capacity');
+  });
+
   it("waits for all running sessions, retries after completion, and rechecks before switching", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("wait-active", true, 0, 0);
@@ -1291,6 +1301,36 @@ describe("refreshSingleQuota token automation state", () => {
     expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).not.toBe(
       "Auto Select could not verify quota for an available account. Refresh its quota and retry."
     );
+  });
+
+  it.each([true, false])("refreshes all candidates before auto switching with Quota Warning=%s", async quotaWarningEnabled => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 3 * 60 * 60_000);
+    vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined);
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback: unknown) => ({
+      autoSwitchEnabled: true, quotaWarningEnabled, autoSwitchWaitForSessionsEnabled: false,
+      autoSwitchRefreshAllBeforeSwitchEnabled: true, autoSwitchWeeklyThreshold: 20,
+      autoRefreshMinutes: 60
+    } as Record<string, unknown>)[key] ?? fallback } as never);
+    const active = createAccount('warning-independent-active', true, 90, 5);
+    const candidate = createAccount('warning-independent-next', false, 90, 90);
+    const accounts = [active, candidate];
+    const repo = {
+      listAccounts: vi.fn(async () => accounts), getAccount: vi.fn(async (id: string) => accounts.find(item => item.id === id)),
+      getTokens: vi.fn(async () => tokens), updateQuota: vi.fn(async (id: string) => {
+        const account = accounts.find(item => item.id === id)!;
+        account.lastQuotaAt = Date.now();
+        return account;
+      }), refreshSubscriptionState: vi.fn(async () => undefined),
+      updateResetCreditsSnapshot: vi.fn(async () => undefined), switchAccount: vi.fn(async () => {
+        active.isActive = false;
+        candidate.isActive = true;
+      })
+    };
+    refreshQuotaMock.mockImplementation(async (account: CodexManagerAccountRecord) => ({ quota: account.quotaSummary }));
+    fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [] });
+    await refreshSingleQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, active.id, { announce: true });
+    expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
+    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id, { expectedActiveAccountId: active.id });
   });
 
   it("refreshes non-current quotas before a warning selects a switch target", async () => {

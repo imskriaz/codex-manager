@@ -25,6 +25,13 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   await access.selectOption('read-only');
   await page.waitForFunction(()=>document.querySelector('select[name="sandbox-mode"]')?.value==='read-only');
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='setCodexSessionAccess').length),1,'Changing access syncs once');
+  const approval = page.getByRole('checkbox', { name: 'Auto approval', exact: true });
+  await approval.click();
+  await page.waitForFunction(() => document.querySelector('.cli-approval-control input')?.checked);
+  assert.equal(await access.inputValue(), 'read-only', 'Approval changes preserve sandbox restrictions');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(x => x.action === 'setCodexSessionAccess').at(-1).payload.autoApprove), true);
+  await approval.click();
+  await page.waitForFunction(() => !document.querySelector('.cli-approval-control input')?.checked);
   assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).inputValue(),'gpt-5','Model IDs stay unchanged');
   await page.keyboard.press('Escape');
   await input.fill('Keep this draft through permission changes'); await checkLayout();
@@ -37,6 +44,7 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   assert.equal(await input.inputValue(),'Keep this draft through permission changes');
   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
   assert.equal(await access.isDisabled(),true,'Offline access changes are blocked');
+  assert.equal(await approval.isDisabled(),true,'Offline approval changes are blocked');
   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
   await page.keyboard.press('Escape');
   const sidebar=page.getByRole('button',{name:'Show sessions sidebar',exact:true});

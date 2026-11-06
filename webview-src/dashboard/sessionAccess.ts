@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardCliSandboxMode, DashboardCliSessionSummary, DashboardHostMessage, DashboardNotice } from '../../src/domain/dashboard/types';
 import { isCodexSessionAccess, type CodexSessionAccess } from '../../src/domain/codexSessionAccess';
 
-export function useSessionAccess(props: { session?: DashboardCliSessionSummary; connected: boolean; send?: (mode: DashboardCliSandboxMode) => string | undefined; feedback: (notice: DashboardNotice) => void }) {
+export function useSessionAccess(props: { session?: DashboardCliSessionSummary; connected: boolean; send?: (mode?: DashboardCliSandboxMode, autoApprove?: boolean) => string | undefined; feedback: (notice: DashboardNotice) => void }) {
   const scope = JSON.stringify([props.session?.deviceId, props.session?.id]);
   const [reported, setReported] = useState<{ scope: string; access: CodexSessionAccess }>();
   const [pending, setPending] = useState(false), [status, setStatus] = useState<string>();
@@ -35,13 +35,13 @@ export function useSessionAccess(props: { session?: DashboardCliSessionSummary; 
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
   }, [scope]);
-  return { mode: access ? access.mode : props.session?.sandboxMode, profile: access?.profile, pending, status,
-    change: (mode: DashboardCliSandboxMode) => {
+  return { mode: access ? access.mode : props.session?.sandboxMode, profile: access?.profile, autoApprove: access?.approvalPolicy === "never", pending, status,
+    change: (mode?: DashboardCliSandboxMode, autoApprove?: boolean) => {
       if (!props.session || !props.connected || request.current || !props.send) return;
       let id: string | undefined;
-      try { id = props.send(mode); }
+      try { id = autoApprove === undefined ? props.send(mode) : props.send(mode, autoApprove); }
       catch (error) { const message = (error as Error).message || 'Access was not sent.'; setStatus(message); props.feedback({ level: 'error', message }); return; }
-      if (!id) { setStatus('Access was not sent. Reconnect and retry.'); return; }
+      if (!id) { const message = 'Access was not sent. Reconnect and retry.'; setStatus(message); props.feedback({ level: 'warning', message }); return; }
       setPending(true); setStatus('Syncing access with Codex…');
       const timer = setTimeout(() => {
         if (request.current?.id !== id) return;

@@ -28,7 +28,9 @@ export async function checkSteerUi(page, { origin, parentId }) {
   });
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), 1, 'Repeated submit events send only once');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Confirmation lost; verify before retrying.' } })));
-  await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).waitFor();
+  await page.locator('.cli-queue-summary').click();
+  await page.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+  await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','A failed send stays in the conversation without restoring the composer');
   await input.fill('My next draft');
   await page.evaluate(() => {
@@ -45,7 +47,9 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.evaluate(() => {
     window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Uncertain result' } }));
   });
-  await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).waitFor();
+  await page.locator('.cli-queue-summary').click();
+  await page.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+  await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','The failed follow-up offers inline Resend');
   await page.evaluate(() => {
     window.__steerState = { ...window.__steerState, sequence: 3, updatedAt: Date.now(), messages: [...window.__steerState.messages, { id: 'second-steer-echo', role: 'user', kind: 'message', turnId: 'turn-fixture', text: 'My next draft' }, { id: 'later-reply', role: 'assistant', kind: 'message', turnId: 'turn-fixture', text: 'Working on the follow-up' }] };
@@ -59,7 +63,8 @@ export async function checkSteerUi(page, { origin, parentId }) {
   assert.ok(messages.indexOf('Working on the follow-up') > messages.indexOf('My next draft'), 'Subsequent output follows the steering message');
   await input.fill('Fast accepted steering');
   await send.click();
-  await page.locator('.cli-local-queue .is-sent').waitFor();
+  await page.locator('.cli-session-message.is-user').filter({ hasText: 'Fast accepted steering' }).waitFor();
+  assert.equal(await page.locator('.cli-session-message.is-user').filter({ hasText: 'Fast accepted steering' }).count(), 1, 'Accepted guidance appears immediately without waiting for an owner echo');
   assert.equal(await page.locator('.cli-local-queue .is-sending').count(), 0, 'Accepted guidance stops showing a pending send');
   await page.evaluate(sessionId => {
     window.__composerNode = document.querySelector('textarea[name="codex-message"]');
@@ -101,7 +106,7 @@ export async function checkSteerUi(page, { origin, parentId }) {
       assert.equal(await input.isDisabled(),true,'Offline composer actions are disabled');
       const before=await page.evaluate(()=>window.__uiActions.length);
       await input.press('Control+Enter');
-      assert.equal(await page.locator('.cli-local-queue').getByRole('button',{name:'Resend',exact:true}).count(),0,'Offline queued messages do not offer Resend');
+      assert.equal(await page.locator('.cli-local-queue').getByRole('button',{name:'Resend queued message',exact:true}).count(),0,'Offline queued messages do not offer Resend');
       assert.equal(await input.getAttribute('placeholder'),'Message Codex…','Connection status keeps the default composer placeholder');
       assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline input sends no host actions');
       assert.equal(await input.inputValue(),'Native owner guidance','Offline actions preserve the draft');

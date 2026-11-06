@@ -1,3 +1,4 @@
+import { normalizeModelCapacityFailures } from '../../infrastructure/config/extensionSettings';
 import * as vscode from "vscode";
 import { getDashboardCopy } from "../../application/dashboard/copy";
 import type { DashboardSettingKey } from "../../domain/dashboard/types";
@@ -55,6 +56,7 @@ export async function handleDashboardSettingUpdate(
       break;
     case "privacyMode":
     case "codexAppRestartEnabled":
+    case "modelCapacityAutoSwitchEnabled":
     case "autoSwitchEnabled":
     case "autoSwitchWaitForSessionsEnabled":
     case "autoSwitchReloadWindowEnabled":
@@ -96,6 +98,11 @@ export async function handleDashboardSettingUpdate(
       if (value === "auto" || value === "manual") {
         await updateDashboardConfiguration(config, key, value, target);
         updated = true;
+      }
+      break;
+    case "modelCapacityFailureCount":
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        await updateDashboardConfiguration(config, key, normalizeModelCapacityFailures(value), target); updated = true;
       }
       break;
     case "autoSwitchHourlyThreshold":
@@ -274,6 +281,8 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
+    key === "modelCapacityAutoSwitchEnabled" ||
+    key === "modelCapacityFailureCount" ||
     key === "autoResumeEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||

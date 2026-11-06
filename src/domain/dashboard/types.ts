@@ -24,6 +24,8 @@ export type DashboardSettingKey =
   | "tokenHistoryRetentionDays"
   | "dailyTokenUsageEnabled"
   | "dailyTokenUsageIntervalMinutes"
+  | "modelCapacityAutoSwitchEnabled"
+  | "modelCapacityFailureCount"
   | "autoSwitchEnabled"
   | "autoSwitchWaitForSessionsEnabled"
   | "autoSwitchReloadWindowEnabled"
@@ -74,6 +76,8 @@ export interface DashboardSettings {
   tokenHistoryRetentionDays?: number;
   dailyTokenUsageEnabled?: boolean;
   dailyTokenUsageIntervalMinutes?: number;
+  modelCapacityAutoSwitchEnabled?: boolean;
+  modelCapacityFailureCount?: number;
   autoSwitchEnabled: boolean;
   autoSwitchWaitForSessionsEnabled?: boolean;
   hourlyQuotaControlEnabled: boolean;
@@ -706,6 +710,7 @@ export interface DashboardActionPayload {
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
+  autoApprove?: boolean;
   projectPath?: string;
   filePath?: string;
   includeBranchDiff?: boolean;

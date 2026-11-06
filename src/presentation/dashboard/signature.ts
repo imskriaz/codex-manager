@@ -93,6 +93,8 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.encryptedSyncEnabledSessionCount ?? "",
     state.settings.encryptedSyncRegistryOverrideEnabled ? "1" : "0",
     state.settings.autoSwitchEnabled ? "1" : "0",
+    state.settings.modelCapacityAutoSwitchEnabled ? "1" : "0",
+    state.settings.modelCapacityFailureCount ?? 3,
     state.settings.autoSwitchWaitForSessionsEnabled ? "1" : "0",
     state.settings.autoSwitchReloadWindowEnabled ? "1" : "0",
     state.settings.autoResumeEnabled ? "1" : "0",

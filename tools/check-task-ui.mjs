@@ -469,5 +469,6 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), false, 'API tester can use the newly created token');
     await page.screenshot({ path: path.join(output, `api-access-${width}x${height}.png`) });
     await api.getByRole('button', { name: 'Close', exact: true }).click();
+    if (width <= 760) await page.keyboard.press('Escape');
     if (width<=760 && await page.locator('.cli-rail-toggle').getAttribute('aria-expanded')==='true') await page.locator('.cli-rail-toggle').click();
 }

@@ -1,3 +1,4 @@
+import { ACCOUNT_CENTER_SIZE_KEY, loadAccountCenterSize, type AccountCenterSize } from './preferences';
 import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { useComposerCommands } from './composerCommands';
 import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
@@ -5,7 +6,7 @@ import { useSessionResume } from './sessionResume';
 import { codexModelLabel } from "./helpers";
 import { useSessionAccess } from './sessionAccess';
 import { activeSessionQuestion, answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
-import { useCliMessageQueue, queuedMessageView, type CliQueuedMessage } from './cliMessageQueue';
+import { useCliMessageQueue, queuedMessageView, withAcceptedQueuedMessages, type CliQueuedMessage } from './cliMessageQueue';
 import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
 import { BrowserWorkWindow } from './browserWorkWindow';
@@ -40,12 +41,11 @@ import type {
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 import { chatAttachmentPreviews, validateChatAttachments, prepareChatInput, type ChatAttachment } from "../../src/domain/chatAttachments";
 import { readSubAgentMetadata } from "../../src/domain/sessionSource";
-import { cliSessionTargetKey } from "./cliSessionRoute";
+import { cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
-import { compareDashboardAutoQueueAccounts, sortWithQueuedAccount } from "./accountSorting";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
@@ -215,13 +215,13 @@ export type CliSessionsPageProps = {
   account?: DashboardAccountViewModel;
   localAccounts?: DashboardAccountViewModel[];
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
-  renderAccountGrid?: (accounts: DashboardAccountViewModel[], beforeAction: () => void) => preact.ComponentChildren;
+  renderAccounts?: () => preact.ComponentChildren;
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
   selectedPeerId?: string;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   onPeerChange?: (peerId: string) => void;
   onRefresh: () => void;
-  onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; projectPath?: string }) => string | undefined;
+  onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string }) => string | undefined;
   onSelect: (session: DashboardCliSessionSummary) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
@@ -240,7 +240,7 @@ export type CliSessionsPageProps = {
   onClearFile: () => void;
   onDeleteFile: (filePath: string, projectPath?: string) => void;
   onSaveFile: (filePath: string, content: string, revision: string, projectPath?: string) => string | undefined;
-  onAccess?: (session: DashboardCliSessionSummary, mode: DashboardCliSandboxMode) => string | undefined;
+  onAccess?: (session: DashboardCliSessionSummary, mode?: DashboardCliSandboxMode, autoApprove?: boolean) => string | undefined;
   onSend: (input: {
     text: string;
     attachments?: ChatAttachment[];
@@ -353,8 +353,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [search, setSearch] = useState("");
 
   const [attachmentReading, setAttachmentReading] = useState(false);
-  const [pendingMessages, setPendingMessages] = useState<Array<{ requestId: string; key: string; message: DashboardCliSessionMessage; sent?: boolean; failed?: boolean }>>([]);
-  const submittedDrafts = useRef(new Map<string, ComposerDraft & { projectPath?: string; key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; seenIds: Set<string>; turnId?: string }>());
+  const [pendingMessages, setPendingMessages] = useState<Array<{ requestId: string; key: string; message: DashboardCliSessionMessage; session?: CliSubmissionResult["session"]; error?: string; sent?: boolean; failed?: boolean }>>([]);
+  const submittedDrafts = useRef(new Map<string, ComposerDraft & { projectPath?: string; key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; session?: CliSubmissionResult["session"]; seenIds: Set<string>; turnId?: string }>());
   const submittingDrafts = useRef(new Map<string, string>());
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
@@ -377,10 +377,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const field of fields) dirty.add(field);
     dirtyDraftFields.current.set(draftKey, dirty);
   };
-  const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession);
+  const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession, props.browser ? "danger-full-access" : undefined);
   const { model, reasoningEffort, sandboxMode } = settings;
   const access = useSessionAccess({ session: props.selectedSession, connected: props.connected !== false,
-    send: mode => props.selectedSession && props.onAccess?.(props.selectedSession, mode), feedback: notice => reportLocalFeedback(notice) });
+    send: (mode, autoApprove) => props.selectedSession && props.onAccess?.(props.selectedSession, mode, autoApprove), feedback: notice => reportLocalFeedback(notice) });
   const resume = useSessionResume({ session: props.selectedSession, connected: props.connected !== false, blocked: props.mutating || props.sending || props.stopping || access.pending,
     send: () => props.selectedSession ? props.onResume(props.selectedSession) : undefined, feedback: notice => reportLocalFeedback(notice) });
   const updateDraftSettings = (patch: Partial<ComposerDraft>) => {
@@ -390,6 +390,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const setModel = (value?: string) => updateDraftSettings({ model: value });
   const setReasoningEffort = (value?: string) => updateDraftSettings({ reasoningEffort: value });
   const setSandboxMode = (value: DashboardCliSandboxMode) => updateDraftSettings({ sandboxMode: value });
+  const autoApprove = composerDrafts[draftKey]?.autoApprove === true;
   const draft = composerDrafts[draftKey]?.text ?? "";
   const attachments = composerDrafts[draftKey]?.attachments ?? EMPTY_CHAT_ATTACHMENTS;
   const setDraft = (value: string | ((current: string) => string)): void => {
@@ -511,9 +512,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           return entry?.draft?.trim() === terminal.text ? { ...current, [terminal.key]: { ...entry, draft: '' } } : current;
         });
       }
-      setPendingMessages(current => current.map(item => item.requestId === result.requestId ? { ...item, sent: result.status === "completed", failed: result.status !== "completed" } : item));
+      setPendingMessages(current => current.map(item => item.requestId === result.requestId ? { ...item, sent: result.status === "completed", failed: result.status !== "completed", session: result.session ?? item.session, error: result.message } : item));
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
+      if (result.session) submitted.session = result.session;
       if (submittingDrafts.current.get(submitted.key) === result.requestId) submittingDrafts.current.delete(submitted.key);
       // Retain unconfirmed sends for late success without discarding newer edits.
       if (result.status !== "completed" && submitted.failedDraft) continue;
@@ -531,7 +533,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   useEffect(() => {
     for (const [requestId, submitted] of submittedDrafts.current) {
-      if (submitted.key !== draftKey || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId))) continue;
+      if ((submitted.key !== draftKey && !sameCliSessionTarget(submitted.session, props.selectedSession)) || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId))) continue;
       submittedDrafts.current.delete(requestId);
       setPendingMessages(current => current.filter(item => item.requestId !== requestId));
       if (submittingDrafts.current.get(submitted.key) === requestId) submittingDrafts.current.delete(submitted.key);
@@ -943,14 +945,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     try { prepareChatInput(text, uploads); }
     catch (error) { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
     const clearedDraft = acknowledgeCliComposerDraft(existingDraft, current);
-    const submitted = { ...current, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
+    const submitted = { ...current, model, reasoningEffort, sandboxMode, autoApprove, projectPath: newChatProject ?? projectPath, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
     submittingDrafts.current.set(draftKey, "sending");
     markDraftFields(['text', 'attachments']);
     composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: clearedDraft };
     setComposerDrafts(composerDraftsRef.current);
     let requestId: string | undefined;
     try {
-    requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
+    requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, autoApprove, projectPath: newChatProject ?? projectPath });
     } catch (error) {
       submittingDrafts.current.delete(draftKey);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
@@ -974,7 +976,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const saved = submittedDrafts.current.get(requestId);
     if (!saved || !saved.failedDraft || submittingDrafts.current.has(saved.key) || props.starting || props.connected === false) return;
     try {
-      const nextId = props.onStart({ text: saved.text, attachments: saved.attachments, model: saved.model, reasoningEffort: saved.reasoningEffort, sandboxMode: saved.sandboxMode ?? sandboxMode, projectPath: saved.projectPath });
+      const nextId = props.onStart({ text: saved.text, attachments: saved.attachments, model: saved.model, reasoningEffort: saved.reasoningEffort, sandboxMode: saved.sandboxMode ?? sandboxMode, autoApprove: saved.autoApprove, projectPath: saved.projectPath });
       if (!nextId) { reportLocalFeedback({ level: 'warning', message: 'Resend was not sent. The message is kept here.' }); return; }
       submittedDrafts.current.delete(requestId);
       submittedDrafts.current.set(nextId, { ...saved, failedDraft: undefined });
@@ -982,7 +984,18 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       setPendingMessages(previous => previous.map(item => item.requestId === requestId ? { ...item, requestId: nextId, sent: false, failed: false } : item));
     } catch (error) { reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); }
   };
-  const renderPendingMessages = () => pendingMessages.filter(item => item.key === draftKey).map(item => <div key={item.requestId} class="cli-pending-message"><SessionMessage message={item.message} onActionFeedback={reportLocalFeedback} /><div class="cli-queued-footer"><span class="cli-queued-status" role="status">{!item.sent && !item.failed ? <span class="cli-live-spinner" aria-hidden="true" /> : null}{item.failed ? 'Send failed' : item.sent ? 'Sent' : 'Sending…'}</span>{item.failed ? <button type="button" class="cli-queue-resend" disabled={props.connected === false || props.starting} onClick={() => resendNewMessage(item.requestId)}>Resend</button> : null}</div></div>);
+  const visiblePendingMessages = pendingMessages.filter(item => props.selectedSession ? sameCliSessionTarget(item.session, props.selectedSession) : item.key === draftKey && newChatProject !== undefined);
+  const pendingNewChat = !props.selectedSession && visiblePendingMessages.length > 0;
+  const renderPendingMessages = () => visiblePendingMessages.length ? <div class="cli-local-queue" aria-label="Local message queue">
+    <button type="button" class="cli-queue-summary" popovertarget="new-session-queue" aria-haspopup="dialog"><QueueIcon /><span>Queued · {visiblePendingMessages.length}</span><ChevronIcon /></button>
+    <div id="new-session-queue" popover="auto" class="cli-queue-list-popover" role="dialog" aria-label="Queued messages">
+      <header><strong>Queued messages</strong><button type="button" class="cli-icon-button" popovertarget="new-session-queue" popovertargetaction="hide" aria-label="Close queued messages"><CloseIcon /></button></header>
+      {visiblePendingMessages.map(item => <article key={item.requestId} class={`cli-queue-list-item is-${item.failed ? 'failed' : item.sent ? 'sent' : 'queued'}`}>
+        <div class="cli-queue-list-copy"><strong>{item.failed ? 'Unconfirmed' : item.sent ? 'Sent' : 'Queued'}</strong><p>{item.message.text || 'Attachment'}</p>{item.error || item.failed ? <small role="alert">{item.error ?? 'Session creation was not confirmed. Check sessions before resending; the prompt may have been accepted.'}</small> : null}</div>
+        {item.failed ? <button type="button" class="cli-icon-button" title="Resend" aria-label="Resend queued message" disabled={props.connected === false || props.starting} onClick={() => resendNewMessage(item.requestId)}><RefreshIcon /></button> : null}
+      </article>)}
+    </div>
+  </div> : null;
   const addAttachments = async (files: File[]): Promise<void> => {
     if (attachmentReadRef.current || props.starting) return;
     if (!files.length) return;
@@ -1175,11 +1188,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             switching={props.switchingAccount}
             onDashboard={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}
             onSettings={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}
-            renderAccountGrid={props.renderAccountGrid}
+            renderAccounts={props.renderAccounts}
             onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
-        {accountCenterOpen ? <SessionAccountFooter connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccountGrid={props.renderAccountGrid} /> : null}
+        {accountCenterOpen ? <SessionAccountFooter connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
         <PanelResizeHandle
           label="Resize sessions sidebar"
           value={layout.railWidth}
@@ -1190,14 +1203,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         />
 
         <main
-          class={`cli-conversation ${props.selectedSession ? "has-session" : newChatProject !== undefined ? "has-new-chat" : ""}`}
+          class={`cli-conversation ${props.selectedSession || pendingNewChat ? "has-session" : newChatProject !== undefined ? "has-new-chat" : ""}`}
           aria-hidden={props.dashboardMode || undefined}
           inert={props.dashboardMode || (mobileLayout && !railCollapsed) || undefined}
         >
-          {!props.selectedSession ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
-          {props.selectedSession ? (
+          {!props.selectedSession && !pendingNewChat ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
+          {props.selectedSession || pendingNewChat ? (
             <>
-              <ConversationHeader
+              {props.selectedSession ? <ConversationHeader
                 workWindow={props.browser ? <BrowserWorkWindow title={props.selectedSession.title} onFeedback={reportLocalFeedback}><p role="status">{props.connected === false ? 'Connection Interrupted · reconnecting' : currentTurnRunning ? 'Working' : props.selectedSession.interrupted ? 'Interrupted · check this conversation in Workspace' : 'Ready'}</p><div class="browser-work-messages">{props.messages.filter(message => message.role === 'assistant' && (!message.kind || message.kind === 'message')).slice(-4).map(message => <p key={message.id}>{message.text}</p>)}</div></BrowserWorkWindow> : undefined}
                 session={props.selectedSession}
                 archived={selectedArchived}
@@ -1216,12 +1229,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onRenameCancelled={() => reportLocalFeedback({ level: "info", message: "Rename cancelled." })}
                 terminalCollapsed={toolsCollapsed}
                 onToggleTerminal={() => { setContextCollapsed(current => !current); setContextAddOpen(false); }}
-              />
+              /> : <header class="cli-conversation-header"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /><strong>{visiblePendingMessages[0]?.message.text.slice(0, 80) || 'New session'}</strong></header>}
               {deleteTarget && !deleteTarget.archived ? <DeleteConfirmation title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
               <div class="cli-message-region"><section ref={messageViewportRef} class="cli-message-viewport" aria-live="polite" aria-busy={props.messagesLoading} onScroll={updateMessageScrollState}>
                 {props.messagesLoading && props.messages.length === 0 ? <MessageSkeleton /> : null}
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
-                {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
+                {!pendingNewChat && !props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
                   <SessionTranscript agentSessions={relatedAgents} onOpenAgent={id => {
                     if (!id) { openContextTab('agents'); return; }
@@ -1229,7 +1242,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     const agent = relatedAgents.find(session => session.id === id);
                     if (!agent) { props.onActionFeedback({ level: 'warning', message: 'This agent is not in the saved session list. Refresh sessions and try again.' }); return; }
                     openContextTab('agents', id);
-                  }} messages={props.messages} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.map(queuedMessageView)} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
+                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.map(queuedMessageView)} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
                   <QueuedMessages queue={messageQueue} popoverId={`queued-message-list-${encodeURIComponent(draftKey)}`} onRefresh={props.onRefreshMessages} />
                   {renderPendingMessages()}
                   {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
@@ -1249,6 +1262,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session"><QueueIcon /></span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
+              ) : !props.selectedSession ? (
+                <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the queued prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
               ) : (
                 <Composer
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
@@ -1258,6 +1273,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   reasoningEffort={reasoningEffort}
                   sandboxMode={access.mode}
                   permissionProfile={access.profile}
+                  autoApprove={access.autoApprove} onAutoApprove={enabled => access.change(undefined, enabled)}
                   accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}
                   accessStatus={access.status}
                   projectPath={props.selectedSession.projectPath ?? projectPath}
@@ -1298,11 +1314,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             </>
           ) : newChatProject !== undefined ? (
             <>
-              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div>{renderPendingMessages()}</section>
+              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1454,6 +1470,7 @@ export function ConversationHeader(props: {
 export function Composer(props: {
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
   draft: string; deviceId?: string; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode;
+  autoApprove?: boolean; onAutoApprove?: (enabled: boolean) => void;
   permissionProfile?: string; accessDisabled?: boolean; accessStatus?: string;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
@@ -1535,6 +1552,7 @@ export function Composer(props: {
           <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
           <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+          {props.onAutoApprove ? <label class="cli-approval-control"><span>Approval</span><span><input type="checkbox" aria-label="Auto approval" checked={props.autoApprove === true} disabled={props.accessDisabled} onChange={event => props.onAutoApprove?.(event.currentTarget.checked)} />Auto approval</span></label> : null}
           {props.feedback && props.feedback.level !== 'info' ? <small class="cli-access-status" role="alert">{props.feedback.message}{props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}</small> : null}
           {props.accessStatus ? <small class="cli-access-status" role="status">{props.accessStatus}</small> : props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
@@ -1640,31 +1658,51 @@ export function ImageLightbox({ image: initialImage, images, initialIndex = 0, o
   const gallery = [...new Map([...sessionImages, ...(images ?? []), initialImage].map(image => [image.src, image])).values()];
   const [selectedSrc, setSelectedSrc] = useState(initialImage.src || gallery[initialIndex]?.src);
   const index = Math.max(0, gallery.findIndex(image => image.src === selectedSrc));
-  const [zoomed, setZoomed] = useState(false);
   const [zoomSize, setZoomSize] = useState<{ width: number; height: number }>();
   const [gestureTransform, setGestureTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const zoomed = gestureTransform.scale > 1.01;
+  const stageRef = useRef<HTMLDivElement>(null);
+  const mouseGesture = useRef<{ id: number; clientX: number; clientY: number; x: number; y: number }>();
+  const dragged = useRef(false);
   const touchGesture = useRef<{ distance: number; scale: number; x: number; y: number; clientX: number; clientY: number }>();
   const [imageReady, setImageReady] = useState(false);
   const preview = useRef<HTMLImageElement>(null);
   const toggleZoom = () => {
-    if (zoomed) { setZoomed(false); setGestureTransform({ scale: 1, x: 0, y: 0 }); return; }
+    if (zoomed) { setZoomSize(undefined); setGestureTransform({ scale: 1, x: 0, y: 0 }); return; }
     const element = preview.current;
     if (!element?.naturalWidth) return;
-    setZoomSize({ width: element.clientWidth * 2, height: element.clientHeight * 2 });
+    setZoomSize({ width: element.clientWidth, height: element.clientHeight });
     setGestureTransform({ scale: 2, x: 0, y: 0 });
-    setZoomed(true);
   };
   const touch = useRef<number>();
   const image = gallery[index] ?? initialImage;
-  const move = (delta: number) => { setSelectedSrc(gallery[(index + delta + gallery.length) % gallery.length]!.src); setZoomed(false); };
-  useLayoutEffect(() => { setFailed(false); setImageReady(false); setZoomed(false); setZoomSize(undefined); setGestureTransform({ scale: 1, x: 0, y: 0 }); touchGesture.current = undefined; }, [image.src]);
+  const move = (delta: number) => { setSelectedSrc(gallery[(index + delta + gallery.length) % gallery.length]!.src); };
+  useLayoutEffect(() => { setFailed(false); setImageReady(false); setZoomSize(undefined); setGestureTransform({ scale: 1, x: 0, y: 0 }); touchGesture.current = undefined; mouseGesture.current = undefined; dragged.current = false; }, [image.src]);
   const accessibility = useModalAccessibility(true, onClose);
   const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !imageReady || failed) return;
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault(); event.stopPropagation();
+      if (!event.deltaY) return;
+      const element = preview.current;
+      if (!element) return;
+      setZoomSize(current => current ?? { width: element.clientWidth, height: element.clientHeight });
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1);
+      setGestureTransform(current => {
+        const scale = Math.min(4, Math.max(1, current.scale * Math.exp(-delta * .002)));
+        return { scale, x: scale > 1 ? current.x : 0, y: scale > 1 ? current.y : 0 };
+      });
+    };
+    stage.addEventListener('wheel', wheel, { passive: false });
+    return () => stage.removeEventListener('wheel', wheel);
+  }, [image.src, imageReady, failed]);
   const alt = image.alt || "Image preview";
   return createPortal(
       <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); move(event.key === 'ArrowLeft' ? -1 : 1); } else accessibility.onKeyDown(event); }} onTouchStart={event => { touch.current = event.touches[0]?.clientX; }} onTouchEnd={event => { const end = event.changedTouches[0]?.clientX; if (!zoomed && touch.current !== undefined && end !== undefined && Math.abs(end - touch.current) > 50) move(end < touch.current ? 1 : -1); touch.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
         <div class="cli-image-lightbox-toolbar"><strong title={alt}>{alt}</strong><span class="cli-image-lightbox-actions" role="group" aria-label="Image controls">{gallery.length > 1 ? <><button type="button" aria-label="Previous image" title="Previous image" onClick={() => move(-1)}><Icon><path d="m14 6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button><small aria-live="polite">{index + 1} / {gallery.length}</small><button type="button" aria-label="Next image" title="Next image" onClick={() => move(1)}><Icon><path d="m10 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button></> : null}<button type="button" aria-label={zoomed ? 'Fit image' : 'Zoom image'} aria-pressed={zoomed} disabled={!imageReady || failed} title={zoomed ? "Fit image" : "Zoom image"} onClick={toggleZoom}><Icon><path d={zoomed ? "M5 12h14" : "M5 12h14M12 5v14"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon></button><a href={image.src} download={`codex-image-${index + 1}`} aria-label="Download image" title="Download image"><Icon><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" title="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
-        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onTouchStart={event => {
+        {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div ref={stageRef} class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onTouchStart={event => {
           event.stopPropagation();
           const first = event.touches[0], second = event.touches[1];
           if (first && second) {
@@ -1679,11 +1717,29 @@ export function ImageLightbox({ image: initialImage, images, initialIndex = 0, o
           if (first && second && gesture.distance > 0) {
             const dx = second.clientX - first.clientX, dy = second.clientY - first.clientY;
             const scale = Math.min(4, Math.max(1, gesture.scale * Math.hypot(dx, dy) / gesture.distance));
-            setGestureTransform({ scale, x: gesture.x, y: gesture.y }); setZoomed(scale > 1.01);
+            if (!zoomSize && preview.current) setZoomSize({ width: preview.current.clientWidth, height: preview.current.clientHeight });
+            setGestureTransform({ scale, x: scale > 1 ? gesture.x : 0, y: scale > 1 ? gesture.y : 0 });
           } else if (first && gesture.distance === 0) {
             setGestureTransform(current => ({ ...current, x: gesture.x + first.clientX - gesture.clientX, y: gesture.y + first.clientY - gesture.clientY }));
           }
-        }} onTouchEnd={() => { touchGesture.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><img ref={preview} key={image.src} src={image.src} alt={alt} style={{ ...(zoomed && zoomSize ? { width: `${zoomSize.width}px`, height: `${zoomSize.height}px` } : {}), transform: `translate3d(${gestureTransform.x}px, ${gestureTransform.y}px, 0) scale(${gestureTransform.scale})`, transformOrigin: 'center center' }} onLoad={() => setImageReady(true)} onError={() => setFailed(true)} onDblClick={toggleZoom} /></div>}
+        }} onTouchEnd={() => { touchGesture.current = undefined; }} onPointerDown={event => {
+          dragged.current = false;
+          if (event.pointerType === 'touch' || event.button !== 0 || !zoomed) { accessibility.onBackdropPointerDown(event); return; }
+          event.preventDefault(); event.stopPropagation();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          mouseGesture.current = { id: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: gestureTransform.x, y: gestureTransform.y };
+        }} onPointerMove={event => {
+          const gesture = mouseGesture.current;
+          if (!gesture || gesture.id !== event.pointerId) return;
+          event.preventDefault();
+          const dx = event.clientX - gesture.clientX, dy = event.clientY - gesture.clientY;
+          if (Math.abs(dx) + Math.abs(dy) > 3) dragged.current = true;
+          setGestureTransform(current => ({ ...current, x: gesture.x + dx, y: gesture.y + dy }));
+        }} onPointerUp={event => {
+          if (mouseGesture.current?.id !== event.pointerId) return;
+          mouseGesture.current = undefined;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }} onPointerCancel={() => { mouseGesture.current = undefined; dragged.current = true; }} onLostPointerCapture={() => { mouseGesture.current = undefined; }} onMouseDown={accessibility.onBackdropMouseDown} onClick={event => { if (dragged.current) { dragged.current = false; event.stopPropagation(); return; } accessibility.onBackdropClick(event); }}><img draggable={false} ref={preview} key={image.src} src={image.src} alt={alt} style={{ ...(zoomed && zoomSize ? { width: `${zoomSize.width}px`, height: `${zoomSize.height}px` } : {}), transform: `translate3d(${gestureTransform.x}px, ${gestureTransform.y}px, 0) scale(${gestureTransform.scale})`, transformOrigin: 'center center' }} onLoad={() => setImageReady(true)} onError={() => setFailed(true)} onDblClick={toggleZoom} /></div>}
       </div>,
       document.body
     );
@@ -2454,23 +2510,33 @@ function SessionAccountFooter(props: {
   onPeerChange?: (peerId: string) => void;
   switching: boolean;
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
-  renderAccountGrid?: (accounts: DashboardAccountViewModel[], beforeAction: () => void) => preact.ComponentChildren;
+  renderAccounts?: () => preact.ComponentChildren;
   onDashboard: () => void;
   onSettings: () => void;
   standalone?: boolean;
   onClose?: () => void;
 }) {
+  const [size, setSize] = useState(loadAccountCenterSize);
+  const [sizeNotice, setSizeNotice] = useState('');
+  const resizing = useRef<{ id: number; x: number; y: number; width: number; height: number; previous?: AccountCenterSize }>();
+  const resized = useRef(size);
+  const resize = (width: number, height: number) => {
+    const next = { width: Math.round(Math.max(Math.min(280, innerWidth - 24), Math.min(innerWidth - 24, width))), height: Math.round(Math.max(Math.min(240, innerHeight - 24), Math.min(innerHeight - 24, height))) };
+    resized.current = next; setSize(next);
+  };
+  const saveSize = () => {
+    if (!resized.current) return;
+    try { window.localStorage.setItem(ACCOUNT_CENTER_SIZE_KEY, JSON.stringify(resized.current)); setSizeNotice('Size saved'); }
+    catch { setSizeNotice('Size changed for this tab. Browser storage could not remember it.'); }
+  };
   const [open, setOpen] = useState(Boolean(props.standalone));
-  const [search, setSearch] = useState("");
   const rootRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
   const focusSearchOnOpen = useRef(false);
   const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
   const peer = peers.find(item => item.id === props.selectedPeerId) ?? peers.find(item => item.local) ?? peers[0]!;
   const connected = props.connected !== false && peer.connected;
-  const accounts = peer.local ? (props.localAccounts ?? props.accounts ?? (props.account ? [props.account] : [])) : (props.peerAccounts?.[peer.id] ?? []);
   const name = (account: DashboardAccountViewModel | undefined, emailFirst = false): string => {
     const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
     return raw ? getSensitiveDisplayValue(raw, props.privacyMode, raw.includes("@") ? "email" : "name") : account ? "Unnamed account" : "No active account";
@@ -2478,14 +2544,6 @@ function SessionAccountFooter(props: {
   const footerName = name(props.account, true);
   const footerSystem = getSensitiveDisplayValue(peer.name, props.privacyMode, "name");
   const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
-  const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
-  const currentName = name(currentAccount);
-  // Manual selection includes disabled and exhausted accounts.
-  const orderedAccounts = sortWithQueuedAccount(accounts, compareDashboardAutoQueueAccounts, false);
-  const filtered = orderedAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel} ${(account.tags ?? []).join(" ")}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  useEffect(() => {
-    setSearch("");
-  }, [peer.id]);
   const closeMenu = (restoreFocus = false): void => {
     setOpen(false);
     props.onClose?.();
@@ -2493,7 +2551,7 @@ function SessionAccountFooter(props: {
   };
   const openMenu = (focusSearch: boolean): void => {
     focusSearchOnOpen.current = focusSearch;
-    setSearch("");
+    const saved = loadAccountCenterSize(); setSize(saved); resized.current = saved;
     setOpen(true);
   };
   const accessibility = useModalAccessibility(open && props.standalone === true, () => closeMenu(true));
@@ -2502,13 +2560,13 @@ function SessionAccountFooter(props: {
     if (!open) return;
     const outside = (event: Event): void => {
       const target = event.target as Node;
-      if (target instanceof Element && target.closest('.saved-overflow-menu-portal, .claim-popover-portal')) return;
+      if (target instanceof Element && target.closest('.overlay.open, .saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover')) return;
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
     const keydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
+      if (event.key === "Escape" && !document.querySelector('.overlay.open, .saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover')) { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
     };
-    const frame = window.requestAnimationFrame(() => { if (focusSearchOnOpen.current) searchRef.current?.focus({ preventScroll: true }); });
+    const frame = window.requestAnimationFrame(() => { if (focusSearchOnOpen.current) menuRef.current?.querySelector<HTMLInputElement>('[name="account-search"]')?.focus({ preventScroll: true }); });
     window.addEventListener("pointerdown", outside);
     window.addEventListener("focusin", outside);
     window.addEventListener("keydown", keydown, true);
@@ -2519,31 +2577,38 @@ function SessionAccountFooter(props: {
       window.removeEventListener("keydown", keydown, true);
     };
   }, [open]);
-  const choose = (accountId?: string): void => { if (!connected || props.switching) return; closeMenu(); props.onSwitchAccount(peer.local ? "local" : peer.id, accountId); };
   return <footer class={`cli-account-footer ${props.standalone ? 'is-standalone' : ''}`} ref={rootRef}>
     {props.standalone ? null : <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </button>}
-    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" >
+    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} style={size ? { '--account-center-width': `${size.width}px`, height: `min(${size.height}px, calc(100dvh - 24px))` } : undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" >
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
-      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
+      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
-      <section class="cli-account-current" aria-label="Current account">
-        <span class="cli-account-avatar is-large" aria-hidden="true">{currentAccount ? currentName.slice(0, 1).toUpperCase() : "?"}</span>
-        <div><strong title={currentName}>{currentName}</strong><small title={name(currentAccount, true)}>{currentAccount ? name(currentAccount, true) : "Add an account from the dashboard"}</small></div>
-        {currentAccount?.planTypeLabel ? <span class="cli-account-plan">{currentAccount.planTypeLabel}</span> : null}
-      </section>
-      <div class="cli-account-quota-grid"><AccountQuota account={currentAccount} saved={!connected} /></div>
-      <div class="cli-account-list-heading"><strong>Accounts <span>{orderedAccounts.length}</span></strong></div>
-      <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account…" value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
-      <div class="cli-account-grid dashboard-view-cards" role="group" aria-label="Saved accounts">
-        <div class="accounts-grid">{props.renderAccountGrid?.(filtered, () => closeMenu())}</div>
-        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name, email or tag." : "Add an account from the dashboard to get started."}</small></div> : null}
-      </div>
-      <button type="button" class="cli-account-switch-action" disabled={!connected || props.switching || !accounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
-      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { closeMenu(); props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
+      <div class="cli-account-grid">{props.renderAccounts?.()}</div>
+      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
+      <div class="cli-account-resize-footer"><small role="status">{sizeNotice}</small><div class="cli-account-resizer" role="separator" aria-label="Resize account center" aria-valuetext={size ? `${size.width} by ${size.height}` : 'Compact default'} tabIndex={0} onPointerDown={event => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation();
+        const bounds = menuRef.current!.getBoundingClientRect();
+        resizing.current = { id: event.pointerId, x: event.clientX, y: event.clientY, width: bounds.width, height: bounds.height, previous: size };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }} onPointerMove={event => {
+        const start = resizing.current;
+        if (!start || start.id !== event.pointerId) return;
+        resize(start.width + (event.clientX - start.x) * (props.standalone ? 2 : 1), start.height + (event.clientY - start.y) * (props.standalone ? 2 : -1));
+      }} onPointerUp={event => {
+        if (resizing.current?.id !== event.pointerId) return;
+        resizing.current = undefined; saveSize();
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      }} onPointerCancel={() => { const start = resizing.current; if (start) { setSize(start.previous); resized.current = start.previous; resizing.current = undefined; setSizeNotice('Resize cancelled'); } }} onLostPointerCapture={() => { resizing.current = undefined; }} onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        const bounds = menuRef.current!.getBoundingClientRect(), step = event.shiftKey ? 100 : 20;
+        resize(bounds.width + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0), bounds.height + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0)); saveSize();
+      }}><Icon><path d="m8 20 12-12m-6 12 6-6" fill="none" stroke="currentColor" stroke-width="1.7" /></Icon></div></div>
     </div>, document.body) : null}
   </footer>;
 }
@@ -2750,7 +2815,6 @@ function QueueIcon() { return <Icon><path d="M8 5h12M8 12h12M8 19h12" stroke="cu
 function StopIcon() { return <Icon><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></Icon>; }
 function PlayIcon() { return <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>; }
 export function AutoResumeIcon(props: { enabled: boolean; goal: boolean }) { return <Icon><path d="M20 8V3l-3 3a9 9 0 1 0 3.5 9M20 8h-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>{props.enabled ? <path data-state="enabled" d="m10 8 6 4-6 4V8Z" fill="currentColor" stroke-linejoin="round"/> : <path data-state="paused" d="M10 9v6m4-6v6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>}</Icon>; }
-function SwitchAccountIcon() { return <Icon><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function AttachmentIcon() { return <Icon><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8m-5 11 8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function EmptyFolderIcon() { return <Icon><path d="M3 7h7l2 2h9v10H3V7Zm0 0V5h7l2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function PlusIcon() { return <Icon><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></Icon>; }
@@ -2772,6 +2836,7 @@ function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
 export function QueuedMessages({ queue, popoverId = 'queued-message-list', onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; popoverId?: string; onRefresh: () => void }) {
+  queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
   if (!queue.items.length) return <div class="cli-local-queue" aria-label="Local message queue" />;
   const status = (item: CliQueuedMessage) => item.state === 'queued' ? 'Queued' : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Failed';
   return <div class="cli-local-queue" aria-label="Local message queue">

@@ -21,6 +21,7 @@ describe("5-hour quota control defaults", () => {
       codexAppRestartMode: "auto", autoRefreshMinutes: 10, usageHistoryRetentionDays: 30,
       cliIntegrationEnabled: true, apiAccessEnabled: false, autoSwitchEnabled: true,
       autoSwitchWaitForSessionsEnabled: false, autoSwitchReloadWindowEnabled: true,
+      modelCapacityAutoSwitchEnabled: true, modelCapacityFailureCount: 3,
       autoResumeEnabled: true, autoSwitchRefreshAllBeforeSwitchEnabled: true,
       autoResetEnabled: true, quotaWarningEnabled: true, webDashboardEnabled: true,
       encryptedSyncVsCodeHeartbeatMinutes: 10

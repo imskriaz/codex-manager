@@ -269,8 +269,9 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
   const saved = new Map(history.map(item => [item.id, item]));
   const messages = live.messages.map(item => {
     const previous = saved.get(item.id);
-    return previous && previous.text === item.text && previous.role === item.role && (!previous.turnId || !item.turnId || previous.turnId === item.turnId)
+    return previous && (previous.text === item.text || previous.role === 'user' && previous.images?.length && previous.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === item.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim()) && previous.role === item.role && (!previous.turnId || !item.turnId || previous.turnId === item.turnId)
       && ((!item.textAttachments?.length && previous.textAttachments?.length) || (!item.images?.length && previous.images?.length)) ? { ...item,
+      text: previous.role === 'user' && previous.images?.length ? previous.text : item.text,
       ...(!item.textAttachments?.length && previous.textAttachments?.length ? { textAttachments: previous.textAttachments } : {}),
       ...(!item.images?.length && previous.images?.length ? { images: previous.images } : {}) } : item;
   });
@@ -280,14 +281,17 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
     if (saved.has(item.id) || item.role !== "user" || item.kind && item.kind !== "message" || !live.turnId) continue;
     const before = messages.slice(0, index).reverse().find(candidate => saved.has(candidate.id));
     const after = messages.slice(index + 1).find(candidate => saved.has(candidate.id));
-    if (!before && !after) continue;
     const start = before ? history.findIndex(candidate => candidate.id === before.id) + 1 : 0;
     const end = after ? history.findIndex(candidate => candidate.id === after.id) : history.length;
     const echo = history.slice(start, end).find(candidate => candidate.role === "user" && (!candidate.kind || candidate.kind === "message") &&
       candidate.turnId === live.turnId && !matchedUsers.has(candidate.id) && !messages.some(other => other.id === candidate.id) &&
-      candidate.text === item.text && JSON.stringify(candidate.images ?? []) === JSON.stringify(item.images ?? []) &&
+      candidate.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === item.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() &&
+      (!candidate.images?.length || !item.images?.length || JSON.stringify(candidate.images.map(image => image.src)) === JSON.stringify(item.images.map(image => image.src))) &&
       (!item.textAttachments?.length || JSON.stringify(candidate.textAttachments ?? []) === JSON.stringify(item.textAttachments)));
-    if (echo) { matchedUsers.add(echo.id); messages[index] = { ...item, id: echo.id, textAttachments: item.textAttachments?.length ? item.textAttachments : echo.textAttachments }; }
+    if (echo) { matchedUsers.add(echo.id); messages[index] = { ...item, id: before || after || live.truncated ? echo.id : item.id,
+      text: echo.images?.length ? echo.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() : item.text,
+      images: item.images?.length ? item.images : echo.images,
+      textAttachments: item.textAttachments?.length ? item.textAttachments : echo.textAttachments }; }
   }
   const exactTurn = live.turnId ? history.findIndex((item) => item.turnId === live.turnId) : -1;
   const ids = new Set(messages.map((item) => item.id));

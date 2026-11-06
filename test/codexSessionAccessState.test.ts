@@ -30,3 +30,11 @@ it('preserves effective restrictions when a builtin profile label disagrees with
   cache.saveCodexSessionAccess('D:/home','session',access,{sandboxPolicy:{type:'readOnly'}});
   expect(cache.readSavedCodexSessionAccess('D:/home','session')?.settings).toEqual({sandboxPolicy:{type:'readOnly'}});
 });
+
+it('retains approval policy and exact permissions across reloads', async () => {
+  let cache = await import('../src/services/codexSessionAccessState');
+  const access = { ...mode, approvalPolicy: 'never' as const };
+  expect(cache.saveCodexSessionAccess('D:/home', 'approval', access, raw)).toBe(true);
+  vi.resetModules(); cache = await import('../src/services/codexSessionAccessState');
+  expect(cache.readSavedCodexSessionAccess('D:/home', 'approval')).toEqual({ access, settings: { ...raw, approvalPolicy: 'never' } });
+});

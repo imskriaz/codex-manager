@@ -26,6 +26,15 @@ it('bounds peer access updates and rejects malformed or future permissions', () 
   for (const patch of [{ mode: 'root' },{ profile: 'x'.repeat(257) },{ networkAccess: 'yes' },{ updatedAt: Date.now()+600000 },{ unknown: true }]) expect(isCodexSessionAccess({ ...access, ...patch })).toBe(false);
 });
 
+it('reads and validates approval policies independently of sandbox permissions', () => {
+  for (const key of ['approvalPolicy', 'approval_policy', 'approval_mode']) {
+    expect(parseCodexSessionAccess({ [key]: 'never' })).toMatchObject({ approvalPolicy: 'never' });
+  }
+  expect(parseCodexSessionAccess({ approvalPolicy: 'always-allow-everything' })).toBeUndefined();
+  expect(isCodexSessionAccess({ mode: 'read-only', approvalPolicy: 'never', updatedAt: Date.now() })).toBe(true);
+  expect(isCodexSessionAccess({ approvalPolicy: true, updatedAt: Date.now() })).toBe(false);
+});
+
 it('reads modern database permission profiles and preserves effective policy over profile provenance', () => {
   expect(parseCodexSessionAccess({ sandbox_policy: '{"type":"disabled"}' })?.mode).toBe('danger-full-access');
   const managed = { type: 'managed', file_system: { type: 'restricted', entries: [{ path: { type: 'special', value: { kind: 'root' } }, access: 'read' }, { path: { type: 'path', path: 'D:/work' }, access: 'write' }, { path: { type: 'path', path: 'D:/work/private' }, access: 'none' }] }, network: 'restricted' };

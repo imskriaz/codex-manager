@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.3
+
+- Keep the narrow Account Center search, filters, and view switch on one compact row on small screens, with consistent body typography and spacing.
+- Add the Capacity tag only after a successful automatic switch, clear auto-managed tags after two hours, and lower tagged accounts in the automatic queue.
+
+## 1.7.2
+
+- Mirror dashboard account features in a narrow, resizable Account Center that remembers its size and stays open beneath action dialogs.
+- Open new prompts directly in the conversation queue, preserve unconfirmed sends, and merge image-message mirrors without duplicating prompts.
+- Support mouse-wheel zoom and dragging in image previews.
+- Default new browser sessions to Full permissions and add a confirmed, per-session Auto approval setting.
+- Switch accounts after a configurable number of consecutive model-capacity failures when no other session is running. Preserve the count across reloads, require another verified capable account, and tag affected accounts Capacity.
+- Keep Auto Switch safety refreshes and refresh timers working independently of Quota Warning.
+- Show acknowledged steering messages immediately in the browser conversation and reconcile later transcript echoes without duplicating them.
+
 ## 1.7.1
 
 - Reuse dashboard account cards in a compact Account Center grid, with manual switching for disabled and exhausted accounts and the same automatic queue order.

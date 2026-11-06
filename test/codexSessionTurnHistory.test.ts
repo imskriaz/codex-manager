@@ -5,6 +5,28 @@ import { describe, expect, it } from "vitest";
 import { readCodexCliSessionMessages, parseCodexAppServerThreadItems } from "../src/services/codexSessionResume";
 
 describe("authoritative session turn identifiers", () => {
+  it('merges a timestamped image mirror across missing turn metadata without merging another turn', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'codex-image-turn-history-'));
+    const id = '01a04882-d037-7a42-ad24-9afb61901199';
+    const file = path.join(home, 'sessions', `rollout-${id}.jsonl`);
+    const timestamp = '2026-11-06T03:00:00Z';
+    const event = { timestamp, type: 'event_msg', payload: { type: 'user_message', message: 'Review this', images: ['data:image/png;base64,AA=='] } };
+    const mirror = { timestamp, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Review this' }, { type: 'input_image', image_url: 'unavailable' }] } };
+    try {
+      await mkdir(path.dirname(file));
+      await writeFile(file, JSON.stringify(event) + '\n');
+      expect(await readCodexCliSessionMessages(id, home)).toHaveLength(1);
+      await appendFile(file, [
+        { type: 'turn_context', payload: { turn_id: 'turn-1' } }, mirror,
+        { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } },
+        { type: 'turn_context', payload: { turn_id: 'turn-2' } }, { ...event, timestamp: '2026-11-06T03:01:00Z' }
+      ].map(row => JSON.stringify(row)).join('\n') + '\n');
+      const messages = await readCodexCliSessionMessages(id, home);
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({ text: 'Review this', turnId: 'turn-1', images: [{ src: 'data:image/png;base64,AA==' }] });
+      expect(messages[1]).toMatchObject({ text: 'Review this', turnId: 'turn-2' });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
   it("annotates app-server items and turn errors", () => {
     expect(parseCodexAppServerThreadItems({ thread: { turns: [{ id: "turn-1", status: "failed", items: [{ id: "reply", type: "agentMessage", text: "reply" }], error: { message: "failed" } }] } })).toEqual([
       expect.objectContaining({ id: "reply", turnId: "turn-1" }), expect.objectContaining({ kind: "error", turnId: "turn-1" })

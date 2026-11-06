@@ -1,6 +1,13 @@
 import type { DashboardCliSandboxMode } from './dashboard/types';
 
-export type CodexSessionAccess = { mode?: DashboardCliSandboxMode; profile?: string; networkAccess?: boolean; updatedAt: number };
+export type CodexApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+export type CodexSessionAccess = { mode?: DashboardCliSandboxMode; profile?: string; networkAccess?: boolean; approvalPolicy?: CodexApprovalPolicy; updatedAt: number };
+export function codexApprovalPolicy(value: unknown): CodexApprovalPolicy | undefined {
+  return ['untrusted', 'on-failure', 'on-request', 'never'].includes(String(value)) && typeof value === 'string' ? value as CodexApprovalPolicy : undefined;
+}
+export function matchesCodexSessionAccess(actual: CodexSessionAccess | undefined, expected: CodexSessionAccess): boolean {
+  return !!actual && (!expected.mode || actual.mode === expected.mode) && (!expected.approvalPolicy || actual.approvalPolicy === expected.approvalPolicy);
+}
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 export function codexSandboxMode(value: unknown): DashboardCliSandboxMode | undefined {
   if (value === 'readOnly' || value === 'read-only') return 'read-only';
@@ -26,17 +33,19 @@ export function parseCodexSessionAccess(value: unknown, updatedAt = Date.now()):
     mode = entries.some(entry => object(entry)?.['access'] === 'write') ? 'workspace-write' : 'read-only';
   }
   if (!mode) mode = profileId === ':danger-full-access' ? 'danger-full-access' : profileId === ':workspace' ? 'workspace-write' : profileId === ':read-only' ? 'read-only' : undefined;
-  if (!policy && !profileId && !permissions && !mode) return undefined;
+  const approvalPolicy = codexApprovalPolicy(raw['approvalPolicy'] ?? raw['approval_policy'] ?? raw['approval_mode']);
+  if (!policy && !profileId && !permissions && !mode && !approvalPolicy) return undefined;
   const network = policy?.['networkAccess'] ?? policy?.['network_access'] ?? (permissions?.['network'] === 'enabled' ? true : permissions?.['network'] === 'restricted' ? false : undefined);
-  return { ...(mode ? { mode } : {}), ...(profileId ? { profile: profileId } : {}), ...(typeof network === 'boolean' ? { networkAccess: network } : {}), updatedAt: Number.isSafeInteger(updatedAt) && updatedAt > 0 ? updatedAt : Date.now() };
+  return { ...(mode ? { mode } : {}), ...(profileId ? { profile: profileId } : {}), ...(typeof network === 'boolean' ? { networkAccess: network } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), updatedAt: Number.isSafeInteger(updatedAt) && updatedAt > 0 ? updatedAt : Date.now() };
 }
 export function isCodexSessionAccess(value: unknown): value is CodexSessionAccess {
   const raw = object(value);
-  return !!raw && Object.keys(raw).every(key => ['mode','profile','networkAccess','updatedAt'].includes(key))
+  return !!raw && Object.keys(raw).every(key => ['mode','profile','networkAccess','approvalPolicy','updatedAt'].includes(key))
     && Number.isSafeInteger(raw['updatedAt']) && (raw['updatedAt'] as number) > 0 && (raw['updatedAt'] as number) <= Date.now() + 5 * 60_000
     && (raw['mode'] === undefined || codexSandboxMode(raw['mode']) === raw['mode'])
     && (raw['profile'] === undefined || typeof raw['profile'] === 'string' && raw['profile'].length > 0 && raw['profile'].length <= 256)
-    && (raw['networkAccess'] === undefined || typeof raw['networkAccess'] === 'boolean');
+    && (raw['networkAccess'] === undefined || typeof raw['networkAccess'] === 'boolean')
+    && (raw['approvalPolicy'] === undefined || codexApprovalPolicy(raw['approvalPolicy']) === raw['approvalPolicy']);
 }
 export function codexSessionAccessPolicy(mode: DashboardCliSandboxMode, cwd: string, networkAccess = false): Record<string, unknown> {
   if (mode === 'danger-full-access') return { type: 'dangerFullAccess' };

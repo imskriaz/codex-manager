@@ -7,15 +7,18 @@ export type CliComposerDraft = {
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
+  autoApprove?: boolean;
 };
-export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string };
+export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string; session?: { id: string; deviceId?: string } };
 
 /** An existing running marker alone does not acknowledge a follow-up. */
 export function isCliSubmissionEcho(message: DashboardCliSessionMessage, submitted: CliComposerDraft, seenIds: Set<string>, turnId?: string): boolean {
   if (seenIds.has(message.id) || message.role !== "user" || (message.kind && message.kind !== "message") || (turnId && message.turnId && message.turnId !== turnId)) return false;
-  return message.text.trim() === submitted.text.trim()
+  const imageCount = submitted.attachments.filter(file => file.kind === 'image').length;
+  const text = (value: string) => imageCount ? value.replace(/^[\t ]*\[Image unavailable\][\t ]*$/gm, '').trim() : value.trim();
+  return text(message.text) === text(submitted.text)
     && JSON.stringify(message.textAttachments ?? []) === JSON.stringify(chatAttachmentPreviews(submitted.attachments))
-    && (message.images?.length ?? 0) === submitted.attachments.filter(file => file.kind === "image").length;
+    && (message.images?.length ?? 0) === imageCount;
 }
 
 export function cliContextUsage(usage: DashboardCodexSessionLiveState["tokenUsage"]) {
@@ -35,6 +38,7 @@ export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | un
   try {
     return {
       text: draft["text"], attachments: validateChatAttachments(draft["attachments"]),
+      ...(typeof draft["autoApprove"] === "boolean" ? { autoApprove: draft["autoApprove"] } : {}),
       ...(typeof draft["model"] === "string" && draft["model"].length <= 200 ? { model: draft["model"] } : {}),
       ...(typeof draft["reasoningEffort"] === "string" && /^[a-z]{1,20}$/.test(draft["reasoningEffort"]) ? { reasoningEffort: draft["reasoningEffort"] } : {}),
       ...(["read-only", "workspace-write", "danger-full-access"].includes(String(draft["sandboxMode"]))
@@ -45,7 +49,7 @@ export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | un
   }
 }
 
-export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort" | "sandboxMode">) {
+export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, config: DashboardCliComposerConfig | undefined, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort" | "sandboxMode">, defaultSandboxMode?: DashboardCliSandboxMode) {
   const preferredModel = draft?.model ?? session?.model;
   const preferredEffort = draft?.reasoningEffort ?? session?.reasoningEffort;
   const model = config?.models.find((option) => option.id === preferredModel)
@@ -55,7 +59,7 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
     : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
       ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
   return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
-    sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? config?.defaultSandboxMode ?? "danger-full-access" as DashboardCliSandboxMode };
+    sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? defaultSandboxMode ?? config?.defaultSandboxMode ?? "danger-full-access" as DashboardCliSandboxMode };
 }
 
 /** Clear only the submitted content, preserving edits made while it was in flight. */

@@ -1043,10 +1043,10 @@ async function runDashboardAction(
       return handleCancelCodexCliSessionTurn(payload?.sessionId);
     case "setCodexSessionAccess": {
       ensureCliIntegrationEnabled();
-      if (!payload?.sessionId || !payload.sandboxMode) throw new Error('Choose a session and access mode first.');
+      if (!payload?.sessionId || !payload.sandboxMode && payload.autoApprove === undefined) throw new Error('Choose a session and permissions or approval policy first.');
       const session = await ensureCliSessionIsActive(payload.sessionId);
       if (payload.projectPath && session.projectPath && await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath)) throw new Error('This session belongs to a different project. Refresh before changing access.');
-      const access = await setCodexSessionAccess(payload.sessionId, payload.sandboxMode);
+      const access = await setCodexSessionAccess(payload.sessionId, payload.sandboxMode, payload.autoApprove);
       return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
     }
     case "respondCodexServerRequest":
@@ -1542,6 +1542,8 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "dailyTokenUsageEnabled",
     "dailyTokenUsageIntervalMinutes",
     "autoSwitchEnabled",
+    "modelCapacityAutoSwitchEnabled",
+    "modelCapacityFailureCount",
     "autoSwitchWaitForSessionsEnabled",
     "autoSwitchReloadWindowEnabled",
     "autoResumeEnabled",
@@ -1952,6 +1954,7 @@ async function handleStartCodexCliSession(
     model: payload?.model,
     reasoningEffort: payload?.reasoningEffort,
     sandboxMode: payload?.sandboxMode,
+    autoApprove: payload?.autoApprove,
     projectPath: payload?.projectPath
   });
   // Creation already has the accepted thread identity. Do not hold its terminal

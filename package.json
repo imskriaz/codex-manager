@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.7.1",
+  "version": "1.7.3",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -145,6 +145,19 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Switch accounts when current quota reaches either configured limit."
+        },
+        "codexManager.modelCapacityAutoSwitchEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Switch to another verified capable account after consecutive model-capacity failures, only when no other session is running. Requires Auto Switch."
+        },
+        "codexManager.modelCapacityFailureCount": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "multipleOf": 1,
+          "default": 3,
+          "markdownDescription": "Consecutive model-capacity failures before switching accounts. Failures while another session is running do not count."
         },
         "codexManager.autoSwitchWaitForSessionsEnabled": {
           "type": "boolean",

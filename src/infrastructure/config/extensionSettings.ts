@@ -44,6 +44,8 @@ export class ExtensionSettingsStore {
       dailyTokenUsageIntervalMinutes: normalizeDailyTokenUsageIntervalMinutes(config.get<number>("dailyTokenUsageIntervalMinutes", 60)),
       dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", true),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", true),
+      modelCapacityAutoSwitchEnabled: config.get<boolean>('modelCapacityAutoSwitchEnabled', true),
+      modelCapacityFailureCount: normalizeModelCapacityFailures(config.get<number>('modelCapacityFailureCount', 3)),
       autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
       // legacy field in the dashboard model for old snapshots, but do not read
@@ -239,4 +241,8 @@ export function normalizeAutoSwitchLockMinutes(value: number): number {
 
 export function normalizeTokenHistoryRetentionDays(value: number): number {
   return normalizeUsageHistoryRetentionDays(Number.isFinite(value) && value > 0 ? value : 30);
+}
+
+export function normalizeModelCapacityFailures(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(100, Math.round(value))) : 3;
 }

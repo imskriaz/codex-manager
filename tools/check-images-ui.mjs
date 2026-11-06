@@ -21,6 +21,27 @@ export async function checkImagesUi(page,{origin,parentId,width,height,output}) 
   assert.deepEqual(afterToolbar,beforeToolbar,'Image zoom leaves the toolbar fixed');
   assert.deepEqual(await page.evaluate(()=>({width:innerWidth,scale:visualViewport.scale})),pageScale,'Image zoom never changes page scale');
   await box.getByRole('button',{name:'Fit image',exact:true}).click();
+  if (width >= 1000) {
+    const stage = box.locator('.cli-image-stage');
+    const image = box.locator('img');
+    await stage.hover();
+    await page.mouse.wheel(0, -350);
+    await page.waitForFunction(() => document.querySelector('.cli-image-stage').classList.contains('is-zoomed'));
+    const zoom = await image.boundingBox(), region = await stage.boundingBox();
+    assert.ok(zoom.width > beforeZoom.width * 1.8, 'Mouse wheel zooms the image');
+    const start = { x: region.x + region.width / 2, y: region.y + region.height / 2 };
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(start.x + 75, start.y + 45, { steps: 5 }); await page.mouse.up();
+    const panned = await image.boundingBox();
+    assert.ok(Math.abs(panned.x - zoom.x - 75) < 2 && Math.abs(panned.y - zoom.y - 45) < 2, 'Dragging pans the zoomed image');
+    assert.equal(await box.isVisible(), true, 'Releasing a drag keeps the viewer open');
+    assert.deepEqual(await box.locator('.cli-image-lightbox-toolbar').boundingBox(), beforeToolbar);
+    await page.mouse.wheel(0, 5000);
+    await box.getByRole('button', { name: 'Zoom image', exact: true }).waitFor();
+    const fitted = await image.boundingBox();
+    assert.ok(Math.abs(fitted.width - beforeZoom.width) < 2 && Math.abs(fitted.x - beforeZoom.x) < 2, 'Zooming out restores fit and clears the pan');
+    assert.deepEqual(await page.evaluate(()=>({width:innerWidth,scale:visualViewport.scale})),pageScale);
+  }
   await box.getByRole('button',{name:'Next image',exact:true}).click();
   assert.notEqual(await original.getAttribute('href'),first,'Original follows the selected gallery image');
   await box.getByText('2 / 3',{exact:true}).waitFor();

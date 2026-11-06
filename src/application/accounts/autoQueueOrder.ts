@@ -83,6 +83,7 @@ export function toAutoQueueOrderValue(account: CodexManagerAccountRecord): AutoQ
     id: account.id,
     autoResetAllowed: account.autoResetAllowed,
     queuePriority: account.queuePriority,
+    capacityTag: account.tags?.some(tag => tag.toLowerCase() === "capacity"),
     disabled: account.enabled === false,
     quotaError: Boolean(account.quotaError),
     resetCreditAttempt: Boolean(account.resetCreditAttempt),

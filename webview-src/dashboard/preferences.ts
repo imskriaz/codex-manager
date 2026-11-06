@@ -1,6 +1,15 @@
 export type AccountFilter =
   "all" | "healthy" | "attention" | "low" | "active" | "enabled" | "disabled" | "claimed" | "capable" | "incapable";
 export type DashboardView = "cards" | "list";
+export type AccountCenterSize = { width: number; height: number };
+export const ACCOUNT_CENTER_SIZE_KEY = 'codexManager.accountCenterSize.v1';
+export function loadAccountCenterSize(): AccountCenterSize | undefined {
+  try {
+    const size = JSON.parse(window.localStorage.getItem(ACCOUNT_CENTER_SIZE_KEY) ?? 'null') as AccountCenterSize | null;
+    if (size && !Array.isArray(size) && typeof size.width === 'number' && typeof size.height === 'number' && Number.isFinite(size.width) && Number.isFinite(size.height) && size.width >= 280 && size.height >= 240 && size.width <= 16384 && size.height <= 16384) return { width: size.width, height: size.height };
+  } catch { /* Missing or unreadable preferences use the compact default. */ }
+  return undefined;
+}
 export type UiPreferences = {
   filter: AccountFilter;
   view: DashboardView;

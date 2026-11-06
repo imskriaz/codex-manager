@@ -5,13 +5,15 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 
 // Real host reads only. Browser storage and service workers belong to a disposable context.
 const origin = 'http://127.0.0.1:39875', output = path.join(tmpdir(), 'codex-manager-offline-ui');
 await mkdir(output, { recursive: true });
 const servedBundle = await fetch(origin + '/assets/dashboard.js', { signal: AbortSignal.timeout(10000) });
 assert.ok(servedBundle.ok, 'The installed dashboard bundle is available');
-const expectedHash = createHash('sha256').update(Buffer.from(await servedBundle.arrayBuffer())).digest('hex');
+const workspaceAssets = process.argv.includes('--workspace-assets');
+const expectedHash = createHash('sha256').update(workspaceAssets ? await readFile('media/webview/dashboard/dashboard.js') : Buffer.from(await servedBundle.arrayBuffer())).digest('hex');
 
 async function checkWorkerUpgrade(browser) {
   const source = await readFile('media/webview/pwaServiceWorker.js');
@@ -69,6 +71,10 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 let page;
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'allow' });
+  if (workspaceAssets) {
+    await useWorkspaceDashboardAssets({ context: () => context, route: context.route.bind(context) }, origin);
+    await context.route('**/service-worker.js*', route => route.fulfill({ contentType: 'text/javascript', path: path.resolve('media/webview/pwaServiceWorker.js') }));
+  }
   // Keep real network response metadata: synthetic worker responses alter local-network permission checks.
   page = await context.newPage();
   const errors = [], actions = [];

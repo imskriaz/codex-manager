@@ -109,6 +109,7 @@ export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: Auto
   if (leftRank !== rightRank) return leftRank - rightRank;
   const leftStar = left.queuePriority === true && (leftRank === 0 || leftRank === 2);
   const rightStar = right.queuePriority === true && (rightRank === 0 || rightRank === 2);
+  if (left.capacityTag !== right.capacityTag) return left.capacityTag ? 1 : -1;
   if (leftStar !== rightStar) return leftStar ? -1 : 1;
   if (leftRank === 0) {
     const urgency = compareAutoQueueUrgency(left, right, policy.nowMs / 1_000);

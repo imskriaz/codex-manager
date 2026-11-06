@@ -24,13 +24,30 @@ export function queuedMessageEchoes(items: CliQueuedMessage[], messages: Dashboa
   const consumed = new Set<string>(), matched = new Set<string>();
   for (const item of items) {
     if (item.state === 'queued') continue;
-    const echo = messages.find(message => !consumed.has(message.id) && isCliSubmissionEcho(message, item.draft, new Set(item.seenIds), item.turnId));
+    // A confirmed native steer may be handed to the owner's next turn.
+    const echo = messages.find(message => !consumed.has(message.id) && isCliSubmissionEcho(message, item.draft, new Set(item.seenIds), item.state === 'sent' ? undefined : item.turnId));
     if (echo) { consumed.add(echo.id); matched.add(item.id); }
   }
   return { items: items.filter(item => !matched.has(item.id)).map(item => ({ ...item, seenIds: [...new Set([...item.seenIds, ...consumed])].slice(-3000) })), matched };
 }
 export function queuedMessageView(item: CliQueuedMessage): DashboardCliSessionMessage {
   return { id: `pending-${item.id}`, role: 'user', kind: 'message', text: item.draft.text, timestamp: new Date(item.createdAt).toISOString(), images: item.draft.attachments.filter(file => file.kind === 'image').map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(item.draft.attachments) };
+}
+
+/** An acknowledged send is visible before the owner's journal catches up. */
+export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[], items: CliQueuedMessage[]): DashboardCliSessionMessage[] {
+  const accepted = queuedMessageEchoes(items, messages).items.filter(item => item.state === 'sent');
+  if (!accepted.length) return messages;
+  const result = [...messages], inserted = new Set<string>();
+  for (const item of accepted) {
+    const seen = new Set(item.seenIds);
+    let after = -1;
+    result.forEach((message, index) => { if (seen.has(message.id) || inserted.has(message.id)) after = index; });
+    const message = { ...queuedMessageView(item), turnId: item.turnId };
+    result.splice(after < 0 ? result.length : after + 1, 0, message);
+    inserted.add(message.id);
+  }
+  return result;
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */

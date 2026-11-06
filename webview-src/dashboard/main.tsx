@@ -301,8 +301,8 @@ function App() {
   const cliLiveStatesRef = useRef<Record<string, DashboardCodexSessionLiveState>>({});
   const liveAuthority = useRef(new Set<string>());
   const [submissionResults, setSubmissionResults] = useState<CliSubmissionResult[]>([]);
-  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"], message?: string, fileRevision?: string) =>
-    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision }].slice(-128));
+  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"], message?: string, fileRevision?: string, session?: CliSubmissionResult["session"]) =>
+    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision, session }].slice(-128));
   const workspaceScopeRef = useRef<string>();
   const workspaceGeneration = useRef(0);
   const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; action: DashboardActionName; fileContent?: string }>());
@@ -1249,7 +1249,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "startCodexCliSession") {
-        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status);
+        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status, message.error, undefined, message.payload?.cliSession);
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         if (message.status === "completed" && message.payload?.cliSession) {
           const session = message.payload.cliSession;
@@ -1296,6 +1296,7 @@ function App() {
           }
           return;
         }
+        if (target && message.status === 'completed') requestCliSessionMessages(target.id, target.deviceId, true);
         showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? formatSessionReadError(message.action, message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.")) });
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
@@ -2154,7 +2155,7 @@ function App() {
     sendAction("exportBackup");
   };
 
-  const renderSavedAccount = (account: DashboardAccountViewModel, compactRow: boolean, beforeAction?: () => void) => (
+  const renderSavedAccount = (account: DashboardAccountViewModel, compactRow: boolean) => (
     <SavedAccountCard
                   key={account.id}
                   account={account}
@@ -2187,11 +2188,10 @@ function App() {
                   onExportAuth={() => handleExportAccount(account.id)}
                   onEditTags={() => {
                     if (state.pendingActions.some(request => request.accountId === account.id && request.action === 'setAccountTags')) { showNotice({ level: 'warning', message: 'These tags are saving in the background. You can keep working; reopen Edit tags after saving finishes.' }); return; }
-                    beforeAction?.();
                     const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
                     setTagEditor({ account: { ...account, tags: [...(account.tags ?? [])] }, targetDeviceId, initialTags: tagDrafts.current.get(`${targetDeviceId ?? 'local'}:${account.id}`) });
                   }}
-                  onAction={(action, id, payload) => { if (['switch', 'details', 'reauthorize', 'remove', 'consumeResetCredit', 'unloadAuth', 'reloadPrompt'].includes(action)) beforeAction?.(); handleAccountAction(action, id, payload); }}
+                  onAction={handleAccountAction}
                 />
   );
 
@@ -2482,6 +2482,221 @@ function App() {
     />
   );
 
+  const renderAccountSection = (compact = false) => (
+          <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${uiPreferences.view}`}>
+            <div class="header accounts-section-header">
+              <div>
+                <h2 class="header-title header-title-with-meta">
+                  {snapshot.copy.savedAccounts}
+                  <span class="account-count-badges">
+                    <button
+                      class={`header-count-badge header-count-link ${uiPreferences.filter === "all" ? "is-selected" : ""}`}
+                      type="button"
+                      aria-pressed={uiPreferences.filter === "all"}
+                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "all" }))}
+                    >
+                      {resolveUiText("total", snapshot.lang)} {searchedAccounts.length}
+                    </button>
+                    {shouldShowAccountCountFilter(accountEnablement.enabled, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "enabled"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "enabled" }))}
+                      >
+                        {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(accountEnablement.disabled, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "disabled"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "disabled" }))}
+                      >
+                        {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(claimedAccountCount, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge is-claimed header-count-link ${uiPreferences.filter === "claimed" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "claimed"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "claimed" }))}
+                      >
+                        {resolveUiText("claimed", snapshot.lang)} {claimedAccountCount}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(validAccountCount, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "healthy"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "healthy" }))}
+                      >
+                        {resolveUiText("valid", snapshot.lang)} {validAccountCount}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(invalidAccountCount, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "attention"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "attention" }))}
+                      >
+                        {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(capableAccountCount, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "capable"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "capable" }))}
+                      >
+                        {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
+                      </button>
+                    ) : null}
+                    {shouldShowAccountCountFilter(incapableAccountCount, searchedAccounts.length) ? (
+                      <button
+                        class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "incapable"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "incapable" }))}
+                      >
+                        {resolveUiText("incapable", snapshot.lang)} {incapableAccountCount}
+                      </button>
+                    ) : null}
+                  </span>
+                </h2>
+              </div>
+              {selectedCount > 0 ? (
+                <BatchSelectionBar
+                  copy={snapshot.copy}
+                  selectedCount={selectedCount}
+                  refreshPending={batchRefreshPending}
+                  resyncPending={batchResyncPending}
+                  removePending={batchRemovePending}
+                  sharePending={sharePending}
+                  autoResetPending={isActionPending('batchSetAccountAutoResetAllowed')}
+                  onAutoReset={allowed => sendAction('batchSetAccountAutoResetAllowed', undefined, { accountIds: state.selectedAccountIds, autoResetAllowed: allowed })}
+                  onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
+                  onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
+                  onRemove={() => {
+                    setBrowserActionRequest({
+                      kind: "confirm",
+                      action: "batchRemove",
+                      accountIds: state.selectedAccountIds,
+                      title: "Remove selected accounts",
+                      message: `Remove ${selectedCount} selected account${selectedCount === 1 ? "" : "s"}?`,
+                      confirmLabel: "Remove",
+                      danger: true
+                    });
+                  }}
+                  onShare={handleShareTokens}
+                />
+              ) : null}
+            </div>
+            <div class="dashboard-account-toolbar">
+              <label class="account-search-control">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  ref={compact ? undefined : searchInputRef}
+                  name="account-search"
+                  type="text"
+                  role="searchbox"
+                  inputMode="search"
+                  autoComplete="off"
+                  value={uiPreferences.accountSearch}
+                  onInput={(event) =>
+                    setUiPreferences((current) => ({ ...current, accountSearch: event.currentTarget.value }))
+                  }
+                  placeholder={resolveUiText("search", snapshot.lang)}
+                  aria-label={resolveUiText("search", snapshot.lang)}
+                />
+                {uiPreferences.accountSearch ? (
+                  <button
+                    type="button"
+                    aria-label={resolveUiText("clear", snapshot.lang)}
+                    onClick={() => setUiPreferences((current) => ({ ...current, accountSearch: "" }))}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </label>
+              <label class="dashboard-select-control">
+                <select
+                  value={accountSort}
+                  onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
+                  aria-label={resolveSortAriaLabel(snapshot.lang)}
+                >
+                  {(
+                    [
+                      "auto-queue",
+                      "quota",
+                      "time-left",
+                      "login-date",
+                      "last-refresh",
+                      "subscription-expiry",
+                      "account-type",
+                      "email",
+                      "status"
+                    ] as AccountSort[]
+                  ).map((sort) => (
+                    <option key={sort} value={sort}>
+                      {resolveSortOptionLabel(sort, snapshot.lang)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
+              <label class="dashboard-select-control metric-priority-control">
+                <select
+                  value={uiPreferences.metricPriority}
+                  aria-label={resolveUiText("metric", snapshot.lang)}
+                  onChange={(event) =>
+                    setUiPreferences((current) => ({
+                      ...current,
+                      metricPriority: event.currentTarget.value as MetricPriority
+                    }))
+                  }
+                >
+                  {availableMetrics.map((metric) => (
+                    <option key={metric.key} value={metric.key}>
+                      {metric.label} ·{" "}
+                      {metricAveragePercent(metric.key) == null ? "—" : `${metricAveragePercent(metric.key)}%`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div class="dashboard-view-controls">
+                <button
+                  type="button"
+                  class="dashboard-view-toggle active"
+                  title={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+                  aria-label={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+                  onClick={() =>
+                    setUiPreferences((current) => ({
+                      ...current,
+                      view: current.view === "cards" ? "list" : "cards"
+                    }))
+                  }
+                >
+                  {uiPreferences.view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
+                </button>
+              </div>
+            </div>
+            <div class="accounts-grid">
+              {sortedAccounts.map((account) => (
+                renderSavedAccount(account, uiPreferences.view === "list")
+              ))}
+              {sortedAccounts.length === 0 ? (
+                <div class="accounts-empty-filter">{resolveUiText("noResults", snapshot.lang)}</div>
+              ) : null}
+            </div>
+          </section>
+  );
+
   return (
     <>
       <a class="skip-link" href="#dashboard-main">
@@ -2737,218 +2952,7 @@ function App() {
 
         </section>
         {displayedAccounts.length > 0 && browserPath !== '/tasks' ? (
-          <section class="section">
-            <div class="header accounts-section-header">
-              <div>
-                <h2 class="header-title header-title-with-meta">
-                  {snapshot.copy.savedAccounts}
-                  <span class="account-count-badges">
-                    <button
-                      class={`header-count-badge header-count-link ${uiPreferences.filter === "all" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "all"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "all" }))}
-                    >
-                      {resolveUiText("total", snapshot.lang)} {searchedAccounts.length}
-                    </button>
-                    {shouldShowAccountCountFilter(accountEnablement.enabled, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "enabled"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "enabled" }))}
-                      >
-                        {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(accountEnablement.disabled, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "disabled"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "disabled" }))}
-                      >
-                        {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(claimedAccountCount, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge is-claimed header-count-link ${uiPreferences.filter === "claimed" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "claimed"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "claimed" }))}
-                      >
-                        {resolveUiText("claimed", snapshot.lang)} {claimedAccountCount}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(validAccountCount, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "healthy"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "healthy" }))}
-                      >
-                        {resolveUiText("valid", snapshot.lang)} {validAccountCount}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(invalidAccountCount, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "attention"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "attention" }))}
-                      >
-                        {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(capableAccountCount, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "capable"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "capable" }))}
-                      >
-                        {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
-                      </button>
-                    ) : null}
-                    {shouldShowAccountCountFilter(incapableAccountCount, searchedAccounts.length) ? (
-                      <button
-                        class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={uiPreferences.filter === "incapable"}
-                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "incapable" }))}
-                      >
-                        {resolveUiText("incapable", snapshot.lang)} {incapableAccountCount}
-                      </button>
-                    ) : null}
-                  </span>
-                </h2>
-              </div>
-              {selectedCount > 0 ? (
-                <BatchSelectionBar
-                  copy={snapshot.copy}
-                  selectedCount={selectedCount}
-                  refreshPending={batchRefreshPending}
-                  resyncPending={batchResyncPending}
-                  removePending={batchRemovePending}
-                  sharePending={sharePending}
-                  autoResetPending={isActionPending('batchSetAccountAutoResetAllowed')}
-                  onAutoReset={allowed => sendAction('batchSetAccountAutoResetAllowed', undefined, { accountIds: state.selectedAccountIds, autoResetAllowed: allowed })}
-                  onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
-                  onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
-                  onRemove={() => {
-                    setBrowserActionRequest({
-                      kind: "confirm",
-                      action: "batchRemove",
-                      accountIds: state.selectedAccountIds,
-                      title: "Remove selected accounts",
-                      message: `Remove ${selectedCount} selected account${selectedCount === 1 ? "" : "s"}?`,
-                      confirmLabel: "Remove",
-                      danger: true
-                    });
-                  }}
-                  onShare={handleShareTokens}
-                />
-              ) : null}
-            </div>
-            <div class="dashboard-account-toolbar">
-              <label class="account-search-control">
-                <span aria-hidden="true">⌕</span>
-                <input
-                  ref={searchInputRef}
-                  name="account-search"
-                  type="text"
-                  role="searchbox"
-                  inputMode="search"
-                  autoComplete="off"
-                  value={uiPreferences.accountSearch}
-                  onInput={(event) =>
-                    setUiPreferences((current) => ({ ...current, accountSearch: event.currentTarget.value }))
-                  }
-                  placeholder={resolveUiText("search", snapshot.lang)}
-                  aria-label={resolveUiText("search", snapshot.lang)}
-                />
-                {uiPreferences.accountSearch ? (
-                  <button
-                    type="button"
-                    aria-label={resolveUiText("clear", snapshot.lang)}
-                    onClick={() => setUiPreferences((current) => ({ ...current, accountSearch: "" }))}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </label>
-              <label class="dashboard-select-control">
-                <select
-                  value={accountSort}
-                  onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
-                  aria-label={resolveSortAriaLabel(snapshot.lang)}
-                >
-                  {(
-                    [
-                      "auto-queue",
-                      "quota",
-                      "time-left",
-                      "login-date",
-                      "last-refresh",
-                      "subscription-expiry",
-                      "account-type",
-                      "email",
-                      "status"
-                    ] as AccountSort[]
-                  ).map((sort) => (
-                    <option key={sort} value={sort}>
-                      {resolveSortOptionLabel(sort, snapshot.lang)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
-              <label class="dashboard-select-control metric-priority-control">
-                <select
-                  value={uiPreferences.metricPriority}
-                  aria-label={resolveUiText("metric", snapshot.lang)}
-                  onChange={(event) =>
-                    setUiPreferences((current) => ({
-                      ...current,
-                      metricPriority: event.currentTarget.value as MetricPriority
-                    }))
-                  }
-                >
-                  {availableMetrics.map((metric) => (
-                    <option key={metric.key} value={metric.key}>
-                      {metric.label} ·{" "}
-                      {metricAveragePercent(metric.key) == null ? "—" : `${metricAveragePercent(metric.key)}%`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div class="dashboard-view-controls">
-                <button
-                  type="button"
-                  class="dashboard-view-toggle active"
-                  title={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  aria-label={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  onClick={() =>
-                    setUiPreferences((current) => ({
-                      ...current,
-                      view: current.view === "cards" ? "list" : "cards"
-                    }))
-                  }
-                >
-                  {uiPreferences.view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
-                </button>
-              </div>
-            </div>
-            <div class="accounts-grid">
-              {sortedAccounts.map((account) => (
-                renderSavedAccount(account, uiPreferences.view === "list")
-              ))}
-              {sortedAccounts.length === 0 ? (
-                <div class="accounts-empty-filter">{resolveUiText("noResults", snapshot.lang)}</div>
-              ) : null}
-            </div>
-          </section>
+          renderAccountSection()
         ) : null}
         </fieldset>
       </main>
@@ -3185,7 +3189,7 @@ function App() {
               account={overviewAccount}
               localAccounts={snapshot.accounts}
               onSwitchAccount={openBrowserSwitchPicker}
-              renderAccountGrid={(accounts, beforeAction) => sortAccounts(accounts, "auto-queue", uiPreferences.metricPriority, capabilityThresholds, snapshot.settings.encryptedSyncRegistryOverrideEnabled).map(account => renderSavedAccount(account, false, beforeAction))}
+              renderAccounts={() => renderAccountSection(true)}
               onSettings={() => dispatch({ type: "open-settings" })}
               switchingAccount={state.pendingActions.some(request => request.action === "switch")}
               peers={pcOptions}
@@ -3275,7 +3279,7 @@ function App() {
                 })
               }
               onStart={(input) => sendAction("startCodexCliSession", undefined, { ...input, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
-              onAccess={(session, sandboxMode) => sendAction("setCodexSessionAccess", undefined, { sessionId: session.id, sandboxMode, projectPath: session.projectPath, targetDeviceId: session.deviceId })}
+              onAccess={(session, sandboxMode, autoApprove) => sendAction("setCodexSessionAccess", undefined, { sessionId: session.id, sandboxMode, autoApprove, projectPath: session.projectPath, targetDeviceId: session.deviceId })}
               onSteer={(input) => {
                 if (!selectedCliSession) return undefined;
                 const requestId = sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath });

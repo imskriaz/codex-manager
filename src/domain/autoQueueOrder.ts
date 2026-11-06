@@ -14,6 +14,7 @@ export interface AutoQueueOrderValue {
   /** Unix seconds, like quota window resetAt. */
   resetCreditsNextExpiresAt?: number;
   invalidQuota?: boolean;
+  capacityTag?: boolean;
 }
 
 export type AutoQueueDecisionReason = "quota-expiring" | "long-window-protected" | "starred-priority" | "quota-balance" | "stale-data";

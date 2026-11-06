@@ -1,5 +1,5 @@
 import { saveCodexSessionAccess } from './codexSessionAccessState';
-import { parseCodexSessionAccess, type CodexSessionAccess } from '../domain/codexSessionAccess';
+import { matchesCodexSessionAccess, parseCodexSessionAccess, type CodexSessionAccess } from '../domain/codexSessionAccess';
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import * as net from "node:net";
@@ -193,7 +193,7 @@ export async function updateNativeCodexSessionAccess(home: string, id: string, s
   await readNativeCodexSessionRunning(home, id);
   const entry = observations.get(`${path.resolve(home)}:${id}`), owner = entry?.owner, revision = connectionRevision;
   const expected = parseCodexSessionAccess(settings);
-  if (!expected?.mode) throw new Error('The requested access mode is invalid.');
+  if (!expected || !expected.mode && !expected.approvalPolicy) throw new Error('The requested access mode is invalid.');
   let changed!: () => void;
   const initialAccess = entry?.access;
   const confirmation = new Promise<void>(resolve => { changed = () => { if (!socket?.writable || entry?.owner !== owner || entry?.access !== initialAccess) resolve(); }; });
@@ -203,8 +203,8 @@ export async function updateNativeCodexSessionAccess(home: string, id: string, s
     if (!reply) return false;
     if (entry?.owner !== owner || connectionRevision !== revision || observations.get(`${path.resolve(home)}:${id}`) !== entry) throw new Error('The Codex owner changed while applying access. Refresh before changing it again.');
     if (reply.result?.applied !== true) throw new Error('Codex did not confirm the access change. Refresh its settings before retrying.');
-    if (entry?.access?.mode !== expected.mode) await waitWithin(confirmation, 3000, 'Codex did not report its applied permissions. Refresh before retrying.');
-    if (!socket?.writable || entry?.owner !== owner || connectionRevision !== revision || entry?.access?.mode !== expected.mode) throw new Error('Codex permissions changed or could not be confirmed. Refresh before retrying.');
+    if (!matchesCodexSessionAccess(entry?.access, expected)) await waitWithin(confirmation, 3000, 'Codex did not report its applied permissions. Refresh before retrying.');
+    if (!socket?.writable || entry?.owner !== owner || connectionRevision !== revision || !matchesCodexSessionAccess(entry?.access, expected)) throw new Error('Codex permissions changed or could not be confirmed. Refresh before retrying.');
     return true;
   } finally { entry?.accessWaiters?.delete(changed); }
 }

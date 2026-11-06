@@ -145,6 +145,23 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
+  it("keeps the current refresh deadline when Quota Warning changes", async () => {
+    let changed!: (event: vscode.ConfigurationChangeEvent) => void;
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => {
+      changed = listener;
+      return { dispose: vi.fn() };
+    });
+    const current = { id: 'warning-toggle-current', isActive: true, enabled: true };
+    const repo = { listAccounts: vi.fn(async () => [current]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(30_000);
+    changed({ affectsConfiguration: key => key === 'codexManager.quotaWarningEnabled' } as never);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledOnce();
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledOnce();
+    scheduler.dispose();
+  });
+
   it("re-evaluates cached quota immediately when Auto Switch settings change", async () => {
     let configurationChanged: ((event: vscode.ConfigurationChangeEvent) => void) | undefined;
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {

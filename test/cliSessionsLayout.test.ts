@@ -369,7 +369,6 @@ describe("sessions sidebar layout", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
-    expect(source).toContain("SwitchAccountIcon");
     expect(source).toContain('props.onSwitchAccount(peerId, accountId)');
     expect(source).not.toContain('class="cli-pc-group-heading"');
     expect(source).toContain('onOpenInCodex={() => props.onOpenInCodex(props.selectedSession!)}');
@@ -438,10 +437,8 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('.cli-workspace .cli-pc-group-toggle { min-height: 24px;');
     expect(source).toContain('aria-label="Account center"');
     expect(source).toContain('aria-label="Account system"');
-    expect(source).toContain('aria-label="Search accounts on selected system"');
-    expect(source).toContain('class="cli-account-grid dashboard-view-cards"');
-    expect(source).toContain("props.renderAccountGrid?.(filtered");
-    expect(source).toContain('props.onSwitchAccount(peer.local ? "local" : peer.id, accountId)');
+    expect(source).toContain('class="cli-account-grid"');
+    expect(source).toContain("props.renderAccounts?.()");
     expect(source).not.toContain('class="cli-account-submenu"');
     expect(css).toContain('.cli-account-center-header');
     expect(css).toContain('width: min(360px, calc(100vw - 16px));');

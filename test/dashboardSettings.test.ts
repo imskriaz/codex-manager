@@ -3,6 +3,17 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it('stores model-capacity settings globally and validates the failure threshold', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    for (const [value, expected] of [[0, 1], [3, 3], [1000, 100], [2.5, 3]]) {
+      expect(await handleDashboardSettingUpdate('modelCapacityFailureCount', value)).toBe(true);
+      expect(update).toHaveBeenLastCalledWith('modelCapacityFailureCount', expected, vscode.ConfigurationTarget.Global);
+    }
+    for (const value of [NaN, Infinity, '3']) expect(await handleDashboardSettingUpdate('modelCapacityFailureCount', value)).toBe(false);
+    expect(await handleDashboardSettingUpdate('modelCapacityAutoSwitchEnabled', false)).toBe(true);
+    expect(update).toHaveBeenLastCalledWith('modelCapacityAutoSwitchEnabled', false, vscode.ConfigurationTarget.Global);
+  });
   it("persists a bounded token history gap and rejects text", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);

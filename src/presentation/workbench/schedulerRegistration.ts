@@ -427,8 +427,7 @@ export function registerAutoRefreshScheduler(params: {
       event.affectsConfiguration("codexManager.autoSwitchWeeklyThreshold");
     if (
       refreshScheduleChanged ||
-      autoSwitchChanged ||
-      event.affectsConfiguration("codexManager.quotaWarningEnabled")
+      autoSwitchChanged
     ) {
       applySchedule();
     }

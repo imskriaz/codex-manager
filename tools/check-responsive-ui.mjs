@@ -163,7 +163,7 @@ const mockHost = `(() => {
           const session=sessions.find(item=>item.id===message.payload.sessionId);
           if(window.__failAccess) {window.__failAccess=false;error='Access change could not be confirmed.';}
           else if(session) {
-            session.access={mode:message.payload.sandboxMode,updatedAt:Date.now()};session.sandboxMode=session.access.mode;
+            session.access={...session.access, ...(message.payload.sandboxMode ? {mode:message.payload.sandboxMode} : {}), ...(typeof message.payload.autoApprove === 'boolean' ? {approvalPolicy:message.payload.autoApprove ? 'never' : 'on-request'} : {}), updatedAt:Date.now()};session.sandboxMode=session.access.mode;
             payload={cliSession:session,notice:{level:'info',message:'Access synced with Codex.'}};
             dispatch({type:'dashboard:codex-session-access',sessionId:session.id,deviceId:session.deviceId,access:session.access});
           }
@@ -177,6 +177,11 @@ const mockHost = `(() => {
           }
         }
         else if(message.action==='refreshToken') {if(window.__failTokenRefresh) error='Refresh token was revoked. Reauthorize this account.';else payload={notice:{level:'info',message:'Account token refreshed.'}};}
+        else if(['setAccountQueuePriority', 'toggleAccountEnabled'].includes(message.action)) {
+          const account = (message.payload.targetDeviceId ? state.peerAccounts?.[message.payload.targetDeviceId] : state.accounts)?.find(account => account.id === message.accountId);
+          if (!account) error = 'That account no longer exists.';
+          else { if (message.action === 'setAccountQueuePriority') account.queuePriority = message.payload.queuePriority; else account.enabled = message.payload.enabled; account.updatedAt = Date.now(); dispatch({ type: 'dashboard:snapshot', state: structuredClone(state) }); payload = { notice: { level: 'info', message: 'Account updated.' } }; }
+        }
         else if(message.action==='setAccountTags') {
           const account=(message.payload.targetDeviceId?state.peerAccounts?.[message.payload.targetDeviceId]:state.accounts)?.find(account=>account.id===message.accountId);
           if(window.__failTagSave) {window.__failTagSave=false;error='Storage full. Your draft is kept.';}
@@ -295,7 +300,7 @@ const mockHost = `(() => {
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
-          payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}};
+          payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}}; window.__newSessionMessages = payload.cliSessionMessages;
         }
         else if(message.action === 'setCodexSessionGoalStatus') {
           if(window.__failNextGoal) {window.__failNextGoal=false;error='Goal storage unavailable.';}
@@ -306,7 +311,7 @@ const mockHost = `(() => {
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
-          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
+          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:(message.payload.sessionId === '01a04882-d037-7a42-ad24-9afb61901198' ? window.__newSessionMessages : undefined) ?? window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
         } else if(message.action === 'getCodexSubAgentMessages' && window.__failAgentRead) error='Agent transcript unavailable. Saved messages were kept.';
         else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
@@ -380,6 +385,7 @@ const mockHost = `(() => {
         }
         if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'startCodexCliSession' && window.__holdNextStart) {window.__holdNextStart=false;window.__heldStartResult=result;return;}
         if(message.action === 'resumeCodexSessions' && window.__holdResumeClick) {window.__heldResumeResult=result;return;}
         if(message.action === 'steerCodexCliSessionTurn' && window.__holdNextSteer) {window.__holdNextSteer=false;window.__heldSteerResult=result;return;}
         if (message.action === 'listCodexCliSessions' && window.__catalogRace) {
@@ -427,11 +433,12 @@ async function selectSidebarSystem(page, width, id) {
   if (await show.isVisible()) await show.click();
   await page.locator('.cli-rail-system select').selectOption(id);
   const hide = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
-  if (width <= 760 && await hide.isVisible()) await hide.click();
+  if (width <= 760 && await hide.isVisible() && await hide.isEnabled()) await hide.click();
 }
-async function checkAccountCenterUi(page, width, height) {
+async function checkAccountCenterUi(page, width, height, restoredDraft) {
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+  if (restoredDraft !== undefined) await page.waitForFunction(text => document.querySelector('textarea[name="codex-message"]')?.value === text, restoredDraft);
   if (width >= 1000) {
     const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
     await composer.fill('Keep my draft while monitoring');
@@ -468,170 +475,110 @@ async function checkAccountCenterUi(page, width, height) {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state } }));
   });
   await selectSidebarSystem(page, width, 'account-remote');
-  assert.equal(new URL(page.url()).pathname, '/workspace', 'Changing systems keeps Workspace open');
-  if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-  const showAccountRail = async () => { if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click(); };
-  await showAccountRail();
-  const accountTrigger = page.getByRole("button", { name: "Open account center", exact: true });
-  await accountTrigger.hover();
-  assert.equal(await page.locator(".cli-account-center").count(), 0, "The account center opens intentionally instead of on hover");
-  await accountTrigger.click();
-  const accountCenter = page.getByRole("dialog", { name: "Account center", exact: true });
-  const currentQuota = accountCenter.locator('.cli-account-quota-grid');
-  await accountCenter.waitFor();
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Search accounts on selected system"), false, "Opening the account center by pointer does not summon the mobile keyboard");
-  const systemSelect = accountCenter.getByRole("combobox", { name: "Account system", exact: true });
-  const selectAccountSystem = async id => {
-    await systemSelect.selectOption(id);
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => {
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } }));
-      requestAnimationFrame(resolve);
-    })));
+  const showRail = async () => { const toggle = page.getByRole('button', { name: 'Show sessions sidebar', exact: true }); if (await toggle.isVisible()) await toggle.click(); };
+  await showRail();
+  const trigger = page.getByRole('button', { name: 'Open account center', exact: true });
+  await trigger.click();
+  const center = page.getByRole('dialog', { name: 'Account center', exact: true });
+  await center.waitFor();
+  const system = center.getByRole('combobox', { name: 'Account system', exact: true });
+  const selectSystem = async id => {
+    await system.selectOption(id);
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } })));
   };
-  assert.equal(await systemSelect.inputValue(), "account-remote", "The account center starts on the selected dashboard system");
-  await selectAccountSystem("fixture-local");
-  assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
-  assert.equal(await systemSelect.evaluate(node => getComputedStyle(node).fontSize), await accountCenter.locator('.cli-account-system > label').evaluate(node => getComputedStyle(node).fontSize), 'System text matches the small label');
-  const cards = accountCenter.locator('.saved-card-container');
-  const savedCard = email => accountCenter.locator('.saved-card-front').filter({ has: page.locator('h3').filter({ hasText: email }) });
-  const readyCard = () => savedCard('rea***com');
-  assert.equal(await currentQuota.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota remains in the summary");
-  assert.equal(await cards.count(), 9, 'The shared grid includes active, disabled, exhausted and unknown-quota accounts');
-  assert.ok((await cards.first().boundingBox()).height <= 180, 'Account center cards keep their content height without dashboard padding');
-  assert.equal(await accountCenter.locator('.cli-account-list-heading span').textContent(), '9');
-  assert.equal(await savedCard('dis***com').getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true, 'Disabled automation does not disable manual switching');
-  assert.equal(await savedCard('exh***com').getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true, 'Exhausted accounts remain manually switchable');
-  assert.equal(await accountCenter.locator('.saved-card-front').filter({hasText:'Claim owner workstation'}).count(), 0, 'Shared cards respect privacy mode');
-  if (width === 1440) {
-    await page.evaluate(() => { window.__holdMetadata = true; });
-    await readyCard().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).click();
-    await readyCard().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
-    assert.equal(await readyCard().locator('.saved-queue-priority-toggle').textContent().then(text => text.trim()), '★', 'Favorite changes visibly before persistence completes');
-    assert.equal(await readyCard().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true, 'Background metadata saving does not block manual switching');
-    await page.evaluate(() => { window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:window.__uiSnapshot}})); });
-    await readyCard().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
-    const failMetadata = async () => page.evaluate(() => { const request = window.__heldMetadata; window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:action-result', action:request.action, requestId:request.requestId, accountId:request.accountId,status:'failed',error:'Account changes could not be saved. Free disk space on this system and retry in Dashboard.'}})); });
-    await failMetadata();
-    await readyCard().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).waitFor();
-    await readyCard().getByRole('button', { name: 'More account actions', exact: true }).click();
-    await page.getByRole('button', { name: 'Tags', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: 'Account tags', exact: true });
-    await editor.getByRole('textbox', { name: 'Tags', exact: true }).fill('Work, Background');
-    await editor.getByRole('button', { name: 'Save tags', exact: true }).click();
-    await editor.waitFor({ state: 'detached' });
-    await accountTrigger.click();
-    await readyCard().getByRole('button', { name: 'Edit tags: Work, Background', exact: true }).waitFor();
-    await failMetadata();
-    await readyCard().getByRole('button', { name: 'Edit tags: Work, Background', exact: true }).waitFor({ state: 'detached' });
-    await readyCard().getByRole('button', { name: 'More account actions', exact: true }).click();
-    await page.getByRole('button', { name: 'Tags', exact: true }).click();
-    assert.equal(await editor.getByRole('textbox', { name: 'Tags', exact: true }).inputValue(), 'Work, Background', 'An unsuccessful background save retains the tag draft');
-    await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.evaluate(() => { window.__holdMetadata = false; });
-    await accountTrigger.click();
+  assert.equal(await system.inputValue(), 'account-remote');
+  await selectSystem('fixture-local');
+  const search = center.getByRole('searchbox');
+  const cards = center.locator('.saved-card-container, .saved-table-row');
+  const card = email => cards.filter({ hasText: email });
+  assert.equal(await cards.count(), 9, 'The mirror includes disabled, exhausted and unknown accounts');
+  const bounds = await center.boundingBox();
+  assert.ok(bounds.width <= 420 && bounds.x >= 0 && bounds.x + bounds.width <= width + 1, 'Account center stays narrow and fits the screen');
+  assert.ok((await cards.first().boundingBox()).height <= 140, 'Account rows stay compact with wrapped plan details and tags');
+  assert.ok(await center.locator('.cli-account-grid').evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'The narrow mirror has no horizontal overflow');
+  assert.equal(await card('dis***com').getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true);
+  assert.equal(await card('exh***com').getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true);
+  const total = center.locator('.account-count-badges > button').first();
+  for (const filter of ['Within quota', 'Over quota']) {
+    await center.getByRole('button', { name: new RegExp('^' + filter + ' ') }).click();
+    assert.equal(await center.getByRole('button', { name: new RegExp('^' + filter + ' ') }).getAttribute('aria-pressed'), 'true');
+    await total.click();
   }
-  assert.equal(await accountTrigger.getByRole('meter').count(), 2, 'Footer keeps each quota window separate');
-  await page.evaluate(() => {
-    const state = window.__uiSnapshot;
-    state.accounts[0].metrics[0].visible = false;
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
-  });
-  await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 1);
-  const singleQuota = accountTrigger.locator('.cli-quota-meter');
-  assert.ok(await singleQuota.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), 'A single quota window fills the footer width');
-  assert.equal(await currentQuota.getByRole('meter').count(), 1, 'Account center summary also fills one quota window');
-  assert.equal(await savedCard("act***com").getByRole("button", { name: snapshot.copy.switchBtn, exact: true }).count(), 0, "The current account offers its existing loaded-account action");
-  await page.evaluate(() => {
-    const state = window.__uiSnapshot;
-    state.accounts[0].metrics[0].visible = true;
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
-  });
-  await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 2);
-  const accountSearch = accountCenter.getByRole("searchbox", { name: "Search accounts on selected system", exact: true });
-  await accountSearch.fill("ready@example.com");
-  assert.equal(await cards.count(), 1);
-  await accountSearch.fill("account-that-does-not-exist");
-  await accountCenter.getByText("No matching accounts", { exact: true }).waitFor();
-  await accountSearch.fill("");
-  await accountSearch.fill('disabled@example.com');
-  assert.equal(await cards.count(), 1, 'Search includes disabled accounts with remaining quota');
-  await accountSearch.fill('unknown@example.com');
-  assert.equal(await cards.count(), 1, 'Unknown quota remains searchable');
-  await accountSearch.fill('');
-  assert.ok(await accountCenter.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; }), "The account center fits every viewport");
-  if (width <= 760) assert.ok(await accountCenter.locator('input[type="search"]').evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile account search avoids automatic iOS zoom at the configured text scale");
-  assert.ok(await accountCenter.evaluate(element => element.scrollWidth <= element.clientWidth), "The account center has no horizontal overflow");
-  await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
-  await selectAccountSystem('account-disabled');
-  await savedCard('dis***com').getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).waitFor();
-  assert.equal(await cards.count(), 1);
-  assert.equal(await accountCenter.locator('.cli-account-switch-action').isEnabled(), true, 'Disabled automation leaves manual switching available');
-  await selectAccountSystem('account-exhausted');
-  assert.equal(await cards.count(), 1, 'Exhausted accounts stay visible');
-  await selectAccountSystem('fixture-local');
-  if (width <= 760) {
-    await accountSearch.focus();
-    await page.setViewportSize({ width, height: Math.max(300, height - 300) });
-    await page.waitForFunction(() => { const bounds = document.querySelector('.cli-account-center')?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
-    await page.screenshot({ path: path.join(output, `account-center-keyboard-${width}.png`) });
-    await page.setViewportSize({ width, height });
-  }
-  await page.keyboard.press("Escape");
-  await page.locator(".cli-account-center").waitFor({ state: "detached" });
-  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open account center");
-  await accountTrigger.press("Enter");
-  await selectAccountSystem("fixture-local");
+  await search.fill('does-not-exist');
+  await center.locator('.accounts-empty-filter').waitFor();
+  await center.locator('.account-search-control button').click();
+  assert.equal(await cards.count(), 9);
+  const sort = center.getByRole('combobox', { name: 'Sort accounts', exact: true });
+  await sort.selectOption('email'); await sort.selectOption('auto-queue');
+  await card('rea***com').locator('.saved-select-toggle').click();
+  await center.locator('.batch-menu-trigger').click();
+  assert.ok(await page.locator('.batch-menu-popover').isVisible(), 'Dashboard batch actions are available');
+  await page.keyboard.press('Escape');
+  assert.equal(await center.isVisible(), true, 'Escape closes a child menu before account center');
+  await card('rea***com').locator('.saved-select-toggle').click();
+  const view = center.locator('.dashboard-view-toggle');
+  await view.click();
+  assert.equal(await center.locator('.saved-table-row').count(), 9, 'The dashboard view toggle works in the mirror');
+  await view.click();
+  const ready = () => card('rea***com');
+  await ready().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).click();
+  await ready().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
+  await ready().getByRole('button', { name: 'More account actions', exact: true }).click();
+  await page.getByRole('button', { name: 'Tags', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Account tags', exact: true });
+  await editor.waitFor();
+  assert.equal(await center.isVisible(), true, 'Action dialogs keep account center open');
+  assert.ok(await editor.evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }), 'Action dialog receives input above the account center');
+  await editor.getByRole('textbox', { name: 'Tags', exact: true }).fill('Work, Background');
+  await editor.getByRole('button', { name: 'Save tags', exact: true }).click();
+  await editor.waitFor({ state: 'detached' });
+  await ready().getByRole('button', { name: 'Edit tags: Work, Background', exact: true }).waitFor();
+  await ready().getByRole('button', { name: snapshot.copy.refreshBtn, exact: true }).click();
+  assert.equal(await center.isVisible(), true, 'Refresh keeps the account center open, including on failure');
   await page.evaluate(() => { window.__holdNextSwitch = true; });
-  await readyCard().getByRole("button", { name: snapshot.copy.switchBtn, exact: true }).click();
-  await page.waitForFunction(() => window.__heldSwitch);
-  assert.deepEqual(await page.evaluate(() => ({ accountId: window.__heldSwitch.accountId, target: window.__heldSwitch.payload?.targetDeviceId ?? "local" })), { accountId: "center-ready", target: "local" }, "Choosing a local account stays local even when a remote dashboard is selected");
-  await showAccountRail();
-  await accountTrigger.click();
-  assert.equal(await accountCenter.locator(".cli-account-switch-action").isDisabled(), true, "Duplicate switching is unavailable while its result is pending");
-  assert.equal(await accountCenter.getByRole("button", { name: "Settings", exact: true }).isEnabled(), true, "Independent navigation stays available");
-  await selectAccountSystem("account-offline");
-  await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
-  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'Offline account controls retain the saved view and prohibit switching');
-  await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-  await selectAccountSystem("account-empty");
-  assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
-  await accountCenter.getByText("Quota unavailable", { exact: true }).waitFor();
-  await page.evaluate(() => { const request = window.__heldSwitch; window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", action: "switch", requestId: request.requestId, accountId: request.accountId, status: "failed", error: "Simulated switch failure. No account was changed." } })); });
-  await selectAccountSystem("fixture-local");
-  await readyCard().getByRole("button", { name: snapshot.copy.switchBtn, exact: true }).waitFor();
-  assert.equal(await readyCard().getByRole("button", { name: snapshot.copy.switchBtn, exact: true }).isEnabled(), true, "A failed switch can be retried");
-  await selectAccountSystem("account-remote");
-  await page.evaluate(() => { window.__removedAccountPeer=window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-remote');window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-  await accountCenter.getByText('Saved accounts. Reconnect this system to switch.',{exact:true}).waitFor();
-  assert.equal(await accountCenter.locator('.cli-account-switch-action').isDisabled(),true,'A missing system cannot accept switches');
-  await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.push(window.__removedAccountPeer);window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-  await selectAccountSystem("fixture-local");
-  await page.evaluate(() => {
-    const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
-    account.metrics = [{ key: "invalid", label: "Invalid", visible: true, percentage: NaN }, { key: "bounded", label: "Remaining", visible: true, percentage: 150 }];
-    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
-  });
-  assert.equal(await currentQuota.getByRole("meter").count(), 1, "Partial quota records omit invalid values");
-  assert.equal(await currentQuota.getByRole("meter").getAttribute("aria-valuenow"), "100", "Quota meters stay within their range");
-  await accountCenter.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.locator(".overlay.open").waitFor();
-  await page.keyboard.press("Escape");
-  await page.evaluate(() => {
-    for (const state of ['closed', 'failed']) window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'error', message: `The connection ${state} before this action was confirmed. Its outcome is unknown; reconnect and verify before retrying.` } }));
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'warning', message: 'Stop requested. Waiting for Codex to end the turn.' } }));
-  });
-  assert.equal(await page.locator('.dashboard-notice').filter({hasText:/The connection (closed|failed) before|Stop requested/}).count(), 0, 'Generic disconnected-action and Stop progress notices do not create a toast');
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'error', message: 'Permission denied. Your work was kept.' } })));
-  await page.locator('.dashboard-notice').filter({hasText:'Permission denied. Your work was kept.'}).waitFor();
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:notice', level: 'error', message: 'Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.' } })));
-  await page.locator('.dashboard-notice').filter({hasText:'Stop could not be confirmed. In Workspace'}).waitFor();
-  assert.equal(await page.locator('.dashboard-notice').filter({hasText:'private app-server'}).count(), 0, 'Private process details stay out of user notices');
-  await page.evaluate(() => { Object.assign(window.__uiSnapshot, window.__accountCenterSaved); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-  if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-  if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "true") await page.locator(".cli-rail-toggle").click();
-  await page.goto(origin + '/');
-  await page.locator('.hero').waitFor();
+  await ready().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).click();
+  await page.waitForFunction(() => !!window.__heldSwitch);
+  assert.equal(await center.isVisible(), true, 'Switch keeps the mirror open');
+  assert.equal(await ready().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isDisabled(), true, 'A pending switch cannot run twice');
+  assert.equal(await page.evaluate(() => window.__heldSwitch.payload?.targetDeviceId ?? 'local'), 'local');
+  await page.evaluate(() => { const r = window.__heldSwitch; window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: r.action, requestId: r.requestId, accountId: r.accountId, status: 'failed', error: 'Switch was not confirmed. No account changed.' } })); });
+  await ready().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).waitFor({ state: 'visible' });
+  await selectSystem('account-offline');
+  await center.getByText('Saved accounts. Reconnect this system to switch.', { exact: true }).waitFor();
+  assert.equal(await cards.first().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isDisabled(), true);
+  await selectSystem('account-empty');
+  await center.locator('.accounts-empty-filter').waitFor();
+  await selectSystem('fixture-local');
+  await center.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.overlay.open').waitFor();
+  assert.equal(await center.isVisible(), true);
+  await page.keyboard.press('Escape');
+  await page.locator('.overlay.open').waitFor({ state: 'detached' });
+  assert.equal(await center.isVisible(), true, 'Escape closes the upper dialog only');
+  const resizer = center.getByRole('separator', { name: 'Resize account center', exact: true });
+  const originalSize = await center.boundingBox();
+  await resizer.focus(); await resizer.press('ArrowLeft'); await resizer.press('ArrowUp');
+  const remembered = await center.boundingBox();
+  assert.ok(remembered.width < originalSize.width && remembered.height < originalSize.height, 'Keyboard resizes both dimensions');
+  await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
+  await showRail(); await trigger.click();
+  const restored = await center.boundingBox();
+  assert.ok(Math.abs(restored.width - remembered.width) < 2 && Math.abs(restored.height - remembered.height) < 2, 'Closing and reopening remembers the size');
+  const corner = await resizer.boundingBox();
+  const delta = restored.width <= 282 ? 8 : -20;
+  await page.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2); await page.mouse.down();
+  await page.mouse.move(corner.x + corner.width / 2 + delta, corner.y - 20, { steps: 3 }); await page.mouse.up();
+  assert.ok(Math.abs((await center.boundingBox()).width - restored.width) > 1, 'Pointer dragging resizes the panel within viewport limits');
+  await page.evaluate(() => { const original = Storage.prototype.setItem; window.__restoreSizeStorage = () => { Storage.prototype.setItem = original; }; Storage.prototype.setItem = function(key, value) { if (key === 'codexManager.accountCenterSize.v1') throw new Error('Full storage'); return original.call(this, key, value); }; });
+  await resizer.press('ArrowRight');
+  await center.getByText('Size changed for this tab. Browser storage could not remember it.', { exact: true }).waitFor();
+  await page.evaluate(() => window.__restoreSizeStorage());
+  await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
+  await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
+  await page.evaluate(() => { Object.assign(window.__uiSnapshot, window.__accountCenterSaved); window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } })); });
+  await page.goto(origin + '/'); await page.locator('.hero').waitFor();
 }
+
 async function checkClosedProject(page, width, errors) {
     await page.goto(`${origin}/workspace/${parentId}?closed-project`);
     if (width <= 1180) {
@@ -725,12 +672,44 @@ try {
       await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
     }
+    if (process.argv.includes('--new-session-queue')) {
+      await page.goto(origin + '/workspace');
+      await page.locator('.cli-workspace').waitFor();
+      const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+      if (await rail.isVisible()) await rail.click();
+      await page.getByRole('button', { name: 'New chat', exact: true }).click();
+      const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
+      await composer.fill('Start my queued session');
+      await page.evaluate(() => { window.__holdNextStart = true; });
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      await page.waitForFunction(() => !!window.__heldStartResult);
+      await page.locator('.cli-conversation.has-session').waitFor();
+      assert.equal(await page.locator('.cli-new-chat-copy').count(), 0, 'Send opens the conversation immediately');
+      assert.equal(await page.locator('.cli-session-message.is-user').count(), 0, 'Pending prompts appear only in the queue');
+      const queued = page.getByRole('button', { name: 'Queued · 1', exact: true });
+      await queued.click();
+      const list = page.getByRole('dialog', { name: 'Queued messages', exact: true });
+      await list.getByText('Start my queued session', { exact: true }).waitFor();
+      await list.getByRole('button', { name: 'Close queued messages', exact: true }).click();
+      await page.evaluate(() => { const r = window.__heldStartResult; window.dispatchEvent(new MessageEvent('message', { data: { ...r, status: 'failed', payload: undefined, error: 'Creation confirmation timed out. Check sessions before resending.' } })); });
+      await queued.click(); await list.getByRole('alert').waitFor();
+      await list.getByRole('button', { name: 'Close queued messages', exact: true }).click();
+      await page.screenshot({ path: path.join(output, `new-session-queue-${width}.png`) });
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldStartResult })));
+      await page.locator('.cli-session-message.is-user').filter({ hasText: 'Start my queued session' }).waitFor();
+      await queued.waitFor({ state: 'detached' });
+      assert.equal(await page.locator('.cli-session-message.is-user').filter({ hasText: 'Start my queued session' }).count(), 1, 'Late acceptance renders one prompt');
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(r => r.action === 'startCodexCliSession').length), 1, 'A failure and late success never submit twice');
+      assert.deepEqual(errors, []);
+      results.push({ width, height, checks: 'Immediate session queue, one dispatch, unconfirmed failure, late success, one transcript prompt' });
+      await context.close(); continue;
+    }
     if (process.argv.includes('--account-center')) {
       await page.goto(origin + '/');
       await page.locator('#dashboard-main').waitFor();
       await checkAccountCenterUi(page, width, height);
       assert.deepEqual(errors, [], 'Account Center has no browser errors');
-      results.push({width,height,checks:'Small system selector, remaining quota only, disabled and claimed accounts, search, remote/offline/reconnect, switching and quiet disconnect notices'});
+      results.push({width,height,checks:'Narrow dashboard mirror, filters, sorting, selection, tags, upper dialogs, offline/switch guards, pointer and keyboard resize, remembered size, storage failure'});
       await context.close(); continue;
     }
     if (process.argv.includes('--wide-content')) {
@@ -2249,27 +2228,30 @@ try {
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', "Failed sends leave the composer empty");
-    const failedMessage = page.locator('.cli-local-queue .is-failed').last();
-    await failedMessage.getByRole('button',{name:'Resend',exact:true}).waitFor();
-    assert.equal(await failedMessage.getByText('notes.txt',{exact:true}).count(),1,'Failed attachments stay under the message');
-    await failedMessage.getByRole('button',{name:'Resend',exact:true}).click();
-    await failedMessage.getByRole('button',{name:'Resend',exact:true}).waitFor();
+    await page.locator('.cli-local-queue .cli-queue-summary').click();
+    const failedMessage = page.getByRole('dialog', { name: 'Queued messages', exact: true }).locator('.is-failed').last();
+    await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+    assert.equal(await failedMessage.getByText('1 attachment',{exact:true}).count(),1,'Failed attachments remain in the queue');
+    await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).click();
+    await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', 'Resend never repopulates the composer');
-    await failedMessage.getByRole('button',{name:'Remove queued message',exact:true}).click();
+    await failedMessage.getByRole('button',{name:'Delete queued message',exact:true}).click();
     if(width===390) {
       const originalDraft=await page.getByRole('textbox',{name:'Message Codex',exact:true}).inputValue();
       await page.evaluate(()=>{
         window.__draftTransactions=IDBDatabase.prototype.transaction;window.__failedDraftWrites=0;
         IDBDatabase.prototype.transaction=function(stores,mode,...rest){if(mode==='readwrite'){window.__failedDraftWrites++;throw new DOMException('Storage full','QuotaExceededError');}return window.__draftTransactions.call(this,stores,mode,...rest);};
       });
-      const warning=page.locator('.dashboard-notice').filter({hasText:'Browser storage could not save your draft.'});
+      const warning=page.getByRole('alert').filter({hasText:'Browser storage could not save your draft.'});
       const composer=page.getByRole('textbox',{name:'Message Codex',exact:true});
-      await composer.fill(originalDraft+' storage failure');await warning.waitFor();
-      assert.equal(await page.getByRole('button',{name:'Retry saving draft',exact:true}).count(),0,'Storage failures appear only as a toast');
-      await warning.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      await composer.fill(originalDraft+' storage failure');
+      await page.locator('.cli-composer-warning').waitFor();
+      await page.getByRole('button',{name:'Message settings',exact:true}).click();
+      await warning.waitFor();
+      await page.keyboard.press('Escape');
       const failedWrites=await page.evaluate(()=>window.__failedDraftWrites);
       await composer.fill(originalDraft+' another edit');await page.waitForFunction(before=>window.__failedDraftWrites>before,failedWrites);
-      assert.equal(await warning.count(),0,'Further failed saves do not repeat the draft toast');
+      assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Browser storage could not save your draft.'}).count(),0,'Draft failures remain in the initiating composer');
       await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.__draftTransactions;});
       await composer.fill(originalDraft);
     }
@@ -2398,7 +2380,7 @@ try {
     await page.locator("#dashboard-main").waitFor({ state: "visible" });
     assert.equal(new URL(page.url()).pathname, "/", "Reload preserves the home dashboard");
     await page.locator(".hero").waitFor();
-    await checkAccountCenterUi(page, width, height);
+    await checkAccountCenterUi(page, width, height, 'Keep the currently selected chat');
     if (width > 760) {
       await page.locator("#donateButton").click();
       const donation = page.getByRole("dialog", { name: "Donate to Codex Manager", exact: true });

@@ -74,6 +74,8 @@ const MAX_WARNINGS_PER_CYCLE = 1;
 const quotaWarningCounts = new Map<string, number>();
 let autoSwitchInFlight: Promise<boolean> | undefined;
 type AutoSwitchOptions = {
+  modelCapacityAccountId?: string;
+  capacityStillNeeded?: () => boolean;
   ignoreEnabled?: boolean;
   userInitiated?: boolean;
   canUseAccount?: (accountId: string) => boolean;
@@ -256,7 +258,7 @@ async function refreshSingleQuotaInternal(
     view.refresh();
   }
   if (warnQuota && account.isActive) {
-    await refreshAllBeforeWarningIfNeeded(repo, view, updatedAccount, announce, options.canUseAccount);
+    await refreshAllBeforeAutomationIfNeeded(repo, view, updatedAccount, announce, options.canUseAccount);
     await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount: options.canUseAccount });
   }
   if (warnQuota) {
@@ -624,11 +626,7 @@ function needsReauthorization(account: CodexManagerAccountRecord): boolean {
 async function evaluateAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
-  options: {
-    ignoreEnabled?: boolean;
-    userInitiated?: boolean;
-    canUseAccount?: (accountId: string) => boolean;
-  },
+  options: AutoSwitchOptions,
   refreshedStaleCandidates = false,
   failedCandidateVerification = false,
   refreshedActive = false
@@ -643,15 +641,19 @@ async function evaluateAutoSwitchForActiveQuota(
   // Keep the runtime fallback aligned with the manifest and settings store.
   // Missing configuration must not silently use the old 20% emergency value,
   // otherwise auto-switch can fire well before the configured 5% default.
+  const modelCapacity = options.modelCapacityAccountId !== undefined;
+  const capacityAllowed = () => getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && options.capacityStillNeeded?.() === true;
+  if (modelCapacity && !capacityAllowed()) return false;
   const policy = getAccountAutoQueuePolicy();
   const hourlyThreshold = policy.hourlyThreshold;
   const weeklyThreshold = policy.weeklyThreshold;
   const hourlyQuotaControlEnabled = true;
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);
+  if (modelCapacity && (!active || active.id !== options.modelCapacityAccountId || !(options.canUseAccount?.(active.id) ?? true))) return false;
   const reauthorization = !!active && needsReauthorization(active);
   if (
-    active && !reauthorization &&
+    active && !modelCapacity && !reauthorization &&
     !refreshedActive &&
     (options.ignoreEnabled || active.enabled !== false) &&
     (!hasFreshQuotaSnapshot(active) || active.quotaError || !active.quotaSummary)
@@ -674,7 +676,7 @@ async function evaluateAutoSwitchForActiveQuota(
   if (
     !active ||
     (!options.ignoreEnabled && active.enabled === false) ||
-    (!reauthorization && (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)))
+    (!modelCapacity && !reauthorization && (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)))
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select unavailable — refresh the active account and retry.");
@@ -689,12 +691,12 @@ async function evaluateAutoSwitchForActiveQuota(
   }
 
   const activeHourlyTriggered =
-    !reauthorization && hourlyQuotaControlEnabled &&
+    !reauthorization && !!active.quotaSummary && hourlyQuotaControlEnabled &&
     hasComparableHourlyWindow(active) &&
     active.quotaSummary!.hourlyPercentage <= hourlyThreshold;
   const activeWeeklyTriggered =
-    !reauthorization && hasComparableWeeklyWindow(active) && active.quotaSummary!.weeklyPercentage <= weeklyThreshold;
-  const shouldSwitch = reauthorization || activeHourlyTriggered || activeWeeklyTriggered;
+    !reauthorization && !!active.quotaSummary && hasComparableWeeklyWindow(active) && active.quotaSummary!.weeklyPercentage <= weeklyThreshold;
+  const shouldSwitch = modelCapacity || reauthorization || activeHourlyTriggered || activeWeeklyTriggered;
   if (!shouldSwitch) {
     lastBlockedAutoSwitchKey = undefined;
     deferredForSessions = false;
@@ -723,6 +725,10 @@ async function evaluateAutoSwitchForActiveQuota(
     .sort(createAutoSwitchComparator());
 
   const next = candidates[0];
+  if (!next && modelCapacity) {
+    recordAutoSwitchDashboardNotice('Model capacity switch deferred: no verified capable account is available.', 'warning', { accountId: active.id });
+    return false;
+  }
   if (!next) {
     // The dashboard can show usable quota from the last snapshot while Auto
     // Select correctly refuses to switch on a stale or pre-session snapshot.
@@ -908,7 +914,7 @@ async function evaluateAutoSwitchForActiveQuota(
   }
 
   lastBlockedAutoSwitchKey = undefined;
-  const matchedRules = reauthorization ? ['reauthorize'] : buildMatchedRules();
+  const matchedRules = modelCapacity ? ['model-capacity'] : reauthorization ? ['reauthorize'] : buildMatchedRules();
   // Session inspection can await native process checks. Complete it before
   // reading the state used to authorize the switch, since the user can switch
   // accounts or change automation settings while that inspection is pending.
@@ -916,6 +922,7 @@ async function evaluateAutoSwitchForActiveQuota(
   // Revalidate the active identity immediately before mutating auth state. A
   // manual/dashboard switch may have won a race while candidate selection was
   // running; never switch based on that stale list snapshot.
+  if (modelCapacity && (await waitWithin(readRunningCodexSessionIds(), 5000, 'Running sessions could not be verified before the model-capacity switch.')).length) return false;
   const latestAccounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const latestActive = latestAccounts.find((account) => account.isActive);
   const latestNext = latestAccounts.find((account) => account.id === next.id);
@@ -924,7 +931,7 @@ async function evaluateAutoSwitchForActiveQuota(
     !latestActive ||
     latestActive.id !== active.id ||
     isAutoSwitchLocked(active.id) ||
-    !(reauthorization ? needsReauthorization(latestActive) && (options.ignoreEnabled || latestActive.enabled !== false) && (options.ignoreEnabled || getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true)) : isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true)) ||
+    !(modelCapacity ? capacityAllowed() && latestActive.enabled !== false : reauthorization ? needsReauthorization(latestActive) && (options.ignoreEnabled || latestActive.enabled !== false) && (options.ignoreEnabled || getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true)) : isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true)) ||
     !latestNext ||
     latestNext.isActive ||
     !(options.canUseAccount?.(latestNext.id) ?? true) ||
@@ -945,7 +952,7 @@ async function evaluateAutoSwitchForActiveQuota(
   }
   await repo.switchAccount(latestNext.id, { expectedActiveAccountId: active.id });
   console.info("[codexManager] auto switch completed", {
-    trigger: reauthorization ? "reauthorize" :
+    trigger: modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -959,7 +966,7 @@ async function evaluateAutoSwitchForActiveQuota(
     fromEmail: active.email,
     toAccountId: latestNext.id,
     toEmail: latestNext.email,
-    trigger: reauthorization ? "reauthorize" :
+    trigger: modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -974,14 +981,14 @@ async function evaluateAutoSwitchForActiveQuota(
   view.refresh();
 
   const decisionReason = getCodexManagerAccountAutoQueueEfficiency(latestNext, autoQueueScoringOptions()).reason;
-  const switchMessage = reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
+  const switchMessage = modelCapacity ? `Consecutive model-capacity failures; switched to ${latestNext.email}.` : reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
   deferredForSessions = false; sessionWaitNotice = undefined;
 
   await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated);
   return true;
 }
 
-async function refreshAllBeforeWarningIfNeeded(
+async function refreshAllBeforeAutomationIfNeeded(
   repo: AccountsRepository,
   view: RefreshView,
   account: CodexManagerAccountRecord,
@@ -992,9 +999,6 @@ async function refreshAllBeforeWarningIfNeeded(
     return;
   }
   const config = getCodexManagerConfiguration();
-  if (!config.get<boolean>(QUOTA_WARNING_ENABLED, true)) {
-    return;
-  }
   const warningThresholds = getQuotaWarningThresholds(config);
   const hourlyEnabled = true;
   const warningThresholdReached =
@@ -1002,13 +1006,18 @@ async function refreshAllBeforeWarningIfNeeded(
       hasComparableHourlyWindow(account) &&
       account.quotaSummary.hourlyPercentage <= warningThresholds.hourly) ||
     (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage <= warningThresholds.weekly);
-  if (warningThresholdReached) {
+  const switchThresholds = getAccountAutoQueuePolicy();
+  const switchThresholdReached =
+    (hasComparableHourlyWindow(account) && account.quotaSummary.hourlyPercentage <= switchThresholds.hourlyThreshold) ||
+    (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage <= switchThresholds.weeklyThreshold);
+  if ((config.get<boolean>(QUOTA_WARNING_ENABLED, true) && warningThresholdReached) ||
+      (config.get<boolean>(AUTO_SWITCH_ENABLED, true) && switchThresholdReached)) {
     await refreshAllBeforeAutoSwitchIfDue(repo, view, config, bypassGap, canUseAccount);
   }
 }
 
 /**
- * Refresh all enabled non-current accounts before a warning notification when
+ * Refresh all enabled non-current accounts before switching or warning when
  * the safety toggle is enabled. The regular all-account refresh interval is
  * also the minimum gap between these safety sweeps; the current-account
  * scheduler remains independent.

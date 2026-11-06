@@ -603,7 +603,7 @@ export interface CodexAutoSwitchReason {
   fromEmail: string;
   toAccountId: string;
   toEmail: string;
-  trigger: "hourly" | "weekly" | "hourly_and_weekly" | "reset" | "reauthorize";
+  trigger: "hourly" | "weekly" | "hourly_and_weekly" | "reset" | "reauthorize" | "model_capacity";
   matchedRules: string[];
   hourlyThreshold: number;
   weeklyThreshold: number;
