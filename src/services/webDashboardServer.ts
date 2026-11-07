@@ -82,7 +82,7 @@ import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/cod
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 
-const WEB_DASHBOARD_PORT = 39875;
+const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
 const SESSION_SECRET_KEY = "codexManager.webDashboard.sessions.v1";
 const SESSION_COOKIE = "codex_dashboard_session";
@@ -895,7 +895,7 @@ export class WebDashboardServer implements vscode.Disposable {
     finally { clearTimeout(timer); }
   }
 
-  private getUrl(pathname = "/"): string {
+  public getUrl(pathname = "/"): string {
     return `http://127.0.0.1:${WEB_DASHBOARD_PORT}${pathname}`;
   }
 
