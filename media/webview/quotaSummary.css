@@ -16963,6 +16963,9 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-workspace .cli-conversation-header { min-height: 52px; padding-block: 6px; }
 .cli-workspace .cli-conversation-header .cli-icon-button { width: 40px; min-height: 40px; }
 .cli-workspace .cli-conversation-header .cli-icon-button svg { width: 20px; height: 20px; }
+.cli-workspace :is(.cli-conversation-actions .cli-icon-button, .cli-context-tabbar > .cli-icon-button) { border: 0; background: transparent; box-shadow: none; }
+.cli-workspace :is(.cli-conversation-actions .cli-icon-button, .cli-context-tabbar > .cli-icon-button):hover:not(:disabled) { background: var(--bg-hover); }
+.cli-workspace :is(.cli-conversation-actions .cli-icon-button, .cli-context-tabbar > .cli-icon-button):focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .cli-session-menu { padding: 4px; border-radius: 8px; }
 .cli-session-menu > button { min-height: 32px; padding: 5px 8px; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
 .cli-composer-options { width: min(284px, calc(100vw - 20px)); padding: 10px; border-radius: 8px; }

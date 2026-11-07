@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.3-pre.8
+
+- Blend conversation toolbar icons and the workspace tools close button into their containers, retaining hover and keyboard focus feedback.
+
 ## 1.7.3-pre.5
 
 - Report bounded socket, first-live, and reconnect timings so workspace realtime performance can be measured safely.
