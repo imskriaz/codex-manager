@@ -5185,6 +5185,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 @media (max-width: 760px) {
+  /* Mobile workspace keeps action feedback in its initiating control; fixed toasts cover the composer and transcript. */
+  .dashboard-notice-stack { display: none !important; }
   .cli-workspace .cli-workspace-grid,
   .cli-workspace .cli-workspace-grid.has-context,
   .cli-workspace.is-rail-collapsed .cli-workspace-grid,

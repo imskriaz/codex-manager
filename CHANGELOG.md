@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.3-pre.4
+
+- Hide fixed dashboard notification toasts on mobile; action feedback remains available in the initiating control.
+
 ## 1.7.3-pre.2
 
 - Hide question prompts once every answer is confirmed, including answers from another client; keep partial questions and queued-answer status visible.

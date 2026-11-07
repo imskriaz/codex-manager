@@ -78,3 +78,8 @@ it('lets the resized Account Center use columns without reserving a blank footer
   expect(css).toContain('.cli-account-resize-footer { position: absolute;');
   expect(css).toContain('.cli-account-resize-footer small { display: none; }');
 });
+
+it('hides fixed dashboard notices on mobile so they do not cover the workspace', () => {
+  const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
+  expect(css).toContain('.dashboard-notice-stack { display: none !important; }');
+});

@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.7.3-pre.3",
+  "version": "1.7.3-pre.4",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -27,6 +27,9 @@
     "openai.chatgpt"
   ],
   "main": "./out/extension.js",
+  "bin": {
+    "codex-manager": "tools/start-node.cjs"
+  },
   "contributes": {
     "icons": {
       "codex-openai": {
@@ -392,6 +395,7 @@
   },
   "scripts": {
     "vscode:uninstall": "node ./tools/uninstall.js",
+    "start": "node ./tools/start-node.cjs",
     "build:webview": "vite build --config vite.webview.config.mts && node tools/verify-dashboard-modules.mjs",
     "typecheck:webview": "tsc --noEmit -p tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.mts",
