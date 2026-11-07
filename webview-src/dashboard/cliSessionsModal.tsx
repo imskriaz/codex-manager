@@ -1270,7 +1270,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               ) : !props.selectedSession ? (
                 <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the queued prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
                ) : <>
-                 <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} onTurnOffQueueing={() => updateDraftSettings({ followUpMode: 'steer' })} />
+                 <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} onSteer={() => updateDraftSettings({ followUpMode: 'steer' })} />
                  <Composer
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
                   deviceId={props.selectedSession.deviceId}
@@ -2849,8 +2849,7 @@ function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
-export function QueuedMessages({ queue, onRefresh, onTurnOffQueueing }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void; onTurnOffQueueing?: () => void }) {
-  const [openId, setOpenId] = useState<string>();
+export function QueuedMessages({ queue, onRefresh, onSteer }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void; onSteer?: () => void }) {
   queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
   if (!queue.items.length) return null;
   const status = (item: CliQueuedMessage) => item.state === 'queued' ? 'Queued' : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Failed';
@@ -2858,20 +2857,12 @@ export function QueuedMessages({ queue, onRefresh, onTurnOffQueueing }: { queue:
     {queue.items.map(item => <article key={item.id} class={`cli-queued-message is-${item.state}`}>
       <div class="cli-queued-message-copy"><span class="cli-queued-message-status">{status(item)}</span><p>{item.draft.text || 'Attachment'}</p>{item.draft.attachments.length ? <small>{item.draft.attachments.length} attachment{item.draft.attachments.length === 1 ? '' : 's'}</small> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
       <div class="cli-queued-message-actions">
-        {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onTurnOffQueueing?.(); queue.sendNow(item.id); }}>↪ <span>Steer</span></button> : null}
+        {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onSteer?.(); queue.sendNow(item.id); }}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
         {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}
         {item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}
-        <span class="cli-queued-message-menu-wrap">
-          <button type="button" class="cli-icon-button" aria-label="More queued message actions" aria-expanded={openId === item.id} onClick={() => setOpenId(openId === item.id ? undefined : item.id)}><MoreIcon /></button>
-          {openId === item.id ? <div class="cli-queued-message-menu" role="menu">
-            <button type="button" role="menuitem" disabled={item.state === 'sending'} onClick={() => { setOpenId(undefined); queue.remove(item.id, true); }}>Edit message</button>
-            {onTurnOffQueueing ? <button type="button" role="menuitem" onClick={() => { setOpenId(undefined); onTurnOffQueueing(); }}>Turn off queueing</button> : null}
-          </div> : null}
-        </span>
+        <button type="button" class="cli-icon-button" aria-label="Edit queued message" title="Edit queued message" disabled={item.state === 'sending'} onClick={() => queue.remove(item.id, true)}><PencilIcon /></button>
       </div>
     </article>)}
-    {queue.notice ? <p class="settings-note" role="status">{queue.notice}</p> : null}
-    {queue.reason ? <p class="settings-note" role="status">{queue.reason}</p> : null}
   </div>;
 }

@@ -64,10 +64,13 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   const queue={items:[item],ready:true,connected:true} as unknown as Parameters<typeof QueuedMessages>[0]['queue'];
   const node=QueuedMessages({queue,onRefresh:()=>{}}) as VNode<any>;
   expect(node.props.class).toBe('cli-local-queue');
-  const row=node.props.children[0][0];
+  const row=node.props.children[0];
   expect(row.props.class).toContain('cli-queued-message');
   expect(row.props.children[0].props.children[0].props.children).toBe('Failed');
-  expect(row.props.children[0].props.children[3].props.role).toBe('alert');
+  expect(row.props.children[0].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
+  const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  expect(source).toContain('aria-label="Edit queued message"');
+  expect(source).not.toContain('Turn off queueing');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
 });
 

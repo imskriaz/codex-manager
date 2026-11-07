@@ -16706,6 +16706,17 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-queued-message-menu button:hover { background: var(--bg-hover); }
 .cli-queued-message-menu button:disabled { opacity: .55; cursor: not-allowed; }
 .task-session-compose > .cli-local-queue { width: 100%; max-width: none; margin: 0 0 6px; }
+.cli-local-queue { gap: 4px; margin-bottom: 4px; }
+.cli-queued-message { align-items: center; min-height: 34px; padding: 4px 8px; box-shadow: none; }
+.cli-queued-message-copy { display: flex; align-items: center; gap: 7px; overflow: hidden; white-space: nowrap; }
+.cli-queued-message-status { flex: none; }
+.cli-queued-message-copy p { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-queued-message-copy small { display: none; }
+.cli-queued-message-copy .cli-queued-message-error { display: inline; flex: none; max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-queued-message-actions { align-items: center; }
+.cli-queued-message-actions .cli-icon-button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
+.cli-queued-steer { min-height: 24px; padding: 2px 5px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-queued-message-menu-wrap, .cli-queued-message-menu { display: none; }
 .cli-queue-summary { display:flex; align-items:center; gap:6px; margin:6px 0 8px auto; min-height:28px; padding:4px 8px; border:1px solid var(--border-default); border-radius:7px; background:var(--bg-surface); color:var(--text-secondary); font:inherit; font-size:calc(11px * var(--dashboard-text-scale, 1)); cursor:pointer; }
 .cli-queue-summary:hover { border-color:var(--accent-blue); color:var(--text-primary); }
 .cli-queue-summary svg { width:14px; height:14px; }
