@@ -1,8 +1,13 @@
 # Changelog
 
+## 1.7.3-pre.5
+
+- Report bounded socket, first-live, and reconnect timings so workspace realtime performance can be measured safely.
+
 ## 1.7.3-pre.4
 
 - Hide fixed dashboard notification toasts on mobile; action feedback remains available in the initiating control.
+- Add bounded host timing telemetry for socket open, first live event, and reconnect recovery.
 
 ## 1.7.3-pre.2
 

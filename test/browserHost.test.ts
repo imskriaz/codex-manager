@@ -374,6 +374,30 @@ describe("browser dashboard bridge", () => {
     expect(source).not.toContain("window.setTimeout(connectRealtime, 3000)");
   });
 
+  it("reports bounded socket, first-live, and reconnect timings", async () => {
+    const events: Array<Record<string, unknown>> = [], timers: Array<{ callback: () => void; delay: number }> = [];
+    class Socket {
+      static readonly OPEN = 1; readyState = 0; listeners = new Map<string, (event?: any) => void>();
+      addEventListener(type: string, callback: (event?: any) => void): void { this.listeners.set(type, callback); }
+      close(): void { this.readyState = 3; }
+      send(): void {}
+    }
+    const sockets: Socket[] = [], Factory = class extends Socket { constructor() { super(); sockets.push(this); } };
+    const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: (callback: () => void, delay: number) => { timers.push({ callback, delay }); return timers.length; }, clearTimeout: vi.fn(),
+      location: { protocol: "http:", host: "127.0.0.1:39875" }, WebSocket: Factory,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event,
+      fetch: vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({}) })), console, Error, Array, JSON, Date, Map });
+    sockets[0]!.readyState = Socket.OPEN; sockets[0]!.listeners.get("open")!();
+    sockets[0]!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:notice", level: "info", message: "live" }) });
+    expect(events.filter(event => event.type === "dashboard:host-status" && event.stage === "live").at(-1)?.timings).toEqual(expect.objectContaining({ socketMs: expect.any(Number), firstLiveMs: expect.any(Number) }));
+    sockets[0]!.listeners.get("close")!({ code: 1006 });
+    timers.find(timer => timer.delay === 500)?.callback(); sockets[1]!.readyState = Socket.OPEN; sockets[1]!.listeners.get("open")!();
+    expect(events.filter(event => event.type === "dashboard:host-status" && event.stage === "live").at(-1)?.timings).toEqual(expect.objectContaining({ reconnectMs: expect.any(Number) }));
+  });
+
   it("resolves a failed remote action immediately instead of leaving the modal waiting", async () => {
     const events: unknown[] = [];
     const windowMock = {

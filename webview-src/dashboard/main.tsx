@@ -893,6 +893,7 @@ function App() {
         setBrowserHostStage(message.stage);
         if (message.stage === "live") noticeControllerRef.current?.connectionRestored();
         if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
+        if (message.timings?.firstLiveMs !== undefined) performance.mark?.(`codex-dashboard-live-${message.timings.firstLiveMs}`);
         return;
       }
       if (message.type === 'dashboard:action-result' && ['generateApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {

@@ -13,6 +13,10 @@
   let snapshotRevision = 0;
   let sourceSystemId;
   let sourceGeneration = 0;
+  const hostStartedAt = Date.now();
+  let socketOpenedAt;
+  let firstLiveAt;
+  let reconnectStartedAt;
   const retiredSourceRequests = new Set();
   let authenticationRequired = false;
   let hiddenAt;
@@ -62,10 +66,15 @@
 
   const isBrowserOffline = () => typeof navigator !== "undefined" && navigator.onLine === false && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
   const publishStatus = (stage, retryInMs) => {
+    const timings = {};
+    if (socketOpenedAt) timings.socketMs = Math.max(0, socketOpenedAt - hostStartedAt);
+    if (firstLiveAt) timings.firstLiveMs = Math.max(0, firstLiveAt - hostStartedAt);
+    if (reconnectStartedAt && socketOpenedAt && socketOpenedAt >= reconnectStartedAt) timings.reconnectMs = Math.max(0, socketOpenedAt - reconnectStartedAt);
     dispatch({
       type: "dashboard:host-status",
       stage: stage === "unreachable" && isBrowserOffline() ? "offline" : stage,
       ...(lastSyncAt ? { lastSyncAt } : {}),
+      ...(Object.keys(timings).length ? { timings } : {}),
       ...(retryInMs ? { retryInMs } : {})
     });
   };
@@ -161,6 +170,7 @@
     if (reconnectTimer !== undefined) return;
     const delay = reconnectDelayMs;
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
+    reconnectStartedAt ??= Date.now();
     publishStatus("reconnecting", delay);
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = undefined;
@@ -199,17 +209,20 @@
       connectingSocket = undefined;
       clearHandshake();
       realtimeSocket = socket;
+      socketOpenedAt = Date.now();
       reconnectDelayMs = 500;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: true });
       publishStatus("live");
+      reconnectStartedAt = undefined;
     });
     socket.addEventListener("message", (event) => {
       if (realtimeSocket !== socket) return;
       try {
         const message = JSON.parse(event.data);
         if (!message?.type) return;
+        if (!firstLiveAt) { firstLiveAt = Date.now(); publishStatus("live"); }
         if (message.type === "dashboard:action-result") forgetSocketAction(message.requestId);
         if (message.type === "dashboard:snapshot") {
           lastSyncAt = Date.now();

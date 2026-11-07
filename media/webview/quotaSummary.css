@@ -17028,3 +17028,25 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-composer-options .cli-approval-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-blue); }
 
 .saved-overflow-menu.saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover { z-index: 20050; }
+
+/* Keep message permissions compact while preserving touch-sized controls. */
+.cli-composer-options { width: min(320px, calc(100vw - 24px)); gap: 8px; padding: 10px; }
+.cli-options-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cli-options-grid label { display: grid; min-width: 0; gap: 4px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-options-grid label > span,
+.cli-permission-panel label > span:first-child { color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.cli-options-grid select { min-height: 34px; }
+.cli-permission-panel { display: grid; grid-template-columns: 1fr; gap: 6px; min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--border-muted); border-radius: 8px; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); }
+.cli-permission-panel:has(.cli-approval-control) { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+.cli-permission-panel legend { display: inline-flex; grid-column: 1 / -1; align-items: center; gap: 5px; width: auto; margin: 0; padding: 0 3px; color: var(--text-secondary); font-size: calc(10px * var(--dashboard-text-scale, 1)); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.cli-permission-panel legend svg { width: 13px; height: 13px; }
+.cli-permission-panel label { display: grid; min-width: 0; gap: 4px; align-content: start; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-permission-panel select { min-width: 0; }
+.cli-permission-panel .cli-approval-control > span:last-child { min-height: 34px; justify-content: flex-start; padding: 0 7px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-base); color: var(--text-primary); white-space: nowrap; }
+.cli-permission-panel .cli-approval-control input { flex: 0 0 16px; }
+@media (max-width: 760px) {
+  .cli-composer-options { width: min(320px, calc(100vw - 24px)); }
+  .cli-composer-options .cli-options-grid select,
+  .cli-composer-options .cli-permission-panel select { min-height: 44px; font-size: calc(14px * var(--dashboard-text-scale, 1)); }
+  .cli-permission-panel .cli-approval-control > span:last-child { min-height: 44px; }
+}

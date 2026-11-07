@@ -1216,7 +1216,8 @@ export type DashboardHostMessage =
   | {
       type: "dashboard:host-status";
       stage: "connecting" | "live" | "degraded" | "reconnecting" | "unreachable" | "offline";
-      lastSyncAt?: number;
+        lastSyncAt?: number;
+        timings?: { socketMs?: number; firstLiveMs?: number; reconnectMs?: number };
       retryInMs?: number;
     }
   | {
