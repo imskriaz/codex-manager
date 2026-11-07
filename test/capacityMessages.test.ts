@@ -59,16 +59,16 @@ it('recognizes structured capacity codes while preserving ordinary error diagnos
   expect(activity({ id: 'tool', kind: 'tool-call', text: 'Read error documentation', debug: '{"example":"serverOverloaded"}' }).props.class).toContain('cli-activity is-tool-call');
 });
 
-it('keeps queue failures compact while exposing the full queue in a popover', () => {
+it('keeps queued messages visible above the composer with inline actions', () => {
   const item={id:'failed',draft:{text:'Keep this message',attachments:[]},state:'failed',error:'Storage could not save this message.',createdAt:1,seenIds:[]};
   const queue={items:[item],ready:true,connected:true} as unknown as Parameters<typeof QueuedMessages>[0]['queue'];
   const node=QueuedMessages({queue,onRefresh:()=>{}}) as VNode<any>;
-  expect(node.props.children[0].type).toBe('button');
-  expect(node.props.children[0].props.popovertarget).toBe('queued-message-list');
-  const modal=node.props.children[1], row=modal.props.children[1].props.children[0];
-  const details=row.props.children[2];expect(details.props.popover).toBe('auto');expect(details.props.role).toBe('dialog');
-  expect(details.props.class).toBe('cli-queue-error-popover');
-  expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}}).props.children).toBeUndefined();
+  expect(node.props.class).toBe('cli-local-queue');
+  const row=node.props.children[0][0];
+  expect(row.props.class).toContain('cli-queued-message');
+  expect(row.props.children[0].props.children[0].props.children).toBe('Failed');
+  expect(row.props.children[0].props.children[3].props.role).toBe('alert');
+  expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
 });
 
 it('lets the resized Account Center use columns without reserving a blank footer strip', () => {

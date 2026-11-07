@@ -23,6 +23,8 @@
   let reconnectMs;
   const retiredSourceRequests = new Set();
   let authenticationRequired = false;
+  let statusDetail;
+  let retrying = false;
   const pendingSocketActions = new Map();
   const pendingHttpActions = new Set();
   const baseRequestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask", "startProjectSubtask"].includes(message?.action)
@@ -76,7 +78,8 @@
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
 
-  const isBrowserOffline = () => typeof navigator !== "undefined" && navigator.onLine === false && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
+  const networkOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+  const isBrowserOffline = () => networkOffline() && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
   const publishStatus = (stage, retryInMs) => {
     const timings = {};
     if (socketOpenedAt !== undefined) timings.socketMs = Math.max(0, socketOpenedAt - hostStartedAt);
@@ -84,7 +87,9 @@
     if (reconnectMs !== undefined) timings.reconnectMs = reconnectMs;
     dispatch({
       type: "dashboard:host-status",
-      stage: stage === "unreachable" && isBrowserOffline() ? "offline" : stage,
+      stage: stage === "unreachable" && networkOffline() ? "offline" : stage,
+      ...(statusDetail ? { detail: statusDetail } : {}),
+      retrying,
       ...(lastSyncAt ? { lastSyncAt } : {}),
       ...(Object.keys(timings).length ? { timings } : {}),
       ...(retryInMs ? { retryInMs } : {})
@@ -132,13 +137,18 @@
         requireSignIn();
         return false;
       }
-      if (!response.ok) throw new Error(`Dashboard refresh failed (${response.status})`);
+      if (!response.ok) throw new Error(`The dashboard returned HTTP ${response.status}.`);
+      statusDetail = undefined;
       lastSyncAt = Date.now();
       if (revision === snapshotRevision) dispatch({ type: "dashboard:snapshot", state });
       publishConnection();
       publishStatus(isRealtimeOpen() ? "live" : "degraded");
       return true;
     })().catch((error) => {
+      statusDetail = isRealtimeOpen() ? 'The live connection is available; displayed data may be stale.'
+        : error?.name === 'AbortError' ? 'The dashboard did not respond within 10 seconds.'
+          : /^The dashboard returned HTTP \d+\.$/.test(error?.message) ? error.message
+            : 'The dashboard could not be reached. The cause is not confirmed.';
       publishStatus(isRealtimeOpen() ? "live" : "unreachable");
       throw error;
     }).finally(() => { snapshotInFlight = undefined; });
@@ -242,6 +252,7 @@
         if (message.type === "dashboard:action-result") forgetSocketAction(message.requestId);
         if (message.type === "dashboard:snapshot") {
           lastSyncAt = Date.now();
+          statusDetail = undefined;
           publishStatus("live");
         }
         dispatch(message);
@@ -255,6 +266,8 @@
       if (connectingSocket === socket) { connectingSocket = undefined; clearHandshake(); }
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
       failUnconfirmedSocketActions();
+      if (event.code === 1013) statusDetail = 'The dashboard is busy or its outgoing connection is full. Reconnecting automatically.';
+      else if (event.code === 1001 || event.code === 1012) statusDetail = 'The dashboard host is restarting or shutting down. Reconnecting automatically.';
       if (event.code === 4001) {
         requireSignIn();
         return;
@@ -313,6 +326,7 @@
       dashboardReady = true;
       const manual = message.type === "dashboard:retry-connection";
       if (manual && retryInFlight) return retryInFlight;
+      if (manual) { retrying = true; statusDetail = undefined; }
       // Startup snapshots can arrive before the dashboard installs its listener.
       if (latestSnapshot) { const startup = latestSnapshot; latestSnapshot = undefined; dispatch(startup); }
       for (const live of startupLive.values()) dispatch(live);
@@ -322,17 +336,13 @@
       if (manual) restartRealtime();
       const refresh = (async () => { try {
         const loaded = await loadSnapshot();
-        if (manual && loaded) dispatch({
-          type: "dashboard:notice",
-          level: "info",
-          message: "Dashboard refreshed."
-        });
+        if (manual && loaded && !isRealtimeOpen()) statusDetail = 'Saved data refreshed. The live connection is still reconnecting.';
       } catch (error) {
         console.error("[codex-manager] dashboard refresh", error);
-        if (manual) dispatch({ type: "dashboard:notice", level: "error", message: isRealtimeOpen() ? "Snapshot refresh failed. The live connection is available; displayed data may be stale." : "Dashboard is still unavailable. Check VS Code and try again." });
+        // Recovery feedback belongs to the persistent connection surface.
       } })();
       if (!manual) return refresh;
-      retryInFlight = refresh.finally(() => { retryInFlight = undefined; });
+      retryInFlight = refresh.finally(() => { retrying = false; retryInFlight = undefined; publishStatus(isRealtimeOpen() ? 'live' : networkOffline() ? 'offline' : 'unreachable'); });
       return retryInFlight;
     }
     let reachedHost = false;
@@ -435,6 +445,8 @@
       void loadSnapshot().catch(() => undefined);
     });
     window.addEventListener("offline", () => {
+      // Loopback remains usable without internet; report offline only when its host cannot be reached.
+      if (!isBrowserOffline()) { void loadSnapshot().catch(() => undefined); return; }
       resetConnectingSocket();
       const active = realtimeSocket;
       realtimeSocket = undefined;

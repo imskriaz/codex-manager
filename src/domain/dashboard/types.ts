@@ -1202,7 +1202,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
-  | { type: "dashboard:host-reload"; deviceId?: string; startedAt: number; phase: "reloading" | "failed"; fromAccountId?: string; toAccountId?: string }
+  | import("./hostReload").DashboardHostReload
   | { type: 'dashboard:maintenance-progress'; job: import('../maintenance').MaintenanceJob; deviceId?: string }
   | { type: 'dashboard:project-changed'; projectPath: string }
   | {
@@ -1220,6 +1220,8 @@ export type DashboardHostMessage =
       lastSyncAt?: number;
       timings?: { socketMs?: number; firstLiveMs?: number; reconnectMs?: number };
       retryInMs?: number;
+      detail?: string;
+      retrying?: boolean;
     }
   | {
       type: "dashboard:action-result";

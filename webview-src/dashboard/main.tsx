@@ -118,6 +118,7 @@ import { TaskBoard } from "./taskBoard";
 import { scheduleDashboardReopen } from "./reopenView";
 import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
+import { ConnectionRecovery, receiveReload, reconcileReloads, reloadStage, type Reloads, type ConnectionStage } from './connectionRecovery';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 type AccountSort =
@@ -434,8 +435,12 @@ function App() {
   const [logConsoleLimited, setLogConsoleLimited] = useState(false);
 
   const [browserHostStage, setBrowserHostStage] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>["stage"]>("connecting");
+  const [browserHostStatus, setBrowserHostStatus] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>>({ type: "dashboard:host-status", stage: "connecting" });
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
-  const [hostReload, setHostReload] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-reload" }>>();
+  const [hostReloads, setHostReloads] = useState<Reloads>({});
+  const [connectionClock, setConnectionClock] = useState(Date.now());
+  const connectionStartedAt = useRef(Date.now());
+  const offlineNoticeMode = useRef(false);
   const [connectionIssue, setConnectionIssue] = useState<"offline" | "unreachable">();
   const connectionUnavailable = ["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage);
   const browserOffline = browserHostStage === "offline";
@@ -444,13 +449,17 @@ function App() {
     const timer = window.setTimeout(() => setConnectionIssue(browserOffline ? "offline" : "unreachable"), 3_000);
     return () => window.clearTimeout(timer);
   }, [isBrowserDashboard, realtimeConnected, connectionUnavailable, browserOffline]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setConnectionClock(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardNotice) => {
       if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info" && (isCliSessionsPath(noticeRoute.current) || !next.actions?.length && !next.actionPrompt)) return;
       noticeControllerRef.current?.show(next);
-      pushBrowserNotification(next);
+      if (!offlineNoticeMode.current) pushBrowserNotification(next);
     },
     [pushBrowserNotification]
   );
@@ -867,6 +876,7 @@ function App() {
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
         if (message.connected) noticeControllerRef.current?.connectionRestored();
+        setHostReloads(current => reconcileReloads(current, [], !message.connected));
         if (!message.connected) {
           liveAuthority.current.clear();
           if ([...messageRequests.current.values()].some((target) => sameCliSessionTarget(target, currentSessionTarget()))) {
@@ -891,13 +901,14 @@ function App() {
         return;
       }
       if (message.type === "dashboard:host-status") {
+        setBrowserHostStatus(message);
         setBrowserHostStage(message.stage);
-        if (message.stage === "live") { setHostReload(undefined); noticeControllerRef.current?.connectionRestored(); }
+        if (message.stage === "live") noticeControllerRef.current?.connectionRestored();
         if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
         return;
       }
       if (message.type === "dashboard:host-reload") {
-        setHostReload(message);
+        setHostReloads(current => receiveReload(current, message));
         return;
       }
       if (message.type === 'dashboard:action-result' && ['generateApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {
@@ -1847,15 +1858,27 @@ function App() {
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
   const selectedPeerOffline = selectedPeer?.connected === false;
-  const reloadInProgress = hostReload?.phase === "reloading";
+  useEffect(() => { setHostReloads(current => reconcileReloads(current, snapshot?.connectedPeers ?? [])); }, [snapshot?.connectedPeers]);
+  const reloadKey = selectedPeer?.id ?? 'local';
+  const hostReload = hostReloads[reloadKey] ?? (selectedPeer?.local || !selectedPeer ? hostReloads['local'] : undefined);
+  const reloadStatus = hostReload ? reloadStage(hostReload, connectionClock) : undefined;
+  const reloadInProgress = reloadStatus === 'reloading';
   const accountLabel = (id?: string): string => {
     if (!id) return "account";
-    const account = snapshot?.accounts.find(item => item.id === id) ?? Object.values(snapshot?.peerAccounts ?? {}).flat().find(item => item.id === id);
-    return account?.email ?? id.slice(0, 12);
+    const account = usageAccounts?.find(item => item.id === id);
+    return getSensitiveDisplayValue(account?.email, state.privacyMode, 'email', 'account');
   };
-  const displayReload = hostReload ? { ...hostReload, fromAccountId: accountLabel(hostReload.fromAccountId), toAccountId: accountLabel(hostReload.toAccountId) } : undefined;
-  const connectionBannerStage = reloadInProgress ? "reloading" : connectionIssue ?? (selectedPeerOffline ? "system-offline" : undefined);
+  const transition = hostReload?.toAccountId && hostReload.toAccountId !== hostReload.fromAccountId
+    ? `Switching from ${accountLabel(hostReload.fromAccountId)} to ${accountLabel(hostReload.toAccountId)}.` : undefined;
+  const connectionBannerStage: ConnectionStage | undefined = reloadStatus ?? connectionIssue ?? (selectedPeerOffline ? 'system-offline' : browserHostStatus.detail ? 'degraded' : undefined);
   const dashboardUnavailable = reloadInProgress || selectedPeerOffline || isBrowserDashboard && (!realtimeConnected || connectionUnavailable);
+  offlineNoticeMode.current = dashboardUnavailable;
+  const dismissReload = () => setHostReloads(current => Object.fromEntries(Object.entries(current).filter(([, reload]) => reload !== hostReload)));
+  const recovery = connectionBannerStage ? <ConnectionRecovery compact stage={connectionBannerStage} transition={transition}
+    system={getSensitiveDisplayValue(selectedPeer?.name, state.privacyMode, 'name', 'Selected system')}
+    status={browserHostStatus} lastSyncAt={browserLastSyncAt}
+    onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })}
+    onDismiss={hostReload && !reloadInProgress ? dismissReload : undefined} /> : null;
   const offlineAccessibility = useModalAccessibility(Boolean(snapshot) && dashboardUnavailable && !isCliSessionsPath(browserPath), () => undefined);
   useEffect(() => { if (dashboardUnavailable) document.querySelectorAll<HTMLElement>(':popover-open').forEach(element => element.hidePopover?.()); }, [dashboardUnavailable]);
   useEffect(() => { if (selectedPeer?.connected) noticeControllerRef.current?.connectionRestored(true); }, [selectedPeer?.id, selectedPeer?.connected]);
@@ -1865,14 +1888,14 @@ function App() {
     return scheduleDashboardReopen(selectedPeerOffline, hasPendingActions || state.settingsOpen || workspaceHasDrafts, () => postMessageToHost({ type: 'dashboard:retry-connection' }));
   }, [isBrowserDashboard, selectedPeerOffline, hasPendingActions, state.settingsOpen, workspaceHasDrafts]);
   if (!snapshot) {
-    const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline") || reloadInProgress;
+    const connectionFailed = Boolean(hostReload) || Boolean(connectionIssue) || connectionClock - connectionStartedAt.current >= 10_000 || isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
       <main
         class="panel"
         id="dashboard-main"
       >
         <section class="section loading-section">
-          {connectionFailed ? <BrowserConnectionRecovery stage={reloadInProgress ? "reloading" : browserHostStage === "offline" ? "offline" : "unreachable"} reload={displayReload} selectedSystem={selectedPeer?.name} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
+          {connectionFailed ? <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
@@ -2713,10 +2736,7 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {connectionBannerStage && isCliSessionsPath(browserPath)
-        ? createPortal(<BrowserConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
-        : null}
-      {notice && (!isCliSessionsPath(browserPath) || notice.level !== 'info')
+      {notice && !dashboardUnavailable && (!isCliSessionsPath(browserPath) || notice.level !== 'info')
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
               <div
@@ -2754,7 +2774,8 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {dashboardUnavailable && !isCliSessionsPath(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}><BrowserConnectionRecovery page={browserPath === "/tasks" ? "Task management" : "Dashboard"} stage={connectionBannerStage ?? 'unreachable'} reload={displayReload} selectedSystem={selectedPeer?.name} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /></div>, document.body) : null}
+        {dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}>{recovery ?? <ConnectionRecovery stage={browserHostStage} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />}</div>, document.body) : null}
+        {!dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? recovery : null}
         <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
@@ -3132,6 +3153,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+              connectionStatus={recovery}
                 browser={isBrowserDashboard}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
@@ -3147,7 +3169,7 @@ function App() {
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
-              connected={realtimeConnected && selectedPeer?.connected !== false && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
+              connected={realtimeConnected && !reloadInProgress && selectedPeer?.connected !== false && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
               submissionResults={submissionResults}
               steering={Boolean(selectedCliSession && [...steerRequests.current].some(requestId => sameCliSessionTarget(turnRequests.current.get(requestId), selectedCliSession)))}
               composerConfig={cliComposerConfig}
@@ -3455,39 +3477,6 @@ function DashboardMobileActions(props: {
       </div>
     </details>
   );
-}
-
-type BrowserConnectionIssue = "unreachable" | "offline" | "system-offline";
-
-type ConnectionBannerStage = BrowserConnectionIssue | "reloading";
-
-function BrowserConnectionBanner(props: { stage: ConnectionBannerStage; lastSyncAt?: number; onRetry: () => void }) {
-  const copy = {
-    unreachable: ["Connection Interrupted in Workspace", "Checking automatically. On the selected system, open VS Code and check Codex Manager in Extensions."],
-    offline: ["You are offline", "Your browser cannot reach the dashboard. Reconnect this device to continue."],
-    "system-offline": ["Selected system is offline", "This PC has not checked in. Switch to another connected system or reconnect it."],
-    reloading: ["Switch applied · reloading", "The active account changed. Codex Manager is reloading this window to apply it."]
-  }[props.stage];
-  return <aside class={`dashboard-connection-banner is-${props.stage}`} role="alert" aria-live="polite">
-    <span class="dashboard-connection-indicator" aria-hidden="true" />
-    <span class="dashboard-connection-copy"><strong>{copy[0]}</strong><small>{copy[1]}{props.lastSyncAt ? ` Last update ${new Date(props.lastSyncAt).toLocaleTimeString()}.` : ""}</small></span>
-    {props.stage === "reloading" ? <span class="dashboard-connection-progress" aria-label="Reload in progress" /> : <button type="button" onClick={props.onRetry}>Retry now</button>}
-  </aside>;
-}
-
-function BrowserConnectionRecovery(props: { stage: ConnectionBannerStage; page?: string; selectedSystem?: string; reload?: Extract<DashboardHostMessage, { type: "dashboard:host-reload" }>; onRetry: () => void }) {
-  const from = props.reload?.fromAccountId ?? "previous account";
-  const to = props.reload?.toAccountId ?? "new account";
-  const reloadText = props.reload?.phase === "reloading"
-    ? `Switching from ${from} to ${to}, then reloading Codex Manager. Keep this window open while the change is applied.`
-    : undefined;
-  return <div class="dashboard-connection-recovery" role="alert">
-    <span class="dashboard-connection-recovery-mark" aria-hidden="true"><img src="/assets/codex.svg" alt="" width="38" height="38" /></span>
-    <small>{reloadText ? "Account switch" : props.stage === "offline" ? "No internet" : props.stage === "system-offline" ? "System offline" : "Connection interrupted"}</small>
-    <h1>{reloadText ? "Applying account switch" : props.stage === "offline" ? "You’re offline" : props.stage === "system-offline" ? `${props.selectedSystem ?? "Selected system"} is offline` : `${props.selectedSystem ?? "Selected system"} is unavailable`}</h1>
-    <p>{reloadText ?? (props.stage === "offline" ? "Reconnect this device to continue. Saved dashboard data stays available, but live actions are paused." : props.stage === "system-offline" ? "The dashboard is still available, but actions for this system are paused until it checks in again." : `Open VS Code on ${props.selectedSystem ?? "the selected system"} and check that Codex Manager is running. We’ll reconnect automatically when it responds.`)}</p>
-    {reloadText ? <span class="dashboard-connection-progress is-large" aria-label="Reload in progress" /> : <button type="button" onClick={props.onRetry}>Try connecting again</button>}
-  </div>;
 }
 
 function sortAccounts(

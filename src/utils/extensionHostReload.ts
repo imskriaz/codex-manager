@@ -160,7 +160,7 @@ export function reloadExtensionHostWithSessionCapture(
       await command("workbench.action.reloadWindow", deadline - Date.now());
     }
   })().catch(async (error: unknown) => {
-    publishDashboardRealtime({ ...reload, phase: "failed" });
+    publishDashboardRealtime({ ...reload, phase: error instanceof AutomaticReloadCancelledError ? "cancelled" : "failed" });
     // Failed or cancelled reloads must not leave the dashboard closed.
     try {
       await command("codexManager.restoreDashboardAfterExtensionHostRestart", 500, [], false);

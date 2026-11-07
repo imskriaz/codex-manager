@@ -41,7 +41,7 @@ it('shares overlapping retries and leaves healthy or connecting sockets alone on
   await h.post({ type: 'dashboard:action', action: 'cancelCodexCliSessionTurn', requestId: 'stop' });
   expect(h.sockets[1]!.send).toHaveBeenCalledOnce();
   h.finish(); await Promise.all([first, second]);
-  expect(h.events.filter(event => event.type === 'dashboard:notice')).toHaveLength(1);
+  expect(h.events.filter(event => event.type === 'dashboard:host-status').at(-1)?.stage).toBe('live');
   h.listeners.get('online')!(); expect(h.sockets).toHaveLength(2);
 });
 

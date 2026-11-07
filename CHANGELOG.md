@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.3-pre.13
+
+- Stack queued steer-or-queue messages directly above the composer with inline steer, edit, delete, and queue controls.
+
+## 1.7.3-pre.12
+
+- Keep offline and reconnect explanations in the focused connection surface, including known HTTP, timeout, system-offline, reload-slow, reload-failed, and unknown-cause states.
+- Propagate account-switch reload state across connected dashboard hosts without replaying the switch, and keep compact recovery controls out of toast notifications.
+
 ## 1.7.3-pre.11
 
 - Use the task conversation footer for its session title (or project name) when no account is available, keeping changed-file stats alongside it.

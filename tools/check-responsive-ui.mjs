@@ -2236,8 +2236,7 @@ try {
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', "Failed sends leave the composer empty");
-    await page.locator('.cli-local-queue .cli-queue-summary').click();
-    const failedMessage = page.getByRole('dialog', { name: 'Queued messages', exact: true }).locator('.is-failed').last();
+    const failedMessage = page.locator('.cli-queued-message.is-failed').last();
     await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
     assert.equal(await failedMessage.getByText('1 attachment',{exact:true}).count(),1,'Failed attachments remain in the queue');
     await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).click();

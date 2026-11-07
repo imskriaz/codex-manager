@@ -51,14 +51,12 @@ export async function checkSessionQuestionUi(page, { parentId, width, output }) 
   await page.screenshot({ path: path.join(output, `question-answer-queued-${width}.png`) });
   await composer.fill('Urgent next step');
   await composer.evaluate(element => element.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  await page.locator('.cli-queue-summary').click();
-  const queue = page.getByRole('dialog', { name: 'Queued messages', exact: true });
-  await queue.locator('.cli-queue-list-item').filter({ hasText: 'Urgent next step' }).getByRole('button', { name: 'Send queued message now', exact: true }).click();
-  await queue.getByRole('status').filter({ hasText: 'Waiting for connection' }).waitFor();
-  assert.match(await queue.locator('.cli-queue-list-item').first().innerText(), /Urgent next step/, 'Send now promotes a waiting message to the top');
+  const queue = page.locator('.cli-local-queue');
+  await queue.locator('.cli-queued-message').filter({ hasText: 'Urgent next step' }).getByRole('button', { name: 'Steer', exact: true }).click();
+  await queue.getByText('Waiting for connection', { exact: true }).waitFor();
+  assert.match(await queue.locator('.cli-queued-message').first().innerText(), /Urgent next step/, 'Steer promotes a waiting message to the top');
   assert.ok(await queue.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1; }), 'Queue actions fit the viewport');
   await page.screenshot({ path: path.join(output, `queue-send-now-${width}.png`) });
-  await queue.getByRole('button', { name: 'Close queued messages', exact: true }).click();
   await page.evaluate(() => { window.__holdNextSend = true; dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })); });
   await page.waitForFunction(() => window.__heldSendResult);
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before + 1, 'Reconnect sends the queued answer exactly once');

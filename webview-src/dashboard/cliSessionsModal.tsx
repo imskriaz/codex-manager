@@ -169,6 +169,7 @@ export type CliSessionsPageProps = {
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
   requestPanel?: preact.ComponentChildren;
+  connectionStatus?: preact.ComponentChildren;
   messages: DashboardCliSessionMessage[];
   liveState?: DashboardCodexSessionLiveState;
   liveStates?: Record<string, DashboardCodexSessionLiveState>;
@@ -1212,6 +1213,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           inert={props.dashboardMode || (mobileLayout && !railCollapsed) || undefined}
         >
           {!props.selectedSession && !pendingNewChat ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
+          {props.connectionStatus ? <div class="workspace-connection-status">{props.connectionStatus}</div> : null}
           {props.selectedSession || pendingNewChat ? (
             <>
               {props.selectedSession ? <ConversationHeader
@@ -1247,8 +1249,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     if (!agent) { props.onActionFeedback({ level: 'warning', message: 'This agent is not in the saved session list. Refresh sessions and try again.' }); return; }
                     openContextTab('agents', id);
                   }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.map(queuedMessageView)} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
-                  <QueuedMessages queue={messageQueue} popoverId={`queued-message-list-${encodeURIComponent(draftKey)}`} onRefresh={props.onRefreshMessages} />
-                  {renderPendingMessages()}
+                   {renderPendingMessages()}
                   {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
                   {showWorking ? <WorkingMessage /> : null}
                   <div />
@@ -1263,13 +1264,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <p>Delete this goal from Codex? The conversation and its messages will be kept.</p>
                 <div class="dialog-actions"><button type="button" onClick={() => { setGoalDeleteTarget(undefined); reportLocalFeedback({ level: 'info', message: 'Goal deletion cancelled.' }); }}>Cancel</button><button type="button" disabled={props.goalUpdating || props.connected === false || currentTurnRunning || props.selectedSession?.status !== 'idle'} onClick={() => { setGoalDeleteTarget(undefined); props.onGoalStatus?.('clear'); }}>Delete goal</button></div>
               </ModalShell>
-              {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session"><QueueIcon /></span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
+               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session"><QueueIcon /></span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : !props.selectedSession ? (
                 <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the queued prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
-              ) : (
-                <Composer
+               ) : <>
+                 <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} onTurnOffQueueing={() => updateDraftSettings({ followUpMode: 'steer' })} />
+                 <Composer
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
                   deviceId={props.selectedSession.deviceId}
                   draft={draft}
@@ -1313,8 +1315,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   onResize={beginComposerResize}
                   onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)}
                   onStop={() => props.selectedSession && props.onStop(props.selectedSession)}
-                />
-              )}
+                 />
+               </>}
               {legacyDraftWarning}
             </>
           ) : newChatProject !== undefined ? (
@@ -2847,23 +2849,29 @@ function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
-export function QueuedMessages({ queue, popoverId = 'queued-message-list', onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; popoverId?: string; onRefresh: () => void }) {
-  const [confirmClear, setConfirmClear] = useState(false);
+export function QueuedMessages({ queue, onRefresh, onTurnOffQueueing }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void; onTurnOffQueueing?: () => void }) {
+  const [openId, setOpenId] = useState<string>();
   queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
-  if (!queue.items.length) return <div class="cli-local-queue" aria-label="Local message queue" />;
+  if (!queue.items.length) return null;
   const status = (item: CliQueuedMessage) => item.state === 'queued' ? 'Queued' : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Failed';
   return <div class="cli-local-queue" aria-label="Local message queue">
-    <button type="button" class="cli-queue-summary" popovertarget={popoverId} aria-haspopup="dialog"><QueueIcon /><span>Queued · {queue.items.length}</span><ChevronIcon /></button>
-    <div id={popoverId} popover="auto" class="cli-queue-list-popover" role="dialog" aria-label="Queued messages">
-      <header><strong>Queued messages</strong><button type="button" class="cli-icon-button" popovertarget={popoverId} popovertargetaction="hide" aria-label="Close queued messages"><CloseIcon /></button></header>
-      <div class="cli-queue-list">{queue.items.map(item => <article key={item.id} class={`cli-queue-list-item is-${item.state}`}>
-        <div class="cli-queue-list-copy"><strong>{status(item)}</strong><p>{item.draft.text || 'Attachment'}</p>{item.draft.attachments.length ? <small>{item.draft.attachments.length} attachment{item.draft.attachments.length === 1 ? '' : 's'}</small> : null}</div>
-        <div class="cli-queue-list-actions">{item.state === 'queued' ? <button type="button" class="cli-icon-button" aria-label="Send queued message now" title="Send now (move to front)" disabled={!queue.ready} onClick={() => queue.sendNow(item.id)}><SendIcon /></button> : null}{item.error ? <button type="button" class="cli-queue-status-button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} aria-label="Show queue error"><WarningIcon /></button> : null}{item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}{queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}{item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}</div>
-        {item.error ? <div id={`queue-error-${encodeURIComponent(item.id)}`} popover="auto" class="cli-queue-error-popover" role="dialog" aria-label="Message failure details"><p>{item.error}</p><button type="button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} popovertargetaction="hide">Close</button></div> : null}
-      </article>)}</div>
-      {queue.notice ? <p class="settings-note" role="status">{queue.notice}</p> : null}
-      {queue.reason ? <p class="settings-note" role="status">{queue.reason}</p> : null}
-      {confirmClear ? <div class="cli-queue-clear-confirm" role="alertdialog" aria-label="Confirm deleting queued messages"><p>Delete {queue.items.filter(item => item.state !== 'sending').length} queued message{queue.items.filter(item => item.state !== 'sending').length === 1 ? '' : 's'}?</p><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button><button type="button" class="is-danger" onClick={() => { queue.items.filter(item => item.state !== 'sending').forEach(item => queue.remove(item.id)); setConfirmClear(false); }}>Delete all</button></div> : <button type="button" class="cli-queue-clear" disabled={!queue.ready || !queue.items.some(item => item.state !== 'sending')} onClick={() => setConfirmClear(true)}>Delete all queued</button>}
-    </div>
+    {queue.items.map(item => <article key={item.id} class={`cli-queued-message is-${item.state}`}>
+      <div class="cli-queued-message-copy"><span class="cli-queued-message-status">{status(item)}</span><p>{item.draft.text || 'Attachment'}</p>{item.draft.attachments.length ? <small>{item.draft.attachments.length} attachment{item.draft.attachments.length === 1 ? '' : 's'}</small> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
+      <div class="cli-queued-message-actions">
+        {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onTurnOffQueueing?.(); queue.sendNow(item.id); }}>↪ <span>Steer</span></button> : null}
+        {item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
+        {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}
+        {item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}
+        <span class="cli-queued-message-menu-wrap">
+          <button type="button" class="cli-icon-button" aria-label="More queued message actions" aria-expanded={openId === item.id} onClick={() => setOpenId(openId === item.id ? undefined : item.id)}><MoreIcon /></button>
+          {openId === item.id ? <div class="cli-queued-message-menu" role="menu">
+            <button type="button" role="menuitem" disabled={item.state === 'sending'} onClick={() => { setOpenId(undefined); queue.remove(item.id, true); }}>Edit message</button>
+            {onTurnOffQueueing ? <button type="button" role="menuitem" onClick={() => { setOpenId(undefined); onTurnOffQueueing(); }}>Turn off queueing</button> : null}
+          </div> : null}
+        </span>
+      </div>
+    </article>)}
+    {queue.notice ? <p class="settings-note" role="status">{queue.notice}</p> : null}
+    {queue.reason ? <p class="settings-note" role="status">{queue.reason}</p> : null}
   </div>;
 }

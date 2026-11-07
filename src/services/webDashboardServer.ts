@@ -81,6 +81,7 @@ import { ConversationShares, sharedConversationPage, publicShareMessages } from 
 import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
+import { isDashboardHostReload, type DashboardHostReload } from "../domain/dashboard/hostReload";
 
 const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
@@ -101,14 +102,15 @@ const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const DASHBOARD_LOCAL_SESSION_WAIT_MS = 750;
 
-function sendDashboardSocketMessage(socket: WebSocket, message: string): void {
+function sendDashboardSocketMessage(socket: WebSocket | UndiciWebSocket, message: string): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   try {
     if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, 'Dashboard updates need to reconnect');
     else socket.send(message);
   } catch (error) {
     console.warn('[codexManager] dashboard client disconnected during delivery', error);
-    socket.terminate();
+    if ('terminate' in socket) socket.terminate();
+    else socket.close();
   }
 }
 
@@ -226,6 +228,7 @@ type PeerCodexSessionLiveMessage = {
 };
 type PeerCodexSessionAccessMessage = { type: 'peer:codex-session-access'; deviceId: string; sessionId: string; access: import('../domain/codexSessionAccess').CodexSessionAccess };
 type PeerMaintenanceProgressMessage = { type: 'peer:maintenance-progress'; deviceId: string; job: MaintenanceJob };
+type PeerHostReloadMessage = { type: 'peer:host-reload'; deviceId: string; reload: DashboardHostReload };
 type LocalPeerState = Pick<PeerSessionMessage, "sessions" | "accounts" | "enablementRegistry">;
 
 /**
@@ -536,6 +539,7 @@ export class WebDashboardServer implements vscode.Disposable {
     );
     this.encryptedSync?.setRealtimeSyncPublisher?.(() => this.publishPeerVault(true));
     this.dashboardRealtimeSubscription = subscribeDashboardRealtime((message) => {
+      if (message.type === 'dashboard:host-reload') { this.publishHostReload(message); return; }
       if (message.type === 'dashboard:codex-session-access') { this.publishSessionAccess(message); return; }
       if (message.type === 'dashboard:maintenance-progress') {
         this.publishMaintenanceProgress(message);
@@ -1801,6 +1805,20 @@ export class WebDashboardServer implements vscode.Disposable {
     return [...this.remoteSessionLive.values()];
   }
 
+  private publishHostReload(message: DashboardHostReload): void {
+    if (!isDashboardHostReload(message)) return;
+    const origin = message.deviceId ?? this.deviceId;
+    const reload = { ...message, deviceId: origin };
+    const peerMessage = JSON.stringify({ type: 'peer:host-reload', deviceId: origin, reload } satisfies PeerHostReloadMessage);
+    if (!message.deviceId && this.peerSocket?.readyState === UndiciWebSocket.OPEN) {
+      sendDashboardSocketMessage(this.peerSocket, peerMessage);
+    }
+    for (const [id, socket] of this.peerSockets) {
+      if (id !== origin && this.authenticatedPeerSockets.has(socket)) sendDashboardSocketMessage(socket, peerMessage);
+    }
+    for (const socket of this.webSocketClients) sendDashboardSocketMessage(socket, JSON.stringify(reload));
+  }
+
   private publishMaintenanceProgress(message: Extract<DashboardHostMessage, { type: 'dashboard:maintenance-progress' }>): void {
     if (!isMaintenanceJob(message.job)) return;
     const origin = message.deviceId ?? this.deviceId;
@@ -2714,7 +2732,7 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerTerminalOutputMessage> &
         Partial<PeerTerminalCompleteMessage> &
         Partial<PeerCodexRequestMessage> &
-        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerNotification>;
+        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerNotification>;
       if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, sourceSocket); return; }
       if (await this.acceptPeerVaultAcknowledgment(message)) return;
       if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
@@ -2742,6 +2760,13 @@ export class WebDashboardServer implements vscode.Disposable {
           this.peerActionWaiters.delete(message.requestId);
           waiter(message as unknown as PeerActionResultMessage);
         }
+        return;
+      }
+      if (message.type === 'peer:host-reload') {
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || typeof message.deviceId !== 'string' ||
+          message.deviceId === this.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket ||
+          !isDashboardHostReload(message.reload) || message.reload.deviceId !== message.deviceId) return;
+        publishDashboardRealtime(message.reload);
         return;
       }
       if (message.type === 'peer:maintenance-progress') {
@@ -3038,7 +3063,7 @@ export class WebDashboardServer implements vscode.Disposable {
             Partial<PeerTerminalOutputMessage> &
             Partial<PeerTerminalCompleteMessage> &
             Partial<PeerCodexRequestMessage> &
-            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerNotification>;
+            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerNotification>;
           if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, socket); return; }
           if (message.type === "peer:action") void this.executePeerAction(message, (value) => socket.send(value));
           if (message.type === "peer:action-result" && typeof message.requestId === "string") {
@@ -3047,6 +3072,11 @@ export class WebDashboardServer implements vscode.Disposable {
               this.peerActionWaiters.delete(message.requestId);
               waiter(message as unknown as PeerActionResultMessage);
             }
+          }
+          if (message.type === 'peer:host-reload' && typeof message.deviceId === 'string' &&
+            message.deviceId !== this.deviceId && this.peerSessions.has(message.deviceId) &&
+            isDashboardHostReload(message.reload) && message.reload.deviceId === message.deviceId) {
+            publishDashboardRealtime(message.reload);
           }
           if (message.type === 'peer:maintenance-progress' && typeof message.deviceId === 'string' &&
             message.deviceId !== this.deviceId && this.peerSessions.has(message.deviceId) && isMaintenanceJob(message.job)) {

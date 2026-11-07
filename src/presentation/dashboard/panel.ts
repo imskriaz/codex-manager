@@ -316,17 +316,18 @@ export class DashboardPanelController {
   private async reopenAfterDisconnect(): Promise<void> {
     if (!this.panel || this.panel.visible === false) return;
     if (this.pendingActions) {
-      await this.postNotice('warning', 'Dashboard recovery is waiting for pending actions to finish.');
+      await this.panel?.webview.postMessage({ type: 'dashboard:host-status', stage: 'live', detail: 'Dashboard recovery is waiting for pending actions to finish. Your current view is kept.', retrying: false });
       return;
     }
     if (this.reconnectReopened) {
-      await this.postNotice('warning', 'The selected system is still unavailable. Reopen the dashboard or select another system to retry.');
+      await this.panel?.webview.postMessage({ type: 'dashboard:host-status', stage: 'unreachable', detail: 'The selected system is still unavailable. Reopen the dashboard or select another system to retry.', retrying: false });
       return;
     }
     this.reconnectReopened = true;
     try { this.panel.dispose(); this.open(true); }
     catch (error) {
       this.reconnectReopened = false;
+      await this.panel?.webview.postMessage({ type: 'dashboard:host-status', stage: 'unreachable', detail: `The dashboard could not reopen. ${error instanceof Error ? error.message : String(error)}`, retrying: false });
       void vscode.window.showErrorMessage(`Codex Manager could not reopen its dashboard. ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }

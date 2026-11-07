@@ -28,8 +28,7 @@ export async function checkSteerUi(page, { origin, parentId }) {
   });
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), 1, 'Repeated submit events send only once');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Confirmation lost; verify before retrying.' } })));
-  await page.locator('.cli-queue-summary').click();
-  await page.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+  await page.locator('.cli-queued-message.is-failed').last().getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
   await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','A failed send stays in the conversation without restoring the composer');
   await input.fill('My next draft');
@@ -47,8 +46,7 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.evaluate(() => {
     window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Uncertain result' } }));
   });
-  await page.locator('.cli-queue-summary').click();
-  await page.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+  await page.locator('.cli-queued-message.is-failed').last().getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
   await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','The failed follow-up offers inline Resend');
   await page.evaluate(() => {
