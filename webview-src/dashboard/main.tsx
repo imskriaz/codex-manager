@@ -3153,10 +3153,11 @@ function App() {
         />
       }
 
+      // connectionStatus={recovery} remains the dashboard/task presentation; workspace uses the single portal banner.
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
-              connectionStatus={recovery}
+              connectionStatus={isCliSessionsPath(browserPath) ? null : recovery}
                 browser={isBrowserDashboard}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
