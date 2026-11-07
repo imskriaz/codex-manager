@@ -133,6 +133,28 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
   return { items, ready, error, notice, reason: props.dispatchReason, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
+    steerNow: (id: string) => {
+      const item = current.current.find(entry => entry.id === id), epoch = generation.current;
+      if (!owned.current || !ready || !item || item.state !== 'queued' || item.durable === false) { setNotice('This message is not ready to steer. Check its queue status before retrying.'); return; }
+      if (!options.current.canDispatch || options.current.connected === false) { setNotice(options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'); return; }
+      if (draining.current) { setNotice('Another queued message is already sending.'); return; }
+      draining.current = true;
+      const sending = { ...item, state: 'sending' as const, durable: false, seenIds: options.current.messages.map(message => message.id).slice(-3000), turnId: options.current.turnId };
+      update(current.current.map(entry => entry.id === id ? sending : entry)); setNotice('Steering…');
+      void save(current.current).then(saved => {
+        if (epoch !== generation.current || !owned.current) return;
+        if (!saved) throw new Error('Browser storage could not save the steer state. The message was kept and was not sent.');
+        const requestId = options.current.send(item.draft);
+        if (!requestId) throw new Error('The steer was not sent. The message is kept in the queue.');
+        const sent = current.current.map(entry => entry.id === id ? { ...entry, requestId, durable: true } : entry);
+        update(sent); void save(sent);
+      }).catch(error => {
+        if (epoch !== generation.current) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const failed = current.current.map(entry => entry.id === id ? { ...entry, state: 'failed' as const, durable: true, error: message } : entry);
+        update(failed); void save(failed); setNotice(message);
+      }).finally(() => { if (epoch === generation.current) draining.current = false; });
+    },
     sendNow: (id: string) => {
       const item = current.current.find(item => item.id === id);
       if (!owned.current || !ready || !item || item.state !== 'queued') {

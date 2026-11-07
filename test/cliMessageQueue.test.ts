@@ -147,6 +147,16 @@ it('shows accepted guidance immediately before subsequent output and replaces ea
   expect(withAcceptedQueuedMessages([imageEcho], [image])).toEqual([imageEcho]);
 });
 
+it('steers a queued message immediately and keeps its row in the sending state', async () => {
+  render({ canDispatch: true }); await flush();
+  const id = queue.enqueue(draft('Steer this now'))!; await flush();
+  queue.steerNow(id);
+  expect(queue.items[0]?.state).toBe('sending');
+  await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft('Steer this now'));
+  expect(queue.items[0]).toMatchObject({ id, state: 'sending', requestId: 'request-1' });
+});
+
 it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {
   const first = entry({ turnId: 'turn' }), second = entry({ id: 'two', turnId: 'turn' });
   const once = queuedMessageEchoes([first,second], [{ id: 'old', role: 'user', text: 'First' }, { id: 'wrong', role: 'user', text: 'First', turnId: 'other' }, { id: 'echo', role: 'user', text: 'First', turnId: 'turn' }]);

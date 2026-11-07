@@ -16723,6 +16723,8 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-queued-message-actions { align-items: center; }
 .cli-queued-message-actions .cli-icon-button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
 .cli-queued-steer { min-height: 24px; padding: 2px 5px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-queued-steer.is-sending { color: var(--text-muted); cursor: wait; }
+.cli-queued-steer.is-sending .cli-live-spinner { width: 10px; height: 10px; flex: none; }
 .cli-queued-message-menu-wrap, .cli-queued-message-menu { display: none; }
 .cli-queue-summary { display:flex; align-items:center; gap:6px; margin:6px 0 8px auto; min-height:28px; padding:4px 8px; border:1px solid var(--border-default); border-radius:7px; background:var(--bg-surface); color:var(--text-secondary); font:inherit; font-size:calc(11px * var(--dashboard-text-scale, 1)); cursor:pointer; }
 .cli-queue-summary:hover { border-color:var(--accent-blue); color:var(--text-primary); }
