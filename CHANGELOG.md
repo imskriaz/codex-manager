@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.3-pre.10
+
+- Compact modal and notification surfaces, with explicit browser-offline, selected-system-offline, unreachable-host, reconnecting, and account-switch reload guidance.
+- Show the active account transition before reload and keep offline recovery inline without action toast spam.
+
 ## 1.7.3-pre.9
 
 - Finish realtime recovery verification and the Node host storage/lint fixes for the workspace reliability changes below.
