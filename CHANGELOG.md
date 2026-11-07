@@ -6,6 +6,7 @@
 
 ## 1.7.3-pre.10
 
+- Fill the image viewer with the preview and compact download/close icons; open composer image thumbnails in the same viewer with wheel and pinch zoom.
 - Compact modal and notification surfaces, with explicit browser-offline, selected-system-offline, unreachable-host, reconnecting, and account-switch reload guidance.
 - Show the active account transition before reload and keep offline recovery inline without action toast spam.
 
