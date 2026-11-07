@@ -141,6 +141,9 @@ describe("always-online WebSocket relay handoff", () => {
     expect(service).toContain("this.spawnPreparedRelay(this.preparedRelay);");
     expect(service).not.toContain("void this.start().catch");
     expect(relay.indexOf("storage.writeSqliteStateFile(pidPath")).toBeLessThan(relay.indexOf("bind();"));
+    expect(service).toContain('mode === "node"');
+    expect(service).toContain('"tools", "start-node.cjs"');
+    expect(readFileSync("tools/start-node.cjs", "utf8")).toContain('value === "--config"');
   });
 });
 

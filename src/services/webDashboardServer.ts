@@ -876,6 +876,7 @@ export class WebDashboardServer implements vscode.Disposable {
   async isConfiguredDomainLocal(): Promise<boolean> {
     const settings = this.settingsStore.getDashboardSettings();
     const domain = normalizeCloudflaredDomain(settings.cloudflaredDomain ?? "");
+    if (settings.alwaysActive === true && settings.webDashboardEnabled && settings.webSocketServerEnabled !== false) return true;
     if (!this.encryptedSync?.isCrossPcEnabled() || !domain || !settings.webDashboardEnabled || settings.webSocketServerEnabled === false) return false;
     const challenge = crypto.randomBytes(16).toString("hex");
     const controller = new AbortController();
@@ -911,6 +912,13 @@ export class WebDashboardServer implements vscode.Disposable {
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (request.method === "POST" && path === "/shutdown") {
+      const adminToken = process.env["CODEX_MANAGER_ADMIN_TOKEN"];
+      if (!adminToken || request.headers["x-codex-admin"] !== adminToken) { response.statusCode = 403; response.end("Forbidden"); return; }
+      response.end("Shutting down");
+      setImmediate(() => process.kill(process.pid, "SIGTERM"));
+      return;
+    }
     const frameAncestors = isWebDashboardPagePath(path) || path === '/login' || path === '/logout' ? "'self'" : "'none'";
     const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
       this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""

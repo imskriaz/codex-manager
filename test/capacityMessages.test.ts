@@ -75,6 +75,7 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).toContain('aria-label="Edit queued message"');
   expect(source).toContain('queue.steerNow(item.id)');
   expect(source).toContain('class="cli-queued-steer is-sending"');
+  expect(source).toContain('class="cli-queued-sending-status"');
   expect(source).not.toContain('Turn off queueing');
   expect(css).toContain('.cli-queued-message-copy { display: flex; align-items: center; gap: 6px; min-width: 0;');
   expect(css).toContain('.cli-queued-message-copy p { display: block; min-width: 0; flex: 1 1 auto;');

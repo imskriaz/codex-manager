@@ -6,6 +6,7 @@ import { initializeSqliteContextWithRetry } from "./storage/sqliteContext";
 import { getSqliteStateStore } from "./storage/sqliteState";
 import { AccountsRepository } from "./storage";
 import { WebDashboardServer } from "./services/webDashboardServer";
+import * as fs from "node:fs/promises";
 
 type NodeSecretStorage = vscode.SecretStorage;
 
@@ -65,11 +66,14 @@ export async function startNodeHost(): Promise<void> {
   await repo.init();
   const dashboard = new WebDashboardServer(context, repo, undefined, { failOnAddressInUse: true });
   await dashboard.start();
+  const pidFile = process.env["CODEX_MANAGER_PID_FILE"];
+  if (pidFile) await fs.writeFile(pidFile, String(process.pid), { encoding: "utf8", mode: 0o600 });
   const shutdown = async (): Promise<void> => {
-    dashboard.dispose();
+    await dashboard.stop();
     repo.dispose();
     const store = getSqliteStateStore();
     store?.close();
+    if (pidFile) await fs.rm(pidFile, { force: true }).catch(() => undefined);
   };
   process.once("SIGINT", () => { void shutdown().finally(() => process.exit(0)); });
   process.once("SIGTERM", () => { void shutdown().finally(() => process.exit(0)); });

@@ -182,6 +182,7 @@ describe("extension manifest configuration", () => {
       };
     };
     expect(manifest.contributes?.configuration?.properties?.["codexManager.webDashboardAlwaysOnlineEnabled"]).toBeUndefined();
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.alwaysActive"]).toMatchObject({ type: "boolean", scope: "machine", default: false });
     const property = manifest.contributes?.configuration?.properties?.["codexManager.webSocketServerEnabled"];
     expect(property).toMatchObject({ type: "boolean", default: true });
     expect(fs.existsSync(path.resolve(path.dirname(manifestPath), "tools", "always-online-server.js"))).toBe(true);

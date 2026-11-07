@@ -16715,6 +16715,8 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-queued-message-thumb { flex: none; width: 24px; height: 24px; object-fit: cover; border-radius: 4px; }
 .cli-queued-message-expanded { display: grid; gap: 5px; margin: 5px 0 2px; padding: 5px 6px; border-top: 1px solid var(--border-muted); color: var(--text-secondary); font-size: calc(12px * var(--dashboard-text-scale, 1)); line-height: 1.45; }
 .cli-queued-message-expanded p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cli-queued-sending-status { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); white-space: nowrap; }
+.cli-queued-sending-status .cli-live-spinner { width: 10px; height: 10px; }
 .cli-queued-attachments { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .cli-queued-attachments img { width: min(180px, 100%); max-height: 140px; object-fit: contain; border-radius: 5px; }
 .cli-queued-attachments span { overflow-wrap: anywhere; }

@@ -111,6 +111,7 @@ export interface DashboardSettings {
   encryptedSyncRegistryOverrideEnabled: boolean;
   webDashboardEnabled: boolean;
   webSocketServerEnabled?: boolean;
+  alwaysActive?: boolean;
   /** Optional public HTTPS origin used when the dashboard is exposed by Cloudflared. */
   cloudflaredDomain?: string;
   displayLanguage: DashboardLanguageOption;

@@ -76,6 +76,7 @@ export class ExtensionSettingsStore {
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", true),
       webSocketServerEnabled: config.get<boolean>("webSocketServerEnabled", true),
+      alwaysActive: config.get<boolean>("alwaysActive", false),
       cloudflaredDomain: config.get<string>("cloudflaredDomain", "").trim(),
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")
     };

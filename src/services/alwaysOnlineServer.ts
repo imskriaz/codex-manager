@@ -16,11 +16,13 @@ export const ALWAYS_ONLINE_RELAY_PORT = 39875;
 const CONFIG_FILE = "always-online-relay.json";
 const PID_FILE = "always-online-relay.pid";
 const SECRET_KEY = "codexManager.webDashboard.alwaysOnlineAdminToken.v1";
+const LOCAL_HOST_KEY_SECRET = "codexManager.webDashboard.alwaysActiveHostKey.v1";
 
-type RelayConfig = { port: number; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string };
+type RelayConfig = { port: number; mode?: "relay" | "node"; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string };
 type PreparedRelay = RelayConfig & {
   configPath: string;
   scriptTarget: string;
+  launchArgs?: string[];
   previousKey?: string;
   previousAdminToken?: string;
 };
@@ -72,7 +74,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       await this.stop();
       return "stopped";
     }
-    const hostKey = await this.encryptedSync?.getRealtimeRelayKey();
+    const hostKey = await this.encryptedSync?.getRealtimeRelayKey() ?? await this.getLocalHostKey();
     if (this.disposed || configuration !== this.configurationKey()) { this.verifiedConfiguration = undefined; await this.stop(); return "stopped"; }
     if (!hostKey) {
       // A missing shared password must not leave a previously prepared relay armed.
@@ -104,7 +106,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       const configPath = path.join(storage, CONFIG_FILE);
       const config = JSON.parse(sqliteStoreForFile(configPath) ? readSqliteStateFile(configPath) : await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
       if (config.adminToken) {
-        await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, config.adminToken, path.join(storage, PID_FILE));
+        await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, config.adminToken, path.join(storage, PID_FILE), config.mode ?? "relay");
       }
     } catch (error) {
       if (sqliteStoreForFile(path.join(getCodexManagerStorageRoot(), CONFIG_FILE)) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -119,25 +121,26 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (existingPid) {
       // A changed encrypted-sync passphrase changes the relay key; restart so
       // peers are not split across two authentication keys.
-      if (prepared.previousKey === prepared.hostKey && prepared.previousAdminToken === prepared.adminToken && await relayIsHealthy(prepared.port)) {
+      if (prepared.previousKey === prepared.hostKey && prepared.previousAdminToken === prepared.adminToken && await hostIsHealthy(prepared.port, prepared.mode ?? "relay")) {
         return "already-running";
       }
       await waitForRelayShutdown(
         ALWAYS_ONLINE_RELAY_PORT,
         prepared.previousAdminToken ?? prepared.adminToken,
-        prepared.pidPath
+        prepared.pidPath,
+        prepared.mode ?? "relay"
       );
     }
-    if (await relayIsHealthy(prepared.port)) {
+    if (await hostIsHealthy(prepared.port, prepared.mode ?? "relay")) {
       return "already-running";
     }
     if (this.disposed) { await this.stop(); throw new Error("Relay preparation stopped because this window closed."); }
     this.spawnPreparedRelay(prepared);
-    const ready = await waitForRelay(prepared.port);
+    const ready = await waitForHost(prepared.port, prepared.mode ?? "relay");
     if (!ready) {
       this.child = undefined;
       if (this.childLaunchError) throw this.childLaunchError;
-      if (await portIsOccupied(prepared.port)) throw new Error("The detached relay could not become ready because the dashboard port is occupied. Close the other host and retry.");
+      if (await portIsOccupied(prepared.port)) throw new Error("The detached host could not become ready because the dashboard port is occupied. Close the other host and retry.");
       throw new Error("The detached Node.js relay did not become ready on 127.0.0.1:39875.");
     }
     return "started";
@@ -158,8 +161,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       [adminToken, this.preparedRelay?.previousAdminToken].filter((value): value is string => !!value)
     );
     for (const token of shutdownTokens) {
-      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, token, pidPath);
-      if (!(await readLivePid(pidPath)) && !(await relayIsHealthy(ALWAYS_ONLINE_RELAY_PORT))) {
+      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, token, pidPath, this.preparedRelay?.mode ?? "relay");
+      if (!(await readLivePid(pidPath)) && !(await hostIsHealthy(ALWAYS_ONLINE_RELAY_PORT, this.preparedRelay?.mode ?? "relay"))) {
         break;
       }
     }
@@ -186,7 +189,18 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private configurationKey(): string | undefined {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
-    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
+    const alwaysActive = config.get<boolean>("alwaysActive", false);
+    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && (domain || alwaysActive ? (domain || "local") : "") || undefined;
+  }
+
+  private async getLocalHostKey(): Promise<string | undefined> {
+    if (!getCodexManagerConfiguration().get<boolean>("alwaysActive", false)) return undefined;
+    let key = await this.context.secrets.get(LOCAL_HOST_KEY_SECRET);
+    if (!key) {
+      key = crypto.randomBytes(32).toString("base64url");
+      await this.context.secrets.store(LOCAL_HOST_KEY_SECRET, key);
+    }
+    return key;
   }
 
   private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {
@@ -221,25 +235,29 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       // Keep the old config on disk until the old process has exited. If the
       // host crashes after Secret Storage rotates, the next startup can still
       // authenticate shutdown with the previous config token.
-      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, previousConfig.adminToken, pidPath);
-      if ((await readLivePid(pidPath)) || (await relayIsHealthy(ALWAYS_ONLINE_RELAY_PORT))) {
+      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, previousConfig.adminToken, pidPath, previousConfig.mode ?? "relay");
+      if ((await readLivePid(pidPath)) || (await hostIsHealthy(ALWAYS_ONLINE_RELAY_PORT, previousConfig?.mode ?? "relay"))) {
         throw new Error("The previous relay did not stop; its admin token was not rotated on disk.");
       }
     }
-    const { configPath, scriptTarget } = await this.prepareRelayFiles();
+    const mode: "relay" | "node" = getCodexManagerConfiguration().get<boolean>("alwaysActive", false) ? "node" : "relay";
+    const { configPath, scriptTarget, launchArgs } = await this.prepareRelayFiles(mode, storage);
     const prepared: PreparedRelay = {
       port: ALWAYS_ONLINE_RELAY_PORT,
+      mode,
       hostKey,
       adminToken,
       pidPath,
       modulePaths: [this.context.extensionUri.fsPath, path.join(this.context.extensionUri.fsPath, "node_modules")],
       configPath,
       scriptTarget,
+      launchArgs,
       previousKey: previousConfig?.hostKey,
       previousAdminToken: previousConfig?.adminToken
     };
     const config: RelayConfig = {
       port: prepared.port,
+      mode: prepared.mode,
       hostKey: prepared.hostKey,
       adminToken: prepared.adminToken,
       pidPath: prepared.pidPath,
@@ -256,7 +274,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private spawnPreparedRelay(prepared: PreparedRelay): void {
     const node = resolveNodeExecutable();
     this.childLaunchError = undefined;
-    this.child = spawn(node, [prepared.scriptTarget, prepared.configPath], {
+    this.child = spawn(node, [prepared.scriptTarget, ...(prepared.launchArgs ?? [])], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -272,11 +290,11 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     this.child.unref();
   }
 
-  private async prepareRelayFiles(): Promise<{ configPath: string; scriptTarget: string }> {
-    const storage = getCodexManagerStorageRoot();
+  private async prepareRelayFiles(mode: "relay" | "node", storage: string): Promise<{ configPath: string; scriptTarget: string; launchArgs: string[] }> {
     await fs.mkdir(storage, { recursive: true });
-    const scriptTarget = path.join(this.context.extensionUri.fsPath, "tools", "always-online-server.js");
-    return { configPath: path.join(storage, CONFIG_FILE), scriptTarget };
+    const configPath = path.join(storage, CONFIG_FILE);
+    if (mode === "node") return { configPath, scriptTarget: path.join(this.context.extensionUri.fsPath, "tools", "start-node.cjs"), launchArgs: ["--config", configPath] };
+    return { configPath, scriptTarget: path.join(this.context.extensionUri.fsPath, "tools", "always-online-server.js"), launchArgs: [configPath] };
   }
 }
 
@@ -328,6 +346,18 @@ function relayIsHealthy(port: number): Promise<boolean> {
   });
 }
 
+function nodeHostIsHealthy(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const request = http.get({ host: "127.0.0.1", port, path: "/api/state", timeout: 800 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
+    request.on("error", () => resolve(false));
+    request.on("timeout", () => { request.destroy(); resolve(false); });
+  });
+}
+
+function hostIsHealthy(port: number, mode: "relay" | "node"): Promise<boolean> {
+  return mode === "node" ? nodeHostIsHealthy(port) : relayIsHealthy(port);
+}
+
 export function isAlwaysOnlineRelayHealthResponse(statusCode: number | undefined, body: string): boolean {
   if (statusCode !== 200 || body.length > 4096) return false;
   try {
@@ -354,11 +384,11 @@ function portIsOccupied(port: number): Promise<boolean> {
   });
 }
 
-function waitForRelay(port: number): Promise<boolean> {
+function waitForHost(port: number, mode: "relay" | "node"): Promise<boolean> {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     const poll = () => {
-      relayIsHealthy(port)
+      hostIsHealthy(port, mode)
         .then((ok) => {
           if (ok) resolve(true);
           else if (Date.now() - startedAt > 8_000) resolve(false);
@@ -422,15 +452,15 @@ async function readLivePid(pidPath: string): Promise<number | undefined> {
   }
 }
 
-async function waitForRelayShutdown(port: number, token: string, pidPath: string): Promise<void> {
+async function waitForRelayShutdown(port: number, token: string, pidPath: string, mode: "relay" | "node" = "relay"): Promise<void> {
   const deadline = Date.now() + 4_000;
   while (Date.now() < deadline) {
-    const [pid, healthy] = await Promise.all([readLivePid(pidPath), relayIsHealthy(port)]);
+    const [pid, healthy] = await Promise.all([readLivePid(pidPath), hostIsHealthy(port, mode)]);
     if (!pid && !healthy) {
       return;
     }
     await requestShutdown(port, token);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("The detached relay did not confirm shutdown. Check the running relay before retrying.");
+  throw new Error("The detached host did not confirm shutdown. Check the running host before retrying.");
 }
