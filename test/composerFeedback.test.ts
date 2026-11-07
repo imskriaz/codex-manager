@@ -21,6 +21,7 @@ it('exposes Queue and Steer follow-up modes in Message settings', () => {
   expect(source).toContain('aria-label="Follow-up mode"');
   expect(source).toContain('value="queue">Queue until turn completes');
   expect(source).toContain('value="steer">Steer now');
+  expect(source).toContain('class="cli-turn-account-name"');
 });
 
 it('uses task context without account placeholders and preserves changed-file actions', () => {

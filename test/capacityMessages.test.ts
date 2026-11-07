@@ -66,11 +66,17 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(node.props.class).toBe('cli-local-queue');
   const row=node.props.children[0];
   expect(row.props.class).toContain('cli-queued-message');
-  expect(row.props.children[0].props.children[0].props.children).toBe('Failed');
-  expect(row.props.children[0].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
+  const details = row.props.children[0];
+  expect(details.type).toBe('details');
+  expect(details.props.open).not.toBe(true);
+  expect(details.props.children[1].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
   expect(source).toContain('aria-label="Edit queued message"');
   expect(source).not.toContain('Turn off queueing');
+  expect(css).toContain('.cli-queued-message-copy { display: flex; align-items: center; gap: 6px; min-width: 0;');
+  expect(css).toContain('.cli-queued-message-copy p { display: block; min-width: 0; flex: 1 1 auto;');
+  expect(css).toContain('.cli-queued-message-thumb { flex: none; width: 24px; height: 24px;');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
 });
 

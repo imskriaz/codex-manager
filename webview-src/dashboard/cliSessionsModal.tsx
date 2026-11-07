@@ -6,7 +6,7 @@ import { useSessionResume } from './sessionResume';
 import { codexModelLabel } from "./helpers";
 import { useSessionAccess } from './sessionAccess';
 import { activeSessionQuestion, answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
-import { useCliMessageQueue, queuedMessageView, withAcceptedQueuedMessages, type CliQueuedMessage } from './cliMessageQueue';
+import { useCliMessageQueue, queuedMessageView, withAcceptedQueuedMessages } from './cliMessageQueue';
 import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
 import { BrowserWorkWindow } from './browserWorkWindow';
@@ -1597,7 +1597,12 @@ export function LiveTurnDetails({ state, usage }: { state?: DashboardCodexSessio
 export function TurnUsageStrip({ account, privacyMode, contextLabel, saved, changedFiles, additions, deletions, onOpenChanges, onOpenAccountCenter }: { account?: DashboardAccountViewModel; privacyMode: boolean; contextLabel?: string; saved?: boolean; changedFiles?: number; additions?: number; deletions?: number; onOpenChanges: () => void; onOpenAccountCenter?: () => void }) {
   const metrics = getAccountQuotaMetrics(account);
   const name = account ? getSensitiveDisplayValue(account.email || account.displayName, privacyMode, 'email') : undefined;
-  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and session usage">{name ? <>{onOpenAccountCenter ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}>{name}</button> : <span class="cli-turn-account" title={name}>{name}</span>}</> : contextLabel ? <span class="cli-turn-context" title={contextLabel}>{contextLabel}</span> : null}{account ? <span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span> : null}<span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span><b class="is-added">+{additions ?? 0}</b><b class="is-removed">−{deletions ?? 0}</b></button> : null}</span></div>;
+  const quota = account ? <span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span> : null;
+  const accountSummary = name ? onOpenAccountCenter
+    ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}><span class="cli-turn-account-name">{name}</span>{quota}</button>
+    : <><span class="cli-turn-account" title={name}>{name}</span>{quota}</>
+    : contextLabel ? <span class="cli-turn-context" title={contextLabel}>{contextLabel}</span> : null;
+  return <div class="cli-turn-usage-strip" role="group" aria-label="Account and session usage">{accountSummary}<span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span><b class="is-added">+{additions ?? 0}</b><b class="is-removed">−{deletions ?? 0}</b></button> : null}</span></div>;
 }
 
 export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews, questionContent }: { questionContent?: JSX.Element; message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onRetryPrompt?: () => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
@@ -2852,10 +2857,12 @@ function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3
 export function QueuedMessages({ queue, onRefresh, onSteer }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void; onSteer?: () => void }) {
   queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
   if (!queue.items.length) return null;
-  const status = (item: CliQueuedMessage) => item.state === 'queued' ? 'Queued' : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Failed';
   return <div class="cli-local-queue" aria-label="Local message queue">
     {queue.items.map(item => <article key={item.id} class={`cli-queued-message is-${item.state}`}>
-      <div class="cli-queued-message-copy"><span class="cli-queued-message-status">{status(item)}</span><p>{item.draft.text || 'Attachment'}</p>{item.draft.attachments.length ? <small>{item.draft.attachments.length} attachment{item.draft.attachments.length === 1 ? '' : 's'}</small> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
+      <details class="cli-queued-message-details">
+        <summary title={item.draft.text || 'Attachment'}><span class="cli-queued-message-copy">{item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : null}<p>{item.draft.text || item.draft.attachments[0]?.name || 'Attachment'}</p><ChevronIcon /></span></summary>
+        <div class="cli-queued-message-expanded">{item.draft.text ? <p>{item.draft.text}</p> : null}{item.draft.attachments.length ? <div class="cli-queued-attachments">{item.draft.attachments.map(attachment => attachment.kind === 'image' ? <img key={attachment.id} src={attachment.data} alt={attachment.name} /> : <span key={attachment.id}>{attachment.name}</span>)}</div> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
+      </details>
       <div class="cli-queued-message-actions">
         {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onSteer?.(); queue.sendNow(item.id); }}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}

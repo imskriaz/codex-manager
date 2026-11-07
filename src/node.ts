@@ -63,7 +63,7 @@ export async function startNodeHost(): Promise<void> {
   const context = await initializeSqliteContextWithRetry(createContext());
   const repo = new AccountsRepository(context);
   await repo.init();
-  const dashboard = new WebDashboardServer(context, repo);
+  const dashboard = new WebDashboardServer(context, repo, undefined, { failOnAddressInUse: true });
   await dashboard.start();
   const shutdown = async (): Promise<void> => {
     dashboard.dispose();

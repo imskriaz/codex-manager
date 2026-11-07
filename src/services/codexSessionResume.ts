@@ -104,8 +104,25 @@ export function browserCodexAppServerTransport(): AppServerTransport {
   return process.platform === "win32" ? "websocket" : "proxy";
 }
 
-function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open>[0], cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
-  return CodexAppServerRpc.open(executable, cwd, signal, appServerTransport.getStore() ?? "stdio");
+export function shouldFallbackToLocalCodexCli(error: unknown, preferred: AppServerTransport): boolean {
+  if (preferred === "stdio") return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /app-server|daemon|proxy|websocket|connect|exited|unavailable|did not start|closed/i.test(message);
+}
+
+async function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open>[0], cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+  const preferred = appServerTransport.getStore() ?? "stdio";
+  try {
+    return await CodexAppServerRpc.open(executable, cwd, signal, preferred);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (!shouldFallbackToLocalCodexCli(error, preferred)) throw error;
+    recordPersistentEvent("warning", "codex-runtime", "Official Codex app-server unavailable; retrying through the local CLI", {
+      preferredTransport: preferred,
+      fallbackTransport: "stdio"
+    }, error);
+    return CodexAppServerRpc.open(executable, cwd, signal, "stdio");
+  }
 }
 
 /** Reuse one native process for a bounded cleanup job, never for session turns. */

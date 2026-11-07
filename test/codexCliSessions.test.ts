@@ -23,6 +23,7 @@ import {
   resolveRecordedSessionProject,
   getCodexCliPathCandidates,
   isCodexCliAvailable,
+  shouldFallbackToLocalCodexCli,
   readCodexCliComposerConfig,
   readCodexCliSessionMessages,
   readCodexCliSessionMessagePage,
@@ -269,6 +270,13 @@ describe("Codex session integration", () => {
     expect(candidates).toContain("C:\\Users\\demo\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe");
     expect(candidates).toContain("C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd");
     expect(candidates).toContain("C:\\Users\\demo\\bin\\codex.exe");
+  });
+
+  it("falls back to local CLI stdio when the preferred app-server transport fails", () => {
+    expect(shouldFallbackToLocalCodexCli(new Error("The official Codex app-server daemon is unavailable."), "proxy")).toBe(true);
+    expect(shouldFallbackToLocalCodexCli(new Error("The official Codex app-server WebSocket did not start."), "websocket")).toBe(true);
+    expect(shouldFallbackToLocalCodexCli(new Error("The request was cancelled."), "proxy")).toBe(false);
+    expect(shouldFallbackToLocalCodexCli(new Error("The request was cancelled."), "stdio")).toBe(false);
   });
 
   it("launches a configured CLI during availability checks", async () => {

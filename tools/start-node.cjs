@@ -16,7 +16,12 @@ Module._initPaths();
 
 const entry = path.join(__dirname, "..", "out", "node.js");
 try {
-  require(entry);
+  const host = require(entry);
+  if (typeof host.startNodeHost !== "function") throw new Error("The compiled Node host does not export startNodeHost().");
+  void host.startNodeHost().catch(error => {
+    console.error(`[codexManager] Node host failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
 } catch (error) {
   console.error("Codex Manager Node host is not built. Run `npm run compile` first.");
   throw error;

@@ -515,7 +515,8 @@ export class WebDashboardServer implements vscode.Disposable {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository,
-    private readonly encryptedSync?: EncryptedSyncManager
+    private readonly encryptedSync?: EncryptedSyncManager,
+    private readonly options: { failOnAddressInUse?: boolean } = {}
   ) {
     this.browserPush = new BrowserPushService(context.secrets, () => this.encryptedSync?.getDashboardPassphraseFingerprint() ?? Promise.resolve(undefined));
     this.conversationShares = new ConversationShares(context.secrets);
@@ -668,6 +669,10 @@ export class WebDashboardServer implements vscode.Disposable {
         server.off("listening", onListening);
         if (this.server === server) this.server = undefined;
         if (isAddressInUseError(error)) {
+          if (this.options.failOnAddressInUse) {
+            reject(new Error(`The Codex Manager dashboard port ${WEB_DASHBOARD_PORT} is already owned by another host. Close VS Code or the standalone Node host before starting this host.`));
+            return;
+          }
           resolve();
           return;
         }

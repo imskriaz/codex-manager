@@ -1947,7 +1947,7 @@ async function handleStartCodexCliSession(
 ) {
   ensureCliIntegrationEnabled();
   if (!(await isCodexCliAvailable())) {
-    throw new Error("Codex CLI is not available on this PC. Install it or set CODEX_CLI_PATH, then try again.");
+    throw new Error("Codex CLI is not available on this PC. Install the official Codex CLI, add it to PATH, or set CODEX_CLI_PATH, then try again.");
   }
   const sessionId = await startCodexCliSession({
     text: payload?.text ?? "",

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.4
+
+- Prefer the native Codex App Server and automatically retry through the detected Codex CLI when its proxy or WebSocket transport is unavailable.
+- Add a standalone Node host that uses the shared SQLite database and refuses to start when another Codex Manager host already owns the dashboard port.
+
+## 1.7.3-pre.14
+
+- Keep queued steer prompts compact and inline above the composer, with direct edit controls and no secondary queue status blocks.
+
 ## 1.7.3-pre.13
 
 - Stack queued steer-or-queue messages directly above the composer with inline steer, edit, delete, and queue controls.
@@ -931,3 +940,4 @@ Codex Manager now provides a cleaner, more dependable way to manage accounts and
 ## 1.0.0
 
 - Initial release.
+
