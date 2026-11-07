@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.3-pre.11
+
+- Use the task conversation footer for its session title (or project name) when no account is available, keeping changed-file stats alongside it.
+
 ## 1.7.3-pre.10
 
 - Compact modal and notification surfaces, with explicit browser-offline, selected-system-offline, unreachable-host, reconnecting, and account-switch reload guidance.

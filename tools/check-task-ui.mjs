@@ -144,6 +144,12 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   const taskReadsBeforeAgents=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='getProjectTaskDetails').length);
   await task.getByRole('tab',{name:/^Agents/}).click();
   await task.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor();
+  const taskContext = task.locator('.cli-turn-context');
+  assert.ok((await taskContext.innerText()).trim(), 'Task conversation footer shows session context');
+  assert.equal(await task.locator('.cli-turn-quota').count(), 0, 'Task context has no empty account quota');
+  const strip = task.locator('.cli-turn-usage-strip');
+  assert.equal(await strip.evaluate(element => element.scrollWidth > element.clientWidth + 1), false, 'Task context and changed-file stats fit one row');
+  await page.screenshot({path:path.join(output,`task-context-${width}x${height}.png`)});
   await task.getByRole('tab',{name:/All agents/}).click();
   await task.locator('.cli-agent-row.is-main').waitFor();
   await task.getByText('Reviewer',{exact:true}).waitFor();
