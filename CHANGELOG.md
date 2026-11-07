@@ -4,6 +4,11 @@
 
 - Blend conversation toolbar icons and the workspace tools close button into their containers, retaining hover and keyboard focus feedback.
 
+## 1.7.3-pre.7
+
+- Keep Full access selected when new Codex sessions open, reconnect, or resume by preserving the explicit permission profile instead of a legacy sandbox override.
+- Confirm both the selected profile and effective permissions before reporting success, and report recovery storage failures before starting a new turn.
+
 ## 1.7.3-pre.5
 
 - Report bounded socket, first-live, and reconnect timings so workspace realtime performance can be measured safely.

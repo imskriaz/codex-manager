@@ -6,7 +6,7 @@ export function codexApprovalPolicy(value: unknown): CodexApprovalPolicy | undef
   return ['untrusted', 'on-failure', 'on-request', 'never'].includes(String(value)) && typeof value === 'string' ? value as CodexApprovalPolicy : undefined;
 }
 export function matchesCodexSessionAccess(actual: CodexSessionAccess | undefined, expected: CodexSessionAccess): boolean {
-  return !!actual && (!expected.mode || actual.mode === expected.mode) && (!expected.approvalPolicy || actual.approvalPolicy === expected.approvalPolicy);
+  return !!actual && (!expected.mode || actual.mode === expected.mode) && (!expected.profile || actual.profile === expected.profile) && (!expected.approvalPolicy || actual.approvalPolicy === expected.approvalPolicy);
 }
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 export function codexSandboxMode(value: unknown): DashboardCliSandboxMode | undefined {
@@ -23,7 +23,7 @@ export function parseCodexSessionAccess(value: unknown, updatedAt = Date.now()):
   const policy = object(stored);
   const profile = object(raw['activePermissionProfile'] ?? raw['active_permission_profile']);
   const permissions = object(raw['permissionProfile'] ?? raw['permission_profile']) ?? (['disabled','managed'].includes(String(policy?.['type'])) ? policy : undefined);
-  const id = profile?.['id'];
+  const id = profile?.['id'] ?? raw['permissions'];
   const profileId = typeof id === 'string' && id.length <= 256 && id.trim() ? id : undefined;
   let mode = codexSandboxMode(policy?.['type'] ?? raw['sandbox_mode']);
   if (!mode && permissions?.['type'] === 'disabled') mode = 'danger-full-access';

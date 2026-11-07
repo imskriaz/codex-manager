@@ -5,6 +5,13 @@ const mode={mode:'workspace-write' as const,updatedAt:Date.now()};
 const raw={sandboxPolicy:{type:'workspaceWrite',writableRoots:['D:/work','D:/shared'],networkAccess:false,readOnlyAccess:{type:'restricted',readableRoots:['D:/docs']}}};
 beforeEach(()=>{state.records.clear();state.fail=false;vi.resetModules();});
 afterEach(()=>vi.restoreAllMocks());
+it('retains the Full profile and approval choice across restart without a legacy sandbox override', async () => {
+  let cache = await import('../src/services/codexSessionAccessState');
+  const access = { mode: 'danger-full-access' as const, profile: ':danger-full-access', approvalPolicy: 'on-request' as const, updatedAt: Date.now() };
+  expect(cache.saveCodexSessionAccess('D:/home', 'full', access, { sandbox: { type: 'dangerFullAccess' } })).toBe(true);
+  vi.resetModules(); cache = await import('../src/services/codexSessionAccessState');
+  expect(cache.readSavedCodexSessionAccess('D:/home', 'full')).toEqual({ access, settings: { permissions: ':danger-full-access', approvalPolicy: 'on-request' } });
+});
 it('recovers the exact confirmed policy across restarts without adding folder or network grants',async()=>{
   let cache=await import('../src/services/codexSessionAccessState');
   expect(cache.saveCodexSessionAccess('D:/home','session',mode,raw)).toBe(true);

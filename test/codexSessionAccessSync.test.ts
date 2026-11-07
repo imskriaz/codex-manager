@@ -8,6 +8,29 @@ function client() {
   return {rpc:{request,onNotification:(listener:(method:string,raw:unknown)=>void)=>{listeners.add(listener);return()=>listeners.delete(listener);}} as unknown as Pick<CodexAppServerRpc,'request'|'onNotification'>,request,listeners,emit:(id:string,sandboxPolicy:unknown)=>{for(const listener of listeners)listener('thread/settings/updated',{threadId:id,threadSettings:{sandboxPolicy}});}};
 }
 afterEach(()=>vi.useRealTimers());
+it.each([null, ':workspace'])('replaces legacy Full provenance (%s) with the selected profile once', async profile => {
+  const c = client();
+  const current = { sandboxPolicy: { type: 'dangerFullAccess' }, activePermissionProfile: profile ? { id: profile } : null };
+  const applied = { ...current, activePermissionProfile: { id: ':danger-full-access' } };
+  c.request.mockImplementation(async () => {
+    for (const listener of c.listeners) listener('thread/settings/updated', { threadId: 'thread', threadSettings: applied });
+    return {};
+  });
+  const selected = { permissions: ':danger-full-access' };
+  expect((await syncCodexSessionAccess(c.rpc, 'thread', selected, current)).access.profile).toBe(':danger-full-access');
+  expect(c.request).toHaveBeenCalledExactlyOnceWith('thread/settings/update', { threadId: 'thread', ...selected }, 10000);
+  await syncCodexSessionAccess(c.rpc, 'thread', selected, applied);
+  expect(c.request).toHaveBeenCalledOnce();
+});
+it('rejects a Full sandbox confirmation that still reports the Workspace profile', async () => {
+  const c = client();
+  c.request.mockImplementation(async () => {
+    for (const listener of c.listeners) listener('thread/settings/updated', { threadId: 'thread', threadSettings: { sandboxPolicy: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':workspace' } } });
+    return {};
+  });
+  await expect(syncCodexSessionAccess(c.rpc, 'thread', { permissions: ':danger-full-access' })).rejects.toThrow('different permissions');
+  expect(c.listeners.size).toBe(0);
+});
 it('waits for actual settings after acknowledgement and ignores unrelated or invalid updates',async()=>{
   const c=client();let completed=false;
   const result=syncCodexSessionAccess(c.rpc,'thread',settings).then(value=>{completed=true;return value;});
@@ -24,12 +47,12 @@ it('reports conflicting applied permissions without claiming the requested mode'
   const c=client();c.request.mockImplementation(async()=>{c.emit('thread',{type:'readOnly'});return {};});
   await expect(syncCodexSessionAccess(c.rpc,'thread',settings)).rejects.toThrow('different permissions');expect(c.listeners.size).toBe(0);
 });
-it('bounds missing confirmation and cleans up after rejection',async()=>{
+it.each([settings, { permissions: ':danger-full-access' }])('bounds missing confirmation and cleans up after rejection (%j)',async requested=>{
   vi.useFakeTimers();const c=client();
-  const result=expect(syncCodexSessionAccess(c.rpc,'thread',settings)).rejects.toThrow('did not confirm');
+  const result=expect(syncCodexSessionAccess(c.rpc,'thread',requested)).rejects.toThrow('did not confirm');
   await vi.advanceTimersByTimeAsync(3001);await result;expect(c.listeners.size).toBe(0);
   c.request.mockRejectedValueOnce(new Error('Owner disconnected'));
-  await expect(syncCodexSessionAccess(c.rpc,'thread',settings)).rejects.toThrow('Owner disconnected');expect(c.listeners.size).toBe(0);
+  await expect(syncCodexSessionAccess(c.rpc,'thread',requested)).rejects.toThrow('Owner disconnected');expect(c.listeners.size).toBe(0);
 });
 it('keeps an already confirmed policy unchanged, including all folder restrictions',async()=>{
   const c=client(),current={sandboxPolicy:{type:'workspaceWrite',writableRoots:['D:/specific'],networkAccess:false}};

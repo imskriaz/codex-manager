@@ -526,6 +526,21 @@ it.each(['confirmed','missing','timeout','disconnect'])('syncs native access thr
   await result; expect(socket.sent.filter(value=>value.method==='thread-follower-update-thread-settings')).toHaveLength(1);
 });
 
+it.each([null, ':workspace', ':danger-full-access'])('requires the selected Full profile from the native owner (%s)', async profile => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot('active')); await reading;
+  const pending = updateNativeCodexSessionAccess(home, id, { permissions: ':danger-full-access' });
+  const result = profile === ':danger-full-access' ? expect(pending).resolves.toBe(true) : expect(pending).rejects.toThrow('permissions changed or could not be confirmed');
+  for (let i = 0; i < 70; i++) await Promise.resolve();
+  const sent = socket.sent.find(value => value.method === 'thread-follower-update-thread-settings');
+  expect(sent.params.threadSettings).toEqual({ permissions: ':danger-full-access' });
+  const applied = snapshot('active', 2) as any;
+  applied.params.change.conversationState.latestThreadSettings = { sandboxPolicy: { type: 'dangerFullAccess' }, activePermissionProfile: profile ? { id: profile } : null };
+  message(applied);
+  message({ type: 'response', requestId: sent.requestId, resultType: 'success', result: { applied: true } });
+  await result;
+  expect(socket.sent.filter(value => value.method === 'thread-follower-update-thread-settings')).toHaveLength(1);
+});
+
 it.each(['idle','active','missing'])('refreshes stale native ownership without restarting after %s', async state => {
   const initial = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot('active')); expect(await initial).toBe(true);
   await vi.advanceTimersByTimeAsync(15001);

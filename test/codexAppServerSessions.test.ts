@@ -51,15 +51,79 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it.each([undefined, 'danger-full-access'] as const)('starts Full sessions (%s) with a durable profile on the first and later turns', async sandboxMode => {
+    let finish!: () => void;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    const full = { thread: { id }, sandbox: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':danger-full-access' }, approvalPolicy: 'never' };
+    const rpc = { request: vi.fn(async () => full), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('full-start'); await completed; }) };
+    mocks.open.mockResolvedValue(rpc);
+    try {
+      await expect(startCodexCliSession({ text: 'Start Full', projectPath: root, sandboxMode, autoApprove: true })).resolves.toBe(id);
+      expect(rpc.request).toHaveBeenCalledExactlyOnceWith('thread/start', { cwd: root, permissions: ':danger-full-access', approvalPolicy: 'never' });
+      const turn = rpc.startAndWaitForTurn.mock.calls[0]?.[1];
+      expect(turn).toMatchObject({ permissions: ':danger-full-access' });
+      expect(turn).not.toHaveProperty('sandboxPolicy');
+      expect(readNewCodexCliSessionSummary(id)?.access).toMatchObject({ mode: 'danger-full-access', profile: ':danger-full-access', approvalPolicy: 'never' });
+    } finally { finish(); await completed; await new Promise(resolve => setTimeout(resolve, 0)); }
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue Full', projectPath: root });
+    expect(rpc.request).toHaveBeenLastCalledWith('thread/resume', { threadId: id, cwd: root, excludeTurns: true, permissions: ':danger-full-access' });
+    expect(rpc.startAndWaitForTurn.mock.calls.at(-1)?.[1]).toMatchObject({ permissions: ':danger-full-access', approvalPolicy: 'never' });
+  });
+
+  it.each(['workspace-write', 'read-only'] as const)('keeps explicitly selected %s sessions restricted', async sandboxMode => {
+    const policy = { type: sandboxMode === 'read-only' ? 'readOnly' : 'workspaceWrite' };
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: policy })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('restricted-start'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await startCodexCliSession({ text: 'Stay restricted', projectPath: root, sandboxMode });
+    expect(rpc.request).toHaveBeenCalledExactlyOnceWith('thread/start', { cwd: root, sandbox: sandboxMode, approvalPolicy: 'on-request' });
+    expect(rpc.startAndWaitForTurn.mock.calls[0]?.[1]).toMatchObject({ sandboxPolicy: policy });
+    expect(rpc.startAndWaitForTurn.mock.calls[0]?.[1]).not.toHaveProperty('permissions');
+  });
+
+  it.each(['workspace', 'offline', 'storage-full'])('does not start a turn when Full cannot be confirmed or saved (%s)', async failure => {
+    const listeners = new Set<(method: string, raw: unknown) => void>();
+    const initial = { thread: { id }, sandbox: { type: 'workspaceWrite' }, activePermissionProfile: { id: ':workspace' } };
+    const rpc = { request: vi.fn(async (method: string) => {
+      if (method === 'thread/start') return failure === 'storage-full' ? { ...initial, sandbox: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':danger-full-access' } } : initial;
+      if (failure === 'offline') throw new Error('Owner disconnected');
+      for (const listener of listeners) listener('thread/settings/updated', { threadId: id, threadSettings: initial });
+      return {};
+    }), onServerRequest: () => () => undefined, onNotification: (listener: (method: string, raw: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); }, close: vi.fn(), startAndWaitForTurn: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    const write = failure === 'storage-full' ? vi.spyOn(preferenceStore, 'set').mockImplementation(() => { throw new Error('storage full'); }) : undefined;
+    try {
+      await expect(startCodexCliSession({ text: 'Start Full', projectPath: root })).rejects.toThrow(failure === 'storage-full' ? 'recovery storage could not save' : failure === 'offline' ? 'Owner disconnected' : 'different permissions');
+      expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+      expect(rpc.close).toHaveBeenCalledOnce();
+      expect(listeners.size).toBe(0);
+    } finally { write?.mockRestore(); }
+  });
+
+  it('selects the Full profile when changing a native session without changing approvals', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Full access session' }) + '\n');
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const nativeAccess = await import('../src/services/codexNativeSessionStatus');
+    vi.mocked(updateNativeCodexSessionAccess).mockImplementationOnce(async () => {
+      vi.mocked(nativeAccess.getNativeCodexSessionAccess).mockReturnValue({ mode: 'danger-full-access', profile: ':danger-full-access', approvalPolicy: 'on-request', updatedAt: Date.now() });
+      return true;
+    });
+    try {
+      expect(await setCodexSessionAccess(id, 'danger-full-access')).toMatchObject({ mode: 'danger-full-access', profile: ':danger-full-access', approvalPolicy: 'on-request' });
+      expect(updateNativeCodexSessionAccess).toHaveBeenCalledExactlyOnceWith(root, id, { permissions: ':danger-full-access' });
+      expect(mocks.open).not.toHaveBeenCalled();
+    } finally { vi.mocked(nativeAccess.getNativeCodexSessionAccess).mockReturnValue(undefined); }
+  });
+
   it('defaults unconfigured resumed sessions to Full and keeps Full on later turns', async () => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + "\n");
-    const rpc = { request: vi.fn(async () => ({ sandboxPolicy: { type: 'dangerFullAccess' } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('full-turn'); }) };
+    const rpc = { request: vi.fn(async () => ({ sandboxPolicy: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':danger-full-access' } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('full-turn'); }) };
     mocks.open.mockResolvedValue(rpc);
     await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', projectPath: root });
-    expect(rpc.request).toHaveBeenCalledWith('thread/resume', expect.objectContaining({ sandbox: 'danger-full-access' }));
+    expect(rpc.request).toHaveBeenCalledWith('thread/resume', expect.objectContaining({ permissions: ':danger-full-access' }));
     await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue again', projectPath: root });
-    for (const call of rpc.startAndWaitForTurn.mock.calls) expect(call[1]).toMatchObject({ sandboxPolicy: { type: 'dangerFullAccess' } });
+    for (const call of rpc.startAndWaitForTurn.mock.calls) expect(call[1]).toMatchObject({ permissions: ':danger-full-access' });
   });
 
   it('deletes a stored session without waiting for renderer IPC or project discovery', async () => {
@@ -599,7 +663,7 @@ describe("native App Server new sessions", () => {
   it("steers only the expected owned turn through its existing connection", async () => {
     let finish!: () => void;
     const completed = new Promise<void>((resolve) => { finish = resolve; });
-    const rpc = { request: vi.fn(async (method: string) => method === "turn/steer" ? { turnId: "turn-1" } : { thread: { id }, sandbox: { type: "dangerFullAccess" } }), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started("turn-1"); await completed; }) };
+    const rpc = { request: vi.fn(async (method: string) => method === "turn/steer" ? { turnId: "turn-1" } : { thread: { id }, sandbox: { type: "dangerFullAccess" }, activePermissionProfile: { id: ":danger-full-access" } }), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started("turn-1"); await completed; }) };
     mocks.open.mockResolvedValue(rpc);
     try {
       await startCodexCliSession({ text: "First prompt", projectPath: root });
@@ -644,7 +708,7 @@ describe("native App Server new sessions", () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
   it("reports a rejected first turn and closes its App Server connection", async () => {
-    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: "dangerFullAccess" } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async () => { throw new Error("Quota unavailable. Switch accounts."); }) };
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: "dangerFullAccess" }, activePermissionProfile: { id: ":danger-full-access" } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async () => { throw new Error("Quota unavailable. Switch accounts."); }) };
     mocks.open.mockResolvedValue(rpc);
     await expect(startCodexCliSession({ text: "First prompt", projectPath: root })).rejects.toThrow("Quota unavailable");
     expect(rpc.close).toHaveBeenCalled();

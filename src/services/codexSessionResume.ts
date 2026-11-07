@@ -1128,7 +1128,7 @@ async function startAppServerSession(options: {
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
       ...(options.model ? { model: options.model } : {}),
-      ...(options.sandboxMode ? { sandbox: options.sandboxMode } : {}),
+      ...(options.sandboxMode === 'danger-full-access' ? { permissions: ':danger-full-access' } : options.sandboxMode ? { sandbox: options.sandboxMode } : {}),
       approvalPolicy: options.autoApprove ? "never" : "on-request"
     });
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
@@ -1136,8 +1136,8 @@ async function startAppServerSession(options: {
     threadId = candidateThreadId;
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, threadId);
-    const applied = await syncCodexSessionAccess(rpc, threadId, { sandboxPolicy: toAppServerSandbox(options.sandboxMode!, cwd), ...(options.autoApprove !== undefined ? { approvalPolicy: options.autoApprove ? "never" : "on-request" } : {}) }, result);
-    rememberSessionAccess(home, threadId, applied.access, applied.settings);
+    const applied = await syncCodexSessionAccess(rpc, threadId, { ...sessionAccessSettings(options.sandboxMode!, cwd), ...(options.autoApprove !== undefined ? { approvalPolicy: options.autoApprove ? "never" : "on-request" } : {}) }, result);
+    if (!rememberSessionAccess(home, threadId, applied.access, applied.settings)) throw new Error('Codex applied the access choice, but recovery storage could not save it. Refresh before starting this session again.');
     activeAppServerTurns.set(threadId, { home, rpc });
     await rpc.startAndWaitForTurn(threadId, {
       threadId: candidateThreadId,
@@ -1145,7 +1145,7 @@ async function startAppServerSession(options: {
       cwd,
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
-      ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
+      ...(options.sandboxMode ? sessionAccessSettings(options.sandboxMode, cwd) : {})
     }, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(candidateThreadId);
       if (active) active.turnId = turnId;
@@ -1188,7 +1188,7 @@ async function sendAppServerSessionMessage(options: {
   const params = {
     threadId: options.sessionId, input: options.goalContinuation ? [] : appServerChatInput(options.text.trim(), options.attachments), cwd,
     ...(options.model ? { model: options.model } : {}), ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
-    ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
+    ...(options.sandboxMode ? sessionAccessSettings(options.sandboxMode, cwd) : {})
   };
   const transcript = await findCliSessionTranscript(resolveCodexHome(), options.sessionId, options.signal);
   await readRecentTranscriptTurnState(transcript);
@@ -1252,9 +1252,9 @@ async function sendAppServerSessionMessage(options: {
       const defaultSandbox = !options.sandboxMode && !inherited && !stored?.access;
       const approvalPolicy = inherited?.approvalPolicy ?? stored?.approvalPolicy;
       if (approvalPolicy) Object.assign(params, { approvalPolicy });
-      const restore = defaultSandbox ? { sandbox: 'danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
+      const restore = defaultSandbox || options.sandboxMode === 'danger-full-access' ? { permissions: ':danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
-      if (!options.sandboxMode) Object.assign(params, defaultSandbox ? { sandboxPolicy: toAppServerSandbox('danger-full-access', cwd) } : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
+      if (!options.sandboxMode) Object.assign(params, defaultSandbox ? sessionAccessSettings('danger-full-access', cwd) : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
       if (!preserved && !opaqueProfile) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
     }
     catch (error) {
@@ -1518,8 +1518,9 @@ async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCode
   throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
 }
 
-function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<string, unknown> {
-  return codexSessionAccessPolicy(mode, cwd);
+function sessionAccessSettings(mode: DashboardCliSandboxMode, cwd: string, networkAccess = false): Record<string, unknown> {
+  // The legacy Full sandbox loses profile provenance when Codex reopens the thread.
+  return mode === 'danger-full-access' ? { permissions: ':danger-full-access' } : { sandboxPolicy: codexSessionAccessPolicy(mode, cwd, networkAccess) };
 }
 function rememberSessionAccess(home: string, id: string, access: CodexSessionAccess | undefined, settings?: unknown): boolean {
   if (!access || path.resolve(resolveCodexHome()) !== path.resolve(home)) return true;
@@ -1551,7 +1552,7 @@ export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandb
     if (!session || session.archived) throw new Error('This session is unavailable or archived. Refresh before changing access.');
     const cwd = await resolveRecordedSessionProject(id, session.projectPath);
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. No access change was sent.');
-    const settings = { ...(mode ? { sandboxPolicy: codexSessionAccessPolicy(mode, cwd, session.access?.networkAccess ?? false) } : {}), ...(autoApprove !== undefined ? { approvalPolicy: autoApprove ? 'never' : 'on-request' } : {}) };
+    const settings = { ...(mode ? sessionAccessSettings(mode, cwd, session.access?.networkAccess ?? false) : {}), ...(autoApprove !== undefined ? { approvalPolicy: autoApprove ? 'never' : 'on-request' } : {}) };
     const expected = parseCodexSessionAccess(settings)!;
     const attemptedAt = Date.now();
     const active = activeAppServerTurns.get(id);

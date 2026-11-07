@@ -1,5 +1,16 @@
 import { expect, it } from 'vitest';
-import { codexSandboxMode, codexSessionAccessPolicy, isCodexSessionAccess, parseCodexSessionAccess, recordedCodexSandboxPolicy } from '../src/domain/codexSessionAccess';
+import { codexSandboxMode, codexSessionAccessPolicy, isCodexSessionAccess, matchesCodexSessionAccess, parseCodexSessionAccess, recordedCodexSandboxPolicy } from '../src/domain/codexSessionAccess';
+
+it('requires the selected Full profile as well as its effective sandbox policy', () => {
+  const expected = parseCodexSessionAccess({ permissions: ':danger-full-access' })!;
+  expect(expected).toMatchObject({ mode: 'danger-full-access', profile: ':danger-full-access' });
+  const sandbox = { sandboxPolicy: { type: 'dangerFullAccess' } };
+  expect(matchesCodexSessionAccess(parseCodexSessionAccess(sandbox), expected)).toBe(false);
+  expect(matchesCodexSessionAccess(parseCodexSessionAccess({ ...sandbox, activePermissionProfile: { id: ':workspace' } }), expected)).toBe(false);
+  expect(matchesCodexSessionAccess(parseCodexSessionAccess({ ...sandbox, activePermissionProfile: { id: ':danger-full-access' } }), expected)).toBe(true);
+  expect(matchesCodexSessionAccess(parseCodexSessionAccess({ sandboxPolicy: { type: 'readOnly' }, activePermissionProfile: { id: ':danger-full-access' } }), expected)).toBe(false);
+  for (const permissions of [null, 1, {}, '', 'x'.repeat(257)]) expect(parseCodexSessionAccess({ permissions })).toBeUndefined();
+});
 
 it.each([['readOnly','read-only'],['workspaceWrite','workspace-write'],['dangerFullAccess','danger-full-access']])('reads both native and app-server access spelling %s', (wire, mode) => {
   expect(codexSandboxMode(wire)).toBe(mode); expect(codexSandboxMode(mode)).toBe(mode);
