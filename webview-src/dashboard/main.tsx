@@ -3259,9 +3259,10 @@ function App() {
                 })
               }
               onClearFile={() => setWorkspaceFilesByPath({})}
-              onDeleteFile={(filePath, projectPath) =>
+              onDeleteFile={(filePath, fileRevision, projectPath) =>
                 sendWorkspaceAction("deleteWorkspaceFile", undefined, {
                   filePath,
+                  fileRevision,
                   sessionId: selectedCliSession?.id,
                   projectPath,
                   confirmed: true,

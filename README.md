@@ -277,6 +277,19 @@ Push notifications include the question and suggested answers. A short, non-secr
 
 ### Workspace inspector
 
+**Keep on top** opens the full browser dashboard in a phone-sized floating window.
+Use its sessions sidebar to switch conversations, inspect the available transcript
+and tool calls, and use the normal composer, approvals, queue, and workspace tools.
+The original window keeps its current conversation and draft. The floating view
+has its own saved drafts and message queues, using the dashboard's existing send
+safeguards. Keep the original
+dashboard open while using the floating workspace.
+
+Desktop Chrome and Edge can keep this window above other apps. Other browsers
+open a normal resizable pop-up and show a warning. Blocked windows and loading
+failures offer visible recovery; the floating dashboard uses the same sign-in
+and connection handling as the main browser dashboard.
+
 The header's workspace-tools icon shows or hides the right sidebar. **Env** stays
 first and cannot be closed; it summarizes the selected project, system, session,
 repository, goal, Auto Resume and queue. **Git**, Files, Reviews, Agents and

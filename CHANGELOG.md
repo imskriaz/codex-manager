@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.3-pre.2
+
+- Hide question prompts once every answer is confirmed, including answers from another client; keep partial questions and queued-answer status visible.
+- Add a Send now icon to move a queued message to the front, save its priority across reconnects, and send as soon as the session is ready.
+- Let a resized Account Center use multiple account columns and remove the reserved footer strip while keeping the resize control accessible.
+- Flatten Account Center cards and workspace session rows into square, borderless list items.
+
+## 1.7.3-pre.1
+
+- Open the complete mobile browser dashboard in Keep on top, including the conversation list, full available activity and tool calls, composer, approvals, queue, and workspace tools.
+- Preserve the original workspace, reuse the existing authenticated dashboard and send safeguards, and show blocked-window, opening-timeout, and loading/retry feedback.
+
 ## 1.7.3
 
 - Keep the narrow Account Center search, filters, and view switch on one compact row on small screens, with consistent body typography and spacing.

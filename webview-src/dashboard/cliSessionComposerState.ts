@@ -8,6 +8,7 @@ export type CliComposerDraft = {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean;
+  followUpMode?: 'queue' | 'steer';
 };
 export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string; session?: { id: string; deviceId?: string } };
 
@@ -27,8 +28,8 @@ export function cliContextUsage(usage: DashboardCodexSessionLiveState["tokenUsag
   return { used, limit: usage.contextWindow, percent: Math.min(100, Math.round(used / usage.contextWindow * 100)) };
 }
 
-export function cliComposerDraftKey(deviceId: string | undefined, sessionId: string | undefined, projectPath?: string): string {
-  return JSON.stringify([deviceId ?? "local", sessionId ? "session" : "new", sessionId ?? projectPath?.trim() ?? ""]);
+export function cliComposerDraftKey(deviceId: string | undefined, sessionId: string | undefined, projectPath?: string, floating = false): string {
+  return JSON.stringify([deviceId ?? "local", sessionId ? "session" : "new", sessionId ?? projectPath?.trim() ?? "", ...(floating ? ['floating'] : [])]);
 }
 
 export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | undefined {
@@ -39,6 +40,7 @@ export function normalizeCliComposerDraft(value: unknown): CliComposerDraft | un
     return {
       text: draft["text"], attachments: validateChatAttachments(draft["attachments"]),
       ...(typeof draft["autoApprove"] === "boolean" ? { autoApprove: draft["autoApprove"] } : {}),
+      ...(draft["followUpMode"] === 'queue' || draft["followUpMode"] === 'steer' ? { followUpMode: draft["followUpMode"] } : {}),
       ...(typeof draft["model"] === "string" && draft["model"].length <= 200 ? { model: draft["model"] } : {}),
       ...(typeof draft["reasoningEffort"] === "string" && /^[a-z]{1,20}$/.test(draft["reasoningEffort"]) ? { reasoningEffort: draft["reasoningEffort"] } : {}),
       ...(["read-only", "workspace-write", "danger-full-access"].includes(String(draft["sandboxMode"]))
@@ -59,7 +61,8 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
     : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
       ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
   return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
-    sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? defaultSandboxMode ?? config?.defaultSandboxMode ?? "danger-full-access" as DashboardCliSandboxMode };
+    sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? defaultSandboxMode ?? config?.defaultSandboxMode ?? "danger-full-access" as DashboardCliSandboxMode,
+    followUpMode: draft?.followUpMode ?? 'steer' };
 }
 
 /** Clear only the submitted content, preserving edits made while it was in flight. */

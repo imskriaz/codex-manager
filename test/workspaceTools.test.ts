@@ -523,6 +523,27 @@ describe("workspace tools", () => {
     }
   });
 
+  it("refuses to edit non-UTF-8 text bytes instead of replacing them", async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), "codex-workspace-encoding-"));
+    const restoreWorkspace = exposeWorkspaceRoot(projectPath);
+    try {
+      await writeFile(join(projectPath, "legacy.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+      await expect(readWorkspaceFile(projectPath, "legacy.txt")).rejects.toThrow(/valid UTF-8/i);
+    } finally { restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
+  });
+
+  it("keeps a newer edit from being deleted by a stale dashboard target", async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), "codex-workspace-stale-delete-"));
+    const restoreWorkspace = exposeWorkspaceRoot(projectPath);
+    try {
+      await writeFile(join(projectPath, "app.ts"), "opened\n", "utf8");
+      const opened = await readWorkspaceFile(projectPath, "app.ts");
+      await writeFile(join(projectPath, "app.ts"), "newer\n", "utf8");
+      await expect(deleteWorkspaceFile(projectPath, "app.ts", opened.revision)).rejects.toThrow(/changed after it was opened/i);
+      await expect(readFile(join(projectPath, "app.ts"), "utf8")).resolves.toBe("newer\n");
+    } finally { restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
+  });
+
   it("rejects deletion through a directory link that resolves outside the project", async () => {
     const parent = await mkdtemp(join(tmpdir(), "codex-workspace-delete-link-"));
     const projectPath = join(parent, "project");

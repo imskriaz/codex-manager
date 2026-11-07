@@ -293,7 +293,7 @@ describe("executeDashboardActionMessage", () => {
   it("keeps deletion confirmed when refreshing the project tree fails", async () => {
     vi.spyOn(workspaceTools, "deleteWorkspaceFile").mockResolvedValue("removed.txt");
     vi.spyOn(workspaceTools, "listWorkspaceFiles").mockRejectedValue(new Error("Drive disconnected"));
-    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "deleteWorkspaceFile", requestId: "delete-refresh-failure", payload: { projectPath: process.cwd(), filePath: "removed.txt" } });
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "deleteWorkspaceFile", requestId: "delete-refresh-failure", payload: { projectPath: process.cwd(), filePath: "removed.txt", fileRevision: "revision" } });
     expect(result).toMatchObject({ status: "completed", payload: { deletedWorkspaceFilePath: "removed.txt", notice: { level: "warning", message: expect.stringContaining("Deleted removed.txt") } } });
     expect(result.payload?.workspaceFiles).toBeUndefined();
   });

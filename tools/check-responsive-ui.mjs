@@ -1,4 +1,5 @@
 import { checkMessageTypesUi } from './check-message-types-ui.mjs';
+import { checkWorkMonitorUi } from './check-work-monitor-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
 import { checkImagesUi } from './check-images-ui.mjs';
 import { checkSessionAccessUi } from './check-session-access-ui.mjs';
@@ -450,7 +451,7 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
     await page.getByRole('button', { name: 'Keep on top', exact: true }).click();
     const monitor = await opened;
     await monitor.locator('.browser-work-monitor').waitFor();
-    await monitor.getByText('Ready', { exact: true }).waitFor();
+    await monitor.frameLocator('iframe').getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
     await monitor.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     assert.equal(await composer.inputValue(), 'Keep my draft while monitoring', 'The work monitor preserves the original composer');
     await composer.fill('');
@@ -652,7 +653,7 @@ try {
     console.log(`Checking ${width}x${height}: session list`);
     const errors = [];
     page.on("pageerror", (error) => { errors.push(error.message); console.log("Browser error:",error.message); });
-    await page.route("**/api/**", (route) => route.abort());
+    await context.route("**/api/**", (route) => route.abort());
     const shareRequests = [];
     let heldShare, releaseShare, shareResponse;
     await page.route("**/api/share/*", async route => {
@@ -661,16 +662,23 @@ try {
       if (shareResponse) return route.fulfill(shareResponse);
       return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/create") ? { token: "a".repeat(64) } : { ok: true } });
     });
-    await useWorkspaceDashboardAssets(page, origin);
-    await page.route("**/assets/browserHost.js*", (route) => route.fulfill({ contentType: "text/javascript", body: mockHost }));
-    await page.route(`${origin}/workspace/*`, async route => {
+    await useWorkspaceDashboardAssets(page, origin, context);
+    await context.route("**/assets/browserHost.js*", (route) => route.fulfill({ contentType: "text/javascript", body: mockHost }));
+    await context.route(`${origin}/workspace/*`, async route => {
       const response = await route.fetch({ url: `${origin}/workspace` });
-      await route.fulfill({ response, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/dashboard\.js)/g, '<script type="module"') });
+      await route.fulfill({ response, headers: { ...response.headers(), 'x-frame-options': 'SAMEORIGIN', 'content-security-policy': response.headers()['content-security-policy']?.replace("frame-ancestors 'none'", "frame-ancestors 'self'") ?? "frame-ancestors 'self'" }, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/dashboard\.js)/g, '<script type="module"') });
     });
     if (fixtureOnly) {
-      await page.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
-      await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
+      await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
+      await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--work-monitor')) {
+      await page.goto(`${origin}/workspace/${parentId}`);
+      await checkWorkMonitorUi(page, { origin, parentId, runningId, width, height, output });
+      assert.deepEqual(errors, [], 'Work monitor has no opener errors');
+      results.push({ width, height, checks: 'Full mobile workspace, conversation list, tools, composer, independent drafts, sending, offline/reconnect, popup blocking, duplicate opening, loading failure/retry, PiP rejection/timeout/late completion and cleanup' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--new-session-queue')) {
       await page.goto(origin + '/workspace');

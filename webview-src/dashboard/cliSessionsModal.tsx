@@ -41,7 +41,7 @@ import type {
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 import { chatAttachmentPreviews, validateChatAttachments, prepareChatInput, type ChatAttachment } from "../../src/domain/chatAttachments";
 import { readSubAgentMetadata } from "../../src/domain/sessionSource";
-import { cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
+import { buildCliSessionPath, cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
@@ -238,7 +238,7 @@ export type CliSessionsPageProps = {
   onListFiles: (projectPath?: string) => void;
   onReadFile: (filePath: string, projectPath?: string) => void;
   onClearFile: () => void;
-  onDeleteFile: (filePath: string, projectPath?: string) => void;
+  onDeleteFile: (filePath: string, fileRevision?: string, projectPath?: string) => void;
   onSaveFile: (filePath: string, content: string, revision: string, projectPath?: string) => string | undefined;
   onAccess?: (session: DashboardCliSessionSummary, mode?: DashboardCliSandboxMode, autoApprove?: boolean) => string | undefined;
   onSend: (input: {
@@ -360,7 +360,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
   const selectedDevice = props.selectedSession?.deviceId ?? props.selectedPeerId ?? props.peers?.find(peer => peer.local)?.id;
-  const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath);
+  const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath, props.browser && window.self !== window.top);
   const currentDraftKey = useRef(draftKey);
   currentDraftKey.current = draftKey;
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>({});
@@ -379,6 +379,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession, props.browser ? "danger-full-access" : undefined);
   const { model, reasoningEffort, sandboxMode } = settings;
+  const followUpMode = settings.followUpMode ?? 'steer';
   const access = useSessionAccess({ session: props.selectedSession, connected: props.connected !== false,
     send: (mode, autoApprove) => props.selectedSession && props.onAccess?.(props.selectedSession, mode, autoApprove), feedback: notice => reportLocalFeedback(notice) });
   const resume = useSessionResume({ session: props.selectedSession, connected: props.connected !== false, blocked: props.mutating || props.sending || props.stopping || access.pending,
@@ -444,6 +445,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sessionReadError = props.selectedSession?.status === "unknown" && !isCodexSessionInspectionNotice(props.selectedSession.statusError ?? "") ? props.selectedSession.statusError : undefined;
   useEffect(() => { if (sessionReadError) props.onActionFeedback({ level: 'warning', message: sessionReadError }); }, [sessionReadError]);
   const [shareOpen, setShareOpen] = useState(false);
+  const [workWindowButtonTarget, setWorkWindowButtonTarget] = useState<HTMLElement | null>(null);
   const messageViewportRef = useRef<HTMLElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
@@ -901,11 +903,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     props.onBackToList();
   };
 
+  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : props.selectedSession?.status === 'unknown' ? 'Waiting for a verified session state before sending.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending ? 'Waiting for the current action to finish.' : currentTurnRunning && !(followUpMode === 'steer' && canSteer) ? 'Waiting for the current turn to finish.' : undefined;
   const messageQueue = useCliMessageQueue({ connected: props.connected !== false,
     scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
-    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && !props.sending && !access.pending && !resume.pending && (!currentTurnRunning || canSteer)),
-    turnId: canSteer ? steeringTurnId : undefined,
-    send: value => canSteer && steeringTurnId
+    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && !props.sending && !access.pending && !resume.pending && (!currentTurnRunning || followUpMode === 'steer' && canSteer)),
+    dispatchReason: queueDispatchReason,
+    turnId: followUpMode === 'steer' && canSteer ? steeringTurnId : undefined,
+    send: value => followUpMode === 'steer' && canSteer && steeringTurnId
       ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
       : props.onSend({ ...value, sandboxMode: undefined, projectPath: props.selectedSession?.projectPath }),
     restore: value => {
@@ -1211,7 +1215,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {props.selectedSession || pendingNewChat ? (
             <>
               {props.selectedSession ? <ConversationHeader
-                workWindow={props.browser ? <BrowserWorkWindow title={props.selectedSession.title} onFeedback={reportLocalFeedback}><p role="status">{props.connected === false ? 'Connection Interrupted · reconnecting' : currentTurnRunning ? 'Working' : props.selectedSession.interrupted ? 'Interrupted · check this conversation in Workspace' : 'Ready'}</p><div class="browser-work-messages">{props.messages.filter(message => message.role === 'assistant' && (!message.kind || message.kind === 'message')).slice(-4).map(message => <p key={message.id}>{message.text}</p>)}</div></BrowserWorkWindow> : undefined}
+                workWindow={props.browser && window.self === window.top ? <span class="cli-work-window-slot" ref={setWorkWindowButtonTarget} /> : undefined}
                 session={props.selectedSession}
                 archived={selectedArchived}
                 busy={props.mutating}
@@ -1274,6 +1278,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   sandboxMode={access.mode}
                   permissionProfile={access.profile}
                   autoApprove={access.autoApprove} onAutoApprove={enabled => access.change(undefined, enabled)}
+                  followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })}
                   accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}
                   accessStatus={access.status}
                   projectPath={props.selectedSession.projectPath ?? projectPath}
@@ -1318,7 +1323,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1402,13 +1407,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onListFiles={() => props.onListFiles(toolProjectPath)}
           onReadFile={(filePath) => props.onReadFile(filePath, toolProjectPath)}
           onClearFile={props.onClearFile}
-          onDeleteFile={(filePath) => props.onDeleteFile(filePath, toolProjectPath)}
+          onDeleteFile={(filePath, revision) => props.onDeleteFile(filePath, revision, toolProjectPath)}
           onSaveFile={(filePath, content, revision) => { const id = props.onSaveFile(filePath, content, revision, toolProjectPath); if (id) submittedFileDrafts.current.set(id, { key: contextProjectKey, path: filePath, text: content, revision }); }}
           onResizePointerDown={(event) => beginPanelResize("terminal", event)}
           onResizeKeyDown={(event) => adjustPanelWithKeyboard("terminal", event.key, event.shiftKey)}
           onResizeReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
       </div>
+      {props.browser && window.self === window.top ? <BrowserWorkWindow buttonTarget={workWindowButtonTarget} path={props.selectedSession ? buildCliSessionPath(props.selectedSession) : '/workspace'} onFeedback={reportLocalFeedback} /> : null}
       {shareOpen && props.selectedSession ? <SessionShareModal connected={props.connected !== false} key={cliSessionTargetKey(props.selectedSession)} title={props.selectedSession.title} sessionKey={cliSessionTargetKey(props.selectedSession)} messages={props.messages} onClose={() => setShareOpen(false)} /> : null}
     </fieldset>
   );
@@ -1471,6 +1477,7 @@ export function Composer(props: {
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
   draft: string; deviceId?: string; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean; onAutoApprove?: (enabled: boolean) => void;
+  followUpMode?: 'queue' | 'steer'; onFollowUpMode?: (mode: 'queue' | 'steer') => void;
   permissionProfile?: string; accessDisabled?: boolean; accessStatus?: string;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
@@ -1553,6 +1560,7 @@ export function Composer(props: {
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
           <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
           {props.onAutoApprove ? <label class="cli-approval-control"><span>Approval</span><span><input type="checkbox" aria-label="Auto approval" checked={props.autoApprove === true} disabled={props.accessDisabled} onChange={event => props.onAutoApprove?.(event.currentTarget.checked)} />Auto approval</span></label> : null}
+          {props.onFollowUpMode ? <label><span>While Codex is running</span><select name="follow-up-mode" aria-label="Follow-up mode" value={props.followUpMode ?? 'steer'} onChange={event => props.onFollowUpMode?.(event.currentTarget.value as 'queue' | 'steer')}><option value="steer">Steer now</option><option value="queue">Queue until turn completes</option></select></label> : null}
           {props.feedback && props.feedback.level !== 'info' ? <small class="cli-access-status" role="alert">{props.feedback.message}{props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}</small> : null}
           {props.accessStatus ? <small class="cli-access-status" role="status">{props.accessStatus}</small> : props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
@@ -2257,7 +2265,7 @@ function WorkspaceContextPanel(props: {
   onListFiles: () => void;
   onReadFile: (filePath: string) => void;
   onClearFile: () => void;
-  onDeleteFile: (filePath: string) => void;
+  onDeleteFile: (filePath: string, revision?: string) => void;
   onSaveFile: (filePath: string, content: string, revision: string) => void;
   onResizePointerDown: (event: JSX.TargetedPointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => void;
@@ -2304,7 +2312,7 @@ function WorkspaceContextPanel(props: {
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {props.activeTab === 'env' ? <WorkspaceEnvironmentView liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGit key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
-    {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
+    {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
     </div>
   </aside>;
 }
@@ -2351,6 +2359,7 @@ function WorkspaceFilesView(props: {
   notice?: DashboardNotice;
   onDraft: (path: string, text: string) => void;
   files: DashboardWorkspaceFileEntry[];
+  filesByPath: Record<string, DashboardWorkspaceFile>;
   file?: DashboardWorkspaceFile;
   activePath?: string;
   loading: boolean;
@@ -2359,7 +2368,7 @@ function WorkspaceFilesView(props: {
   saving: boolean;
   onRefresh: () => void;
   onOpenFile: (filePath: string) => void;
-  onDeleteFile: (filePath: string) => void;
+  onDeleteFile: (filePath: string, revision?: string) => void;
   onClearFile: () => void;
   onFeedback: (notice: DashboardNotice) => void;
   onSave: (filePath: string, content: string, revision: string) => void;
@@ -2398,7 +2407,7 @@ function WorkspaceFilesView(props: {
   return <>{props.readError ? <div class={`cli-inspector-notice ${savedTree ? "is-warning" : "is-error"}`} role={savedTree ? "status" : "alert"}>{props.readError}</div> : null}{props.notice ? <div class={`cli-inspector-notice is-${props.notice.level}`} role={props.notice.level === "error" ? "alert" : "status"}>{props.notice.message}</div> : null}<div class={currentPath ? "cli-files-workbench is-detail" : "cli-files-workbench is-list"}>
     {currentPath ? null : <div class="cli-file-tree" aria-busy={props.loading}><header><strong>Project files</strong><IconButton label="Refresh files" disabled={props.loading || props.connected === false} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>{props.loading && props.files.length === 0 ? <span class="cli-context-loading" role="status"><span class="cli-live-spinner" />Loading files…</span> : props.files.length === 0 ? <span class="cli-context-empty">{props.readError ? "Use Refresh files to retry." : "No project files."}</span> : props.files.filter((entry) => !hiddenByParent(entry)).map((entry) => entry.type === "directory" ? <button key={entry.path} type="button" class="is-directory" aria-expanded={collapsed[entry.path] === false} title={entry.path} style={`--tree-depth:${entry.depth}`} onContextMenu={(event) => { event.preventDefault(); setFileMenu({ entry, x: event.clientX, y: event.clientY }); }} onClick={() => setCollapsed((current) => ({ ...current, [entry.path]: current[entry.path] === false }))}><ChevronIcon /><EmptyFolderIcon /><span>{entry.name}</span></button> : <button key={entry.path} type="button" title={entry.path} class={currentPath === entry.path ? "is-selected" : ""} style={`--tree-depth:${entry.depth}`} onContextMenu={(event) => { event.preventDefault(); setFileMenu({ entry, x: event.clientX, y: event.clientY }); }} onClick={() => openFile(entry.path)}><FileIcon /><span>{entry.name}</span></button>)}</div>}
     {fileMenu ? <WorkspaceContextMenu x={fileMenu.x} y={fileMenu.y} onClose={() => setFileMenu(undefined)}><strong title={fileMenu.entry.path}>{fileMenu.entry.name}</strong>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); openFile(fileMenu.entry.path); }}><FileIcon /> Open</button> : <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); setCollapsed((current) => ({ ...current, [fileMenu.entry.path]: current[fileMenu.entry.path] === false })); }}><EmptyFolderIcon /> Expand / collapse</button>}<button type="button" role="menuitem" onClick={() => { const selected = fileMenu.entry.path; setFileMenu(undefined); void navigator.clipboard.writeText(selected).then(() => props.onFeedback({ level: "info", message: "File path copied." }), () => props.onFeedback({ level: "error", message: "File path could not be copied." })); }}><LinkIcon /> Copy path</button>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" class="is-danger" disabled={props.connected === false} onClick={() => { setDeleteTarget(fileMenu.entry); setFileMenu(undefined); }}><TrashIcon /> Delete</button> : null}</WorkspaceContextMenu> : null}
-    {deleteTarget ? <DeleteConfirmation compact title={deleteTarget.name} onCancel={() => setDeleteTarget(undefined)} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDeleteFile(target.path); if (target.path === currentPath) props.onClearFile(); }} /> : null}
+    {deleteTarget ? <DeleteConfirmation compact title={deleteTarget.name} onCancel={() => setDeleteTarget(undefined)} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDeleteFile(target.path, props.filesByPath[target.path]?.revision); if (target.path === currentPath) props.onClearFile(); }} /> : null}
     {currentPath ? <div class="cli-file-editor">{fileReady && props.file ? <><header><span><strong title={props.file.path}>{props.file.path}</strong><small>{dirty ? "Modified" : `${props.file.kind === "text" ? props.file.language : props.file.mimeType} · ${formatFileSize(props.file.size)}`}</small></span><span class="cli-file-actions">{props.file.language === "markdown" ? <button type="button" onClick={() => setDocumentModes((current) => ({ ...current, [props.file!.path]: markdownPreview ? "edit" : "preview" }))}>{markdownPreview ? "Edit" : "Preview"}</button> : null}{props.file.kind === "text" ? <button type="button" disabled={!dirty || props.saving || props.connected === false} onClick={() => props.onSave(props.file!.path, draft, revision)}>{props.saving ? "Saving…" : "Save"}</button> : null}</span></header>{props.file.kind === "image" && props.file.dataUrl ? <figure class="cli-file-image-preview"><button type="button" aria-label={`Preview ${props.file.path}`} onClick={() => setImageOpen(true)}><img src={props.file.dataUrl} alt={props.file.path} /></button><figcaption>{props.file.mimeType} · {formatFileSize(props.file.size)}</figcaption></figure> : props.file.kind === "audio" && props.file.dataUrl ? <div class="cli-file-media-preview"><FileIcon /><audio controls preload="metadata" src={props.file.dataUrl}>Audio preview is not supported by this browser.</audio><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "video" && props.file.dataUrl ? <div class="cli-file-media-preview is-video"><FileIcon /><video controls preload="metadata" src={props.file.dataUrl}>Video preview is not supported by this browser.</video><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "pdf" && props.file.dataUrl ? <iframe class="cli-file-pdf-preview" title={`Preview ${props.file.path}`} src={props.file.dataUrl} /> : props.file.kind === "document" ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>body{max-width:760px;margin:0 auto;padding:32px;color:#24292f;background:#fff;font:15px/1.65 Georgia,serif}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #d0d7de}</style>${props.file.content}`} /> : markdownPreview ? <MarkdownPreview content={draft} /> : <WorkspaceCodeEditor path={props.file.path} language={props.file.language} value={draft} disabled={props.connected === false} onChange={(value) => props.onDraft(props.file!.path, value)} onSave={() => { if (dirty && !props.saving && props.connected !== false) props.onSave(props.file!.path, draft, revision); }} />}</> : <div class="cli-context-empty" role="status"><FileIcon /><span>{props.fileLoading ? "Opening file…" : "File could not be loaded."}</span>{!props.fileLoading ? <button type="button" disabled={props.connected === false} onClick={() => props.onOpenFile(currentPath)}>Retry</button> : null}</div>}</div> : null}
   </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <ImageLightbox image={{ src: props.file.dataUrl, alt: props.file.path }} onClose={() => setImageOpen(false)} /> : null}</>;
 }
@@ -2836,6 +2845,7 @@ function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
 export function QueuedMessages({ queue, popoverId = 'queued-message-list', onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; popoverId?: string; onRefresh: () => void }) {
+  const [confirmClear, setConfirmClear] = useState(false);
   queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
   if (!queue.items.length) return <div class="cli-local-queue" aria-label="Local message queue" />;
   const status = (item: CliQueuedMessage) => item.state === 'queued' ? 'Queued' : item.state === 'sending' ? 'Sending…' : item.state === 'sent' ? 'Sent' : item.state === 'uncertain' ? 'Unconfirmed' : 'Failed';
@@ -2845,11 +2855,12 @@ export function QueuedMessages({ queue, popoverId = 'queued-message-list', onRef
       <header><strong>Queued messages</strong><button type="button" class="cli-icon-button" popovertarget={popoverId} popovertargetaction="hide" aria-label="Close queued messages"><CloseIcon /></button></header>
       <div class="cli-queue-list">{queue.items.map(item => <article key={item.id} class={`cli-queue-list-item is-${item.state}`}>
         <div class="cli-queue-list-copy"><strong>{status(item)}</strong><p>{item.draft.text || 'Attachment'}</p>{item.draft.attachments.length ? <small>{item.draft.attachments.length} attachment{item.draft.attachments.length === 1 ? '' : 's'}</small> : null}</div>
-        <div class="cli-queue-list-actions">{item.error ? <button type="button" class="cli-queue-status-button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} aria-label="Show queue error"><WarningIcon /></button> : null}{item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}{queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}{item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}</div>
+        <div class="cli-queue-list-actions">{item.state === 'queued' ? <button type="button" class="cli-icon-button" aria-label="Send queued message now" title="Send now (move to front)" disabled={!queue.ready} onClick={() => queue.sendNow(item.id)}><SendIcon /></button> : null}{item.error ? <button type="button" class="cli-queue-status-button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} aria-label="Show queue error"><WarningIcon /></button> : null}{item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}{queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}{item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}</div>
         {item.error ? <div id={`queue-error-${encodeURIComponent(item.id)}`} popover="auto" class="cli-queue-error-popover" role="dialog" aria-label="Message failure details"><p>{item.error}</p><button type="button" popovertarget={`queue-error-${encodeURIComponent(item.id)}`} popovertargetaction="hide">Close</button></div> : null}
       </article>)}</div>
-      {!queue.connected ? <p class="settings-note">Waiting for connection. Queued messages stay saved on this session.</p> : null}
-      <button type="button" class="cli-queue-clear" disabled={!queue.connected || !queue.items.some(item => item.state !== 'sending')} onClick={() => queue.items.filter(item => item.state !== 'sending').forEach(item => queue.remove(item.id))}>Delete all queued</button>
+      {queue.notice ? <p class="settings-note" role="status">{queue.notice}</p> : null}
+      {queue.reason ? <p class="settings-note" role="status">{queue.reason}</p> : null}
+      {confirmClear ? <div class="cli-queue-clear-confirm" role="alertdialog" aria-label="Confirm deleting queued messages"><p>Delete {queue.items.filter(item => item.state !== 'sending').length} queued message{queue.items.filter(item => item.state !== 'sending').length === 1 ? '' : 's'}?</p><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button><button type="button" class="is-danger" onClick={() => { queue.items.filter(item => item.state !== 'sending').forEach(item => queue.remove(item.id)); setConfirmClear(false); }}>Delete all</button></div> : <button type="button" class="cli-queue-clear" disabled={!queue.ready || !queue.items.some(item => item.state !== 'sending')} onClick={() => setConfirmClear(true)}>Delete all queued</button>}
     </div>
   </div>;
 }

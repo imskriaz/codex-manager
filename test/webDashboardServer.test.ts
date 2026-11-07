@@ -29,6 +29,33 @@ import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import * as sessionMetadata from "../src/services/codexSessionResume";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
 
+it('permits only same-origin dashboard frames and retains authentication and private response headers', async () => {
+  let authorized = true;
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), {
+    settingsStore: { getDashboardSettings: () => ({}) },
+    isAuthorized: async () => authorized,
+    assetVersion: 'monitor-test'
+  }) as { handle(request: unknown, response: unknown): Promise<void> };
+  for (const authenticated of [true, false]) {
+    authorized = authenticated;
+    for (const path of ['/', '/tasks', '/workspace', '/workspace/11111111-1111-4111-8111-111111111111?device=remote', '/login', '/api/state', '/missing']) {
+      const headers = new Map<string, string>(); let body = '';
+      const response = { statusCode: 200, setHeader: (key: string, value: string) => headers.set(key.toLowerCase(), value), end: (value?: string) => { body = value ?? ''; } };
+      // API response bodies are covered elsewhere; inspect their denied frame policy before authorization.
+      if (path === '/api/state') authorized = false;
+      await server.handle({ method: 'GET', url: path, headers: { host: '127.0.0.1:39875' }, socket: { remoteAddress: '127.0.0.1' } }, response);
+      authorized = authenticated;
+      const dashboard = path !== '/api/state' && path !== '/missing';
+      expect(headers.get('x-frame-options')).toBe(dashboard ? 'SAMEORIGIN' : 'DENY');
+      expect(headers.get('content-security-policy')).toContain(`frame-ancestors '${dashboard ? 'self' : 'none'}'`);
+      expect(headers.get('content-security-policy')).toContain("form-action 'self'");
+      expect(headers.get('cache-control')).toBe('no-store');
+      if (!authenticated && dashboard) { expect(body).toContain('password'); expect(body).not.toContain('id="app"'); }
+      if (path === '/api/state') expect(response.statusCode).toBe(401);
+    }
+  }
+});
+
 it("serves lazy module assets and rejects traversal, source maps, and missing chunks", async () => {
   const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-modules-"));
   mkdirSync(join(directory, "media", "webview", "dashboard", "chunks"), { recursive: true });

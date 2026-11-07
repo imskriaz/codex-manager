@@ -20,6 +20,7 @@ vi.mock('preact/hooks', () => ({
 vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes }));
 import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, withAcceptedQueuedMessages, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
 import { canRestoreCliComposerDraft } from '../webview-src/dashboard/cliSessionComposerState';
+import { cliComposerDraftKey } from '../webview-src/dashboard/cliSessionComposerState';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 
 const draft = (text = 'First') => ({ text, attachments: [] });
@@ -41,6 +42,18 @@ beforeEach(() => {
   options = { scope: 'pc:session', messages: [], results: [], canDispatch: false, send, restore, feedback };
 });
 afterEach(() => { for (const slot of harness.slots) slot?.cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('keeps the original queue intact while the floating workspace dispatches its own queue', async () => {
+  const original = cliComposerDraftKey('pc', 'session'), floating = cliComposerDraftKey('pc', 'session', undefined, true);
+  render({ scope: original }); await flush(); queue.enqueue(draft('Original queued work')); await flush();
+  render({ scope: floating }); await flush(); queue.enqueue(draft('Floating queued work')); await flush();
+  render({ canDispatch: true }); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft('Floating queued work'));
+  expect((harness.records.get(`message-queue:${original}`) as CliQueuedMessage[])[0]?.draft.text).toBe('Original queued work');
+  render({ scope: original, canDispatch: false }); await flush();
+  expect(queue.items[0]?.draft.text).toBe('Original queued work');
+  expect(send).toHaveBeenCalledTimes(1);
+});
 
 it('queues an answer once immediately while offline and keeps the fence through failure and resend', async () => {
   render(); await flush();
@@ -215,4 +228,65 @@ it('rolls back an unconfirmed removal inline without a storage toast or automati
   harness.writes.mockResolvedValue(false);feedback.mockClear();queue.remove(id);await flush();
   expect(queue.items[0]).toMatchObject({id,state:'failed',error:expect.stringContaining('could not be removed')});expect(feedback).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled();
   harness.writes.mockResolvedValue(true);queue.remove(id);await flush();expect(queue.items).toEqual([]);
+});
+
+it('moves a waiting message to the front offline, saves the order, and sends it first after reconnect', async () => {
+  render({ connected: false }); await flush();
+  queue.enqueue(draft('First')); queue.enqueue(draft('Second')); const urgent = queue.enqueue(draft('Urgent'))!; await flush();
+  queue.sendNow(urgent); queue.sendNow(urgent); await flush();
+  expect(queue.items.map(item => item.draft.text)).toEqual(['Urgent', 'First', 'Second']);
+  expect(queue.notice).toContain('Waiting for connection'); expect(send).not.toHaveBeenCalled();
+  const saved = harness.records.get('message-queue:pc:session');
+  expect(normalizeCliMessageQueue(saved).map(item => item.draft.text)).toEqual(['Urgent', 'First', 'Second']);
+  queue.retryLoad(); await flush();
+  render({ connected: true, canDispatch: true }); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft('Urgent'));
+  render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  expect(send.mock.calls.map(call => call[0].text)).toEqual(['Urgent', 'First']);
+});
+
+it.each(['sending', 'uncertain', 'failed'] as const)('keeps an earlier %s message ahead of a newly prioritized message', async state => {
+  render({ canDispatch: true }); await flush();
+  queue.enqueue(draft('Active')); queue.enqueue(draft('Later')); const urgent = queue.enqueue(draft('Urgent'))!; await flush();
+  if (state === 'uncertain') { await vi.advanceTimersByTimeAsync(65_000); await flush(); }
+  if (state === 'failed') { render({ results: [{ requestId: 'request-1', status: 'failed', message: 'Disconnected' }] }); await flush(); }
+  queue.sendNow(urgent); await flush();
+  expect(queue.items.map(item => item.draft.text)).toEqual(['Active', 'Urgent', 'Later']);
+  expect(queue.items[0]?.state).toBe(state); expect(send).toHaveBeenCalledOnce();
+  render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  expect(send.mock.calls.map(call => call[0].text)).toEqual(['Active', 'Urgent']);
+});
+
+it.each([false, 'reject'])('keeps a priority change unsent when storage returns %s', async failure => {
+  render(); await flush(); queue.enqueue(draft('First')); const urgent = queue.enqueue(draft('Urgent'))!; await flush();
+  if (failure === 'reject') harness.writes.mockRejectedValueOnce(new Error('Storage failed'));
+  else harness.writes.mockResolvedValueOnce(false);
+  queue.sendNow(urgent); await flush();
+  render({ canDispatch: true }); await flush();
+  expect(send).not.toHaveBeenCalled();
+  expect(queue.items[0]).toMatchObject({ id: urgent, state: 'failed', error: expect.stringContaining('priority could not be saved') });
+  expect(queue.notice).toContain('not sent');
+  queue.resend(urgent); await flush(); expect(send).toHaveBeenCalledExactlyOnceWith(draft('Urgent'));
+});
+
+it('waits for priority storage and ignores its completion after changing sessions', async () => {
+  render(); await flush(); queue.enqueue(draft('First')); const urgent = queue.enqueue(draft('Urgent'))!; await flush();
+  let finish!: (saved: boolean) => void;
+  harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  queue.sendNow(urgent); render({ canDispatch: true }); await flush();
+  expect(send).not.toHaveBeenCalled(); expect(queue.items[0]?.durable).toBe(false);
+  render({ scope: 'another-session', canDispatch: false }); await flush();
+  finish(true); await flush();
+  expect(queue.items).toEqual([]); expect(queue.notice).toBeUndefined(); expect(send).not.toHaveBeenCalled();
+});
+
+it('reports stale or non-owned priority actions and can reorder a full queue without adding messages', async () => {
+  queue = render(); queue.sendNow('missing'); await flush(); expect(queue.notice).toContain('not ready');
+  for (let index = 0; index < 20; index++) queue.enqueue(draft(String(index)));
+  await flush(); const urgent = queue.items.at(-1)!.id;
+  queue.sendNow(urgent); await flush(); expect(queue.items).toHaveLength(20); expect(queue.items[0]?.id).toBe(urgent);
+  queue.sendNow('missing'); await flush(); expect(queue.items).toHaveLength(20); expect(queue.notice).toContain('not ready');
+  locks.mockImplementationOnce(async (_name, _options, work) => work(null));
+  render({ scope: 'another-session' }); await flush(); queue.sendNow(urgent); await flush();
+  expect(queue.notice).toContain('not ready'); expect(send).not.toHaveBeenCalled();
 });

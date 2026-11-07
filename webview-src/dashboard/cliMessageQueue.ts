@@ -51,9 +51,10 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
-  const current = useRef(items), options = useRef(props); options.current = props;
+  const [notice, setNotice] = useState<string>();
+  const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
   const owned = useRef(false), draining = useRef(false), writes = useRef(Promise.resolve(true)), generation = useRef(0);
   const loadFailed = (message: string) => { setError(message); };
   const update = (next: CliQueuedMessage[]) => { current.current = next; setItems(next); };
@@ -64,7 +65,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
   };
   useEffect(() => {
     const epoch = ++generation.current;
-    owned.current = false; draining.current = false; update([]); setReady(false); setError(undefined);
+    owned.current = false; draining.current = false; update([]); setReady(false); setError(undefined); setNotice(undefined);
     if (!props.scope) return;
     let release = () => {}, disposed = false;
     const scope = props.scope;
@@ -131,7 +132,27 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     }, Math.max(65_000, chatUploadTimeoutMs(pending.draft.attachments)));
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
-  return { items, ready, error, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
+  return { items, ready, error, notice, reason: props.dispatchReason, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
+    sendNow: (id: string) => {
+      const item = current.current.find(item => item.id === id);
+      if (!owned.current || !ready || !item || item.state !== 'queued') {
+        noticeVersion.current++;
+        setNotice('This message is not ready to move. Check its queue status before retrying.'); return;
+      }
+      if (item.durable === false) return;
+      const noticeEpoch = ++noticeVersion.current;
+      const next = current.current.filter(item => item.id !== id), epoch = generation.current;
+      // Keep any earlier in-flight or unconfirmed send ahead of the waiting messages.
+      const index = next.findIndex(item => item.state === 'queued');
+      next.splice(index < 0 ? next.length : index, 0, { ...item, durable: false });
+      update(next); setNotice('Saving message priority…');
+      void save(next).catch(() => false).then(saved => {
+        if (epoch !== generation.current || !current.current.some(item => item.id === id && item.state === 'queued')) return;
+        const failure = 'Message priority could not be saved. The message was kept and was not sent. Free storage before retrying.';
+        update(current.current.map(item => item.id === id ? { ...item, durable: saved, ...(!saved ? { state: 'failed' as const, error: failure } : {}) } : item));
+        if (noticeVersion.current === noticeEpoch) setNotice(saved ? options.current.connected === false ? 'Message moved to the top. Waiting for connection.' : 'Message is first in line. It will send when this session can accept it.' : failure);
+      });
+    },
     enqueue: (draft: CliComposerDraft): string | undefined => {
       const normalized = normalizeCliComposerDraft(draft);
       if (!normalized || !normalized.text.trim() && !normalized.attachments.length) { props.feedback('This message could not be queued. Check its text and attachments.'); return; }

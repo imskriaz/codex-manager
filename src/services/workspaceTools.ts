@@ -292,19 +292,30 @@ export async function readWorkspaceFile(
     }
     return { path: relative, content: "", language: preview.kind, kind: preview.kind, mimeType: preview.mimeType, size: snapshot.size, revision, dataUrl: `data:${preview.mimeType};base64,${buffer.toString("base64")}` };
   }
-  const content = snapshot.buffer.toString("utf8");
+  let content: string;
+  try {
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(snapshot.buffer);
+  } catch {
+    throw new Error("This text file is not valid UTF-8 and cannot be edited in the dashboard. Open it in VS Code instead.");
+  }
   if (content.includes("\0")) throw new Error("Binary files cannot be edited in the dashboard.");
   return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
 }
 
 export async function deleteWorkspaceFile(
   projectPath: string | undefined,
-  filePath: string | undefined
+  filePath: string | undefined,
+  expectedRevision?: string
 ): Promise<string> {
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   return runCrossWindowExclusive(sharedPathKey("workspace-file", absolute), "Workspace file change", async () => {
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Only files can be deleted from the project tree.");
+  if (expectedRevision) {
+    const current = await fs.readFile(absolute);
+    if (workspaceFileRevision(current) !== expectedRevision)
+      throw new Error("This file changed after it was opened. Refresh it before deleting.");
+  }
   await fs.unlink(absolute);
   return relative;
   });

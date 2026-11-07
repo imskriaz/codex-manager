@@ -15500,7 +15500,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .task-floating-menu .task-project-picker { padding:0; }
 .task-floating-menu .task-project-picker button { padding:5px 8px; margin:3px 5px; }
 .task-column-count { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; padding:0 4px; background:var(--cyan-soft); border-radius:4px; font-weight:500; }
-.task-card-row { position:relative; min-width:0; min-height:44px; margin-bottom:4px; border:1px solid var(--border-muted); border-radius:4px; background:var(--bg-elevated); }
+.task-card-row { position:relative; min-width:0; min-height:44px; margin-bottom:4px; border:1px solid var(--border-muted); border-radius:4px; background:var(--bg-elevated); content-visibility:auto; contain-intrinsic-size:auto 44px; }
 .task-card-row:hover,.task-card-row:focus-within { border-color:color-mix(in srgb,var(--accent-blue) 50%,var(--border-muted)); }
 .task-card-row.is-dragging { opacity:.4; }
 .task-board-section .task-card-row .task-board-card { display:grid; grid-template-rows:16px 13px; gap:2px; align-content:start; width:100%; height:44px; min-width:0; margin:0; padding:6px 8px; border:0; border-radius:4px; background:transparent; text-align:left; }
@@ -15536,6 +15536,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 
 .task-list-view,.task-time-view { flex:1; min-height:0; overflow:auto; border:1px solid var(--border-muted); border-radius:4px; }
 .task-list-view table { width:100%; border-collapse:collapse; min-width:580px; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.task-list-view tbody tr { content-visibility:auto; contain-intrinsic-size:auto 38px; }
 .task-list-view th { position:sticky; top:0; background:var(--bg-elevated); text-align:left; z-index:1; }
 .task-list-view td,.task-list-view th { border-bottom:1px solid var(--border-muted); padding:6px 9px; white-space:nowrap; }
 .task-list-view th button,.task-list-view .task-list-title { border:0; background:transparent; padding:2px 0; text-align:left; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
@@ -16971,17 +16972,17 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .cli-session-menu > button { min-height: 40px; }
 }
 
-.browser-work-monitor { display:flex; flex-direction:column; min-width:0; max-width:100%; height:100dvh; margin:0; padding:10px; box-sizing:border-box; background:var(--bg-base); color:var(--text-primary); font:13px/1.5 system-ui,sans-serif; }
-.browser-work-monitor > header { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border-default); padding-bottom:8px; }
+.browser-work-monitor { display:flex; flex-direction:column; min-width:0; max-width:100%; height:100dvh; margin:0; box-sizing:border-box; background:var(--bg-base); color:var(--text-primary); font:13px/1.5 system-ui,sans-serif; }
+.browser-work-monitor > header { display:flex; flex:none; align-items:center; gap:8px; border-bottom:1px solid var(--border-default); padding:4px 8px; }
 .browser-work-monitor > header strong { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.browser-work-monitor button { padding:6px 8px; border:1px solid var(--border-default); border-radius:6px; color:inherit; background:var(--bg-elevated); cursor:pointer; }
-.browser-work-monitor p { margin:8px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
-.browser-work-messages { overflow:auto; min-height:0; }
-.browser-work-messages p + p { border-top:1px solid var(--border-default); padding-top:8px; }
+.browser-work-monitor button { min-height:44px; padding:6px 8px; border:1px solid var(--border-default); border-radius:6px; color:inherit; background:var(--bg-elevated); cursor:pointer; }
+.browser-work-monitor > :is(p, [role="alert"]) { flex:none; margin:8px; overflow-wrap:anywhere; }
+.browser-work-monitor iframe { display:block; flex:1; width:100%; min-height:0; border:0; }
+.cli-work-window-slot { display:contents; }
 
-.cli-account-resize-footer { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-left: 10px; min-height: 28px; }
-.cli-account-resize-footer small { flex: 1; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
-.cli-account-resizer { flex: none; display: grid; place-items: center; width: 28px; height: 28px; cursor: nwse-resize; touch-action: none; }
+.cli-account-resize-footer { position: absolute; z-index: 3; right: 4px; bottom: 2px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0; min-height: 0; pointer-events: none; }
+.cli-account-resize-footer small { display: none; }
+.cli-account-resizer { pointer-events: auto; flex: none; display: grid; place-items: center; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none; }
 .cli-account-resizer:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .cli-account-center > :is(header, .cli-account-system, .cli-account-status, nav) { flex: none; }
 
@@ -17000,12 +17001,26 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-account-center .cli-account-dashboard .dashboard-view-controls,
 .cli-account-center .cli-account-dashboard .dashboard-view-toggle { flex: 0 0 28px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; margin: 0; }
 .cli-account-center .cli-account-dashboard .saved-card-front { padding: 4px 5px; }
+.cli-account-center .cli-account-dashboard :is(.saved-card-container, .saved-card-inner, .saved-card, .saved-card-front) { border-radius: 0; background: transparent; box-shadow: none; }
+.cli-account-center .cli-account-dashboard .saved-card-container { padding: 0; }
+.cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+@media (max-width: 519px) {
+  .cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 350px) {
   .cli-account-center .cli-account-dashboard .account-search-control { flex-basis: 64px; }
   .cli-account-center .cli-account-dashboard .dashboard-select-control { width: 48px; max-width: 48px; }
   .cli-account-center .cli-account-dashboard .account-tag-filter,
   .cli-account-center .cli-account-dashboard .metric-priority-control { width: 44px; max-width: 44px; }
 }
+
+/* Keep the workspace rail as a flat list instead of stacked cards. */
+.cli-workspace .cli-project-group .cli-project-row,
+.cli-workspace .cli-project-sessions .cli-session-row { border-radius: 0; background: transparent; box-shadow: none; }
+.cli-workspace .cli-project-group .cli-project-row:hover,
+.cli-workspace .cli-project-group .cli-project-row:focus-within,
+.cli-workspace .cli-session-row:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.cli-workspace .cli-session-row.is-selected { border-radius: 0; background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
 
 .cli-composer-options .cli-approval-control > span:last-child { display: flex; align-items: center; gap: 6px; }
 .cli-composer-options .cli-approval-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-blue); }

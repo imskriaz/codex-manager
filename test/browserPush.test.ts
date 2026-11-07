@@ -247,6 +247,19 @@ describe("persistent browser push", () => {
     );
   });
 
+  it("merges registrations made by separate host instances", async () => {
+    const make = () => new BrowserPushService({
+      get: async (key: string) => stored.get(key),
+      store: async (key: string, value: string) => { stored.set(key, value); }
+    } as never, async () => password);
+    const first = make(), second = make();
+    await Promise.all([
+      first.subscribe(subscription("instance-one"), "one", "https://dashboard.example", password),
+      second.subscribe(subscription("instance-two"), "two", "https://dashboard.example", password)
+    ]);
+    expect(JSON.parse(stored.get("codexManager.browserPush.v1")!).subscriptions).toHaveLength(2);
+  });
+
   it("deduplicates major events, excludes routine notices, and validates single-use actions", async () => {
     await service.subscribe(subscription(), "device", "https://dashboard.example", password);
     service.notify({ level: "info", message: "Quotas refreshed" });

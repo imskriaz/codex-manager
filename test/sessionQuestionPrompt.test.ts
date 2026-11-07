@@ -9,6 +9,7 @@ vi.mock('preact/hooks', () => ({
 }));
 vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.write }));
 import { SessionQuestionPrompt } from '../webview-src/dashboard/sessionQuestions';
+import { answeredSessionQuestionIds, sessionQuestionReply } from '../src/domain/sessionQuestions';
 let props: Parameters<typeof SessionQuestionPrompt>[0];
 const submit = vi.fn();
 function render(patch: Partial<typeof props> = {}) { props = { ...props, ...patch }; harness.cursor = 0; const node = SessionQuestionPrompt(props); harness.effects.splice(0).forEach(effect => effect()); return node; }
@@ -49,4 +50,36 @@ it('retains partial answers with their original indices and renders public histo
   expect(find('legend').props.children).toBe('Second?'); find('textarea').props.onInput({ currentTarget: { value: 'Second answer' } }); find('form').props.onSubmit({ preventDefault() {} });
   expect(submit.mock.calls[0]![0]).not.toContain('First?'); expect(submit.mock.calls[0]![0]).toContain('Second answer');
   expect(nodes(render({ onReply: undefined })).some(node => node.type === 'button' || node.type === 'textarea')).toBe(false);
+});
+
+it('hides an open prompt when its answer arrives from another client and after reopening history', async () => {
+  render(); await flush(); expect(find('form')).toBeDefined();
+  const reply = { id: 'reply', role: 'user' as const, text: sessionQuestionReply(props.message, { '0': 'Yes' }) };
+  const answered = answeredSessionQuestionIds([props.message, reply, reply]);
+  expect(render({ answered })).toBeNull();
+  expect(submit).not.toHaveBeenCalled();
+  harness.slots.forEach(slot => slot?.cleanup?.()); harness.slots = [];
+  expect(render()).toBeNull(); await flush(); expect(render()).toBeNull();
+  expect(render({ onReply: undefined })).toBeNull();
+});
+
+it('keeps queued answers visible until confirmed and hides only after every question is answered', async () => {
+  const message = { ...props.message, questions: [{ title: 'First?' }, { title: 'Second?' }] };
+  const first = { id: 'first', role: 'user' as const, text: sessionQuestionReply(message, { '0': 'Yes' }) };
+  render({ message, answered: answeredSessionQuestionIds([first]) }); await flush();
+  expect(find('legend').props.children).toBe('Second?');
+  const second = { id: 'second', role: 'user' as const, text: sessionQuestionReply(message, { '1': 'No' }) };
+  const answered = answeredSessionQuestionIds([first, second]);
+  const queued = render({ answered, pending: true });
+  expect(nodes(queued).some(node => node.props['aria-label'] === 'Queued Codex answer')).toBe(true);
+  expect(nodes(queued).some(node => node.type === 'form')).toBe(false);
+  expect(render({ pending: false })).toBeNull();
+});
+
+it('keeps the prompt available when a reply is incomplete or belongs to another question', async () => {
+  const other = { ...props.message, id: 'other' };
+  for (const text of [sessionQuestionReply(other, { '0': 'Yes' }), sessionQuestionReply(props.message, { '0': ' ' }), '<send_user_message_question_reply>{broken}</send_user_message_question_reply>']) {
+    render({ answered: answeredSessionQuestionIds([{ id: 'reply', role: 'user', text }]) }); await flush();
+    expect(find('form')).toBeDefined();
+  }
 });

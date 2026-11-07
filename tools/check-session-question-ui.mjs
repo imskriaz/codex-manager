@@ -26,7 +26,13 @@ export async function checkSessionQuestionUi(page, { parentId, width, output }) 
   await input.fill('');
   const fresh = { ...ask, id: 'question-current', timestamp: new Date().toISOString() };
   await inject([fresh], 2); await form.waitFor();
-  await inject([fresh, { id: 'later-activity', kind: 'command', text: 'Continuing work', command: 'echo working', status: 'completed' }], 3);
+  const answered = { id: 'answered-elsewhere', role: 'user', kind: 'message', text: '<send_user_message_question_reply>\n' + JSON.stringify([{ questionItemId: JSON.stringify(['request_user_input_async', fresh.id, 0]), question: 'Which layout?', answer: 'Answered elsewhere' }]) + '\n</send_user_message_question_reply>' };
+  await inject([fresh, answered], 3); await form.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.cli-question-message').count(), 0, 'Confirmed answers hide the prompt, including answers from another client');
+  await page.screenshot({ path: path.join(output, `question-answered-hidden-${width}.png`) });
+  fresh.id = 'question-next';
+  await inject([fresh], 4); await form.waitFor();
+  await inject([fresh, { id: 'later-activity', kind: 'command', text: 'Continuing work', command: 'echo working', status: 'completed' }], 5);
   await form.waitFor({ state: 'hidden' });
   const current = page.locator('.cli-session-message').filter({ hasText: 'Which layout?' });
   await current.getByRole('button', { name: 'Answer', exact: true }).click();
@@ -43,8 +49,19 @@ export async function checkSessionQuestionUi(page, { parentId, width, output }) 
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before, 'Offline answers queue without dispatch');
   assert.equal(await page.locator('.cli-local-queue').count(), 1, 'Repeated answer submission queues once');
   await page.screenshot({ path: path.join(output, `question-answer-queued-${width}.png`) });
+  await composer.fill('Urgent next step');
+  await composer.evaluate(element => element.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await page.locator('.cli-queue-summary').click();
+  const queue = page.getByRole('dialog', { name: 'Queued messages', exact: true });
+  await queue.locator('.cli-queue-list-item').filter({ hasText: 'Urgent next step' }).getByRole('button', { name: 'Send queued message now', exact: true }).click();
+  await queue.getByRole('status').filter({ hasText: 'Waiting for connection' }).waitFor();
+  assert.match(await queue.locator('.cli-queue-list-item').first().innerText(), /Urgent next step/, 'Send now promotes a waiting message to the top');
+  assert.ok(await queue.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1; }), 'Queue actions fit the viewport');
+  await page.screenshot({ path: path.join(output, `queue-send-now-${width}.png`) });
+  await queue.getByRole('button', { name: 'Close queued messages', exact: true }).click();
   await page.evaluate(() => { window.__holdNextSend = true; dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })); });
   await page.waitForFunction(() => window.__heldSendResult);
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before + 1, 'Reconnect sends the queued answer exactly once');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').at(-1).payload.text), 'Urgent next step', 'Reconnect sends the promoted message first');
   assert.equal(await page.locator('.codex-request-backdrop').count(), 0, 'Questions never open a modal');
 }

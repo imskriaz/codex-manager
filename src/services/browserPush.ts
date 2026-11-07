@@ -4,6 +4,7 @@ import type * as vscode from "vscode";
 import { hostname } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { compactNotificationMessage, type MirroredNotification } from "../utils/notificationMirror";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 
 const STORAGE_KEY = "codexManager.browserPush.v1";
 const MAX_SUBSCRIPTIONS = 64;
@@ -12,6 +13,7 @@ type Subscription = webPush.PushSubscription & { owner: string; origin: string; 
 type PushState = { keys: { publicKey: string; privateKey: string }; subscriptions: Subscription[]; delivered?: Array<[string, number]> };
 const DELIVERY_RETENTION_MS = 24 * 60 * 60_000;
 const MAX_DELIVERIES = 1024;
+let sharedPushMutation: Promise<unknown> = Promise.resolve();
 
 export class BrowserPushRegistrationConflictError extends Error {
   constructor() { super("Notification registration needs refreshing."); }
@@ -81,16 +83,18 @@ export class BrowserPushService {
   }
 
   private mutate<T>(work: (state: PushState) => T | Promise<T>): Promise<T> {
-    const task = this.mutations
-      .catch(() => undefined)
-      .then(async () => {
+    const previousSharedMutation = sharedPushMutation;
+    const task = this.mutations.catch(() => undefined).then(() => previousSharedMutation.catch(() => undefined)).then(() =>
+      runCrossWindowExclusive("state:browser-push", "Browser notification registration", async () => {
         const state = await this.read();
         state.subscriptions = state.subscriptions.filter(item => item && typeof item === "object" && typeof item.endpoint === "string" && item.keys && Number.isFinite(item.expiresAt) && item.expiresAt > Date.now());
         const result = await work(state);
         await this.secrets.store(STORAGE_KEY, JSON.stringify(state));
         return result;
-      });
+      }, { waitMs: 2_000 })
+    );
     this.mutations = task;
+    sharedPushMutation = task.then(() => undefined, () => undefined);
     return task;
   }
 
@@ -273,6 +277,7 @@ export class BrowserPushService {
 
   async hasSubscriptions(): Promise<boolean> {
     await this.mutations.catch(() => undefined);
+    await sharedPushMutation.catch(() => undefined);
     const raw = await this.secrets.get(STORAGE_KEY);
     if (!raw) return false;
     const state = JSON.parse(raw) as PushState;
@@ -281,6 +286,7 @@ export class BrowserPushService {
 
   async isSubscribed(endpoint: string, owner: string, origin: string): Promise<boolean> {
     await this.mutations.catch(() => undefined);
+    await sharedPushMutation.catch(() => undefined);
     const state = await this.read(), password = await this.password();
     return state.subscriptions.some(item => item.endpoint === endpoint && item.owner === owner && item.origin === origin &&
       item.expiresAt > Date.now() && (item.password === undefined || item.password === password));

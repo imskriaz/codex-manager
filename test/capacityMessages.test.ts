@@ -1,7 +1,8 @@
 import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 import type { DashboardCliSessionMessage } from '../src/domain/dashboard/types';
-vi.mock('preact/hooks', () => ({ useMemo: (factory: () => unknown) => factory(), useContext: () => undefined }));
+vi.mock('preact/hooks', () => ({ useMemo: (factory: () => unknown) => factory(), useContext: () => undefined, useState: (initial: unknown) => [initial, vi.fn()] }));
 import { SessionMessage, QueuedMessages } from '../webview-src/dashboard/cliSessionsModal';
 
 function activity(message: DashboardCliSessionMessage): VNode<any> {
@@ -68,4 +69,12 @@ it('keeps queue failures compact while exposing the full queue in a popover', ()
   const details=row.props.children[2];expect(details.props.popover).toBe('auto');expect(details.props.role).toBe('dialog');
   expect(details.props.class).toBe('cli-queue-error-popover');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}}).props.children).toBeUndefined();
+});
+
+it('lets the resized Account Center use columns without reserving a blank footer strip', () => {
+  const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
+  expect(css).toContain('.cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }');
+  expect(css).toContain('@media (max-width: 519px)');
+  expect(css).toContain('.cli-account-resize-footer { position: absolute;');
+  expect(css).toContain('.cli-account-resize-footer small { display: none; }');
 });

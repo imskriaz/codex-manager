@@ -34,7 +34,8 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
     setAnswers(next);
     void writeBrowserCache(key, next).then(saved => { if (!saved) setOutcome('Browser storage could not save this answer. It is kept in this tab; copy it before closing.'); });
   };
-  if (!questions.length) return <section class="cli-question-message" aria-label={pending ? 'Queued Codex answer' : 'Answered Codex question'}>{message.questions?.map((question, index) => <p key={index}>{question.title}</p>)}<small>{pending ? 'Answer queued' : 'Answered'}</small></section>;
+  if (!questions.length && !pending) return null;
+  if (!questions.length) return <section class="cli-question-message" aria-label="Queued Codex answer">{message.questions?.map((question, index) => <p key={index}>{question.title}</p>)}<small>Answer queued</small></section>;
   return <section class="cli-question-message" aria-label="Codex question">
     {!visible ? <>{questions.map(question => <p key={question.index}>{question.title}</p>)}{onReply ? <button type="button" disabled={queued} onClick={() => setOpen(true)} aria-expanded={false}>{queued ? 'Answer queued' : 'Answer'}</button> : null}</> :
       <form class="codex-request-panel cli-question-prompt" aria-label="Answer Codex question" onSubmit={event => {

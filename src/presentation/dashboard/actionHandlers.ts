@@ -1105,7 +1105,8 @@ async function runDashboardAction(
         notice: { level: "info" as const, message: "File saved." }
       };
     case "deleteWorkspaceFile": {
-      const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath);
+      if (!payload?.fileRevision) throw new Error("Refresh or open the file before deleting it so newer edits are protected.");
+      const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath, payload.fileRevision);
       try {
         const result = await listWorkspaceFiles(payload?.projectPath);
         return { deletedWorkspaceFilePath: deletedPath, workspaceFiles: result.files, workspaceFilesWarning: result.warning,

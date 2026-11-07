@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
+  it('keeps floating drafts and queues separate without changing existing keys or system ownership', () => {
+    expect(cliComposerDraftKey('pc', 'chat')).toBe('["pc","session","chat"]');
+    const floating = cliComposerDraftKey('pc', 'chat', undefined, true);
+    expect(floating).not.toBe(cliComposerDraftKey('pc', 'chat'));
+    expect(floating).not.toBe(cliComposerDraftKey('other-pc', 'chat', undefined, true));
+    expect(floating).not.toBe(cliComposerDraftKey('pc', 'other-chat', undefined, true));
+    expect(cliComposerDraftKey('pc', undefined, 'D:/work', true)).not.toBe(cliComposerDraftKey('pc', undefined, 'D:/work'));
+    expect(cliComposerDraftKey('pc', undefined, 'D:/work', true)).not.toBe(cliComposerDraftKey('pc', undefined, 'D:/other', true));
+  });
   it('acknowledges only a newly observed user message in the expected turn', () => {
     const draft = { text: 'Follow up', attachments: [] };
     const echo = { id: 'new', role: 'user' as const, text: 'Follow up', turnId: 'turn' };
@@ -56,7 +65,7 @@ describe("durable Codex composer state", () => {
   it("restores settings offline and validates them against the fresh model catalog", () => {
     const saved = { text: "draft", attachments: [], model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" as const };
     expect(resolveCliComposerSettings(saved, undefined)).toMatchObject({ model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" });
-    expect(resolveCliComposerSettings(saved, { models: [{ id: "available", label: "Available", reasoningEfforts: ["medium"], defaultReasoningEffort: "medium" }], defaultSandboxMode: "workspace-write" })).toEqual({ model: "available", reasoningEffort: "medium", sandboxMode: "read-only" });
+    expect(resolveCliComposerSettings(saved, { models: [{ id: "available", label: "Available", reasoningEfforts: ["medium"], defaultReasoningEffort: "medium" }], defaultSandboxMode: "workspace-write" })).toEqual({ model: "available", reasoningEffort: "medium", sandboxMode: "read-only", followUpMode: "steer" });
   });
 });
 

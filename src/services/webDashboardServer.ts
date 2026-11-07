@@ -900,22 +900,23 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+    const requestUrl = new URL(request.url ?? "/", this.getUrl());
+    const path = requestUrl.pathname;
+    const frameAncestors = isWebDashboardPagePath(path) || path === '/login' || path === '/logout' ? "'self'" : "'none'";
     const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
       this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""
     );
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
-    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("X-Frame-Options", frameAncestors === "'self'" ? "SAMEORIGIN" : "DENY");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader(
       "Content-Security-Policy",
-      `default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${getWebDashboardConnectSources(request, configuredCloudflaredOrigin)}; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`
+      `default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${getWebDashboardConnectSources(request, configuredCloudflaredOrigin)}; form-action 'self'; frame-ancestors ${frameAncestors}; base-uri 'none'`
     );
     const method = request.method ?? "GET";
-    const requestUrl = new URL(request.url ?? "/", this.getUrl());
-    const path = requestUrl.pathname;
     if (path.startsWith('/projects/share/') || path.startsWith('/api/projects/share/')) {
       const api = path.startsWith('/api/');
       const suffix = path.slice(api ? '/api/projects/share/'.length : '/projects/share/'.length);

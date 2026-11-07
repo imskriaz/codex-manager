@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 vi.mock('preact/hooks', () => ({ useState: (value: unknown) => [value, vi.fn()], useRef: (value: unknown) => ({ current: value ?? null }), useId: () => 'composer-fixture', useLayoutEffect: () => undefined, useEffect: () => undefined }));
 import { Composer } from '../webview-src/dashboard/cliSessionsModal';
@@ -13,4 +14,11 @@ it('keeps the composer stable without status rows or connection placeholders', (
     expect(tree.some(node => node.props.class?.includes('cli-composer-state'))).toBe(false);
   }
   expect(nodes(Composer({ ...config, unavailableReason: 'Reconnecting…' })).find(node => node.type === 'textarea')?.props.placeholder).toBe('Message Codex…');
+});
+
+it('exposes Queue and Steer follow-up modes in Message settings', () => {
+  const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  expect(source).toContain('aria-label="Follow-up mode"');
+  expect(source).toContain('value="queue">Queue until turn completes');
+  expect(source).toContain('value="steer">Steer now');
 });
