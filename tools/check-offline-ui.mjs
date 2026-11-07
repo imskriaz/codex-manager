@@ -119,6 +119,7 @@ try {
   assert.equal(await page.locator('.task-board-column').count(), 4, 'Cached task boards restore all stages even when the project has no tasks');
   assert.equal(await page.getByRole('button', { name: 'Board actions', exact: true }).isDisabled(), true, 'Disconnected boards prohibit live actions');
   await page.locator('.dashboard-offline-overlay').waitFor();
+  await page.locator('.dashboard-connection-recovery').waitFor();
   await page.screenshot({ path: path.join(output, 'tasks-cold-offline.png') });
   console.log('Cold offline task board restored');
   const cachePaths = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)))).flat());

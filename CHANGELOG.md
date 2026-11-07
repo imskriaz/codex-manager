@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.3-pre.9
+
+- Finish realtime recovery verification and the Node host storage/lint fixes for the workspace reliability changes below.
+- Remove the floating monitor header and make the full account/quota footer open Account Center from one click target.
+
 ## 1.7.3-pre.8
 
 - Blend conversation toolbar icons and the workspace tools close button into their containers, retaining hover and keyboard focus feedback.
@@ -8,6 +13,13 @@
 
 - Keep Full access selected when new Codex sessions open, reconnect, or resume by preserving the explicit permission profile instead of a legacy sandbox override.
 - Confirm both the selected profile and effective permissions before reporting success, and report recovery storage failures before starting a new turn.
+
+## 1.7.3-pre.6
+
+- Replay saved live activity and prompts before loading dashboard accounts, with a bounded snapshot wait that preserves the live connection on failure.
+- Preserve healthy sockets on focus and network events, share repeated connection retries, and reject sends immediately when the transport buffer is full.
+- Keep session rows stable during token updates and skip redundant transcript reads while complete live history is authoritative. Ignore stale completion events without triggering refreshes.
+- Correct first-live and reconnect timings, include timing summaries in read-only UI checks, and fix the standalone host's storage regression.
 
 ## 1.7.3-pre.5
 

@@ -49,10 +49,10 @@ export function BrowserWorkWindow(props: { path: string; buttonTarget: HTMLEleme
     } catch (error) { monitor.current?.close(); if (mounted.current) props.onFeedback({ level: 'warning', message: error instanceof Error ? error.message : 'The work monitor could not open. Retry Keep on top from the conversation header.' }); }
     finally { clearTimeout(timer); openingNow.current = false; if (mounted.current) setOpening(false); }
   };
-  return <>{props.buttonTarget ? createPortal(<button type="button" class="cli-icon-button" aria-label="Keep on top" title="Keep on top · full mobile workspace" aria-pressed={Boolean(target)} disabled={opening} onClick={() => void open()}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 8h5v5m0-5-7 7"/></svg></button>, props.buttonTarget) : null}{target ? createPortal(<MobileWorkspace path={props.path} onFeedback={props.onFeedback} onBack={() => { window.focus(); monitor.current?.close(); }} />, target) : null}</>;
+  return <>{props.buttonTarget ? createPortal(<button type="button" class="cli-icon-button" aria-label="Keep on top" title="Keep on top · full mobile workspace" aria-pressed={Boolean(target)} disabled={opening} onClick={() => void open()}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 8h5v5m0-5-7 7"/></svg></button>, props.buttonTarget) : null}{target ? createPortal(<MobileWorkspace path={props.path} onFeedback={props.onFeedback} />, target) : null}</>;
 }
 
-function MobileWorkspace(props: { path: string; onBack: () => void; onFeedback: (notice: DashboardNotice) => void }) {
+function MobileWorkspace(props: { path: string; onFeedback: (notice: DashboardNotice) => void }) {
   // Keep navigation independent when the original window changes conversations.
   const [path] = useState(props.path);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -71,7 +71,7 @@ function MobileWorkspace(props: { path: string; onBack: () => void; onFeedback: 
       setLoading(false); setError('');
     } catch { fail('Mobile workspace could not load. Check the connection or retry loading.'); }
   };
-  return <><header><strong>Mobile workspace</strong><button type="button" onClick={props.onBack}>Back to workspace</button></header>
+  return <>
     {loading ? <p role="status">Loading mobile workspace…</p> : null}
     {error ? <div role="alert"><p>{error}</p><button type="button" onClick={() => {
       setError(''); setLoading(true); setAttempt(value => value + 1);

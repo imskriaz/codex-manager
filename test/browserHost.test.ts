@@ -197,25 +197,22 @@ describe("browser dashboard bridge", () => {
     expect(events).not.toContainEqual(expect.objectContaining({ state: { stale: true } }));
     sockets[1]!.open();
     listeners.get("online")!();
-    expect(sockets[1]!.close).toHaveBeenCalledOnce();
-    sockets[2]!.open();
+    expect(sockets[1]!.close).not.toHaveBeenCalled();
     documentMock.visibilityState = "hidden"; listeners.get("visibilitychange")!();
     now += 1000; documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
-    expect(sockets).toHaveLength(3);
+    expect(sockets).toHaveLength(2);
     documentMock.visibilityState = "hidden"; listeners.get("visibilitychange")!();
     now += 16000; documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
-    expect(sockets[2]!.close).toHaveBeenCalledOnce();
-    expect(sockets).toHaveLength(4);
-    sockets[3]!.open();
+    expect(sockets[1]!.close).not.toHaveBeenCalled();
+    expect(sockets).toHaveLength(2);
     await post({ type: "dashboard:action", requestId: "recovered", action: "listCodexCliSessions" });
-    expect(sockets[3]!.send).toHaveBeenCalledOnce();
-    expect(sockets.slice(1, 3).every(socket => socket.send.mock.calls.length === 0)).toBe(true);
+    expect(sockets[1]!.send).toHaveBeenCalledOnce();
     navigatorMock.onLine = false; listeners.get("offline")!();
     expect(events).toContainEqual(expect.objectContaining({ stage: "offline" }));
     documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
-    expect(sockets).toHaveLength(4);
+    expect(sockets).toHaveLength(2);
     navigatorMock.onLine = true; listeners.get("online")!();
-    expect(sockets).toHaveLength(5);
+    expect(sockets).toHaveLength(3);
   });
   it("aborts a stalled HTTP action and reports its unconfirmed outcome", async () => {
     const events: Array<Record<string, unknown>> = [];
@@ -391,7 +388,7 @@ describe("browser dashboard bridge", () => {
     runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event,
       fetch: vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({}) })), console, Error, Array, JSON, Date, Map });
     sockets[0]!.readyState = Socket.OPEN; sockets[0]!.listeners.get("open")!();
-    sockets[0]!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:notice", level: "info", message: "live" }) });
+    sockets[0]!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:codex-session-live", state: {} }) });
     expect(events.filter(event => event.type === "dashboard:host-status" && event.stage === "live").at(-1)?.timings).toEqual(expect.objectContaining({ socketMs: expect.any(Number), firstLiveMs: expect.any(Number) }));
     sockets[0]!.listeners.get("close")!({ code: 1006 });
     timers.find(timer => timer.delay === 500)?.callback(); sockets[1]!.readyState = Socket.OPEN; sockets[1]!.listeners.get("open")!();

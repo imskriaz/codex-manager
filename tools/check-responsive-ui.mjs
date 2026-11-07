@@ -452,7 +452,7 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
     const monitor = await opened;
     await monitor.locator('.browser-work-monitor').waitFor();
     await monitor.frameLocator('iframe').getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
-    await monitor.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+    await monitor.close();
     assert.equal(await composer.inputValue(), 'Keep my draft while monitoring', 'The work monitor preserves the original composer');
     await composer.fill('');
   }

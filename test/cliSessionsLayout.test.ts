@@ -120,6 +120,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('aria-label="Close image preview"');
       expect(source).toContain('aria-label="Download image"');
       expect(source).toContain('download={`codex-image-${index + 1}`}');
+      expect(source).toContain('class="cli-attachment-preview"');
+      expect(source).toContain('aria-label={`Preview ${file.name}`}');
     expect(source).toContain('class="cli-code-surface"');
     expect(source).toContain('copyLabel={failed ? "Copy error" : "Copy result"}');
     expect(css).toContain("overflow-x: auto");
@@ -220,6 +222,8 @@ describe("sessions sidebar layout", () => {
     expect(projects).toBeGreaterThan(filters);
     expect(source).not.toContain("<AccountDock");
     expect(source).toContain('class={`cli-account-footer');
+    expect(source).toContain('class="cli-account-footer-quota"');
+    expect(source).toContain('aria-label="Open account center"');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('class="cli-composer-location is-top"');
     expect(source).toContain("!props.projectLocked");

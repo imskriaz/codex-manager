@@ -1,12 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../src/domain/dashboard/types";
-import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatus } from "../webview-src/dashboard/cliSessionLiveState";
+import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { cliSessionTargetKey } from "../webview-src/dashboard/cliSessionRoute";
 
 const message = (id: string, text: string, turnId?: string, role: "user" | "assistant" = "assistant"): DashboardCliSessionMessage => ({ id, text, role, turnId });
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it('uses live history only after an initial load with current, complete running authority', () => {
+    const row = { id: 'chat', title: 'Task', status: 'running' as const, steerTurnId: 'turn' };
+    const live = snapshot();
+    expect(hasCurrentCliLiveHistory(row, live, true, true)).toBe(true);
+    expect(hasCurrentCliLiveHistory(row, live, false, true)).toBe(false);
+    expect(hasCurrentCliLiveHistory(row, live, true, false)).toBe(false);
+    for (const changed of [undefined, { ...live, truncated: true }, { ...live, status: 'completed' as const }, { ...live, deviceId: 'other' }, { ...live, turnId: 'different' }]) {
+      expect(hasCurrentCliLiveHistory(row, changed, true, true)).toBe(false);
+    }
+    expect(hasCurrentCliLiveHistory({ ...row, status: 'idle', steerTurnId: undefined, updatedAt: new Date(200).toISOString() }, live, true, true)).toBe(false);
+  });
+  it.each(['running', 'completed', 'failed', 'disconnected'] as const)('preserves unchanged rows and lists during %s token updates', status => {
+    const state = snapshot({ status });
+    const row = { id: 'chat', title: 'Task', status: 'idle' as const };
+    const key = cliSessionTargetKey(row);
+    const reconciled = reconcileCliSessionStatuses([row], { [key]: state });
+    const tokenUpdate = { ...state, sequence: 2, messages: [message('text', 'More tokens')] };
+    expect(reconcileCliSessionStatuses(reconciled, { [key]: tokenUpdate })).toBe(reconciled);
+    expect(reconcileCliSessionStatus(reconciled[0]!, { [key]: tokenUpdate })).toBe(reconciled[0]);
+    const other = { ...row, id: 'other' };
+    expect(reconcileCliSessionStatuses([row, other], { [key]: state })[1]).toBe(other);
+    expect(reconcileCliSessionStatuses(reconciled, { [key]: snapshot({ status: status === 'running' ? 'completed' : 'running', streamId: 'new', updatedAt: 200 }) })).not.toBe(reconciled);
+  });
   it("keeps saved current-turn history when the bounded live suffix has rolled forward", () => {
     const history = [message("prompt", "Do work", "turn", "user"), message("early", "Earlier activity", "turn"), message("latest", "Partial", "turn")];
     expect(combineCliLiveMessages(history, snapshot({ truncated: true, messages: [message("latest", "Updated", "turn")] })).map(item => item.text)).toEqual(["Do work", "Earlier activity", "Updated"]);

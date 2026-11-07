@@ -1202,6 +1202,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
+  | { type: "dashboard:host-reload"; deviceId?: string; startedAt: number; phase: "reloading" | "failed"; fromAccountId?: string; toAccountId?: string }
   | { type: 'dashboard:maintenance-progress'; job: import('../maintenance').MaintenanceJob; deviceId?: string }
   | { type: 'dashboard:project-changed'; projectPath: string }
   | {
@@ -1216,8 +1217,8 @@ export type DashboardHostMessage =
   | {
       type: "dashboard:host-status";
       stage: "connecting" | "live" | "degraded" | "reconnecting" | "unreachable" | "offline";
-        lastSyncAt?: number;
-        timings?: { socketMs?: number; firstLiveMs?: number; reconnectMs?: number };
+      lastSyncAt?: number;
+      timings?: { socketMs?: number; firstLiveMs?: number; reconnectMs?: number };
       retryInMs?: number;
     }
   | {

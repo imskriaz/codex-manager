@@ -117,11 +117,16 @@ try {
     await context.setOffline(false);
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === true, null, { timeout: 30_000 });
     assert.deepEqual(errors, [], "Real browser runtime errors");
-    results.push({ width, loadMs, sessions: sessions.length, children: childIds.length, messages, newChat: createdSessionId ? "first response passed" : "not requested", reconnect: "passed" });
+    const timings = await page.evaluate(() => window.__liveEvents.filter(event => event.type === 'dashboard:host-status' && event.timings).at(-1)?.timings ?? {});
+    results.push({ width, loadMs, timings, sessions: sessions.length, children: childIds.length, messages, newChat: createdSessionId ? "first response passed" : "not requested", reconnect: "passed" });
     await context.close();
   }
   await writeFile(path.join(output, "results.json"), JSON.stringify(results, null, 2));
-  console.log(JSON.stringify({ results, screenshots: output }, null, 2));
+  const timingSummary = Object.fromEntries(['loadMs', 'socketMs', 'firstLiveMs', 'reconnectMs'].map(key => {
+    const samples = results.map(result => key === 'loadMs' ? result.loadMs : result.timings[key]).filter(Number.isFinite).sort((a, b) => a - b);
+    return [key, { samples: samples.length, p50: samples[Math.max(0, Math.ceil(samples.length * .5) - 1)] ?? null, p95: samples[Math.max(0, Math.ceil(samples.length * .95) - 1)] ?? null }];
+  }));
+  console.log(JSON.stringify({ results, timingSummary, screenshots: output }, null, 2));
 } finally {
   await browser.close();
 }

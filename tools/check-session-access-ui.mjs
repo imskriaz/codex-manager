@@ -22,6 +22,17 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   await external('danger-full-access');
   await toggle.click(); const access=page.getByRole('combobox',{name:'Access mode',exact:true});
   await page.waitForFunction(()=>document.querySelector('select[name="sandbox-mode"]')?.value==='danger-full-access');
+  const panel = page.locator('.cli-composer-options');
+  const modelBounds = await page.getByRole('combobox', { name: 'Model', exact: true }).boundingBox();
+  const reasoningBounds = await page.getByRole('combobox', { name: 'Reasoning', exact: true }).boundingBox();
+  assert.ok(reasoningBounds.y > modelBounds.y, 'Model and reasoning keep separate full-width rows');
+  for (const field of await panel.locator('.cli-options-grid label, .cli-permission-panel label').all()) {
+    const bounds = await field.boundingBox(), control = await field.locator('select, input').boundingBox();
+    assert.ok(control.x >= bounds.x && control.x + control.width <= bounds.x + bounds.width + 1, 'Every settings control fits its label');
+    if (await field.locator('select').count()) assert.ok(control.width > 0, 'Selects remain visible in their compact columns');
+  }
+  assert.equal(await panel.evaluate(element => element.scrollWidth > element.clientWidth + 1), false, 'Compact settings have no horizontal overflow');
+  await page.screenshot({ path: path.join(output, `permissions-${width}x${height}.png`), animations: 'disabled' });
   await access.selectOption('read-only');
   await page.waitForFunction(()=>document.querySelector('select[name="sandbox-mode"]')?.value==='read-only');
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='setCodexSessionAccess').length),1,'Changing access syncs once');

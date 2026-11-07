@@ -1,188 +1,142 @@
 # Workspace speed and realtime reliability plan
 
-## Goal
+## Scope and current behavior
 
-Make the workspace feel immediate while keeping state trustworthy when the
-connection, session owner, browser tab, or local storage changes.
+The mobile browser workspace already provides the conversation list, transcript,
+reasoning and tool details, composer, prompts, files, terminals, Git, reviews and
+agents. Its compact layout uses labeled icons, collapsible activity, responsive
+dialogs and follow-latest scrolling. Preserve those controls, readable text,
+keyboard focus, drafts and browser-local queue ownership.
 
-The current code already has useful safety fences: WebSocket reconnect with
-backoff, snapshot revision checks, bounded action maps, live session events,
-durable message queues, and explicit unknown or unconfirmed states. The main
-cost is that several paths still rebuild broad state or wait for a full action
-round trip before the interface can show local progress.
+This implementation removes avoidable recovery and render work using the existing
+protocol. It does not promise zero network latency. Do not add another delta
+protocol, revision-dependent React keys, server-owned composer queues or queue
+write coalescing: each would add a second contract without measured need.
 
-## Findings from the current code
+## Implementation checklist
 
-- `media/webview/browserHost.js` keeps one in-flight snapshot and reconnects with
-  500 ms to 5 s backoff. It correctly drops stale snapshots by revision, but a
-  reconnect can still wait for a full `/api/state` response before all derived
-  dashboard views settle.
-- `src/services/webDashboardServer.ts` builds and sends broad snapshots for
-  many actions. Session list and transcript actions are already excluded from
-  the immediate snapshot path, but the remaining state payload is still larger
-  than a workspace view needs.
-- Session live updates are pushed over WebSocket and merged in the webview, but
-  transcript reads and session-list reads remain separate requests. A selected
-  workspace can therefore render a stale list while its live turn is current.
-- `webview-src/dashboard/cliSessionsModal.tsx` renders the sidebar, transcript,
-  composer, queue, and workspace rail in one component tree. Realtime messages
-  can invalidate more of this tree than the changed session requires.
-- `webview-src/dashboard/cliMessageQueue.ts` writes queue state before dispatch,
-  prevents blind replay after timeout, and now supports Send now ordering. Queue
-  and Steer are per-composer settings; Queue deliberately waits for the active
-  turn to finish, while Steer uses the verified turn fence.
-- The host already suspends some work in hidden tabs and uses bounded timers,
-  but there is no single measured budget for first workspace paint, first live
-  event, action acknowledgement, or reconnect recovery.
+| Area | Change | Completion assertion |
+| --- | --- | --- |
+| Startup/reconnect | In `src/services/webDashboardServer.ts`, `sendRealtimeSnapshot` replays bounded live state, access events and prompts before awaiting dashboard state; cap the state wait at five seconds. | A hung/failed state build emits a warning without closing the usable socket; a closed client receives no late snapshot. |
+| Startup listener | In `media/webview/browserHost.js`, retain the latest 30 session live states and latest prompts only until the dashboard listener is ready. | Early live activity replays once, remains bounded, and releases after mount or authentication loss. A different source snapshot clears old startup state. |
+| Connection reuse | Reuse `connectingSocket`, `reconnectTimer` and `snapshotInFlight`; preserve healthy/connecting sockets on focus and online events. Share overlapping manual retries. | One handshake and one snapshot fetch; one manual retry outcome. Existing ten-second handshake timeout and 500 ms–5 s retry backoff remain bounded. |
+| Transport pressure | Reject sends above the existing server's 4 MiB browser transport pressure threshold. | The initiating action receives an immediate failure saying it was not sent. No automatic HTTP fallback or mutation replay; explicit retry works after drain. |
+| Incremental activity | Reuse `dashboard:codex-session-live`, bounded full tails, `streamId`, `sequence`, device identity and truncation. In `webview-src/dashboard/main.tsx`, ignore rejected terminal events before requesting history. | Duplicate, obsolete and out-of-order frames cannot revoke current authority or trigger duplicate completion refreshes. |
+| History reads | Use `hasCurrentCliLiveHistory` in `webview-src/dashboard/cliSessionLiveState.ts` to skip redundant running history reads only after initial history is loaded and current complete authoritative live state exists. | Missing history, changed project/turn/device, truncated/absent/disconnected authority and explicit refresh retain recovery reads; accepted completion refreshes saved history. |
+| Render work | Preserve unchanged session object and array identities during message-only updates. Sort the live registry only when trimming beyond 30 sessions. | Status transitions still update rows. Composer identity, draft, focus and queue lock survive token updates. |
+| Diagnostics | Correct `socketMs`, `firstLiveMs` and `reconnectMs` in `browserHost.js`; summarize finite samples in `tools/check-live-ui.mjs`. | First socket open stays fixed; first live means a session event, not a notice; reconnect measures the last completed transport recovery, including manual retry. |
+| Node storage policy | Remove unused synthetic `globalStorageUri` in `src/node.ts`. | `test/storageRoot.test.ts` passes; storage stays at the shared root. |
 
-## Implementation phases
+Existing send/steer, Stop, resume, file and terminal actions already bypass broad
+snapshots. Keep their immediate pending feedback and request-scoped outcomes.
+Stop confirmation means the request was accepted, not that the turn has ended.
+No optional discovery, snapshot or recovery wait may gate these manual actions.
 
-### 1. Measure before changing behavior
+The browser queue remains exclusively browser-owned through `navigator.locks`.
+Persisted dispatch and Send now reorder writes remain commit barriers. Storage
+failure must retain the draft/queue and prevent an unsafe send. No optimistic
+success or automatic replay follows an unknown mutation outcome.
 
-Add lightweight development diagnostics around:
+## Failure and compatibility contract
 
-- navigation to workspace,
-- snapshot request and response size,
-- session list and transcript request duration,
-- first WebSocket open and first live session event,
-- action sent, action acknowledged, and action outcome confirmed,
-- reconnect start, socket open, snapshot accepted, and stale snapshot dropped.
+Keep existing full-tail validation and timestamp/stream/sequence acceptance;
+this change introduces no protocol or persisted-schema migration. List
+`realtimeRevision` continues to fence owner-scoped list responses; it is not a
+live-stream sequence. Browser `sourceGeneration` continues to fence action
+results after a snapshot identifies a different system; it is not a process
+boot ID and does not claim same-device reboot detection.
 
-Record p50/p95 values in the existing UI check output. Keep the diagnostics
-disabled in production or sample them at a low rate. Set budgets before
-optimizing: first usable workspace under 500 ms from cached state, first live
-event under 1 s when the socket is available, local send/queue feedback in the
-same frame, and reconnect recovery under 3 s on a healthy local host.
+- Offline, expired authentication, socket close and lost acknowledgement keep
+  their current explicit offline/unconfirmed states and no-blind-replay rules.
+- Missing, stale or corrupt cache falls back to existing list/history/state
+  requests; it never becomes authority for sending or steering.
+- Partial/truncated or unavailable live history retains disk history recovery.
+  Quiet sessions do not need to emit a new event for the socket to remain usable.
+- Snapshot timeout/failure preserves live activity and displayed data, emits a
+  warning, and allows Refresh dashboard to retry. Late completion does not send
+  an extra snapshot after the bounded attempt has ended.
+- Focus and online notifications do not abandon pending actions on healthy
+  sockets. Actual close still reports unknown outcomes and reconnects once.
+- Queue-full, storage-full, ownership loss and reload keep existing durable
+  fences. Backpressure rejects before transport send; it does not clear drafts.
+- Same-device host reboot, real remote latency, sustained storage exhaustion and
+  long-run memory pressure require separate environmental verification. Existing
+  stream replacement and persisted-queue tests are simulations, not reboot proof.
 
-### 2. Make selected workspace data incremental
+## Verification and delivery
 
-Introduce a small workspace-scoped realtime payload containing only:
+Finish the implementation audit before starting tests. Changed implementation
+paths are those listed above, plus `src/domain/dashboard/types.ts` formatting;
+update only their associated tests, this plan, `WORKSPACE-GOAL.md`, changelog,
+`package.json` and root `package-lock.json`. Use no new dependencies.
 
-- the selected session status and current turn,
-- changed transcript items or a bounded live tail,
-- queue and prompt changes for that session,
-- a monotonic session revision and source system ID.
+1. Focused tests: `test/browserHost.test.ts`,
+   `test/browserRealtimeRecovery.test.ts`, `test/cliSessionLiveState.test.ts`,
+   `test/webDashboardSessionLive.test.ts`, `test/storageRoot.test.ts`,
+   `test/cliSessionsLayout.test.ts`, and `test/cliMessageQueue.test.ts`.
+   Cover shared retries, startup replay, bounded buffers, unchanged row identity,
+   missing/truncated/stale authority, completion ordering and failed snapshot
+   delivery. Retain existing lost-ack, cache, ownership and durable-queue tests.
+2. Run the full regression suite, then `npm run verify` and production compile.
+   Keep complete logs and actual exit codes; interrupted runs are not passes.
+3. Run responsive fixture checks at all six existing sizes in light/dark themes,
+   plus notification/offline fixtures. Require no horizontal overflow, accessible
+   icon names, visible feedback, readable text and keyboard focus.
+4. Run read-only `tools/check-live-ui.mjs --workspace-assets` against the required
+   local host. Capture desktop/mobile screenshots, runtime errors, offline
+   recovery and timing samples. Do not create sessions or send messages.
+5. This slice increments `1.7.3-pre.5` once to `1.7.3-pre.6`; a concurrent
+   access-profile slice advances to `1.7.3-pre.7`, and the toolbar style slice to
+   `1.7.3-pre.8`. Preserve all changelog entries and synchronize manifest/lock versions. Package and verify
+   the final agreed snapshot, install it in local VS Code, commit intended
+   changes directly on `main`, then push. Do not publish tags or releases.
+6. Record exact results and remaining environment limits in `WORKSPACE-GOAL.md`.
+   Workspace client assets against the running host do not prove that the host
+   process has reloaded the newly installed extension.
 
-Keep the broad dashboard snapshot for startup and settings. On a selected
-workspace, apply the incremental payload first and request a transcript refresh
-only when the revision gap, truncation marker, or source change says it is
-needed. Never merge an older payload over a newer live revision.
+## Measurement limits and next profiling pass
 
-Files to inspect together: `src/services/webDashboardServer.ts`,
-`src/domain/dashboard/types.ts`, `src/domain/codexSessionLive.ts`,
-`webview-src/dashboard/cliSessionLiveState.ts`, and
-`media/webview/browserHost.js`.
+`loadMs` in the live smoke script measures navigation to a visible dashboard.
+The host timings start at bridge initialization: `socketMs` ends at its first
+socket open; `firstLiveMs` ends at the first session event and is absent for quiet
+hosts; `reconnectMs` ends at socket open after a recovery start. Reconnect timing
+does not measure accepted transcript recovery. The script navigates again, so
+its load sample and final bridge timings may come from different documents.
+Two viewport samples provide smoke evidence only, even when p50/p95 are printed.
 
-### 3. Reduce render work without hiding state
+For performance acceptance, take at least 30 warm-cache and 30 cold-cache runs
+separately on the same hardware/browser and fixed session fixture; record host
+version, cache condition and sample count. Add navigation-to-usable-transcript,
+action-acknowledgement and recovery-to-accepted-state timings before claiming
+budgets. Provisional targets are 500 ms cached usable workspace, 1 s first session
+event on an available local socket, and same-frame local pending feedback.
+A 3 s reconnect target applies only to immediate healthy-host recovery, not the
+maximum 5 s backoff after repeated failures. These targets are not measured gains.
 
-Split the large session page at stable boundaries:
+Only after profiling shows a remaining cost: extract stable memoized component
+boundaries without changing component keys, consider completed-history
+virtualization while preserving the live tail, or specify a new catch-up protocol
+with retention, timeout and full-refresh fallback. Keep queue coalescing deferred
+unless its commit barriers and failure propagation can be proven equivalent.
 
-- session sidebar keyed by session-list revision,
-- transcript keyed by selected session and message revision,
-- composer and queue keyed by composer scope,
-- workspace tools keyed by project and active tab.
+## Combined access-profile delivery
 
-Memoize only these boundaries and keep the existing local feedback behavior.
-Do not virtualize the transcript until measurements show large histories are a
-real cost; if needed, virtualize only completed activity while preserving the
-live tail, keyboard focus, and question anchors.
+The user authorized including the concurrent access-profile fix after
+verification. Its scope is `src/domain/codexSessionAccess.ts`,
+`src/services/codexSessionResume.ts` and their six access/app-server/native tests.
+Full explicitly selects `:danger-full-access` for session creation, resumed
+turns and settings changes. Confirmation compares both effective mode and
+selected profile; unchanged approval settings remain unchanged. Restricted modes
+retain their sandbox policy. Starting a new turn fails visibly when the selected
+profile cannot be confirmed or its recovery record cannot be persisted.
 
-### 4. Make manual actions locally immediate
+Audit the parser, sync/native confirmation callers and persistence first; then
+run the access-focused tests before restarting the full combined regression.
+Keep the superseded in-progress regression log, but do not count it as a pass.
+Package/install/commit the verified combined `pre.8` snapshot; live read-only
+checks do not claim to exercise a real access mutation.
 
-Use the existing durable queue and optimistic local state for visible intent:
-
-- show a queued or steering row immediately after the local fence is saved,
-- keep the composer draft independent from the action result,
-- show the exact pending, confirmed, failed, cancelled, or unconfirmed state,
-- reconcile with the owner echo or action result before removing the local row.
-
-Extend this pattern to refresh, stop, resume, file reads, and terminal controls
-where the current UI waits for a broad snapshot. Never claim completion from a
-local optimistic state alone.
-
-### 5. Tighten realtime recovery
-
-Keep the current backoff and no-blind-replay rules, then add:
-
-- a single reconnect coordinator so visibility, offline, socket-close, and
-  manual retry cannot start overlapping probes;
-- a bounded stale-data banner that names the last accepted revision/time;
-- a delta catch-up request after reconnect before falling back to a full state
-  snapshot;
-- explicit source-generation fencing for actions and live events after account
-  or host changes;
-- a test for a socket that opens, drops during an action, and returns an
-  acknowledgement from the old generation.
-
-### 6. Storage and queue pressure
-
-Measure IndexedDB write latency and queue bytes. Keep the current hard limits,
-but coalesce adjacent queue writes and surface a warning before the hard limit.
-Send now must remain a reorder operation until its durable write succeeds; Queue
-must never dispatch while a verified turn is running; Steer must include the
-expected turn ID and fail closed when it changes.
-
-### 7. Verification matrix
-
-Focused tests should cover:
-
-- cached workspace paint followed by a newer live delta,
-- stale snapshot after a newer delta,
-- reconnect during send, stop, steer, refresh, and transcript load,
-- duplicate socket opens and overlapping manual retries,
-- source/account change with late action results,
-- Queue and Steer mode across reload, offline, full storage, timeout, and
-  completed-turn transitions,
-- Send now reordering before and after reconnect,
-- large transcript rendering and bounded live-tail trimming.
-
-Then run the full regression suite, lint, webview typecheck, extension build,
-VSIX packaging, local VSIX installation, and the read-only local UI checks at
-`http://127.0.0.1:39875`. Record timings and any unverified external cases in
-`WORKSPACE-GOAL.md`.
-
-## Risks and limits
-
-- Smaller deltas can hide a missed event if revision fencing is incomplete;
-  every delta needs a gap or truncation signal and a full-refresh fallback.
-- Memoization can preserve stale callbacks if scope keys are wrong; tests must
-  switch sessions and devices while actions are pending.
-- Optimistic controls can mislead users if success is shown before owner
-  confirmation; use pending language until the result or transcript echo.
-- Actual reboot, storage exhaustion, remote peer latency, and long-run memory
-  pressure remain environment-dependent and must be reported separately from
-  local fixture results.
-
-## Proposed order
-
-Measure first, then incremental selected-session events, then render boundaries,
-then optimistic manual actions, then reconnect and storage pressure tuning.
-Re-run the same timing and failure matrix after each phase so a faster path does
-not quietly weaken delivery or recovery guarantees.
-
-## Compact workspace plan
-
-Keep the existing mobile layout as the source of truth and reduce density in
-small, reversible steps:
-
-1. Keep the conversation title, connection state, and primary action visible;
-   move secondary actions into labeled icon buttons with tooltips and
-   accessible names. Never remove the text alternative from an icon-only
-   control.
-2. Keep one compact session row per conversation: status icon, two-line title
-   and project metadata, then time. Use the existing search and project groups
-   instead of repeating context in every row.
-3. Keep transcript activity collapsed by default, with a clear activity glyph,
-   status, and short summary. Open tool arguments, results, command output, and
-   file changes on demand; preserve copy, keyboard focus, and the live tail.
-4. Keep the Composer to two rows on a phone: message field, attachment, model,
-   access, and send/stop. Place less-used settings behind the existing
-   anchored popover and keep the input at readable text size.
-5. Measure each change at 320, 390, 768, and 1440 pixels in light and dark
-   themes. The acceptance bar is no horizontal scroll, 44px touch targets,
-   visible focus, readable labels, and no loss of error or pending states.
-
-The compact pass should delete repeated decoration before shrinking type. Body
-text stays at a readable size; density comes from spacing, grouping, and icon
-placement. Virtualize only completed transcript activity after profiling shows
-that the live tail needs it.
+The user assigned final verification and delivery to another active task. This
+task leaves implementation and focused results in the shared main checkout and
+does not duplicate that owner's jobs. See `output/workspace-speed-handoff.md`
+for the interrupted regression failure and required production asset rebuild.

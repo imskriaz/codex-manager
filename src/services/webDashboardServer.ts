@@ -1954,19 +1954,20 @@ export class WebDashboardServer implements vscode.Disposable {
   private async sendRealtimeSnapshot(socket: WebSocket): Promise<void> {
     try {
       if (socket.readyState === WebSocket.OPEN) {
-        const state = await this.buildState();
-        this.lastRealtimeSignature = buildDashboardStateSignature(state);
-        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:snapshot", state }));
         for (const live of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()]) {
           if (socket.readyState !== WebSocket.OPEN) break;
           sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:codex-session-live", state: live } satisfies DashboardHostMessage));
         }
         for (const access of this.sessionAccessEvents.values()) sendDashboardSocketMessage(socket, JSON.stringify(access));
         sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:codex-requests", requests: [...listPendingCodexAppServerPrompts(), ...this.remoteCodexPrompts.values()] } satisfies DashboardHostMessage));
+        const state = await waitWithin(this.buildState(), 5_000, 'Dashboard state is still loading. Use Refresh dashboard to retry.');
+        if (socket.readyState !== WebSocket.OPEN) return;
+        this.lastRealtimeSignature = buildDashboardStateSignature(state);
+        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:snapshot", state }));
       }
     } catch (error) {
       console.warn("[codexManager] WebSocket snapshot failed", error);
-      socket.close();
+      sendDashboardSocketMessage(socket, JSON.stringify({ type: 'dashboard:notice', level: 'warning', message: 'Dashboard state could not be refreshed. Live activity remains connected; use Refresh dashboard to retry.' } satisfies DashboardHostMessage));
     }
   }
 

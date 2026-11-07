@@ -630,7 +630,7 @@ describe("peer WebSocket failure handling", () => {
   it("keeps the VS Code host and detached relay on the single dashboard port", () => {
     const serverSource = readFileSync("src/services/webDashboardServer.ts", "utf8");
     const relaySource = readFileSync("tools/always-online-server.js", "utf8");
-    expect(serverSource).toContain("const WEB_DASHBOARD_PORT = 39875;");
+    expect(serverSource).toContain('const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);');
     expect(serverSource).not.toContain("39876");
     expect(relaySource).toContain("const port = 39875;");
     expect(relaySource).not.toContain("config.port || 39875");

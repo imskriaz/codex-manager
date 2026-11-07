@@ -96,7 +96,7 @@ export async function checkWorkMonitorUi(page, { origin, parentId, runningId, wi
   assert.ok(await content.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Full dashboard fits its iframe');
   assert.ok(await monitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Floating shell fits');
   await monitor.screenshot({ path: path.join(output, `work-monitor-${width}x${height}.png`), animations: 'disabled' });
-  await monitor.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+  await monitor.close();
   await page.waitForFunction(() => document.querySelector('button[aria-label="Keep on top"]')?.getAttribute('aria-pressed') === 'false');
   assert.equal(await original.inputValue(), 'Keep the original window draft');
 

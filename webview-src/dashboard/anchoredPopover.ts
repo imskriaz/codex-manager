@@ -1,19 +1,19 @@
 import { useLayoutEffect } from 'preact/hooks';
 
 type Anchor = Pick<DOMRect, 'top' | 'bottom' | 'left' | 'right'>;
-export function anchoredPopoverPosition(anchor: Anchor, menu: { width: number; height: number }, viewport: { left: number; top: number; width: number; height: number }, align: 'start' | 'end' = 'end') {
+export function anchoredPopoverPosition(anchor: Anchor, menu: { width: number; height: number }, viewport: { left: number; top: number; width: number; height: number }, align: 'start' | 'center' | 'end' = 'end') {
   const { left: x, top: y, width, height } = viewport;
   const below = y + height - anchor.bottom - 6, above = anchor.top - y - 6;
   const opensAbove = menu.height > below && above > below;
   return {
-    left: Math.max(x + 8, Math.min(align === 'start' ? anchor.left : anchor.right - menu.width, x + width - menu.width - 8)),
+    left: Math.max(x + 8, Math.min(align === 'start' ? anchor.left : align === 'center' ? (anchor.left + anchor.right - menu.width) / 2 : anchor.right - menu.width, x + width - menu.width - 8)),
     top: Math.max(y + 8, Math.min(opensAbove ? anchor.top - menu.height - 6 : anchor.bottom + 6, y + height - menu.height - 8)),
     opensAbove
   };
 }
 
 /** Keep flyouts beside their trigger as content, scroll and the mobile keyboard change. */
-export function useAnchoredPopover(open: boolean, anchor: { current?: Pick<HTMLElement, 'isConnected' | 'getBoundingClientRect'> | null }, panel: { current?: HTMLElement | null }, align: 'start' | 'end' = 'end') {
+export function useAnchoredPopover(open: boolean, anchor: { current?: Pick<HTMLElement, 'isConnected' | 'getBoundingClientRect'> | null }, panel: { current?: HTMLElement | null }, align: 'start' | 'center' | 'end' = 'end') {
   useLayoutEffect(() => {
     const menu = panel.current;
     if (!open || !menu) return;

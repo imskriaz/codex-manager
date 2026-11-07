@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/require-await -- Host adapters expose promise APIs over synchronous storage and cleanup. */
+import { readFileSync } from "node:fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { initializeSqliteContextWithRetry } from "./storage/sqliteContext";
@@ -44,13 +46,12 @@ function createMemento(): vscode.Memento {
 function createContext(): vscode.ExtensionContext {
   const extensionRoot = path.resolve(__dirname, "..");
   const uri = vscode.Uri.file(extensionRoot);
-  const packageJSON = require(path.join(extensionRoot, "package.json")) as Record<string, unknown>;
+  const packageJSON = JSON.parse(readFileSync(path.join(extensionRoot, "package.json"), "utf8")) as Record<string, unknown>;
   return {
     extensionUri: uri,
     extension: { packageJSON, extensionUri: uri },
     extensionPath: extensionRoot,
     storageUri: vscode.Uri.file(process.env["CODEX_MANAGER_STORAGE_ROOT"] ?? extensionRoot),
-    globalStorageUri: uri,
     globalState: createMemento(),
     workspaceState: createMemento(),
     secrets: createNodeSecretStorage(),

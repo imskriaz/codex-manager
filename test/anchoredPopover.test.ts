@@ -10,6 +10,9 @@ it('fits the visual viewport with an on-screen keyboard and zoom offsets', () =>
   const position = anchoredPopoverPosition({ top: 290, bottom: 314, left: 260, right: 284 }, { width: 240, height: 160 }, screen, 'start');
   expect(position).toEqual({ left: 112, top: 124, opensAbove: true });
 });
+it('centers a flyout on its trigger when requested', () => {
+  expect(anchoredPopoverPosition({ top: 100, bottom: 124, left: 300, right: 400 }, { width: 200, height: 100 }, viewport, 'center')).toEqual({ left: 250, top: 130, opensAbove: false });
+});
 it('clamps an oversized or detached anchor to the visible margin', () => {
   expect(anchoredPopoverPosition({ top: -100, bottom: -80, left: 1500, right: 1600 }, { width: 1000, height: 800 }, viewport)).toMatchObject({ left: 8, top: 8 });
 });

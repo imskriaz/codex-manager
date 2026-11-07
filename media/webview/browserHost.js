@@ -8,7 +8,10 @@
   let lastSyncAt;
   let lastProbeAt = 0;
   let snapshotInFlight;
+  let retryInFlight;
   let latestSnapshot;
+  const startupLive = new Map();
+  let startupPrompts;
   let dashboardReady = false;
   let snapshotRevision = 0;
   let sourceSystemId;
@@ -17,9 +20,9 @@
   let socketOpenedAt;
   let firstLiveAt;
   let reconnectStartedAt;
+  let reconnectMs;
   const retiredSourceRequests = new Set();
   let authenticationRequired = false;
-  let hiddenAt;
   const pendingSocketActions = new Map();
   const pendingHttpActions = new Set();
   const baseRequestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask", "startProjectSubtask"].includes(message?.action)
@@ -48,6 +51,8 @@
       const nextSystem = message.state?.connectedPeers?.find(peer => peer.local)?.id;
       if (nextSystem && sourceSystemId && nextSystem !== sourceSystemId) {
         sourceGeneration++;
+        startupLive.clear();
+        startupPrompts = undefined;
         const retired = [...pendingSocketActions.keys()];
         failUnconfirmedSocketActions();
         for (const id of retired) retiredSourceRequests.add(id);
@@ -61,15 +66,22 @@
       peerAccountCounts.clear();
       for (const [id, accounts] of Object.entries(message.state?.peerAccounts || {})) peerAccountCounts.set(id, accounts.length);
     }
+    if (!dashboardReady && message?.type === 'dashboard:codex-session-live') {
+      const key = `${message.state?.deviceId ?? 'local'}:${message.state?.sessionId}`;
+      startupLive.delete(key);
+      startupLive.set(key, message);
+      while (startupLive.size > 30) startupLive.delete(startupLive.keys().next().value);
+    }
+    if (!dashboardReady && message?.type === 'dashboard:codex-requests') startupPrompts = message;
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
 
   const isBrowserOffline = () => typeof navigator !== "undefined" && navigator.onLine === false && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
   const publishStatus = (stage, retryInMs) => {
     const timings = {};
-    if (socketOpenedAt) timings.socketMs = Math.max(0, socketOpenedAt - hostStartedAt);
-    if (firstLiveAt) timings.firstLiveMs = Math.max(0, firstLiveAt - hostStartedAt);
-    if (reconnectStartedAt && socketOpenedAt && socketOpenedAt >= reconnectStartedAt) timings.reconnectMs = Math.max(0, socketOpenedAt - reconnectStartedAt);
+    if (socketOpenedAt !== undefined) timings.socketMs = Math.max(0, socketOpenedAt - hostStartedAt);
+    if (firstLiveAt !== undefined) timings.firstLiveMs = Math.max(0, firstLiveAt - hostStartedAt);
+    if (reconnectMs !== undefined) timings.reconnectMs = reconnectMs;
     dispatch({
       type: "dashboard:host-status",
       stage: stage === "unreachable" && isBrowserOffline() ? "offline" : stage,
@@ -152,6 +164,9 @@
   const requireSignIn = () => {
     if (authenticationRequired) return;
     authenticationRequired = true;
+    latestSnapshot = undefined;
+    startupLive.clear();
+    startupPrompts = undefined;
     resetConnectingSocket();
     const active = realtimeSocket;
     realtimeSocket = undefined;
@@ -209,7 +224,8 @@
       connectingSocket = undefined;
       clearHandshake();
       realtimeSocket = socket;
-      socketOpenedAt = Date.now();
+      socketOpenedAt ??= Date.now();
+      if (reconnectStartedAt !== undefined) reconnectMs = Math.max(0, Date.now() - reconnectStartedAt);
       reconnectDelayMs = 500;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
@@ -222,7 +238,7 @@
       try {
         const message = JSON.parse(event.data);
         if (!message?.type) return;
-        if (!firstLiveAt) { firstLiveAt = Date.now(); publishStatus("live"); }
+        if (firstLiveAt === undefined && message.type === 'dashboard:codex-session-live') { firstLiveAt = Date.now(); publishStatus("live"); }
         if (message.type === "dashboard:action-result") forgetSocketAction(message.requestId);
         if (message.type === "dashboard:snapshot") {
           lastSyncAt = Date.now();
@@ -255,6 +271,8 @@
   };
 
   const restartRealtime = () => {
+    if (connectingSocket) return;
+    reconnectStartedAt ??= Date.now();
     resetConnectingSocket();
     const active = realtimeSocket;
     realtimeSocket = undefined;
@@ -294,11 +312,15 @@
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
       dashboardReady = true;
       const manual = message.type === "dashboard:retry-connection";
+      if (manual && retryInFlight) return retryInFlight;
       // Startup snapshots can arrive before the dashboard installs its listener.
       if (latestSnapshot) { const startup = latestSnapshot; latestSnapshot = undefined; dispatch(startup); }
+      for (const live of startupLive.values()) dispatch(live);
+      startupLive.clear();
+      if (startupPrompts) { const prompts = startupPrompts; startupPrompts = undefined; dispatch(prompts); }
       publishConnection();
       if (manual) restartRealtime();
-      try {
+      const refresh = (async () => { try {
         const loaded = await loadSnapshot();
         if (manual && loaded) dispatch({
           type: "dashboard:notice",
@@ -308,8 +330,10 @@
       } catch (error) {
         console.error("[codex-manager] dashboard refresh", error);
         if (manual) dispatch({ type: "dashboard:notice", level: "error", message: isRealtimeOpen() ? "Snapshot refresh failed. The live connection is available; displayed data may be stale." : "Dashboard is still unavailable. Check VS Code and try again." });
-      }
-      return;
+      } })();
+      if (!manual) return refresh;
+      retryInFlight = refresh.finally(() => { retryInFlight = undefined; });
+      return retryInFlight;
     }
     let reachedHost = false;
     let timer;
@@ -323,6 +347,7 @@
       // All dashboard actions use the live socket when available. A disconnected
       // socket still falls back to the existing confirmed HTTP request path.
       if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN) {
+        if (realtimeSocket.bufferedAmount > 4 * 1024 * 1024) throw new Error('The live connection is busy. This action was not sent. Wait for pending data before retrying.');
         reachedHost = true;
         if (message?.type === "dashboard:action" && message.requestId) {
           const actionTimer = window.setTimeout?.(() => {
@@ -406,7 +431,7 @@
 
   if (typeof window.addEventListener === "function") {
     window.addEventListener("online", () => {
-      restartRealtime();
+      connectRealtime();
       void loadSnapshot().catch(() => undefined);
     });
     window.addEventListener("offline", () => {
@@ -445,9 +470,7 @@
   }
 
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") { hiddenAt = Date.now(); return; }
-    if (hiddenAt !== undefined && Date.now() - hiddenAt >= 15_000) restartRealtime();
-    hiddenAt = undefined;
+    if (document.visibilityState !== "visible") return;
     publishConnection();
     if (!isRealtimeOpen()) connectRealtime();
     void loadSnapshot().catch(() => undefined);

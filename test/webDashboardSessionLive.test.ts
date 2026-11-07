@@ -2,6 +2,39 @@ import { describe, expect, it, vi } from "vitest";
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
+it.each(['timeout', 'failure', 'closed', 'success'])('replays activity and prompts before a slow dashboard snapshot: %s', async outcome => {
+  vi.useFakeTimers();
+  const browser = socket();
+  let finish!: (value: unknown) => void;
+  let fail!: (error: Error) => void;
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), {
+    sessionAccessEvents: new Map(), remoteCodexPrompts: new Map(),
+    currentRemoteSessionLive: () => [{ ...state(), deviceId: 'remote-pc' }],
+    buildState: vi.fn(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }))
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    const pending = server.sendRealtimeSnapshot(browser);
+    const replay = browser.send.mock.calls.map(call => JSON.parse(call[0] as string));
+    expect(replay).toContainEqual(expect.objectContaining({ type: 'dashboard:codex-session-live' }));
+    expect(replay).toContainEqual(expect.objectContaining({ type: 'dashboard:codex-requests' }));
+    expect(replay.some(event => event.type === 'dashboard:snapshot')).toBe(false);
+    if (outcome === 'failure') fail(new Error('Storage unavailable'));
+    else if (outcome === 'timeout') await vi.advanceTimersByTimeAsync(5_000);
+    else { if (outcome === 'closed') browser.readyState = 3; finish({ accounts: [], settings: {}, tokenAutomation: {}, indexHealth: {} }); }
+    await pending;
+    if (outcome === 'timeout') {
+      finish({ accounts: [], settings: {}, tokenAutomation: {}, indexHealth: {} });
+      await Promise.resolve();
+      expect(browser.send.mock.calls.map(call => JSON.parse(call[0] as string)).some(event => event.type === 'dashboard:snapshot')).toBe(false);
+    }
+    expect(browser.close).not.toHaveBeenCalled();
+    if (outcome === 'timeout' || outcome === 'failure') expect(browser.send.mock.calls.map(call => JSON.parse(call[0] as string))).toContainEqual(expect.objectContaining({ type: 'dashboard:notice', level: 'warning' }));
+    if (outcome === 'closed') expect(browser.send.mock.calls).toHaveLength(replay.length);
+    if (outcome === 'success') expect(JSON.parse(browser.send.mock.calls.at(-1)![0] as string).type).toBe('dashboard:snapshot');
+  } finally { warn.mockRestore(); vi.useRealTimers(); }
+});
+
 const state = (sequence = 1) => ({ sessionId: "01a04882-d037-7a42-ad24-9afb61901188",
   streamId: "01a04882-d037-7a42-ad24-9afb61901189", sequence, status: "running", updatedAt: Date.now(), messages: [] });
 const socket = (bufferedAmount = 0) => ({ readyState: 1, bufferedAmount, send: vi.fn(), close: vi.fn() });

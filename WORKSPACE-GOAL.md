@@ -31,6 +31,59 @@ Objective: end to end fix all gaps and support in workspace, including UI/UX par
 
 ## Latest evidence
 
+### Current combined prerelease: 1.7.3-pre.8
+
+- The floating auditor uses the complete compact mobile browser workspace,
+  including conversation switching, tool arguments/results, composer, prompts,
+  workspace tools and latest-message scrolling. Existing responsive coverage
+  exercises the floating window and independent drafts.
+- Realtime recovery now replays activity/prompts before a bounded dashboard
+  snapshot; focus/online preserve healthy sockets, repeated retries share work,
+  startup live replay is bounded and released, and transport pressure reports
+  an immediate unsent action failure. Unchanged session rows retain identity,
+  complete authoritative live history avoids redundant reads, and rejected
+  terminal frames cannot trigger completion refreshes.
+- The user authorized the concurrent access-profile fix in this delivery. Full
+  selects its explicit permission profile across creation/resume/settings, checks
+  effective permissions and profile together, and fails a new turn if recovery
+  storage cannot save the confirmed choice.
+- Focused realtime/storage/queue/layout checks: 7 files, 154 tests passed in
+  25.13 seconds (`output/pre6-focused.log`). Access/owner/action checks: 7 files,
+  396 tests passed in 60.96 seconds (`output/pre7-access-focused.log`).
+- The initial combined regression was superseded after scope expanded; its log
+  is retained as `output/pre6-regression-superseded.log` and is not a pass.
+  The subsequent regression reported one encrypted-sync recovery failure before
+  interruption; its exact final error was not printed. Preserve
+  `output/pre7-regression.log` and diagnose it in the final owner's run.
+- `npm run verify` passed with exit 0 (`output/pre7-verify.log` and `.exit`):
+  lint had 0 errors and 4239 warnings, and both TypeScript checks passed.
+- The user assigned final combined verification and delivery to another active
+  task. Only this task's duplicate regression/build runners were stopped; the
+  other task's jobs were left running. Production compile was interrupted during
+  Vite chunk rendering, so rebuild generated assets before smoke checks or
+  packaging. Final regression, production build, UI checks, VSIX/install and
+  commit/push remain pending with that owner. Handoff:
+  `output/workspace-speed-handoff.md`.
+- The combined `pre.9` full regression reached 242 files and 3,147 tests; 3,146
+  passed and one source-string assertion failed because the host task made the
+  dashboard port environment-configurable. After updating that stale assertion,
+  the impacted dashboard/layout suites passed 104/104 tests in 9.53 seconds
+  (`output/pre9-followup-focused.log`). Rerun the full suite once more if a
+  clean all-pass artifact is required after the final host-reload edits.
+- The floating monitor header marked in the supplied screenshot is removed;
+  the popup now opens directly into the mobile workspace and closes through its
+  window. The quota footer meter passes pointer input through to the existing
+  Account Center button so the whole account/quota area opens it together.
+- Final webview typecheck passed after the host-reload narrowing fix (`output/pre9-final-webview-typecheck-2.log` and `.exit`); `git diff --check` is clean.
+- The performance plan is reconciled with the existing protocol and durable
+  queue barriers. EGM reached two consecutive clean review rounds; report:
+  `output/goldfish_review_report.md`. This is plan review, not runtime proof.
+- Real remote peers, reboot, sustained storage exhaustion, alternate operating
+  systems and long-run memory pressure remain unverified. Smoke p50/p95 values
+  from two viewports do not establish the provisional performance budgets.
+
+### Historical stable-release evidence
+
 - Focused Auto Resume/settings regression: five files and 144 tests passed, including recovery readiness, retained failures, shutdown capture, and ignoring the retired background preference. Result: `output/release-1.6.0-removal-focused.log`.
 - Auto Resume recovery remains on the official VS Code conversation-tab path; shutdown capture is bounded to 1.25 seconds and preserves the existing recovery queue when the host closes too quickly. The prior experimental background path and setting are removed.
 - `node tools/check-responsive-ui.mjs`: all six viewports passed (1440x1000, 1024x768, 768x1024, 390x844, 320x667, 844x390), including light/dark send contrast, one copy action, compact usage, top-layer menus, keyboard actions, and spinner replacement while hovering an open menu. Log: `output/release-1.6.0-responsive.log`; screenshots: `%TEMP%/codex-manager-ui-check`.

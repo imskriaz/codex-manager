@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { flushNotificationDelivery } from "./notificationMirror";
+import { publishDashboardRealtime } from "../services/dashboardRealtime";
+import { getQueuedAccountSwitch } from "../presentation/workbench/windowRuntimeAccount";
 
 let inFlight: Promise<void> | undefined;
 let inFlightAutomatic = false;
@@ -72,12 +74,16 @@ export function reloadExtensionHostWithSessionCapture(
   inFlightAutomatic = automatic;
   const manual = new AbortController();
   manualReload = manual;
+  const queued = getQueuedAccountSwitch();
+  const reload = { type: "dashboard:host-reload" as const, startedAt: Date.now(), fromAccountId: queued?.fromAccountId, toAccountId: queued?.toAccountId };
   const verifyAutomaticPreference = (): void => {
     if (inFlightAutomatic && !getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true)) {
       throw new AutomaticReloadCancelledError();
     }
   };
   const work = (async () => {
+    verifyAutomaticPreference();
+    publishDashboardRealtime({ ...reload, phase: "reloading" });
     const deadline = Date.now() + 45_000;
     const preparationDeadline = Date.now() + 500;
     const capture = new AbortController();
@@ -154,6 +160,7 @@ export function reloadExtensionHostWithSessionCapture(
       await command("workbench.action.reloadWindow", deadline - Date.now());
     }
   })().catch(async (error: unknown) => {
+    publishDashboardRealtime({ ...reload, phase: "failed" });
     // Failed or cancelled reloads must not leave the dashboard closed.
     try {
       await command("codexManager.restoreDashboardAfterExtensionHostRestart", 500, [], false);
