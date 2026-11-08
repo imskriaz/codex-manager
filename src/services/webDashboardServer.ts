@@ -216,6 +216,7 @@ type PeerCodexRequestResolvedMessage = {
   type: "peer:codex-request-resolved";
   deviceId: string;
   requestId: string;
+  automatic?: boolean;
 };
 type PeerAggregateMessage = {
   type: "peer:aggregate";
@@ -571,7 +572,7 @@ export class WebDashboardServer implements vscode.Disposable {
             ? { type: "peer:terminal-complete" as const, deviceId: this.deviceId, result: message.result }
             : message.type === "dashboard:codex-request"
               ? { type: "peer:codex-request" as const, deviceId: this.deviceId, request: message.request }
-              : { type: "peer:codex-request-resolved" as const, deviceId: this.deviceId, requestId: message.requestId };
+              : { type: "peer:codex-request-resolved" as const, deviceId: this.deviceId, requestId: message.requestId, ...(message.automatic === true ? { automatic: true } : {}) };
         this.peerSocket.send(JSON.stringify(peerMessage));
       }
       if (message.type === 'dashboard:terminal-output' || message.type === 'dashboard:terminal-complete') this.relayTerminalEvent(message);
@@ -2821,7 +2822,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if (message.type === "peer:codex-request-resolved" && message.requestId && message.deviceId !== this.deviceId) {
         if (!this.authenticatedPeerSockets.has(sourceSocket) || !message.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket) return;
         this.remoteCodexPrompts.delete(message.requestId);
-        publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId });
+        publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId, ...(message.automatic === true ? { automatic: true } : {}) });
         return;
       }
       if (!(await this.acceptPeerSession(message, false))) return;
@@ -3117,7 +3118,7 @@ export class WebDashboardServer implements vscode.Disposable {
           }
           if (message.type === "peer:codex-request-resolved" && message.requestId && message.deviceId !== this.deviceId) {
             this.remoteCodexPrompts.delete(message.requestId);
-            publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId });
+            publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId, ...(message.automatic === true ? { automatic: true } : {}) });
           }
           if (message.type === "peer:aggregate" && Array.isArray(message.peers)) {
             if (this.peerSocket !== socket || !(await this.replacePeerAggregate(message.peers))) return;

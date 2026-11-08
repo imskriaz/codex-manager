@@ -13,7 +13,8 @@ import type {
   DashboardUsageGraphQuery
 } from "../../src/domain/dashboard/types";
 import type { DashboardUsageSample } from "../../src/domain/dashboard/types";
-import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, resolveLockMinutes } from "./helpers";
+import { formatRelativeTimestamp, formatTimestamp, formatTokenCount, getSensitiveDisplayValue, resolveLockMinutes } from "./helpers";
+export { formatTokenCount } from "./helpers";
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
@@ -662,7 +663,6 @@ const USAGE_GRAPH_MAX_BAR_HEIGHT = 42;
 
 type UsageGraphBar = { event: UsageEvent; x: number; width: number; height: number; bucketStart: number; bucketEnd: number };
 type UsageGraphAnchor = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
-export const formatTokenCount = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format;
 const USAGE_EXACT_NUMBER = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
 export function resolveUsageAxisMaximum(value: number): number {

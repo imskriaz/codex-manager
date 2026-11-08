@@ -1245,7 +1245,7 @@ export type DashboardHostMessage =
   | { type: "dashboard:codex-requests"; requests: DashboardCodexServerRequest[] }
   | { type: "dashboard:codex-session-access"; sessionId: string; deviceId?: string; access: import("../codexSessionAccess").CodexSessionAccess }
   | { type: "dashboard:codex-session-live"; state: DashboardCodexSessionLiveState }
-  | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string }
+  | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string; automatic?: boolean }
   | {
       type: "dashboard:oauth-authorized";
       oauthSessionId: string;

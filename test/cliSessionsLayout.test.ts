@@ -101,8 +101,11 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain('aria-label="Sending" aria-live="polite"');
     expect(source).not.toContain('> <span>Steering…</span>');
+    expect(source).toContain('(!props.sending || canSteer) && !access.pending');
     expect(css).toContain("@media (max-width: 480px)");
     expect(css).toContain(".cli-turn-quota small { display: none; }");
+    expect(source).toContain("item.state !== 'sending' ? <button type=\"button\" class=\"cli-icon-button cli-goal-control\" aria-label=\"Edit queued message\"");
+    expect(css).toContain(".cli-workspace .cli-local-queue { width: auto; max-width: none; margin: 2px 16px 0;");
   });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");

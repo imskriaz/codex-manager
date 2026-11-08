@@ -112,6 +112,11 @@ export async function checkMobilePolishUi(page, { origin, width, height, output,
   assert.equal(await page.locator('.cli-conversation > .cli-composer-unavailable').count(), 0, 'Running state retains the composer');
   assert.equal(await runningStatus.locator('.cli-running-quota-inline,.cli-quota-inline,.cli-running-quota').count(), 0, 'Composer omits duplicate quota');
   await page.locator('.cli-turn-usage-strip .cli-turn-quota').waitFor({ state: 'visible' });
+  const accountBox = await page.locator('.cli-turn-account-group .cli-turn-account').boundingBox();
+  const quotaBox = await page.locator('.cli-turn-account-group .cli-turn-quota').boundingBox();
+  assert.ok(quotaBox.x - accountBox.x - accountBox.width <= 9, 'Account and quota stay together without expanding the account');
+  assert.ok(Math.abs(quotaBox.y - accountBox.y) <= 3, 'Account and quota stay on one line');
+  if (width <= 480) assert.equal(await page.locator('.cli-turn-quota small:visible').count(), 0, 'Small screens show percentages without hourly or weekly labels');
   await fits(runningStatus, 'Compact running status');
   await page.screenshot({ path: path.join(output, `mobile-polish-running-${width}.png`), animations: 'disabled' });
   await page.goto(origin + '/tasks');

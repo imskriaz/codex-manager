@@ -51,7 +51,7 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
@@ -111,6 +111,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     const pending = current.current.map(item => item.id === next.id ? fenced : item); update(pending);
     void save(pending).then(saved => {
       if (epoch !== generation.current || !owned.current) return;
+      if (!current.current.some(item => item.id === next.id && item.state === 'sending')) return;
       if (!saved) throw new Error('Browser storage could not save the send state. Your message was kept and was not sent. Free storage before retrying.');
       if (!options.current.canDispatch) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
       const requestId = options.current.send(next.draft);
@@ -136,17 +137,20 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     steerNow: (id: string) => {
       const item = current.current.find(entry => entry.id === id), epoch = generation.current;
       if (!owned.current || !ready || !item || item.state !== 'queued' || item.durable === false) { setNotice('This message is not ready to steer. Check its queue status before retrying.'); return; }
-      if (!options.current.canDispatch || options.current.connected === false) { setNotice(options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'); return; }
-      if (draining.current) { setNotice('Another queued message is already sending.'); return; }
+      if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) { const message = options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'; setNotice(message); options.current.feedback(message); return; }
+      if (draining.current || current.current.some(entry => entry.state === 'sending')) { const message = 'Another queued message is already sending. Wait for confirmation before steering this message.'; setNotice(message); options.current.feedback(message); return; }
       draining.current = true;
       const sending = { ...item, state: 'sending' as const, durable: false, seenIds: options.current.messages.map(message => message.id).slice(-3000), turnId: options.current.turnId };
       update(current.current.map(entry => entry.id === id ? sending : entry)); setNotice('Steering…');
       void save(current.current).then(saved => {
         if (epoch !== generation.current || !owned.current) return;
+        if (!current.current.some(entry => entry.id === id && entry.state === 'sending')) return;
         if (!saved) throw new Error('Browser storage could not save the steer state. The message was kept and was not sent.');
+        if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) throw new Error('The session cannot accept this message yet. It was kept and was not sent.');
+        const turnId = options.current.turnId;
         const requestId = options.current.steer ? options.current.steer(item.draft) : options.current.send(item.draft);
         if (!requestId) throw new Error('The steer was not sent. The message is kept in the queue.');
-        const sent = current.current.map(entry => entry.id === id ? { ...entry, requestId, durable: true } : entry);
+        const sent = current.current.map(entry => entry.id === id ? { ...entry, requestId, durable: true, turnId } : entry);
         update(sent); void save(sent);
       }).catch(error => {
         if (epoch !== generation.current) return;

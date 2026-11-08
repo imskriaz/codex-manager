@@ -21,7 +21,7 @@ import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSo
 import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_WIRE_BYTES, needsChatAttachmentFiles, prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput, materializeChatAttachments } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError, type AppServerTransport } from "./codexAppServerRpc";
-import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
+import { attachCodexAppServerPrompts, autoApprovePendingCodexPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
 import { publishDashboardRealtime } from "./dashboardRealtime";
@@ -1556,12 +1556,13 @@ function rememberSessionAccess(home: string, id: string, access: CodexSessionAcc
   if (previous && previous.updatedAt>access.updatedAt) return true;
   access={...access,updatedAt:Math.max(access.updatedAt,(previous?.updatedAt??0)+1)};
   const saved=saveCodexSessionAccess(home,id,access,settings);
+  if (saved) autoApprovePendingCodexPrompts(id);
   publishDashboardRealtime({ type: 'dashboard:codex-session-access', sessionId: id, access });
   return saved;
 }
 
 function attachSessionSettingsAndPrompts(rpc: CodexAppServerRpc, home: string, id: string): () => void {
-  const prompts = attachCodexAppServerPrompts(rpc, id);
+  const prompts = attachCodexAppServerPrompts(rpc, id, () => path.resolve(resolveCodexHome()) === path.resolve(home) && readSavedCodexSessionAccess(home, id)?.access.approvalPolicy === 'never');
   const settings = rpc.onNotification((method, raw) => {
     const value = raw as { threadId?: unknown; threadSettings?: unknown } | undefined;
     if (method === 'thread/settings/updated' && value?.threadId === id) rememberSessionAccess(home, id, parseCodexSessionAccess(value.threadSettings),value.threadSettings);

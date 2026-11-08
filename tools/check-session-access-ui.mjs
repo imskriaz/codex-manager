@@ -70,7 +70,7 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   await page.evaluate(()=>{window.__realStorageTransaction=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]==='readwrite')throw new DOMException('Storage full','QuotaExceededError');return window.__realStorageTransaction.apply(this,args);};});
   await input.fill('Draft');
   await page.locator('.cli-composer-warning').waitFor();
-  assert.equal(await page.locator('.dashboard-notice-stack').count(),0,'Draft storage failures do not create a toast');
+  assert.equal(await page.locator('.dashboard-notice-stack .dashboard-notice').filter({ hasText: 'Browser storage could not save' }).count(),0,'Draft storage failures do not create a toast');
   assert.deepEqual(await form.boundingBox(),beforeStorage,'Storage feedback does not shift the composer');
   await page.getByRole('button',{name:'Message settings',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Browser storage could not save your draft.'}).waitFor();

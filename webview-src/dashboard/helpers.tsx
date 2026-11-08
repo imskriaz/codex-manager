@@ -3,6 +3,8 @@ import { formatResetRelativeTime } from "../../src/utils/resetTime";
 
 type SensitiveKind = "email" | "id" | "name";
 
+export const formatTokenCount = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format;
+
 export function isAccountAttention(account: DashboardAccountViewModel): boolean {
   return (
     !account.dismissedHealth &&

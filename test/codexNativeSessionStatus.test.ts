@@ -540,6 +540,23 @@ it.each([null, ':workspace', ':danger-full-access'])('requires the selected Full
   await result;
   expect(socket.sent.filter(value => value.method === 'thread-follower-update-thread-settings')).toHaveLength(1);
 });
+it('auto approves an existing native prompt when approval policy changes during the running turn', async () => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize();
+  const value = snapshot('active');
+  Object.assign(value.params.change.conversationState, { latestThreadSettings: { approvalPolicy: 'on-request' }, requests: [{ id: 'auto-native', method: 'item/commandExecution/requestApproval', params: { threadId: id, command: 'echo test' } }] });
+  message(value); await reading;
+  expect(socket.sent.some(item => item.method === 'thread-follower-command-approval-decision')).toBe(false);
+  const updated = snapshot('active', 2);
+  Object.assign(updated.params.change.conversationState, { ...value.params.change.conversationState, latestThreadSettings: { approvalPolicy: 'never' } });
+  message(updated);
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  const sent = socket.sent.find(item => item.method === 'thread-follower-command-approval-decision');
+  expect(sent).toMatchObject({ params: { requestId: 'auto-native', decision: 'accept' } });
+  message({ type: 'response', requestId: sent.requestId, resultType: 'success', result: { ok: true } });
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  expect(listPendingCodexAppServerPrompts()).toEqual([]);
+  expect(socket.sent.filter(item => item.method === 'thread-follower-command-approval-decision')).toHaveLength(1);
+});
 
 it.each(['idle','active','missing'])('refreshes stale native ownership without restarting after %s', async state => {
   const initial = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot('active')); expect(await initial).toBe(true);

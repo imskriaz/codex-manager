@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts, syncNativeCodexPrompts, clearNativeCodexPrompts } from "../src/services/codexAppServerPrompts";
+import { attachCodexAppServerPrompts, autoApprovePendingCodexPrompts, cancelCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts, syncNativeCodexPrompts, clearNativeCodexPrompts } from "../src/services/codexAppServerPrompts";
 import type { AppServerRequest, CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
@@ -30,6 +30,40 @@ it('preserves native question age across owner resync and prompt expiry', async 
 });
 
 describe("Codex app-server dashboard prompts", () => {
+  it.each(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'])('auto approves current and future %s prompts only after opt-in', async method => {
+    const fake = createRpc(); let enabled = false;
+    const detach = attachCodexAppServerPrompts(fake.rpc, 'auto', () => enabled);
+    try {
+      const params = { threadId: 'auto', command: 'echo test', permissions: { network: { enabled: true } } };
+      fake.emit({ id: 1, method, params }); await Promise.resolve(); expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      enabled = true; autoApprovePendingCodexPrompts('auto'); autoApprovePendingCodexPrompts('auto'); await Promise.resolve();
+      expect(fake.answerServerRequest).toHaveBeenCalledTimes(1); expect(listPendingCodexAppServerPrompts()).toEqual([]);
+      fake.emit({ id: 2, method, params }); await Promise.resolve(); expect(fake.answerServerRequest).toHaveBeenCalledTimes(2);
+      enabled = false; fake.emit({ id: 3, method, params }); await Promise.resolve(); expect(fake.answerServerRequest).toHaveBeenCalledTimes(2);
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+    } finally { detach(); }
+  });
+  it('never auto answers questions, unsupported grants, changed owners, or failed responses repeatedly', async () => {
+    const fake = createRpc(); let enabled = true;
+    const detach = attachCodexAppServerPrompts(fake.rpc, 'auto-safe', () => enabled);
+    const source = {}, respond = vi.fn().mockRejectedValue(new Error('Owner unavailable'));
+    try {
+      fake.emit({ id: 1, method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Choose?' }] } });
+      fake.emit({ id: 2, method: 'item/permissions/requestApproval', params: { permissions: { unknownScope: true } } });
+      await Promise.resolve(); await Promise.resolve(); expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      fake.emit({ id: 3, method: 'item/commandExecution/requestApproval', params: { command: 'echo hi' } }); enabled = false;
+      await Promise.resolve(); expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      const requests = [{ id: 9, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-auto', command: 'echo hi' } }];
+      syncNativeCodexPrompts(source, 'native-auto', requests, respond, () => true);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      syncNativeCodexPrompts(source, 'native-auto', requests, respond, () => true);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(respond).toHaveBeenCalledOnce();
+      expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-auto')).toBeDefined();
+      syncNativeCodexPrompts(source, 'native-auto', [{ ...requests[0]!, id: 10 }], respond, () => true);
+      clearNativeCodexPrompts(source); await Promise.resolve(); expect(respond).toHaveBeenCalledOnce();
+    } finally { detach(); clearNativeCodexPrompts(source); }
+  });
   it("removes a stopped turn's prompts while preserving other sessions and resolving stale replies", () => {
     const first = createRpc();
     const second = createRpc();

@@ -3,7 +3,14 @@ import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 import type { DashboardCliSessionMessage } from '../src/domain/dashboard/types';
 vi.mock('preact/hooks', () => ({ useMemo: (factory: () => unknown) => factory(), useContext: () => undefined, useState: (initial: unknown) => [initial, vi.fn()] }));
-import { SessionMessage, QueuedMessages } from '../webview-src/dashboard/cliSessionsModal';
+import { SessionMessage, QueuedMessages, LiveTurnDetails } from '../webview-src/dashboard/cliSessionsModal';
+
+it('compacts every session usage counter while keeping exact totals on hover', () => {
+  const node = LiveTurnDetails({ usage: { input: 276906687, cachedInput: 272657408, output: 251524, reasoningOutput: 96616, total: 277158211, contextWindow: 475000 } })!;
+  const counts = node.props.children[1].props.children.props.children[0].props.children;
+  expect(counts.map((count: VNode<any>) => count.props.children[2].props.children)).toEqual(['276.9M', '272.7M', '251.5K', '96.6K', '277.2M', '475K']);
+  expect(counts[0].props.title).toBe('Input: 276,906,687 tokens');
+});
 
 function activity(message: DashboardCliSessionMessage): VNode<any> {
   const node = SessionMessage({ message });
@@ -66,7 +73,8 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(node.props.class).toBe('cli-local-queue');
   const row=node.props.children[0];
   expect(row.props.class).toContain('cli-queued-message');
-  const details = row.props.children[0];
+  const details = row;
+  expect(row.props.class).toContain('cli-goal-strip');
   expect(details.type).toBe('details');
   expect(details.props.open).not.toBe(true);
   expect(details.props.children[1].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
@@ -77,9 +85,8 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).toContain('class="cli-queued-steer is-sending"');
   expect(source).toContain('class="cli-queued-sending-status"');
   expect(source).not.toContain('Turn off queueing');
-  expect(css).toContain('.cli-queued-message-copy { display: flex; align-items: center; gap: 6px; min-width: 0;');
-  expect(css).toContain('.cli-queued-message-copy p { display: block; min-width: 0; flex: 1 1 auto;');
-  expect(css).toContain('.cli-queued-message-thumb { flex: none; width: 24px; height: 24px;');
+  expect(css).toContain('.cli-queued-message-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis;');
+  expect(css).toContain('.cli-queued-message-thumb { flex: none; width: 14px; height: 14px;');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
 });
 

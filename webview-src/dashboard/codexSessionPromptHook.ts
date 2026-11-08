@@ -35,8 +35,13 @@ export function useCodexSessionPrompts(props: {
   const [checking, setChecking] = useState(false);
   const checkTimer = useRef<number>();
   const checkTarget = useRef<string>();
+  const responseTimers = useRef(new Map<string, number>());
   const update = useCallback((action: CodexPromptUpdate) => {
     current.current = updateCodexPrompts(current.current, action);
+    for (const [id, timer] of responseTimers.current) {
+      if (current.current.entries.some(entry => entry.responseId === id)) continue;
+      window.clearTimeout(timer); responseTimers.current.delete(id);
+    }
     setState(current.current);
   }, []);
   const matches = (entry: CodexPromptEntry): boolean => {
@@ -66,7 +71,7 @@ export function useCodexSessionPrompts(props: {
       } else if (message?.type === "dashboard:codex-request-resolved") {
         const key = codexPromptKey({ id: message.requestId, deviceId: message.deviceId });
         const entry = current.current.entries.find(item => codexPromptKey(item.request) === key);
-        if (entry && !Object.values(current.current.responses).includes(key)) options.current.onNotice({ level: "warning", message: "The Codex request closed. It may have expired, been cancelled, or been answered elsewhere." });
+        if (entry && !message.automatic && !Object.values(current.current.responses).includes(key)) options.current.onNotice({ level: "warning", message: "The Codex request closed. It may have expired, been cancelled, or been answered elsewhere." });
         if (checkTarget.current === key) stopCheck();
         update({ type: "resolved", key });
       } else if (message?.type === "dashboard:action-result" && message.action === "respondCodexServerRequest" && Object.hasOwn(current.current.responses, message.requestId)) {
@@ -77,7 +82,11 @@ export function useCodexSessionPrompts(props: {
       }
     };
     window.addEventListener("message", receive);
-    return () => { window.removeEventListener("message", receive); window.clearTimeout(checkTimer.current); };
+    return () => {
+      window.removeEventListener("message", receive); window.clearTimeout(checkTimer.current);
+      for (const timer of responseTimers.current.values()) window.clearTimeout(timer);
+      responseTimers.current.clear();
+    };
   }, [update]);
   const check = (key: string): void => {
     if (!options.current.connected || checkTimer.current !== undefined) return;
@@ -104,11 +113,17 @@ export function useCodexSessionPrompts(props: {
       codexRequestId: entry.request.id, codexDecision: decision,
       codexAnswers: decision === "approve" && entry.request.kind === "question" ? entry.answers : undefined,
       targetDeviceId: entry.request.deviceId
-    }); } catch (error) {
+    });
+      if (!responseId) throw new Error('Your response was not queued. Reconnect before retrying.');
+    } catch (error) {
       const message = error instanceof Error ? error.message : 'Your response could not be queued. Your answer is kept.';
       update({ type: 'error', key, error: message }); options.current.onNotice({ level: 'error', message }); return;
     }
     update({ type: "submit", key, responseId });
+    responseTimers.current.set(responseId, window.setTimeout(() => {
+      update({ type: "timeout", responseId });
+      options.current.onNotice({ level: "warning", message: "The response was not confirmed. Check the request before retrying; your answer is kept." });
+    }, 80_000));
     options.current.onNotice({ level: "info", message: "Response queued. Awaiting Codex confirmation." });
   };
   const visible = state.entries.filter(entry => !entry.request.sourceMessageId && !entry.responseId);

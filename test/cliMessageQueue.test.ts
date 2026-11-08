@@ -159,6 +159,53 @@ it('steers a queued message immediately and keeps its row in the sending state',
   expect(queue.items[0]).toMatchObject({ id, state: 'sending', requestId: 'steer-1' });
 });
 
+it('steers explicitly in queue mode and shows processing before a slow storage fence completes', async () => {
+  render({ canDispatch: false, canSteer: true, turnId: 'active', steer }); await flush();
+  const id = queue.enqueue(draft('Send now'))!; await flush();
+  let finish!: (value: boolean) => void;
+  harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  queue.steerNow(id); queue.steerNow(id); await flush();
+  expect(queue.items[0]?.state).toBe('sending'); expect(steer).not.toHaveBeenCalled();
+  finish(true); await flush();
+  expect(steer).toHaveBeenCalledExactlyOnceWith(draft('Send now')); expect(send).not.toHaveBeenCalled();
+  expect(options.canDispatch).toBe(false);
+});
+
+it.each(['offline', 'access-change', 'timeout', 'session-change', 'storage-full'] as const)('keeps a waiting steer unsent after %s', async failure => {
+  render({ canDispatch: false, canSteer: true, turnId: 'active', steer }); await flush();
+  const id = queue.enqueue(draft())!; await flush();
+  let finish!: (value: boolean) => void;
+  harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  queue.steerNow(id); await flush(); expect(queue.items[0]?.state).toBe('sending');
+  if (failure === 'offline') render({ connected: false });
+  if (failure === 'access-change') render({ canSteer: false });
+  if (failure === 'session-change') { render({ scope: 'other' }); await flush(); }
+  if (failure === 'timeout') { await vi.advanceTimersByTimeAsync(65_000); await flush(); }
+  finish(failure !== 'storage-full'); await flush();
+  expect(steer).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  if (failure !== 'session-change') expect(queue.items[0]?.state).toBe(failure === 'timeout' ? 'uncertain' : 'failed');
+});
+
+it.each(['new-turn', undefined])('sends explicit Steer to the current session state (%s) after saving', async turnId => {
+  render({ canDispatch: false, canSteer: true, turnId: 'previous-turn', steer }); await flush();
+  const id = queue.enqueue(draft())!; await flush();
+  let finish!: (value: boolean) => void;
+  harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  queue.steerNow(id); await flush();
+  render({ turnId, steer: turnId ? steer : undefined, canDispatch: !turnId });
+  finish(true); await flush();
+  expect(turnId ? steer : send).toHaveBeenCalledExactlyOnceWith(draft());
+  expect(queue.items[0]?.turnId).toBe(turnId);
+});
+
+it('does not send another explicit steer while the previous one awaits confirmation', async () => {
+  render({ canDispatch: false, canSteer: true, steer }); await flush();
+  const first = queue.enqueue(draft())!, second = queue.enqueue(draft('Later'))!; await flush();
+  queue.steerNow(first); await flush(); queue.steerNow(second); await flush();
+  expect(steer).toHaveBeenCalledOnce(); expect(queue.items[1]?.state).toBe('queued');
+  expect(feedback).toHaveBeenCalledWith(expect.stringContaining('Wait for confirmation'));
+});
+
 it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {
   const first = entry({ turnId: 'turn' }), second = entry({ id: 'two', turnId: 'turn' });
   const once = queuedMessageEchoes([first,second], [{ id: 'old', role: 'user', text: 'First' }, { id: 'wrong', role: 'user', text: 'First', turnId: 'other' }, { id: 'echo', role: 'user', text: 'First', turnId: 'turn' }]);

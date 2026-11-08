@@ -14,6 +14,8 @@ type PendingPrompt = {
   request: DashboardCodexServerRequest;
   timer: NodeJS.Timeout;
   expiresAt: number;
+  autoApprove?: () => boolean;
+  autoAttempted?: boolean;
 };
 
 export class CodexPromptNotSentError extends Error {}
@@ -32,8 +34,8 @@ export function listPendingCodexAppServerPrompts(): DashboardCodexServerRequest[
 }
 
 /** Route app-server approval and question requests through the dashboard.
- * Unsupported requests fail closed; no permission is granted automatically. */
-export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: string): () => void {
+ * Unsupported requests fail closed; automatic approval requires a confirmed opt-in. */
+export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: string, autoApprove?: () => boolean): () => void {
   const off = rpc.onServerRequest((serverRequest) => {
     if (Buffer.byteLength(JSON.stringify(serverRequest.params ?? {}), "utf8") > 32 * 1024) {
       rpc.rejectServerRequest(serverRequest.id, "This approval request is too large to review safely in the dashboard.");
@@ -59,8 +61,9 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
       finishPrompt(request.id, pending);
     }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { rpc, serverId: serverRequest.id, method: serverRequest.method,
-      params: serverRequest.params && typeof serverRequest.params === "object" ? serverRequest.params as Record<string, unknown> : {}, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS });
+      params: serverRequest.params && typeof serverRequest.params === "object" ? serverRequest.params as Record<string, unknown> : {}, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
     publishDashboardRealtime({ type: "dashboard:codex-request", request });
+    autoApprovePendingCodexPrompts(threadId);
   });
   const cleanup = () => {
     off();
@@ -75,7 +78,7 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
 }
 
 /** Mirror supported requests from a verified official owner; never answer on expiry or disconnect. */
-export function syncNativeCodexPrompts(source: object, threadId: string, requests: AppServerRequest[], respond: (request: AppServerRequest, result: unknown) => Promise<void>): void {
+export function syncNativeCodexPrompts(source: object, threadId: string, requests: AppServerRequest[], respond: (request: AppServerRequest, result: unknown) => Promise<void>, autoApprove?: () => boolean): void {
   const questionTimes = nativeQuestionTimes.get(source) ?? new Map<string | number, { signature: string; createdAt: number }>();
   nativeQuestionTimes.set(source, questionTimes);
   for (const id of questionTimes.keys()) if (!requests.some(request => request.id === id)) questionTimes.delete(id);
@@ -97,8 +100,24 @@ export function syncNativeCodexPrompts(source: object, threadId: string, request
     }
     const timer = setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { nativeSource: source, respondNative: result => respond(serverRequest, result),
-      serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS });
+      serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
     publishDashboardRealtime({ type: "dashboard:codex-request", request });
+  }
+  autoApprovePendingCodexPrompts(threadId);
+}
+
+/** Only a confirmed approval choice authorizes permission responses, never question answers. */
+export function autoApprovePendingCodexPrompts(threadId: string): void {
+  for (const [id, pending] of pendingPrompts) {
+    if (pending.request.threadId !== threadId || pending.request.kind === 'question' || pending.responding || pending.autoAttempted || !pending.autoApprove?.()) continue;
+    pending.autoAttempted = true;
+    void Promise.resolve().then(() => {
+      if (pendingPrompts.get(id) !== pending) return;
+      if (!pending.autoApprove?.()) { pending.autoAttempted = false; return; }
+      return respondCodexAppServerPrompt(id, 'approve');
+    }).catch(error => {
+      publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: `Auto approval was not confirmed. Review the pending Codex request before retrying. ${error instanceof Error ? error.message : String(error)}` });
+    });
   }
 }
 
@@ -182,7 +201,7 @@ export function respondCodexAppServerPrompt(
 function finishPrompt(requestId: string, pending: PendingPrompt): void {
   clearTimeout(pending.timer);
   pendingPrompts.delete(requestId);
-  publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId });
+  publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId, ...(pending.autoAttempted ? { automatic: true } : {}) });
 }
 
 function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: string): DashboardCodexServerRequest | undefined {

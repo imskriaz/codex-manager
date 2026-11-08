@@ -11,7 +11,7 @@ import { recordNativeSessionStatus } from "./sessionRecording";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { waitWithin } from "../utils/concurrency";
 import type { AppServerRequest } from "./codexAppServerRpc";
-import { clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
+import { autoApprovePendingCodexPrompts, clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
 
 type Observation = {
   home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number; verifiedAt?: number;
@@ -183,6 +183,7 @@ function updateAccess(entry: Observation, access: CodexSessionAccess | undefined
   entry.access = access;
   for (const changed of entry.accessWaiters ?? []) changed();
   if (access) saveCodexSessionAccess(entry.home,entry.id,access,settings);
+  autoApprovePendingCodexPrompts(entry.id);
   if (access) publishDashboardRealtime({ type: 'dashboard:codex-session-access', sessionId: entry.id, access });
 }
 export function getNativeCodexSessionAccess(home: string, id: string): CodexSessionAccess | undefined {
@@ -460,7 +461,7 @@ function syncPrompts(entry: Observation): void {
     });
     (entry.promptResponses ??= new Map()).set(key, responding);
     return responding;
-  });
+  }, () => entry.access?.approvalPolicy === 'never');
 }
 function applyPromptPatch(entry: Observation, patch: { path?: unknown; op?: unknown; value?: unknown }): boolean {
   const path = patch.path as unknown[];

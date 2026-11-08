@@ -774,7 +774,7 @@ try {
       results.push({width,height,checks:'PDF and DOCX uploads over 2 MB, durable queue, compact inline Resend, newer draft preservation, reload without replay'}); await context.close(); continue;
     }
     if (process.argv.includes('--steer')) {
-      await checkSteerUi(page, { origin, parentId });
+      await checkSteerUi(page, { origin, parentId, width, output });
       assert.deepEqual(errors, [], 'Steering has no browser runtime errors');
       results.push({ width, height, checks: 'Steering sends once, shows inline Resend, preserves newer drafts and chronological replies' });
       await context.close(); continue;

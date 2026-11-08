@@ -6,6 +6,13 @@
 - Add a standalone Node host that uses the shared SQLite database and refuses to start when another Codex Manager host already owns the dashboard port.
 - Keep an always-active local Node host on the shared SQLite database and dashboard port after VS Code closes, with clean VS Code takeover and standalone account switching.
 - Keep queued steering feedback compact and immediate, including an inline sending spinner and shared keyboard behavior in browser and VS Code dashboards.
+- Keep account and quota together above the composer, hide quota labels on small screens, and use the goal row layout for queued messages, with editing hidden while steering is in progress.
+- Expose Auto approval in task conversations and recover unconfirmed approval responses without losing answers or sending automatic retries.
+- Show mobile task warnings inside the board or open task form when floating notifications are hidden.
+- Display session token counts with compact K, M, and B suffixes while retaining exact values on hover.
+- Keep elapsed goal time compact with M, H, and D units.
+- Let explicit Steer send during queue mode, show processing immediately, and keep queue action icons distinct and closely spaced.
+- Apply confirmed Auto approval to pending and future permission requests in the active turn, while keeping questions manual and failed responses visible.
 
 ## 1.7.3-pre.14
 

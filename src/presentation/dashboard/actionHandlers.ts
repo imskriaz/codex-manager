@@ -1047,7 +1047,7 @@ async function runDashboardAction(
       const session = await ensureCliSessionIsActive(payload.sessionId);
       if (payload.projectPath && session.projectPath && await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath)) throw new Error('This session belongs to a different project. Refresh before changing access.');
       const access = await setCodexSessionAccess(payload.sessionId, payload.sandboxMode, payload.autoApprove);
-      return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
+      return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: payload.autoApprove === true ? 'Auto approval is active in Manager, including permission requests in the current turn. Access changes apply to the next turn.' : payload.autoApprove === false ? 'Auto approval is off for new permission requests. Responses already sent cannot be withdrawn.' : session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
     }
     case "respondCodexServerRequest":
       if (!payload?.codexRequestId || !payload.codexDecision) throw new Error("Choose a Codex prompt response before continuing.");

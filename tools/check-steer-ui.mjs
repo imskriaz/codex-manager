@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 
-export async function checkSteerUi(page, { origin, parentId }) {
+export async function checkSteerUi(page, { origin, parentId, output, width }) {
   await page.goto(`${origin}/workspace/${parentId}`);
   const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });
   await input.waitFor();
@@ -12,6 +13,7 @@ export async function checkSteerUi(page, { origin, parentId }) {
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
   }, parentId);
   await page.getByRole('button', { name: 'Stop', exact: true }).waitFor();
+  assert.equal(await page.locator('.cli-goal-strip:not(.cli-queued-message) > summary > small').innerText(), '2M', 'Goal time uses compact uppercase duration units');
   assert.equal(await page.locator('.cli-send-button:visible, .cli-stop-button:visible').count(), 1, 'An empty running composer shows only Stop');
   await input.fill('First steering message');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } })));
@@ -21,6 +23,27 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.evaluate(() => { window.__holdNextSteer = true; });
   await send.click();
   await page.waitForFunction(() => window.__heldSteerResult);
+  assert.equal(await page.locator('.cli-queued-message.is-sending').getByRole('button', { name: 'Edit queued message', exact: true }).count(), 0, 'In-flight guidance hides its unavailable Edit action');
+  const matchingRows = await page.evaluate(() => {
+    const read = selector => {
+      const row = document.querySelector(selector), summary = row.querySelector(':scope > summary');
+      const box = row.getBoundingClientRect(), style = getComputedStyle(row), header = getComputedStyle(summary);
+      return { x: box.x, width: box.width, height: box.height, font: style.fontSize, color: style.color, background: style.backgroundColor, border: style.border, radius: style.borderRadius, padding: header.padding, gap: header.gap };
+    };
+    return { goal: read('.cli-goal-strip:not(.cli-queued-message)'), queue: read('.cli-queued-message.is-sending') };
+  });
+  assert.deepEqual(matchingRows.queue, matchingRows.goal, 'Queue and Steer use the exact goal row geometry and visual styles');
+  const iconSizes = await page.evaluate(() => {
+    const size = selector => { const style = getComputedStyle(document.querySelector(selector)); return { width: style.width, height: style.height }; };
+    return { goal: size('.cli-goal-strip:not(.cli-queued-message) .cli-goal-mark svg'), queue: size('.cli-queued-message .cli-goal-mark svg'), spinner: size('.cli-queued-message .cli-live-spinner') };
+  });
+  assert.deepEqual(iconSizes.queue, iconSizes.goal, 'Queue icons match goal icons');
+  assert.deepEqual(iconSizes.spinner, iconSizes.goal, 'The single sending spinner matches goal icon dimensions');
+  await page.screenshot({ path: path.join(output, `queue-goal-${width}.png`), animations: 'disabled' });
+  const pendingRow = page.locator('.cli-queued-message.is-sending');
+  await pendingRow.locator(':scope > summary').click();
+  assert.equal(await pendingRow.evaluate(row => row.open), true, 'Queued text expands like a goal');
+  await pendingRow.locator(':scope > summary').click();
   assert.equal(await input.inputValue(), '', 'Steering clears immediately');
   await page.locator('.cli-composer').evaluate(form => {
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -29,6 +52,11 @@ export async function checkSteerUi(page, { origin, parentId }) {
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), 1, 'Repeated submit events send only once');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Confirmation lost; verify before retrying.' } })));
   await page.locator('.cli-queued-message.is-failed').last().getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
+  const controlSizes = await page.evaluate(() => {
+    const size = selector => { const box = document.querySelector(selector).getBoundingClientRect(); return { width: box.width, height: box.height }; };
+    return { goal: size('.cli-goal-strip:not(.cli-queued-message) .cli-goal-control'), queue: size('.cli-queued-message .cli-goal-control') };
+  });
+  assert.deepEqual(controlSizes.queue, controlSizes.goal, 'Queue controls use the same desktop and touch sizes as goal controls');
   await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','A failed send stays in the conversation without restoring the composer');
   await input.fill('My next draft');
@@ -119,5 +147,57 @@ export async function checkSteerUi(page, { origin, parentId }) {
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSteerResult })));
   await page.getByRole('button', {name:'Stop',exact:true}).waitFor();
   assert.equal(await page.locator('.cli-send-button:visible,.cli-stop-button:visible').count(),1,'Accepted guidance returns to a single Stop action');
+  await page.evaluate(() => {
+    window.__steerState = { ...window.__steerState, sequence: 5, status: 'running', updatedAt: Date.now() + 5000, tokenUsage: { input: 276906687, cachedInput: 272657408, output: 251524, reasoningOutput: 96616, total: 277158211, contextWindow: 475000 } };
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
+  });
+  const showTools = page.getByRole('button', { name: 'Show workspace tools', exact: true });
+  if (await showTools.isVisible()) await showTools.click();
+  await page.getByRole('tab', { name: 'Env', exact: true }).click();
+  const usage = page.locator('.cli-inspector-view .cli-usage-grid');
+  await usage.waitFor();
+  assert.deepEqual(await usage.locator('strong').allTextContents(), ['276.9M', '272.7M', '251.5K', '96.6K', '277.2M', '475K'], 'Every usage counter uses compact suffixes');
+  assert.equal(await usage.locator('> span').first().getAttribute('title'), 'Input: 276,906,687 tokens', 'Exact counts remain available on hover');
+  await page.screenshot({ path: path.join(output, `compact-tokens-${width}.png`), animations: 'disabled' });
+  await page.getByRole('button', { name: 'Hide workspace tools', exact: true }).click();
+  await page.evaluate(sessionId => {
+    const session = window.__uiSessions.find(item => item.id === sessionId);
+    Object.assign(session, { status: 'idle', steerTurnId: undefined, locked: false, updatedAt: new Date(Date.now() + 6000).toISOString() });
+    window.__steerState = { ...window.__steerState, sequence: 6, status: 'completed', updatedAt: Date.now() + 6000 };
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-idle-fixture', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+    window.__holdNextSend = true; window.__heldSendResult = undefined;
+  }, parentId);
+  await input.fill('Turn start stays pending'); await send.click();
+  await page.waitForFunction(() => window.__heldSendResult);
+  await page.evaluate(sessionId => {
+    const session = window.__uiSessions.find(item => item.id === sessionId);
+    Object.assign(session, { status: 'running', steerTurnId: 'pending-send-turn', locked: true, updatedAt: new Date(Date.now() + 7000).toISOString() });
+    window.__steerState = { ...window.__steerState, streamId: 'pending-send-fixture', sequence: 0, status: 'running', turnId: 'pending-send-turn', updatedAt: Date.now() + 7000, messages: [...window.__steerState.messages, { id: 'pending-start-echo', role: 'user', kind: 'message', turnId: 'pending-send-turn', text: 'Turn start stays pending' }] };
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-active-fixture', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  }, parentId);
+  await page.locator('.cli-queued-message').filter({ hasText: 'Turn start stays pending' }).waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Follow-up mode', exact: true }).selectOption('queue');
+  await page.keyboard.press('Escape');
+  const beforeExplicit = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length);
+  await input.fill('Explicit steer from queue mode'); await send.click();
+  const queued = page.locator('.cli-queued-message').filter({ hasText: 'Explicit steer from queue mode' });
+  await queued.getByRole('button', { name: /Steer$/ }).waitFor();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), beforeExplicit, 'Queue mode waits until explicitly steered');
+  await page.evaluate(() => { window.__holdNextSteer = true; window.__heldSteerResult = undefined; });
+  await queued.getByRole('button', { name: /Steer$/ }).click();
+  await queued.locator('.cli-live-spinner').waitFor();
+  assert.equal(await queued.locator('.cli-live-spinner').count(), 1, 'Steer displays exactly one processing spinner');
+  assert.equal(await queued.getByRole('button', { name: 'Edit queued message', exact: true }).count(), 0, 'Processing hides Edit immediately');
+  await page.waitForFunction(() => window.__heldSteerResult);
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'steerCodexCliSessionTurn').length), beforeExplicit + 1, 'Explicit Steer sends during a running turn without changing follow-up mode');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSteerResult })));
+  await queued.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  assert.equal(await page.getByRole('combobox', { name: 'Follow-up mode', exact: true }).inputValue(), 'queue', 'Explicit Steer preserves the chosen queue mode');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult })));
 
 }

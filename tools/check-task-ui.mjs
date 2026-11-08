@@ -53,7 +53,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   });
   await page.getByRole('tab',{name:'List',exact:true}).click();
   await page.getByRole('tab',{name:'List',exact:true,selected:true}).waitFor();
-  await page.getByText('Display choice is kept in this tab only. Browser storage is unavailable.',{exact:true}).first().waitFor();
+  await page.getByText('Display choice is kept in this tab only. Browser storage is unavailable.',{exact:true}).filter({visible:true}).first().waitFor();
   await page.evaluate(() => { Storage.prototype.setItem = window.__originalSetItem; });
   await page.getByRole('tab',{name:'Board',exact:true}).click();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Task board keeps horizontal scrolling inside its columns');
@@ -81,7 +81,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await runningMenuButton.click();
   await assertFlyoutNear(page, runningMenuButton, page.getByRole('menu',{name:'Actions for Running workspace task',exact:true}));
   await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
-  await page.getByText('This task changed in another browser. Your draft was kept.',{exact:true}).first().waitFor();
+  await page.getByText('This task changed in another browser. Your draft was kept.',{exact:true}).filter({visible:true}).first().waitFor();
   assert.equal(await runningCard.count(),1,'A failed hide keeps the session visible');
   await page.evaluate(() => { window.__failTaskSaves=false; });
   await runningMenuButton.click();
@@ -144,6 +144,14 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   const taskReadsBeforeAgents=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='getProjectTaskDetails').length);
   await task.getByRole('tab',{name:/^Agents/}).click();
   await task.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor();
+  await task.getByRole('button', { name: 'Message settings', exact: true }).click();
+  const approval = task.getByRole('checkbox', { name: 'Auto approval', exact: true });
+  await approval.click();
+  await page.waitForFunction(() => document.querySelector('.task-session-conversation .cli-approval-control input')?.checked);
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'setCodexSessionAccess').at(-1).payload.autoApprove), true, 'Task conversation sends approval policy to its owner');
+  await approval.click();
+  await page.waitForFunction(() => !document.querySelector('.task-session-conversation .cli-approval-control input')?.checked);
+  await page.keyboard.press('Escape');
   const taskContext = task.locator('.cli-turn-context');
   assert.ok((await taskContext.innerText()).trim(), 'Task conversation footer shows session context');
   assert.equal(await task.locator('.cli-turn-quota').count(), 0, 'Task context has no empty account quota');
@@ -250,7 +258,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     assert.equal(await child.count(),1,'A session dropped under a custom task is shown once');
     const saves = await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='saveProjectTask').length);
     await page.locator('.task-board-card').filter({hasText:'Release work'}).dragTo(idea,{sourcePosition:{x:12,y:12},targetPosition:{x:12,y:12}});
-    await page.getByText('Only session tasks can be subtasks. Custom tasks stay on the top-level board.',{exact:true}).waitFor();
+    await page.getByText('Only session tasks can be subtasks. Custom tasks stay on the top-level board.',{exact:true}).filter({visible:true}).waitFor();
     assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='saveProjectTask').length),saves,'Custom tasks cannot be nested');
     await idea.dragTo(page.locator('.task-board-column.is-planned .task-board-column-heading'));
     await page.locator('.task-board-column.is-planned .task-board-card').filter({hasText:'Idea collection'}).waitFor();
@@ -354,12 +362,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await create.locator('input[type=file]').setInputFiles({name:'task-brief.txt',mimeType:'text/plain',buffer:Buffer.from('Task attachment survives offline save')});
   await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).waitFor();
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
-  await page.locator('.dashboard-offline-overlay').waitFor();
+  await page.locator('.dashboard-connection-banner').waitFor();
+  assert.equal(await page.locator('.dashboard-offline-overlay').count(), 0, 'Task boards use only the bottom connection banner');
   assert.equal(await page.getByRole('button',{name:'Board actions',exact:true}).isDisabled(),true,'All board actions disable offline');
-  assert.equal(await create.getByLabel('Title',{exact:true}).inputValue(),'Offline task draft','The masked view preserves the open draft');
+  assert.equal(await create.getByLabel('Title',{exact:true}).inputValue(),'Offline task draft','The offline view preserves the open draft');
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length),sentBefore,'No task write starts offline');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
-  await page.locator('.dashboard-offline-overlay').waitFor({state:'hidden'});
+  await page.locator('.dashboard-connection-banner').waitFor({state:'hidden'});
   await page.waitForFunction(()=>!document.querySelector('.task-create-modal button[type=submit]')?.disabled);
   await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
   if (width === 320) await page.evaluate(() => {
@@ -371,7 +380,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   });
   await create.getByRole('button', { name: 'Save task', exact: true }).click();
   if (width === 320) {
-    await page.locator('.dashboard-notice-stack').getByText('Browser storage is full or unavailable. Your open draft was kept; reconnect before closing this view.', {exact:true}).waitFor();
+    await create.getByText('Browser storage is full or unavailable. Your open draft was kept; reconnect before closing this view.', {exact:true}).waitFor();
     assert.equal(await create.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
     assert.equal(await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).count(),1,'Storage failures preserve the attachment');
     await create.getByRole('button', { name: 'Close new task', exact: true }).click();
@@ -383,7 +392,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   }
   assert.equal(await page.locator('.task-board-status').count(),0,'Action feedback never inserts a board row');
   assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'Routine task outcomes stay quiet');
-  while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).first().click();
+  while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).first().click();
   await page.locator('.dashboard-notice-stack').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore + (width === 320 ? 0 : 1), 'Only the explicit save after reconnect sends a request');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));

@@ -37,6 +37,11 @@ try {
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(() => {
       window.__liveEvents = [];
+      window.__liveSockets = [];
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = class extends NativeWebSocket {
+        constructor(...args) { super(...args); window.__liveSockets.push(this); }
+      };
       window.addEventListener("message", event => {
         const message = event.data;
         if (message?.type?.startsWith("dashboard:")) window.__liveEvents.push(message);
@@ -113,6 +118,8 @@ try {
     }
     // Disconnect this test browser only, then require the real transport to recover.
     await context.setOffline(true);
+    // Chromium keeps established loopback sockets alive when HTTP goes offline.
+    await page.evaluate(() => window.__liveSockets.forEach(socket => socket.close()));
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === false, null, { timeout: 45_000 });
     await context.setOffline(false);
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === true, null, { timeout: 30_000 });

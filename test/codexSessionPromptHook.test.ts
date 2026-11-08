@@ -55,6 +55,49 @@ beforeEach(() => {
 afterEach(() => { harness.cleanups.forEach(cleanup => cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("session request routing and recovery", () => {
+  it('quietly removes permission requests handled by Manager Auto approval', () => {
+    render(); emit({ type: 'dashboard:codex-request', request: { ...request(), kind: 'command' } });
+    emit({ type: 'dashboard:codex-request-resolved', requestId: 'question', deviceId: 'worker', automatic: true });
+    expect(render().active).toBeUndefined(); expect(notice).not.toHaveBeenCalled();
+  });
+  it('recovers a missing approval acknowledgement without relying on the parent timeout handler', () => {
+    vi.useFakeTimers(); render();
+    const approval = { ...request(), kind: 'permissions' as const };
+    emit({ type: 'dashboard:codex-request', request: approval });
+    const key = codexPromptKey(approval);
+    render().respond(key, 'approve');
+    vi.advanceTimersByTime(80_000);
+    let hook = render();
+    expect(hook.active).toMatchObject({ uncertain: true, responseId: undefined, error: expect.stringContaining('not confirmed') });
+    hook.respond(key, 'approve'); expect(send).toHaveBeenCalledOnce();
+    emit({ type: 'dashboard:codex-requests', requests: [approval] });
+    hook = render(); hook.respond(key, 'approve');
+    expect(send).toHaveBeenCalledTimes(2);
+    emit({ type: 'dashboard:action-result', requestId: 'response1', action: 'respondCodexServerRequest', status: 'failed', error: 'Old failure' });
+    expect(render().entries[0]?.responseId).toBe('response2');
+    emit({ type: 'dashboard:action-result', requestId: 'response2', action: 'respondCodexServerRequest', status: 'completed' });
+    const notices = notice.mock.calls.length;
+    vi.advanceTimersByTime(80_000);
+    expect(render().active).toBeUndefined(); expect(notice).toHaveBeenCalledTimes(notices);
+  });
+  it.each(['resolved', 'snapshot', 'unmount'] as const)('clears approval deadlines after %s', action => {
+    vi.useFakeTimers(); render(); emit({ type: 'dashboard:codex-request', request: request() });
+    render().respond(codexPromptKey(request()), 'decline');
+    if (action === 'resolved') emit({ type: 'dashboard:codex-request-resolved', requestId: 'question', deviceId: 'worker' });
+    else if (action === 'snapshot') emit({ type: 'dashboard:codex-requests', requests: [] });
+    else harness.cleanups.forEach(cleanup => cleanup?.());
+    const notices = notice.mock.calls.length;
+    vi.advanceTimersByTime(80_000);
+    expect(notice).toHaveBeenCalledTimes(notices);
+  });
+  it('keeps an approval usable when the host cannot queue the response', () => {
+    render(); emit({ type: 'dashboard:codex-request', request: request() });
+    send.mockReturnValueOnce(undefined);
+    render().respond(codexPromptKey(request()), 'decline');
+    expect(render().active).toMatchObject({ error: expect.stringContaining('not queued') });
+    expect(render().active?.responseId).toBeUndefined();
+    render().respond(codexPromptKey(request()), 'decline'); expect(send).toHaveBeenCalledTimes(2);
+  });
   it("routes an explicit answer to its owner exactly once and keeps it after failure", () => {
     render(); emit({ type: "dashboard:codex-request", request: request() });
     const key = codexPromptKey(request());
