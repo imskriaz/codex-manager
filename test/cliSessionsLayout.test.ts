@@ -490,6 +490,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
     expect(source).toContain("steeringTurnId");
+    expect(source).toContain("Starting new session…");
+    expect(source).toContain('class="cli-session-row is-starting"');
     expect(taskBoard).toContain("const [sharedVisibleStages, setSharedVisibleStages] = useState<TaskStage[]>(stages)");
     expect(taskBoard).toContain("if (props.shared) setSharedVisibleStages(next)");
     expect(source).not.toContain('<strong>Running elsewhere</strong>');

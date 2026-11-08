@@ -2009,7 +2009,8 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   ensureCliIntegrationEnabled();
   if (!payload?.sessionId) throw new Error("Choose a session first.");
   const currentSession = await ensureCliSessionIsActive(payload.sessionId);
-  if (currentSession.status === "running" || currentSession.locked) {
+  const liveAfterStop = getCodexSessionLiveState(payload.sessionId)?.status === "cancelled";
+  if ((currentSession.status === "running" || currentSession.locked) && !liveAfterStop) {
     throw new Error(`This session has an active writer${currentSession.runningBy ? ` in ${currentSession.runningBy}` : ""}. Wait for the current turn to finish before sending.`);
   }
   if (

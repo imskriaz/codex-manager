@@ -899,6 +899,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </div>;
     })()
   );
+  const renderStartingSession = (): preact.ComponentChildren => props.starting ? <div role="listitem" class="cli-session-row is-starting" aria-live="polite"><span class="cli-session-row-main has-project"><strong>Starting new session…</strong><small class="cli-session-row-meta">Waiting for Codex to accept the first turn</small></span><span class="cli-session-row-status"><span class="cli-session-spinner" aria-hidden="true" /></span></div> : null;
   const returnToSessionList = (): void => {
     setNewChatProject(undefined);
     props.onBackToList();
@@ -1134,7 +1135,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           </div>
 
           <div class="cli-session-list-region">
-          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{visibleSessions.slice(0,sessionLimits['compact'] ?? 50).map(session => renderSession(session))}<ScrollMore remaining={visibleSessions.length-(sessionLimits['compact'] ?? 50)} onMore={() => growSessions('compact')} /></div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
+          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{renderStartingSession()}{visibleSessions.slice(0,sessionLimits['compact'] ?? 50).map(session => renderSession(session))}<ScrollMore remaining={visibleSessions.length-(sessionLimits['compact'] ?? 50)} onMore={() => growSessions('compact')} /></div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
+            {renderStartingSession()}
             {pcGroups.map((pc) => {
               const knownProjectPaths = new Set((pc.local ? projects : []).map((project) => canonicalWebPath(project.path)));
               const sessionProjects = [...new Map(pc.allSessions

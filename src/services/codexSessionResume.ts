@@ -1183,6 +1183,16 @@ async function startAppServerSession(options: {
   }
 }
 
+async function waitForCancelledTurnRelease(home: string, sessionId: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const app = activeAppServerTurns.get(sessionId);
+    const native = ownedNativeTurn(home, sessionId);
+    if ((!app || !app.cancelRequested) && (!native || !native.cancelled)) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
 async function sendAppServerSessionMessage(options: {
   sessionId: string;
   text: string;
@@ -1201,6 +1211,7 @@ async function sendAppServerSessionMessage(options: {
   options.signal?.throwIfAborted();
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
+  await waitForCancelledTurnRelease(resolveCodexHome(), options.sessionId);
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   const params = {
     threadId: options.sessionId, input: options.goalContinuation ? [] : appServerChatInput(options.text.trim(), options.attachments), cwd,
@@ -1654,8 +1665,12 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     activeAppServer.cancelRequested = true;
     if (!activeAppServer.turnId) { void activeAppServer.rpc.close(); return true; }
     recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: appServerTransport.getStore() ?? "stdio" });
-    activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(() => {
+    activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(async () => {
       cancelCodexAppServerPrompts(sessionId);
+      // Interrupt acknowledgement can arrive before Codex releases the
+      // writer process running a command. Close this private connection now
+      // so its child process tree is torn down before the next turn starts.
+      await Promise.resolve(activeAppServer.rpc.close());
       return true;
     }).catch(error => {
       activeAppServer.cancelRequested = false;
