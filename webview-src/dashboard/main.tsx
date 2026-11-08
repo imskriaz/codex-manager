@@ -2517,11 +2517,11 @@ function App() {
   );
 
   const renderAccountSection = (compact = false) => (
-          <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${uiPreferences.view}`}>
+          <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${compact ? "cards" : uiPreferences.view}`}>
             <div class="header accounts-section-header">
               <div>
                 <h2 class="header-title header-title-with-meta">
-                  {snapshot.copy.savedAccounts}
+                  {compact ? null : snapshot.copy.savedAccounts}
                   <span class="account-count-badges">
                     <button
                       class={`header-count-badge header-count-link ${uiPreferences.filter === "all" ? "is-selected" : ""}`}
@@ -2703,7 +2703,7 @@ function App() {
                   ))}
                 </select>
               </label>
-              <div class="dashboard-view-controls">
+              {!compact ? <div class="dashboard-view-controls">
                 <button
                   type="button"
                   class="dashboard-view-toggle active"
@@ -2718,11 +2718,11 @@ function App() {
                 >
                   {uiPreferences.view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
                 </button>
-              </div>
+              </div> : null}
             </div>
             <div class="accounts-grid">
               {sortedAccounts.map((account) => (
-                renderSavedAccount(account, uiPreferences.view === "list")
+                renderSavedAccount(account, !compact && uiPreferences.view === "list")
               ))}
               {sortedAccounts.length === 0 ? (
                 <div class="accounts-empty-filter">{resolveUiText("noResults", snapshot.lang)}</div>

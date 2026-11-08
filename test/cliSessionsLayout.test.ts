@@ -235,6 +235,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class={`cli-account-footer');
     expect(source).toContain('class="cli-account-footer-quota"');
     expect(source).toContain('aria-label="Open account center"');
+    expect(source).toContain('dashboard-view-${compact ? "cards" : uiPreferences.view}');
+    expect(source).toContain('renderSavedAccount(account, !compact && uiPreferences.view === "list")');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('class="cli-composer-location is-top"');
     expect(source).toContain("!props.projectLocked");
