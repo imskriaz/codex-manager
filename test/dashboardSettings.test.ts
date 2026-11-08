@@ -92,11 +92,13 @@ describe("handleDashboardSettingUpdate", () => {
 
   it("persists the Always Active host toggle globally", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
+    const values = new Map<string, unknown>();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn(),
+      get: vi.fn((key: string, fallback?: unknown) => values.has(key) ? values.get(key) : fallback),
       update,
       inspect: vi.fn(() => ({ key: "codexManager.alwaysActive", defaultValue: false }))
     } as never);
+    update.mockImplementation(async (key, value) => { values.set(key, value); });
     await expect(handleDashboardSettingUpdate("alwaysActive", true)).resolves.toBe(true);
     expect(update).toHaveBeenCalledWith("alwaysActive", true, vscode.ConfigurationTarget.Global);
     update.mockClear();

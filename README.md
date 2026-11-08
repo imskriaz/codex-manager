@@ -157,6 +157,10 @@ The browser dashboard is enabled by default and listens on `http://127.0.0.1:398
 3. For a public HTTPS address, enable **WS Cross System**, enter the final URL (for example `https://codex.example.com`), and configure the tunnel to forward to `http://127.0.0.1:39875`.
 4. The manager automatically prepares the relay on the system verified to host that tunnel. Other systems connect without preparing a detached host.
 
+Enable **Always Active** in the same Settings panel to keep the local Node host and SQLite-backed dashboard running after VS Code closes. The detached host uses the same port (`39875`) and database as VS Code, so the browser, standalone Node process, and later VS Code takeover see the same sessions, accounts, settings, and queued work.
+
+For a standalone Node launch from a source checkout, run `npm run compile` first, then `npm start` (or `node tools/start-node.cjs`). The host serves `http://127.0.0.1:39875` and refuses a second process on the same port. Stop it with Ctrl+C; VS Code can take over the same database and port on its next start.
+
 The **Tools** tab opens focused maintenance panels for archives, conversations, goals, and old shell snapshots. Review the selected system and affected items before confirming deletion. Search with Enter or the Search button. Progress arrives through bounded events; reopening a running operation or reconnecting checks its current status without polling. Use Refresh status if the host cannot stream updates. A missing start reply can be checked without resending cleanup. Inspection tools report missing projects, large conversations, and native database health without changing data. **System Log** stays in Data & sync; its console contains download and clear controls, and startup and recovery diagnostics use this same toggle. Switching logging off clears saved manager history and stops saving startup logs.
 
 Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
@@ -184,6 +188,7 @@ Important combinations:
 - **Automatic switching** is on by default, with quota refresh before switching, reload, Auto Resume, quota reset and warnings enabled. The 5-hour quota always participates in switching and status-bar warnings.
 - **Switch after model-capacity failures** is on under Auto Switch. Its configurable threshold defaults to three consecutive failures across local sessions. A failure counts only when no other session is running; success resets the count. Switching requires another verified capable account and a final check that every session has stopped. A successful automatic switch adds the **Capacity** account tag without removing existing tags; that automatic tag clears after two hours and lowers the account's automatic queue priority while present.
 - **Quota Warning** controls notifications independently of Auto Switch. Turning it off keeps switch safety refreshes and scheduled checks running.
+- **Always Active** keeps the shared local Node host alive after VS Code closes; it is machine-wide and uses the same SQLite database and dashboard port for clean handoff.
 - **WS Cross System** controls cross-PC WebSocket connections using the configured HTTPS origin. Manager prepares the detached relay only after verifying that the configured tunnel reaches this system. Local dashboard WebSockets work independently. The `cloudflared` process and DNS route are managed by you.
 - A visible browser dashboard subscribes to its selected system: one initial load, then file-change updates without recurring session scans. Switching systems or hiding/closing the dashboard releases that subscription. Idle VS Code instances retain lightweight authenticated presence for discovery and account ownership. Update both PCs together for the signed subscription protocol.
 
@@ -314,7 +319,7 @@ Each project and system keeps its own tool tabs, commit draft and file edits. Gi
 
 ### Project Kanban and task details
 
-**Task view**, beside Dashboard in the browser workspace, opens the selected project's **Idea, Planned, Running, Completed** board. Kanban is on by default and can be turned off in Settings. Choose a discovered project or add an existing project folder, including a closed worktree.
+**Task view**, beside Dashboard in the browser workspace, opens the selected project's **Idea, Planned, Running, Completed** board. The project board is always available. Choose a discovered project or add an existing project folder, including a closed worktree.
 
 Each discovered parent session has one database task. Create custom tasks or ideas without starting Codex. Group a session beneath a custom task using **Parent task** and **Move under task**; **Move to board** makes the session standalone again. Custom tasks stay at the top level and cannot be nested. **Subtask** starts a new session beneath a custom task. Board moves change classification without starting, pausing, resuming or stopping Codex. Child agents remain session activity. Running descendants mark their parent as running; idle work alone does not complete a task.
 

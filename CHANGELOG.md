@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.5
+
+- Fix browser and standalone Node persistence for the **Always Active** machine setting.
+- Keep the project task board always available and remove its redundant Settings toggle.
+- Document the shared SQLite database, port handoff, and standalone Node launch workflow.
+
 ## 1.7.4
 
 - Prefer the native Codex App Server and automatically retry through the detected Codex CLI when its proxy or WebSocket transport is unavailable.

@@ -367,6 +367,16 @@ it('acknowledges saved settings in the browser and never reports a failed write 
   } finally { server.dispose(); }
 });
 
+it('acknowledges the Always Active browser setting through the host message path', async () => {
+  const { server, internal } = createServer();
+  const update = vi.spyOn(dashboardSettings, 'handleDashboardSettingUpdate').mockResolvedValue(true);
+  try {
+    const result = await internal.processClientMessage({ type: 'dashboard:setting', key: 'alwaysActive', value: true });
+    expect(update).toHaveBeenCalledWith('alwaysActive', true);
+    expect(result.messages).toContainEqual({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
+  } finally { server.dispose(); }
+});
+
 it.each([false, true])('returns the stored snapshot after an invalid or failed settings write (storage=%s)', async storageFailure => {
   const { server, internal } = createServer();
   const stored = { settings: { autoResumeEnabled: false } };
