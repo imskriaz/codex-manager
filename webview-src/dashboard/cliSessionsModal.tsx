@@ -1603,9 +1603,9 @@ export function TurnUsageStrip({ account, privacyMode, contextLabel, saved, chan
   const metrics = getAccountQuotaMetrics(account);
   const name = account ? getSensitiveDisplayValue(account.email || account.displayName, privacyMode, 'email') : undefined;
   const quota = account ? <span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span> : null;
-  const accountSummary = name ? onOpenAccountCenter
-    ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}><span class="cli-turn-account-name">{name}</span>{quota}</button>
-    : <><span class="cli-turn-account" title={name}>{name}</span>{quota}</>
+  const accountSummary = name ? <span class="cli-turn-account-group">{onOpenAccountCenter
+    ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}><span class="cli-turn-account-name">{name}</span></button>
+    : <span class="cli-turn-account" title={name}>{name}</span>}{quota}</span>
     : contextLabel ? <span class="cli-turn-context" title={contextLabel}>{contextLabel}</span> : null;
   return <div class="cli-turn-usage-strip" role="group" aria-label="Account and session usage">{accountSummary}<span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span><b class="is-added">+{additions ?? 0}</b><b class="is-removed">−{deletions ?? 0}</b></button> : null}</span></div>;
 }
@@ -2868,9 +2868,9 @@ export function QueuedMessages({ queue, onRefresh, onSteer }: { queue: ReturnTyp
         <summary title={item.draft.text || 'Attachment'}><span class="cli-queued-message-copy">{item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : null}<p>{item.draft.text || item.draft.attachments[0]?.name || 'Attachment'}</p><ChevronIcon /></span></summary>
         <div class="cli-queued-message-expanded">{item.draft.text ? <p>{item.draft.text}</p> : null}{item.draft.attachments.length ? <div class="cli-queued-attachments">{item.draft.attachments.map(attachment => attachment.kind === 'image' ? <img key={attachment.id} src={attachment.data} alt={attachment.name} /> : <span key={attachment.id}>{attachment.name}</span>)}</div> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
       </details>
-      {item.state === 'sending' ? <small class="cli-queued-sending-status" role="status" aria-live="polite"><span class="cli-live-spinner" aria-hidden="true" /> Sending…</small> : null}
+      {item.state === 'sending' ? <small class="cli-queued-sending-status" role="status" aria-label="Sending" aria-live="polite"><span class="cli-queued-steer is-sending" aria-hidden="true"><span class="cli-live-spinner" /></span></small> : null}
       <div class="cli-queued-message-actions">
-        {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onSteer?.(); queue.steerNow(item.id); }}>↪ <span>Steer</span></button> : item.state === 'sending' ? <span class="cli-queued-steer is-sending" role="status" aria-live="polite"><span class="cli-live-spinner" aria-hidden="true" /> <span>Steering…</span></span> : null}
+        {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => { onSteer?.(); queue.steerNow(item.id); }}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
         {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><RefreshIcon /></button> : null}
         {item.state !== 'sending' ? <button type="button" class="cli-icon-button is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}

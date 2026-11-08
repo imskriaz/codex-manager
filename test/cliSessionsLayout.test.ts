@@ -96,6 +96,14 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('aria-label={`Actions for ${session.title}`}');
     expect(css).toContain(".cli-workspace .cli-session-row:hover .cli-session-row-menu-wrap");
   });
+  it("keeps queued sends single-shot and compresses the phone quota row", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(source).toContain('aria-label="Sending" aria-live="polite"');
+    expect(source).not.toContain('> <span>Steering…</span>');
+    expect(css).toContain("@media (max-width: 480px)");
+    expect(css).toContain(".cli-turn-quota small { display: none; }");
+  });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");

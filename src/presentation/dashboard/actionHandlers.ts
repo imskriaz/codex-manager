@@ -1105,8 +1105,10 @@ async function runDashboardAction(
         notice: { level: "info" as const, message: "File saved." }
       };
     case "deleteWorkspaceFile": {
-      if (!payload?.fileRevision) throw new Error("Refresh or open the file before deleting it so newer edits are protected.");
-      const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath, payload.fileRevision);
+      // A tree entry has no content hash. Capture one at confirmation time so
+      // deleting directly from the tree still keeps the stale-edit guard.
+      const revision = payload?.fileRevision ?? (await readWorkspaceFile(payload?.projectPath, payload?.filePath)).revision;
+      const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath, revision);
       try {
         const result = await listWorkspaceFiles(payload?.projectPath);
         return { deletedWorkspaceFilePath: deletedPath, workspaceFiles: result.files, workspaceFilesWarning: result.warning,
