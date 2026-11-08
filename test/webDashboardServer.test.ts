@@ -34,6 +34,7 @@ it('permits only same-origin dashboard frames and retains authentication and pri
   const server = Object.assign(Object.create(WebDashboardServer.prototype), {
     settingsStore: { getDashboardSettings: () => ({}) },
     isAuthorized: async () => authorized,
+    auth: { hasDashboardPassphrase: async () => false },
     assetVersion: 'monitor-test'
   }) as { handle(request: unknown, response: unknown): Promise<void> };
   for (const authenticated of [true, false]) {

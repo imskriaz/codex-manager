@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { initializeSqliteContextWithRetry } from "./storage/sqliteContext";
-import { getSqliteStateStore } from "./storage/sqliteState";
+import { deleteSqliteStateFile, getSqliteStateStore, readSqliteStateFile, writeSqliteStateFile } from "./storage/sqliteState";
 import { AccountsRepository } from "./storage";
 import { WebDashboardServer } from "./services/webDashboardServer";
-import * as fs from "node:fs/promises";
+import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
+import { getCodexManagerStorageRoot } from "./utils/storageRoot";
 
 type NodeSecretStorage = vscode.SecretStorage;
 
@@ -52,7 +53,7 @@ function createContext(): vscode.ExtensionContext {
     extensionUri: uri,
     extension: { packageJSON, extensionUri: uri },
     extensionPath: extensionRoot,
-    storageUri: vscode.Uri.file(process.env["CODEX_MANAGER_STORAGE_ROOT"] ?? extensionRoot),
+    storageUri: vscode.Uri.file(process.env["CODEX_MANAGER_WORKSPACE_STORAGE"] ?? process.env["CODEX_MANAGER_STORAGE_ROOT"] ?? extensionRoot),
     globalState: createMemento(),
     workspaceState: createMemento(),
     secrets: createNodeSecretStorage(),
@@ -63,21 +64,43 @@ function createContext(): vscode.ExtensionContext {
 export async function startNodeHost(): Promise<void> {
   const context = await initializeSqliteContextWithRetry(createContext());
   const repo = new AccountsRepository(context);
-  await repo.init();
   const dashboard = new WebDashboardServer(context, repo, undefined, { failOnAddressInUse: true });
-  await dashboard.start();
   const pidFile = process.env["CODEX_MANAGER_PID_FILE"];
-  if (pidFile) await fs.writeFile(pidFile, String(process.pid), { encoding: "utf8", mode: 0o600 });
-  const shutdown = async (): Promise<void> => {
+  let closing: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => closing ??= (async () => {
     await dashboard.stop();
+    dashboard.dispose();
     repo.dispose();
-    const store = getSqliteStateStore();
-    store?.close();
-    if (pidFile) await fs.rm(pidFile, { force: true }).catch(() => undefined);
-  };
-  process.once("SIGINT", () => { void shutdown().finally(() => process.exit(0)); });
-  process.once("SIGTERM", () => { void shutdown().finally(() => process.exit(0)); });
+    if (pidFile) {
+      try { if (readSqliteStateFile(pidFile) === String(process.pid)) deleteSqliteStateFile(pidFile); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    for (const subscription of context.subscriptions) subscription.dispose();
+    getSqliteStateStore()?.close();
+  })();
+  const exit = (): void => { void shutdown().then(() => process.exit(0), error => { console.error("[codexManager] Node shutdown failed", error); process.exit(1); }); };
+  process.once("SIGINT", exit);
+  process.once("SIGTERM", exit);
+  try {
+    await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
+    await repo.init();
+    const deadline = Date.now() + (process.env["CODEX_MANAGER_HANDOFF"] === "1" ? 8_000 : 0);
+    for (;;) {
+      try { await dashboard.start(); break; }
+      catch (error) {
+        if (closing || Date.now() >= deadline || !(error instanceof Error) || !error.message.includes("already owned by another host")) throw error;
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+    }
+    if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));
+  } catch (error) {
+    await shutdown();
+    process.removeListener("SIGINT", exit);
+    process.removeListener("SIGTERM", exit);
+    throw error;
+  }
   console.log(`Codex Manager Node host listening at ${dashboard.getUrl()}`);
+  if (process.send) process.send({ type: "codex-manager-ready", url: dashboard.getUrl() });
 }
 
 if (require.main === module) {

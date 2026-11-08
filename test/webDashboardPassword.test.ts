@@ -22,6 +22,7 @@ describe("Web Dashboard encrypted-sync passphrase", () => {
       {} as never,
       {
         hasDashboardPassphrase: vi.fn(async () => true),
+        getDashboardPassphraseFingerprint: vi.fn(async () => "password-fingerprint"),
         verifyDashboardPassphrase: vi.fn(async () => false),
         setOnlineDeviceIds: vi.fn()
       } as never
@@ -73,6 +74,7 @@ describe("Web Dashboard forwarded protocol", () => {
       {} as never,
       {
         hasDashboardPassphrase: vi.fn(async () => true),
+        getDashboardPassphraseFingerprint: vi.fn(async () => "password-fingerprint"),
         verifyDashboardPassphrase: vi.fn(async () => false),
         setOnlineDeviceIds: vi.fn()
       } as never
@@ -118,6 +120,7 @@ describe("Web Dashboard forwarded protocol", () => {
       {} as never,
       {
         hasDashboardPassphrase: vi.fn(async () => true),
+        getDashboardPassphraseFingerprint: vi.fn(async () => "password-fingerprint"),
         verifyDashboardPassphrase: vi.fn(async () => false),
         setOnlineDeviceIds: vi.fn()
       } as never

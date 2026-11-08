@@ -1,3 +1,4 @@
+import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
 import { isCodexSessionAccess } from '../domain/codexSessionAccess';
 import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import { notificationTargetUrl } from '../domain/notificationTarget';
@@ -85,7 +86,6 @@ import { isDashboardHostReload, type DashboardHostReload } from "../domain/dashb
 
 const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
-const SESSION_SECRET_KEY = "codexManager.webDashboard.sessions.v1";
 const SESSION_COOKIE = "codex_dashboard_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_PERSISTED_SESSIONS = 16;
@@ -508,6 +508,9 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly sessionAccessEvents = new Map<string, Extract<DashboardHostMessage, { type: 'dashboard:codex-session-access' }>>();
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
   private readonly browserPush: BrowserPushService;
+  private readonly auth: DashboardAuth;
+  private readonly authSubscription: vscode.Disposable | undefined;
+  private loginInFlight = 0;
   private readonly codexPushActions = new Map<string, { requestId: string; targetDeviceId?: string; question: boolean; replyQuestionId?: string; answers?: Record<string, Record<string, string>> }>();
   private readonly conversationShares: ConversationShares;
   private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
@@ -519,7 +522,15 @@ export class WebDashboardServer implements vscode.Disposable {
     private readonly encryptedSync?: EncryptedSyncManager,
     private readonly options: { failOnAddressInUse?: boolean } = {}
   ) {
-    this.browserPush = new BrowserPushService(context.secrets, () => this.encryptedSync?.getDashboardPassphraseFingerprint() ?? Promise.resolve(undefined));
+    this.auth = new DashboardAuth(context.secrets, encryptedSync);
+    this.authSubscription = context.secrets?.onDidChange?.(event => {
+      if (event.key !== DASHBOARD_PASSPHRASE_KEY) return;
+      void this.auth.refresh().then(() => this.closeInvalidRemoteBrowserSockets()).catch(error => {
+        this.closeRemoteBrowserSockets();
+        this.broadcastRealtimeNotice("error", `Dashboard authentication could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    });
+    this.browserPush = new BrowserPushService(context.secrets, () => this.auth.getDashboardPassphraseFingerprint());
     this.conversationShares = new ConversationShares(context.secrets);
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
@@ -618,7 +629,11 @@ export class WebDashboardServer implements vscode.Disposable {
         void this.sendRealtimeSnapshot(socket);
       }
     });
-    this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status"], topics => {
+    this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status", "auth"], topics => {
+      if (topics.has("auth")) void this.closeInvalidRemoteBrowserSockets().catch(error => {
+        this.closeRemoteBrowserSockets();
+        console.error("[codexManager] shared dashboard authentication validation failed", error);
+      });
       if (topics.has("session-status")) { this.cliSessionRefreshAfter = 0; void this.publishCliSessionsRealtime(); }
       if (topics.has("accounts") || (topics.has("state") && this.lastPeerClaimFingerprint !== JSON.stringify(this.encryptedSync?.getRealtimeEnablementRegistry() ?? []))) this.publishLocalPeerState();
       this.publishRealtimeState();
@@ -649,7 +664,11 @@ export class WebDashboardServer implements vscode.Disposable {
       try { void Promise.resolve(this.context.secrets.delete(LEGACY_PASSWORD_SECRET_KEY)).catch(() => undefined); }
       catch { /* Legacy cleanup must not delay a manual dashboard open. */ }
     }
-    if (this.encryptedSync) this.deviceId = await waitWithin(this.encryptedSync.getPresenceDeviceId(), 5_000, 'Dashboard device identity is unavailable. Retry shortly.');
+    const [deviceId] = await Promise.all([
+      this.encryptedSync ? waitWithin(this.encryptedSync.getPresenceDeviceId(), 5_000, 'Dashboard device identity is unavailable. Retry shortly.') : undefined,
+      waitWithin(this.auth.refresh(), 5_000, 'Dashboard authentication is unavailable. Retry shortly.')
+    ]);
+    if (deviceId) this.deviceId = deviceId;
     if (revision !== this.serverStartRevision || this.peerStopped || !this.isEnabled()) return;
     this.server = http.createServer((request, response) => {
       void this.handle(request, response).catch((error) => {
@@ -862,6 +881,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   dispose(): void {
     this.encryptedSync?.setRealtimeSyncPublisher?.(undefined);
+    this.authSubscription?.dispose();
     this.dashboardRealtimeSubscription();
     this.stopStorageSubscription?.();
     this.oauth.dispose();
@@ -917,7 +937,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const adminToken = process.env["CODEX_MANAGER_ADMIN_TOKEN"];
       if (!adminToken || request.headers["x-codex-admin"] !== adminToken) { response.statusCode = 403; response.end("Forbidden"); return; }
       response.end("Shutting down");
-      setImmediate(() => process.kill(process.pid, "SIGTERM"));
+      setImmediate(() => process.emit("SIGTERM"));
       return;
     }
     const frameAncestors = isWebDashboardPagePath(path) || path === '/login' || path === '/logout' ? "'self'" : "'none'";
@@ -1080,7 +1100,7 @@ export class WebDashboardServer implements vscode.Disposable {
         response.statusCode = 303;
         response.setHeader("Location", returnPath);
         response.end();
-      } else this.sendHtml(response, loginPage(Boolean(await this.encryptedSync?.hasDashboardPassphrase()), "Your dashboard session expired. Sign in again to continue.", returnPath));
+      } else this.sendHtml(response, loginPage(Boolean(await this.auth.hasDashboardPassphrase()), "Your dashboard session expired. Sign in again to continue.", returnPath));
       return;
     }
     if (method === "POST" && path === "/login") {
@@ -1113,7 +1133,7 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       const returnPath = normalizeWebDashboardReturnPath(`${path}${requestUrl.search}`);
-      this.sendHtml(response, loginPage(Boolean(await this.encryptedSync?.hasDashboardPassphrase()), "", returnPath));
+      this.sendHtml(response, loginPage(Boolean(await this.auth.hasDashboardPassphrase()), "", returnPath));
       return;
     }
     if (method === "POST" && path === "/logout") {
@@ -1173,7 +1193,7 @@ export class WebDashboardServer implements vscode.Disposable {
           return;
         }
         if (path === "/api/push/subscribe") {
-          await this.browserPush.subscribe(body["subscription"], owner, origin, isLocalWebDashboardRequest(request) ? undefined : await this.encryptedSync?.getDashboardPassphraseFingerprint());
+          await this.browserPush.subscribe(body["subscription"], owner, origin, isLocalWebDashboardRequest(request) ? undefined : await this.auth.getDashboardPassphraseFingerprint());
           this.pushWatching = true; this.refreshCliSessionRealtimeLifecycle();
         } else if (path === "/api/push/unsubscribe" && typeof body["endpoint"] === "string") {
           await this.browserPush.unsubscribe(body["endpoint"], owner, origin);
@@ -1257,27 +1277,37 @@ export class WebDashboardServer implements vscode.Disposable {
       throw error;
     }
     const password = new URLSearchParams(body).get("password") ?? "";
-    const configured = Boolean(await this.encryptedSync?.hasDashboardPassphrase());
-    if (!configured || !(await this.encryptedSync?.verifyDashboardPassphrase(password))) {
-      this.loginAttempts.set(ip, {
-        count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1,
-        resetAt: attempt && attempt.resetAt > now ? attempt.resetAt : now + LOGIN_WINDOW_MS
-      });
-      response.statusCode = 401;
-      response.setHeader("Content-Type", "text/html; charset=utf-8");
-      response.end(loginPage(configured, "Incorrect password.", returnPath));
+    if (this.loginInFlight >= 4) {
+      response.statusCode = 429;
+      response.setHeader("Retry-After", "1");
+      response.end("Dashboard sign-in is busy. Retry shortly.");
       return;
     }
-    const token = crypto.randomBytes(32).toString("hex");
-    await this.rememberSession(token, now + SESSION_TTL_MS);
-    response.statusCode = 303;
-    const secure = isForwardedHttpsRequest(request) ? "; Secure" : "";
-    response.setHeader(
-      "Set-Cookie",
-      `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`
-    );
-    response.setHeader("Location", returnPath);
-    response.end();
+    this.loginInFlight++;
+    try {
+      const credential = await this.auth.getDashboardPassphraseFingerprint();
+      const configured = Boolean(await this.auth.hasDashboardPassphrase());
+      if (!configured || !(await this.auth.verifyDashboardPassphrase(password))) {
+        this.loginAttempts.set(ip, {
+          count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1,
+          resetAt: attempt && attempt.resetAt > now ? attempt.resetAt : now + LOGIN_WINDOW_MS
+        });
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "text/html; charset=utf-8");
+        response.end(loginPage(configured, "Incorrect password.", returnPath));
+        return;
+      }
+      const token = crypto.randomBytes(32).toString("hex");
+      await this.rememberSession(token, now + SESSION_TTL_MS, credential);
+      response.statusCode = 303;
+      const secure = isForwardedHttpsRequest(request) ? "; Secure" : "";
+      response.setHeader(
+        "Set-Cookie",
+        `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`
+      );
+      response.setHeader("Location", returnPath);
+      response.end();
+    } finally { this.loginInFlight--; }
   }
 
   private async isAuthorized(request: http.IncomingMessage): Promise<boolean> {
@@ -1287,7 +1317,7 @@ export class WebDashboardServer implements vscode.Disposable {
     // second passphrase prompt. Requests arriving through a forwarded/tunneled
     // connection (for example Cloudflared) are still required to authenticate.
     if (isLocalWebDashboardRequest(request)) return true;
-    if (!(await this.encryptedSync?.hasDashboardPassphrase())) return false;
+    if (!(await this.auth.hasDashboardPassphrase())) return false;
     const token = readDashboardSessionToken(request);
     if (!token) return false;
     return this.isAuthorizedSessionToken(token);
@@ -1296,7 +1326,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async isAuthorizedSessionToken(token: string): Promise<boolean> {
     if (!token || !/^[a-f0-9]{64}$/i.test(token)) return false;
     const persisted = normalizePersistedWebDashboardSessions(
-      await this.context.secrets.get(SESSION_SECRET_KEY),
+      await this.auth.readSessions(),
       Date.now()
     );
     const fingerprint = fingerprintWebDashboardSession(token);
@@ -1311,14 +1341,14 @@ export class WebDashboardServer implements vscode.Disposable {
     return true;
   }
 
-  private async rememberSession(token: string, expiresAt: number): Promise<void> {
+  private async rememberSession(token: string, expiresAt: number, credential?: string): Promise<void> {
     await runCrossWindowExclusive("state:dashboard-sessions", "Dashboard login", async () => {
     const sessions = normalizePersistedWebDashboardSessions(
-      await this.context.secrets.get(SESSION_SECRET_KEY),
+      await this.auth.readSessions(),
       Date.now()
     ).filter((session) => session.fingerprint !== fingerprintWebDashboardSession(token));
     sessions.push({ fingerprint: fingerprintWebDashboardSession(token), expiresAt });
-    await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions.slice(-MAX_PERSISTED_SESSIONS)));
+    await this.auth.writeSessions(JSON.stringify(sessions.slice(-MAX_PERSISTED_SESSIONS)), credential);
     this.sessions.set(token, expiresAt);
     }, { waitMs: 2_000 });
   }
@@ -1331,10 +1361,10 @@ export class WebDashboardServer implements vscode.Disposable {
     this.sessions.delete(token);
     const fingerprint = fingerprintWebDashboardSession(token);
     const sessions = normalizePersistedWebDashboardSessions(
-      await this.context.secrets.get(SESSION_SECRET_KEY),
+      await this.auth.readSessions(),
       Date.now()
     ).filter((session) => session.fingerprint !== fingerprint);
-    await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions));
+    await this.auth.writeSessions(JSON.stringify(sessions));
     this.closeRemoteBrowserSockets((socket) => this.browserSocketSessionFingerprint.get(socket) === fingerprint);
     }, { waitMs: 2_000 });
   }
@@ -1775,7 +1805,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
     const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
     const browserPassphraseFingerprint =
-      !isPeer && !localBrowser ? await this.encryptedSync?.getDashboardPassphraseFingerprint() : undefined;
+      !isPeer && !localBrowser ? await this.auth.getDashboardPassphraseFingerprint() : undefined;
     if (
       requestUrl.pathname !== "/ws" ||
       !isTrustedWebDashboardOrigin(
@@ -2124,7 +2154,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const expiresAt = this.browserSocketExpiresAt.get(socket);
       const expectedFingerprint = this.browserSocketPassphraseFingerprint.get(socket);
       const currentFingerprint = expectedFingerprint
-        ? await this.encryptedSync?.getDashboardPassphraseFingerprint()
+        ? await this.auth.getDashboardPassphraseFingerprint()
         : undefined;
       if (
         (expiresAt !== undefined && expiresAt <= Date.now()) ||
@@ -2203,12 +2233,14 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async closeInvalidRemoteBrowserSockets(): Promise<void> {
-    const currentFingerprint = await this.encryptedSync?.getDashboardPassphraseFingerprint();
+    if (![...this.webSocketClients].some(socket => this.browserSocketSessionFingerprint.has(socket))) return;
+    const currentFingerprint = await this.auth.getDashboardPassphraseFingerprint();
     const now = Date.now();
+    const sessions = new Set(normalizePersistedWebDashboardSessions(await this.auth.readSessions(), now).map(session => session.fingerprint));
     this.closeRemoteBrowserSockets((socket) => {
       const expectedFingerprint = this.browserSocketPassphraseFingerprint.get(socket);
       const expiresAt = this.browserSocketExpiresAt.get(socket);
-      return expiresAt === undefined || expiresAt <= now || expectedFingerprint !== currentFingerprint;
+      return expiresAt === undefined || expiresAt <= now || expectedFingerprint !== currentFingerprint || !sessions.has(this.browserSocketSessionFingerprint.get(socket)!);
     });
   }
 

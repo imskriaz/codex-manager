@@ -19,9 +19,30 @@ async function removeLegacyLauncher(): Promise<void> {
   if (file) await fs.unlink(file).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
 }
 
-export async function installRelayStartup(configPath: string, scriptPath: string): Promise<void> {
+export async function resolveNodeExecutable(): Promise<string> {
+  for (const candidate of [...new Set([process.env["NODE"], process.env["NODE_EXE"], "node", process.execPath].filter((value): value is string => !!value))]) {
+    const executable = await new Promise<string | undefined>(resolve => execFile(candidate, ["-p", "JSON.stringify({version:process.versions.node,executable:process.execPath})"], {
+      windowsHide: true, timeout: 1_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
+    }, (error, stdout) => {
+      if (error) { resolve(undefined); return; }
+      try {
+        const result = JSON.parse(String(stdout)) as { version: string; executable: string };
+        const version = /^(\d+)\.(\d+)\./.exec(result.version);
+        resolve(version && typeof result.executable === "string" && path.isAbsolute(result.executable) &&
+          (Number(version[1]) > 22 || Number(version[1]) === 22 && Number(version[2]) >= 13) ? result.executable : undefined);
+      } catch { resolve(undefined); }
+    }));
+    if (executable) return executable;
+  }
+  throw new Error("Always Active requires Node.js 22.13 or newer, or a compatible VS Code runtime.");
+}
+
+export async function installRelayStartup(configPath: string, scriptPath: string, executable = process.execPath): Promise<void> {
   if (process.platform !== "win32") return;
-  const command = `"${process.env["ComSpec"] ?? "cmd.exe"}" /d /c "set ELECTRON_RUN_AS_NODE=1&&"${process.execPath}" "${scriptPath}" "${configPath}""`;
+  const literal = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+  const script = `$env:ELECTRON_RUN_AS_NODE='1'; Start-Process -WindowStyle Hidden -FilePath ${literal(executable)} -ArgumentList ${literal(`"${scriptPath}" "${configPath}"`)}`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const command = `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encoded}`;
   await reg(["add", REGISTRY, "/v", VALUE, "/t", "REG_SZ", "/d", command, "/f"]);
   await removeLegacyLauncher();
 }

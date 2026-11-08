@@ -20,7 +20,7 @@ function unhealthyPort() {
 function server() {
   const instance = new AlwaysOnlineServer({} as never);
   vi.spyOn(instance as unknown as { prepareRelay(): Promise<unknown> }, "prepareRelay").mockResolvedValue({
-    port: 39875, pidPath: "missing-relay.pid", configPath: "relay-config.json", scriptTarget: "relay.js", hostKey: "key", adminToken: "token"
+    executable: process.execPath, port: 39875, pidPath: "missing-relay.pid", configPath: "relay-config.json", scriptTarget: "relay.js", hostKey: "key", adminToken: "token"
   });
   return instance;
 }

@@ -99,7 +99,7 @@ describe("sessions sidebar layout", () => {
   it("keeps queued sends single-shot and compresses the phone quota row", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(source).toContain('aria-label="Sending" aria-live="polite"');
+    expect(source).toContain("items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending')");
     expect(source).not.toContain('> <span>Steering…</span>');
     expect(source).toContain('(!props.sending || canSteer) && !access.pending');
     expect(css).toContain("@media (max-width: 480px)");
@@ -235,8 +235,9 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class={`cli-account-footer');
     expect(source).toContain('class="cli-account-footer-quota"');
     expect(source).toContain('aria-label="Open account center"');
-    expect(source).toContain('dashboard-view-${compact ? "cards" : uiPreferences.view}');
-    expect(source).toContain('renderSavedAccount(account, !compact && uiPreferences.view === "list")');
+    const dashboard = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(dashboard).toContain('dashboard-view-${compact ? "cards" : uiPreferences.view}');
+    expect(dashboard).toContain('renderSavedAccount(account, !compact && uiPreferences.view === "list")');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('class="cli-composer-location is-top"');
     expect(source).toContain("!props.projectLocked");

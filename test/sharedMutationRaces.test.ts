@@ -10,6 +10,7 @@ import {
   sharedPathKey
 } from "../src/utils/crossWindowOperations";
 import { WebDashboardServer } from "../src/services/webDashboardServer";
+import { DashboardAuth } from "../src/services/dashboardAuth";
 import {
   readWorkspaceFile,
   saveWorkspaceFile,
@@ -55,6 +56,7 @@ it("preserves concurrent browser logins and does not revive a logged-out session
   const server = () =>
     Object.assign(Object.create(WebDashboardServer.prototype), {
       context,
+      auth: new DashboardAuth(context.secrets as never),
       sessions: new Map(),
       closeRemoteBrowserSockets: vi.fn(),
       browserSocketSessionFingerprint: new Map()
@@ -72,9 +74,11 @@ it("preserves concurrent browser logins and does not revive a logged-out session
   expect(await second.isAuthorizedSessionToken(a)).toBe(false);
   expect(await second.isAuthorizedSessionToken(b)).toBe(true);
   expect(await second.isAuthorizedSessionToken(c)).toBe(true);
-  context.secrets.store = async () => {
-    throw new Error("storage full");
-  };
+  const write = store.set.bind(store);
+  vi.spyOn(store, "set").mockImplementation((namespace, key, value) => {
+    if (namespace === "dashboard-auth" && key === "sessions") throw new Error("storage full");
+    write(namespace, key, value);
+  });
   await expect(first.rememberSession("d".repeat(64), expires)).rejects.toThrow("storage full");
   expect(first.sessions.has("d".repeat(64))).toBe(false);
 });

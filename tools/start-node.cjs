@@ -56,10 +56,39 @@ if (configPath) {
     if (!process.env.CODEX_MANAGER_PORT && Number.isInteger(config.port)) process.env.CODEX_MANAGER_PORT = String(config.port);
     if (!process.env.CODEX_MANAGER_ADMIN_TOKEN && config.adminToken) process.env.CODEX_MANAGER_ADMIN_TOKEN = String(config.adminToken);
     if (!process.env.CODEX_MANAGER_PID_FILE && config.pidPath) process.env.CODEX_MANAGER_PID_FILE = path.resolve(String(config.pidPath));
+    if (config.workspaceStoragePath) process.env.CODEX_MANAGER_WORKSPACE_STORAGE = String(config.workspaceStoragePath);
+    if (config.mode === "node") process.env.CODEX_MANAGER_HANDOFF = "1";
   } catch (error) {
     console.error(`[codexManager] Node host config could not be read: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
+}
+
+if (args.includes("--background")) {
+  const { spawn } = require("node:child_process");
+  const child = spawn(process.execPath, [__filename, ...args.filter(value => value !== "--background")], {
+    detached: true, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"], env: process.env
+  });
+  let ready = false;
+  const timer = setTimeout(() => {
+    console.error("Codex Manager background startup timed out. Run without --background to inspect the failure.");
+    child.kill();
+    process.exitCode = 1;
+  }, 15_000);
+  child.once("error", error => { clearTimeout(timer); console.error(`Background startup failed: ${error.message}`); process.exitCode = 1; });
+  child.once("exit", code => {
+    clearTimeout(timer);
+    if (!ready) { console.error(`Background host exited before becoming ready (${code}). Run without --background for details.`); process.exitCode = 1; }
+  });
+  child.on("message", message => {
+    if (message?.type !== "codex-manager-ready" || ready) return;
+    ready = true;
+    clearTimeout(timer);
+    console.log(`Codex Manager running in background at ${message.url} (PID ${child.pid}).`);
+    child.disconnect();
+    child.unref();
+  });
+  return;
 }
 
 const shim = path.join(__dirname, "node-vscode-shim");

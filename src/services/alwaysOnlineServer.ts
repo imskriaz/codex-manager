@@ -1,4 +1,4 @@
-import { installRelayStartup, removeRelayStartup } from "../utils/relayStartup";
+import { installRelayStartup, removeRelayStartup, resolveNodeExecutable } from "../utils/relayStartup";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
@@ -18,8 +18,9 @@ const PID_FILE = "always-online-relay.pid";
 const SECRET_KEY = "codexManager.webDashboard.alwaysOnlineAdminToken.v1";
 const LOCAL_HOST_KEY_SECRET = "codexManager.webDashboard.alwaysActiveHostKey.v1";
 
-type RelayConfig = { port: number; mode?: "relay" | "node"; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string };
+type RelayConfig = { port: number; mode?: "relay" | "node"; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string; workspaceStoragePath?: string };
 type PreparedRelay = RelayConfig & {
+  executable: string;
   configPath: string;
   scriptTarget: string;
   launchArgs?: string[];
@@ -242,7 +243,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     }
     const mode: "relay" | "node" = getCodexManagerConfiguration().get<boolean>("alwaysActive", false) ? "node" : "relay";
     const { configPath, scriptTarget, launchArgs } = await this.prepareRelayFiles(mode, storage);
+    const executable = await resolveNodeExecutable();
     const prepared: PreparedRelay = {
+      executable,
       port: ALWAYS_ONLINE_RELAY_PORT,
       mode,
       hostKey,
@@ -262,17 +265,18 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       adminToken: prepared.adminToken,
       pidPath: prepared.pidPath,
       modulePaths: prepared.modulePaths,
+      workspaceStoragePath: this.context.storageUri?.fsPath,
       claimRegistryPath: path.join(storage, "account-claim-authority.json")
     };
     if (sqliteStoreForFile(configPath)) writeSqliteStateFile(configPath, JSON.stringify(config));
     else await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
-    await writeStartupLauncher(this.context, configPath, scriptTarget);
+    await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
     this.preparedRelay = prepared;
     return prepared;
   }
 
   private spawnPreparedRelay(prepared: PreparedRelay): void {
-    const node = resolveNodeExecutable();
+    const node = prepared.executable;
     this.childLaunchError = undefined;
     this.child = spawn(node, [prepared.scriptTarget, ...(prepared.launchArgs ?? [])], {
       detached: true,
@@ -316,12 +320,6 @@ export function createRelayAdminToken(): string {
 
 export function isLegacyRelayAdminToken(token: string): boolean {
   return token.length < 43 || /^[0-9a-z]{7,12}-[0-9a-z]{4,13}-.+$/i.test(token);
-}
-
-function resolveNodeExecutable(): string {
-  // A normal Node install is preferred. Electron can execute Node too, which
-  // keeps the feature working on machines that only have VS Code installed.
-  return process.env["NODE"] ?? process.env["NODE_EXE"] ?? process.execPath;
 }
 
 function relayIsHealthy(port: number): Promise<boolean> {
@@ -429,8 +427,8 @@ function requestShutdown(port: number, token: string): Promise<void> {
   });
 }
 
-async function writeStartupLauncher(context: vscode.ExtensionContext, configPath: string, scriptPath: string): Promise<void> {
-  await installRelayStartup(configPath, scriptPath);
+async function writeStartupLauncher(context: vscode.ExtensionContext, configPath: string, scriptPath: string, executable: string): Promise<void> {
+  await installRelayStartup(configPath, scriptPath, executable);
   void context;
 }
 

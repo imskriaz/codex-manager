@@ -32,14 +32,11 @@ export async function handleDashboardSettingUpdate(
   const config = getCodexManagerConfiguration();
   let updated = false;
 
-  // Browser and standalone Node hosts both persist this machine-wide switch.
-  if (key === "alwaysActive") {
-    if (typeof value !== "boolean") return false;
-    await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
-    return config.get<boolean>(key, !value) === value;
-  }
-
   switch (key) {
+    case "alwaysActive":
+      if (typeof value !== "boolean") return false;
+      await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
+      return config.get<boolean>(key, !value) === value;
     case "persistentLogLevel":
       if (typeof value === "string") { await setPersistentLogLevel(value); updated = true; }
       break;

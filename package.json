@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -410,6 +410,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "test:ui": "npm run compile && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs && node tools/check-offline-ui.mjs",
+    "test:node:handoff": "npm run compile && node tools/check-node-handoff.mjs",
     "test:ui:live": "node tools/check-live-ui.mjs",
     "test:ui:actions": "node tools/check-live-actions.mjs --mutate"
   },

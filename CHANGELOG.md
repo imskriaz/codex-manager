@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.6
+
+- Preserve the shared dashboard password and browser login across VS Code and standalone Node handoff, using a salted verifier and session fingerprints in SQLite.
+- Revoke shared browser sessions on password changes, preserve logout across hosts, and surface authentication storage failures.
+- Prefer a compatible installed Node runtime, hide Windows startup windows, and add a confirmed `--background` standalone launch.
+- Retry the shared port during handoff, retain the originating settings scope, and track the background PID in SQLite for clean takeover.
+
 ## 1.7.5
 
 - Fix browser and standalone Node persistence for the **Always Active** machine setting.
