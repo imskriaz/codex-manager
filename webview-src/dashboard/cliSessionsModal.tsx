@@ -2870,7 +2870,6 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
       <summary title={item.draft.text || 'Attachment'}>
         <span class="cli-goal-mark" aria-hidden="true">{item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : <QueueIcon />}</span>
         <span class="cli-queued-message-copy">{item.draft.text || item.draft.attachments[0]?.name || 'Attachment'}</span>
-      {item.state === 'sending' ? <small class="cli-queued-sending-status" role="status" aria-label="Sending" aria-live="polite"><span class="cli-queued-steer is-sending" aria-hidden="true"><span class="cli-live-spinner" /></span></small> : null}
       <span class="cli-queued-message-actions" onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
         {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => queue.steerNow(item.id)}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
