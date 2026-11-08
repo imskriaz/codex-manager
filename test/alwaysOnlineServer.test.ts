@@ -143,7 +143,9 @@ describe("always-online WebSocket relay handoff", () => {
     expect(relay.indexOf("storage.writeSqliteStateFile(pidPath")).toBeLessThan(relay.indexOf("bind();"));
     expect(service).toContain('mode === "node"');
     expect(service).toContain('"tools", "start-node.cjs"');
+    expect(service).toContain('code === "EPERM"');
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain('value === "--config"');
+    expect(readFileSync("tools/start-node.cjs", "utf8")).toContain("PRAGMA busy_timeout = 250");
   });
 });
 

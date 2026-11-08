@@ -440,13 +440,15 @@ async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<
 }
 
 async function readLivePid(pidPath: string): Promise<number | undefined> {
+  let value: number | undefined;
   try {
     const text = sqliteStoreForFile(pidPath) ? readSqliteStateFile(pidPath) : await fs.readFile(pidPath, "utf8");
-    const value = Number(text.trim());
+    value = Number(text.trim());
     if (!Number.isInteger(value) || value <= 0) return undefined;
     process.kill(value, 0);
     return value;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM" && value) return value;
     if (sqliteStoreForFile(pidPath) && (error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     return undefined;
   }

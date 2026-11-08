@@ -1,14 +1,11 @@
 # Changelog
 
-## 1.7.4-pre.1
-
-- Keep an always-active local Node host on the shared SQLite database and dashboard port after VS Code closes, with clean VS Code takeover and standalone account switching.
-- Keep queued steering feedback compact and immediate, including an inline sending spinner and shared keyboard behavior in browser and VS Code dashboards.
-
 ## 1.7.4
 
 - Prefer the native Codex App Server and automatically retry through the detected Codex CLI when its proxy or WebSocket transport is unavailable.
 - Add a standalone Node host that uses the shared SQLite database and refuses to start when another Codex Manager host already owns the dashboard port.
+- Keep an always-active local Node host on the shared SQLite database and dashboard port after VS Code closes, with clean VS Code takeover and standalone account switching.
+- Keep queued steering feedback compact and immediate, including an inline sending spinner and shared keyboard behavior in browser and VS Code dashboards.
 
 ## 1.7.3-pre.14
 
