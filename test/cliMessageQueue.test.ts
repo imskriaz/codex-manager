@@ -147,6 +147,15 @@ it('shows accepted guidance immediately before subsequent output and replaces ea
   expect(withAcceptedQueuedMessages([imageEcho], [image])).toEqual([imageEcho]);
 });
 
+it('shows a steering message in the transcript while the request is still in flight', () => {
+  const steering = entry({ state: 'sending', turnId: 'turn' });
+  expect(withAcceptedQueuedMessages([], [steering])).toMatchObject([
+    { id: 'pending-one', role: 'user', text: 'First', turnId: 'turn' }
+  ]);
+  const echo = { id: 'echo', role: 'user' as const, turnId: 'turn', text: 'First' };
+  expect(withAcceptedQueuedMessages([echo], [steering])).toEqual([echo]);
+});
+
 it('steers a queued message immediately and keeps its row in the sending state', async () => {
   render({ canDispatch: false, steer }); await flush();
   const id = queue.enqueue(draft('Steer this now'))!; await flush();

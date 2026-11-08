@@ -90,6 +90,20 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("webSocketServerEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
+  it("persists the Always Active host toggle globally", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn(() => ({ key: "codexManager.alwaysActive", defaultValue: false }))
+    } as never);
+    await expect(handleDashboardSettingUpdate("alwaysActive", true)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("alwaysActive", true, vscode.ConfigurationTarget.Global);
+    update.mockClear();
+    await expect(handleDashboardSettingUpdate("alwaysActive", "true")).resolves.toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("updates the workspace value when an effective setting is overridden there", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

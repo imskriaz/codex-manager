@@ -36,7 +36,8 @@ export function queuedMessageView(item: CliQueuedMessage): DashboardCliSessionMe
 
 /** An acknowledged send is visible before the owner's journal catches up. */
 export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[], items: CliQueuedMessage[]): DashboardCliSessionMessage[] {
-  const accepted = queuedMessageEchoes(items, messages).items.filter(item => item.state === 'sent');
+  // Keep the user input in the transcript while the steer/send request is in flight.
+  const accepted = queuedMessageEchoes(items, messages).items.filter(item => item.state === 'sending' || item.state === 'sent');
   if (!accepted.length) return messages;
   const result = [...messages], inserted = new Set<string>();
   for (const item of accepted) {

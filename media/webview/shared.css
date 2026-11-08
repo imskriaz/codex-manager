@@ -40,6 +40,24 @@
   --cyan-soft: rgba(56, 139, 253, 0.12);
   --bar: var(--gradient-blue);
   --bar-soft: rgba(56, 139, 253, 0.18);
+  /* Shared aliases used by the browser workspace shell. */
+  --bg-page: var(--bg-base);
+  --bg-canvas: var(--bg-base);
+  --bg-muted: color-mix(in srgb, var(--bg-surface) 72%, var(--bg-base));
+  --bg-hover: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
+  --bg-selected: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
+  --surface-hover: var(--bg-hover);
+  --surface-muted: var(--bg-muted);
+  --border: var(--border-default);
+  --border-strong: var(--border-muted);
+  --border-subtle: color-mix(in srgb, var(--border-default) 72%, transparent);
+  --text-tertiary: var(--text-muted);
+  --text-inverse: #ffffff;
+  --accent-contrast: #ffffff;
+  --button-primary-foreground: #ffffff;
+  --error: var(--accent-red);
+  --font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
 

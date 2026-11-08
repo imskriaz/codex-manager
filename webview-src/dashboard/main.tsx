@@ -3164,7 +3164,7 @@ function App() {
               taskBoardEnabled={snapshot.settings.taskBoardEnabled !== false}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
               onApi={() => setApiTokenOpen(true)}
-              showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}
+              showLogout={isBrowserDashboard}
               privacyMode={state.privacyMode}
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}

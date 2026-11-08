@@ -2614,7 +2614,7 @@ function SessionAccountFooter(props: {
       <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <div class="cli-account-grid">{props.renderAccounts?.()}</div>
-      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
+      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { props.onApi?.(); }}><ApiIcon />API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
       <div class="cli-account-resize-footer"><small role="status">{sizeNotice}</small><div class="cli-account-resizer" role="separator" aria-label="Resize account center" aria-valuetext={size ? `${size.width} by ${size.height}` : 'Compact default'} tabIndex={0} onPointerDown={event => {
         if (event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
@@ -2858,11 +2858,14 @@ function ReviewIcon() { return <Icon><path d="M4 5h16v12H8l-4 4V5Zm4 4h8m-8 4h5"
 function WarningIcon() { return <Icon><path d="M12 3 2.8 20h18.4L12 3Zm0 6v5m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function CheckIcon() { return <Icon><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+function ApiIcon() { return <Icon><path d="m8 5-4 7 4 7M16 5l4 7-4 7M14 3l-4 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon>; }
+function SignOutIcon() { return <Icon><path d="M14 5h5v14h-5M4 12h11m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon>; }
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
 export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void }) {
-  queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
+  // Sending items are rendered in the transcript optimistically; keep only waiting/recovery rows here.
+  queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending') };
   if (!queue.items.length) return null;
   return <div class="cli-local-queue" aria-label="Local message queue">
     {queue.items.map(item => <details key={item.id} class={`cli-goal-strip cli-queued-message is-${item.state}`}>

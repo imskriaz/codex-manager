@@ -592,7 +592,7 @@ describe("sessions sidebar layout", () => {
 
     expect(server).not.toContain("position:fixed;right:12px;bottom:12px");
     expect(server).toContain('data-dashboard-remote="${showLogout ? "true" : "false"}"');
-    expect(main).toContain('showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}');
+    expect(main).toContain('showLogout={isBrowserDashboard}');
     expect(source).toContain('class="cli-account-logout-form"');
     expect(source).toContain('action="/logout"');
     expect(source).toContain('type="submit" class="cli-account-logout"');

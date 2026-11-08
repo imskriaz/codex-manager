@@ -48,6 +48,7 @@ export type DashboardSettingKey =
   | "encryptedSyncVsCodeHeartbeatMinutes"
   | "webDashboardEnabled"
   | "webSocketServerEnabled"
+  | "alwaysActive"
   | "cloudflaredDomain"
   | "displayLanguage";
 

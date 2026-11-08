@@ -84,10 +84,13 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).toContain('queue.steerNow(item.id)');
   expect(source).toContain('class="cli-queued-steer is-sending"');
   expect(source).toContain('class="cli-queued-sending-status"');
+  expect(source).toContain('<ApiIcon />API');
+  expect(source).toContain('<SignOutIcon />Sign out');
   expect(source).not.toContain('Turn off queueing');
   expect(css).toContain('.cli-queued-message-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis;');
   expect(css).toContain('.cli-queued-message-thumb { flex: none; width: 14px; height: 14px;');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
+  expect(QueuedMessages({queue:{...queue,items:[{...item,state:'sending'}],ready:true,connected:true},onRefresh:()=>{}})).toBeNull();
 });
 
 it('lets the resized Account Center use columns without reserving a blank footer strip', () => {

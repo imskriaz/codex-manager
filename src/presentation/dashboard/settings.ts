@@ -74,6 +74,7 @@ export async function handleDashboardSettingUpdate(
     case "fullCrossPcAccountSyncEnabled":
     case "webDashboardEnabled":
     case "webSocketServerEnabled":
+    case "alwaysActive":
       if (typeof value === "boolean") {
         await updateDashboardConfiguration(config, key, value, target);
         updated = true;
@@ -290,7 +291,8 @@ function resolveConfigurationTarget(
     key === "autoSwitchWaitForSessionsEnabled" ||
     key === "fullCrossPcAccountSyncEnabled" ||
     key === "encryptedSyncVsCodeHeartbeatMinutes" ||
-    key === "crossWindowAccountModeEnabled"
+    key === "crossWindowAccountModeEnabled" ||
+    key === "alwaysActive"
   ) {
     return vscode.ConfigurationTarget.Global;
   }

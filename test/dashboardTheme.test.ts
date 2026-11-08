@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { resolveDashboardTheme } from "../webview-src/dashboard/theme";
 
 function classList(...classes: string[]) {
@@ -22,5 +23,12 @@ describe("resolveDashboardTheme", () => {
   it("falls back to system media only when VS Code classes are unavailable", () => {
     expect(resolveDashboardTheme("auto", classList(), true)).toBe("light");
     expect(resolveDashboardTheme("auto", classList(), false)).toBe("dark");
+  });
+
+  it("defines browser workspace aliases so panels keep their backgrounds and borders", () => {
+    const css = readFileSync("media/webview/shared.css", "utf8");
+    for (const name of ["--bg-page", "--bg-muted", "--bg-hover", "--surface-hover", "--border", "--font-family"]) {
+      expect(css).toContain(`${name}:`);
+    }
   });
 });
