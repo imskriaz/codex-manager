@@ -8,6 +8,8 @@ import { AccountsRepository } from "./storage";
 import { WebDashboardServer } from "./services/webDashboardServer";
 import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
+import { disposePersistentLogging, registerPersistentLogging, recordPersistentEvent } from "./utils/persistentLog";
+import { waitWithin } from "./utils/concurrency";
 
 type NodeSecretStorage = vscode.SecretStorage;
 
@@ -68,6 +70,7 @@ export async function startNodeHost(): Promise<void> {
   const pidFile = process.env["CODEX_MANAGER_PID_FILE"];
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => closing ??= (async () => {
+    recordPersistentEvent("info", "node-host", "Standalone shutdown started", { pid: process.pid });
     await dashboard.stop();
     dashboard.dispose();
     repo.dispose();
@@ -75,6 +78,7 @@ export async function startNodeHost(): Promise<void> {
       try { if (readSqliteStateFile(pidFile) === String(process.pid)) deleteSqliteStateFile(pidFile); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
+    await disposePersistentLogging(true);
     for (const subscription of context.subscriptions) subscription.dispose();
     getSqliteStateStore()?.close();
   })();
@@ -82,18 +86,25 @@ export async function startNodeHost(): Promise<void> {
   process.once("SIGINT", exit);
   process.once("SIGTERM", exit);
   try {
+    await waitWithin(registerPersistentLogging(context), 2_000, "Standalone diagnostics initialization timed out.").catch(error => console.warn("[codexManager] standalone diagnostics unavailable", error));
+    recordPersistentEvent("info", "node-host", "Standalone startup started", { pid: process.pid });
     await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
     await repo.init();
     const deadline = Date.now() + (process.env["CODEX_MANAGER_HANDOFF"] === "1" ? 8_000 : 0);
+    let waitingForPort = false;
     for (;;) {
       try { await dashboard.start(); break; }
       catch (error) {
         if (closing || Date.now() >= deadline || !(error instanceof Error) || !error.message.includes("already owned by another host")) throw error;
+        if (!waitingForPort) recordPersistentEvent("info", "node-host", "Waiting for the current dashboard host to release the port", { pid: process.pid });
+        waitingForPort = true;
         await new Promise(resolve => setTimeout(resolve, 150));
       }
     }
     if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));
+    recordPersistentEvent("info", "node-host", "Standalone ready", { pid: process.pid, url: dashboard.getUrl() });
   } catch (error) {
+    recordPersistentEvent("error", "node-host", "Standalone startup failed", { pid: process.pid }, error);
     await shutdown();
     process.removeListener("SIGINT", exit);
     process.removeListener("SIGTERM", exit);

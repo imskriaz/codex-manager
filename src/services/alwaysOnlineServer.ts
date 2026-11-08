@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
+import { recordPersistentEvent } from "../utils/persistentLog";
 
 /** Reuses the normal dashboard port; the detached relay takes over when the
  * VS Code-managed server releases it. */
@@ -97,6 +98,11 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
   isWaitingForConfiguration(): boolean {
     return this.waitingForConfiguration;
+  }
+
+  async prepareForShutdown(): Promise<void> {
+    if (this.preparedRelay && this.verifiedConfiguration === this.configurationKey()) return;
+    await this.applyConfiguration();
   }
 
   /** Release the shared port while the VS Code dashboard is active. */
@@ -191,7 +197,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
     const alwaysActive = config.get<boolean>("alwaysActive", false);
-    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && (domain || alwaysActive ? (domain || "local") : "") || undefined;
+    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && (domain || alwaysActive)
+      ? JSON.stringify([domain || "local", alwaysActive ? "node" : "relay"]) : undefined;
   }
 
   private async getLocalHostKey(): Promise<string | undefined> {
@@ -268,8 +275,10 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       workspaceStoragePath: this.context.storageUri?.fsPath,
       claimRegistryPath: path.join(storage, "account-claim-authority.json")
     };
+    if (this.disposed) throw new Error("Background host preparation stopped because this window closed.");
     if (sqliteStoreForFile(configPath)) writeSqliteStateFile(configPath, JSON.stringify(config));
     else await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
+    if (this.disposed) throw new Error("Background host preparation stopped because this window closed.");
     await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
     this.preparedRelay = prepared;
     return prepared;
@@ -287,6 +296,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
         ELECTRON_RUN_AS_NODE: node === process.execPath ? "1" : process.env["ELECTRON_RUN_AS_NODE"]
       }
     });
+    recordPersistentEvent("info", "node-host", "Background host handoff requested", { mode: prepared.mode, pid: this.child.pid, executable: node });
     this.child.on("error", (error) => {
       this.childLaunchError = error;
       console.warn("[codexManager] detached relay could not launch", error);

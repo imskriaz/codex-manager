@@ -4,12 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 
-const probe = vi.hoisted(() => ({ code: undefined as string | undefined, nativeMode: "", calls: [] as { args: string[]; options: { windowsHide: boolean; timeout: number } }[] }));
+const probe = vi.hoisted(() => ({ code: undefined as string | undefined, nativeMode: "", calls: [] as { command: string; args: string[]; options: { windowsHide: boolean; timeout: number } }[] }));
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
   return { ...actual, execFile: (...args: any[]) => {
-    if (args[0] === "powershell.exe" && probe.nativeMode) {
-      probe.calls.push({ args: args[1], options: args[2] });
+    if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0])) && probe.nativeMode) {
+      probe.calls.push({ command: args[0], args: args[1], options: args[2] });
       if (probe.nativeMode === "slow") { setTimeout(() => args.at(-1)(null, "[]"), 5200); return {}; }
       if (probe.nativeMode === "incomplete") { args.at(-1)(null, "{}"); return {}; }
       if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
@@ -47,6 +47,8 @@ describe("writer lock evidence", () => {
     probe.nativeMode = "slow";
     await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
     expect(probe.calls).toHaveLength(1);
+    expect(path.isAbsolute(probe.calls[0]!.command)).toBe(true);
+    expect(probe.calls[0]!.command).toContain(path.join("System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
   });
   it.skipIf(process.platform !== "win32")("keeps incomplete native output inconclusive and retries after recovery", async () => {
     const root = await fixture();

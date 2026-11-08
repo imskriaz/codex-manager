@@ -658,7 +658,7 @@ function App() {
   const cliSessionsRef = useRef(cliSessions);
   cliSessionsRef.current = cliSessions;
   const connectedPeers = mergeDashboardPeers(snapshot?.connectedPeers ?? [], cliSessions);
-  const pcOptions = connectedPeers.length > 0 ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
+  const pcOptions = connectedPeers.some(peer => peer.local) ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: false, local: true }, ...connectedPeers];
   if (selectedPeerId !== "local" && !pcOptions.some(peer => peer.id === selectedPeerId))
     pcOptions.push({ id: selectedPeerId, name: "Remote PC", sessionCount: 0, connected: false, local: false });
   const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
@@ -1946,7 +1946,7 @@ function App() {
       });
       return;
     }
-    setSelectedPeerId(session.deviceId ?? pcOptions.find(peer => peer.local)?.id ?? "local");
+    setSelectedPeerId(session.deviceId ?? "local");
     navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     selectedCliSessionRef.current = session;
     setSelectedCliSession(reconcileCliSessionStatus(session, cliLiveStatesRef.current));
@@ -1991,11 +1991,6 @@ function App() {
       uiPreferences.metricPriority
     ]
   );
-  useEffect(() => {
-    if (selectedPeerId === "local" && !pcOptions.some((peer) => peer.id === selectedPeerId)) {
-      setSelectedPeerId(pcOptions.find((peer) => peer.local)?.id ?? pcOptions[0]!.id);
-    }
-  }, [pcOptions, selectedPeerId]);
   const handleAutoRefreshToggle = (enabled: boolean): void => {
     const nextMinutes = enabled ? state.lastEnabledAutoRefreshMinutes || 15 : 0;
     patchSettings({ autoRefreshMinutes: nextMinutes });

@@ -19,7 +19,7 @@ vi.mock("fs/promises", async (original) => {
 vi.mock("child_process", async (original) => {
   const child = await original<typeof import("child_process")>();
   return { ...child, execFile: (...args: any[]) => {
-    if (args[0] === "powershell.exe") { args.at(-1)(mocks.nativeProbeError ? new Error("inspection timeout") : null, JSON.stringify([...mocks.nativeHeldLocks])); return {}; }
+    if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0]))) { args.at(-1)(mocks.nativeProbeError ? new Error("inspection timeout") : null, JSON.stringify([...mocks.nativeHeldLocks])); return {}; }
     if (args[0] === "lsof") { args.at(-1)(null, [...mocks.heldLocks].map((file) => `n${file}`).join("\n")); return {}; }
     return (child.execFile as any)(...args);
   } };

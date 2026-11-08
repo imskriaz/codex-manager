@@ -307,7 +307,11 @@ export class AccountsWorkbench {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    try { this.alwaysOnlineServer.dispose(); }
+    catch (error) { console.error("[codexManager] background handoff failed during disposal", error); }
+    this.webDashboard.dispose();
     cancelCodexSessionAutoResume();
     this.autoResumeTracking?.dispose();
     if (this.alwaysOnlinePreparationTimer) {
@@ -333,6 +337,10 @@ export class AccountsWorkbench {
 
   async shutdown(): Promise<void> {
     if (this.disposed) return;
+    const handoffDeadline = Date.now() + 3_000;
+    const handoff = this.alwaysOnlineServer.prepareForShutdown().catch(error => {
+      console.error("[codexManager] shutdown background preparation failed", error);
+    });
     this.autoResumeTracking?.dispose();
     this.autoResumeTracking = undefined;
     if (isAutoResumeEnabled(getCodexManagerConfiguration())) {
@@ -353,7 +361,15 @@ export class AccountsWorkbench {
     }
     this.encryptedSync.shutdown();
     try { await waitWithin(this.repo.flush(), 1500, "Final account save did not finish before shutdown."); }
-    finally { this.dispose(); }
+    finally {
+      // Context subscriptions are disposed after deactivate closes SQLite.
+      try {
+        await waitWithin(handoff, Math.max(1, handoffDeadline - Date.now()), "Background host preparation did not finish before shutdown.").catch(error => console.error("[codexManager] shutdown background preparation unconfirmed", error));
+        this.alwaysOnlineServer.dispose();
+        await this.webDashboard.stop();
+      }
+      finally { this.dispose(); }
+    }
   }
 
   private async notifyIndexHealth(): Promise<void> {

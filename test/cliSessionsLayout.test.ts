@@ -24,6 +24,12 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it('keeps the selected local system during transient remote-only discovery', () => {
+    const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+    expect(source).not.toContain('setSelectedPeerId(pcOptions.find((peer) => peer.local)?.id ?? pcOptions[0]!.id)');
+    expect(source).toContain('connectedPeers.some(peer => peer.local) ? connectedPeers : [{ id: "local"');
+    expect(source).toContain('setSelectedPeerId(session.deviceId ?? "local")');
+  });
   it('shares task actions across every view and keeps task details docked with a single-line header', () => {
     const source = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
     const primitives = readFileSync('webview-src/dashboard/primitives.tsx', 'utf8');

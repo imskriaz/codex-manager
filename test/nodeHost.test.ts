@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => ({
   start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
-  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn()
+  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn()
 }));
 vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context }));
 vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; } }));
@@ -12,6 +12,7 @@ vi.mock("../src/storage/sqliteState", () => ({
   writeSqliteStateFile: host.writePid, deleteSqliteStateFile: host.deletePid
 }));
 vi.mock("../src/utils/crossWindowOperations", () => ({ configureCrossWindowOperationCoordinator: host.coordinate }));
+vi.mock("../src/utils/persistentLog", () => ({ registerPersistentLogging: host.registerLogs, disposePersistentLogging: host.closeLogs, recordPersistentEvent: host.log }));
 import { startNodeHost } from "../src/node";
 
 let signals: Set<(...args: any[]) => void>;
@@ -39,6 +40,8 @@ it("waits for VS Code's port release, writes the SQLite PID only after bind, and
   await vi.advanceTimersByTimeAsync(150); await launch;
   expect(host.start).toHaveBeenCalledTimes(2);
   expect(host.coordinate).toHaveBeenCalledOnce();
+  expect(host.registerLogs).toHaveBeenCalledOnce();
+  expect(host.log).toHaveBeenCalledWith("info", "node-host", "Standalone ready", expect.any(Object));
   expect(host.writePid).toHaveBeenCalledWith("always-online-relay.pid", String(process.pid));
   const stop = process.listeners("SIGTERM").find(listener => !signals.has(listener))!;
   stop(); stop();
@@ -46,6 +49,7 @@ it("waits for VS Code's port release, writes the SQLite PID only after bind, and
   expect(host.stop).toHaveBeenCalledOnce();
   expect(host.deletePid).toHaveBeenCalledWith("always-online-relay.pid");
   expect(host.close).toHaveBeenCalledOnce();
+  expect(host.closeLogs).toHaveBeenCalledWith(true);
 });
 
 it("refuses a competing direct launch and leaves the active owner's PID intact", async () => {
@@ -54,6 +58,7 @@ it("refuses a competing direct launch and leaves the active owner's PID intact",
   host.readPid.mockReturnValue("999999");
   await expect(startNodeHost()).rejects.toThrow("already owned");
   expect(host.start).toHaveBeenCalledOnce();
+  expect(host.log).toHaveBeenCalledWith("error", "node-host", "Standalone startup failed", expect.any(Object), expect.any(Error));
   expect(host.writePid).not.toHaveBeenCalled();
   expect(host.deletePid).not.toHaveBeenCalled();
   expect(host.repoDispose).toHaveBeenCalledOnce();

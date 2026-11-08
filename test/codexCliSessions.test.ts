@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("child_process", async original => {
   const child = await original<typeof import("child_process")>();
   return { ...child, execFile: (...args: any[]) => {
-    if (args[0] === "powershell.exe") { args.at(-1)(null, "[]"); return {}; }
+    if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0]))) { args.at(-1)(null, "[]"); return {}; }
     return (child.execFile as any)(...args);
   } };
 });
@@ -298,6 +298,22 @@ describe("Codex session integration", () => {
     } finally {
       if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
       else process.env["CODEX_CLI_PATH"] = previousPath;
+    }
+  });
+
+  it("uses npm's direct script instead of its Windows command shim", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-npm-shim-")); roots.push(root);
+    const script = path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+    await mkdir(path.dirname(script), { recursive: true });
+    const marker = path.join(root, "direct.txt");
+    await writeFile(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'direct');`);
+    const shim = path.join(root, "codex.cmd"); await writeFile(shim, "exit /b 1");
+    const previous = process.env["CODEX_CLI_PATH"]; process.env["CODEX_CLI_PATH"] = shim;
+    try {
+      await expect(isCodexCliAvailable()).resolves.toBe(true);
+      expect(await readFile(marker, "utf8")).toBe("direct");
+    } finally {
+      if (previous === undefined) delete process.env["CODEX_CLI_PATH"]; else process.env["CODEX_CLI_PATH"] = previous;
     }
   });
 

@@ -18,6 +18,18 @@ afterEach(() => {
 });
 
 describe("always-online WebSocket relay handoff", () => {
+  it('reuses prepared startup but refreshes it when Always Active changes before close', async () => {
+    let active = false;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'alwaysActive' ? active : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    const server = new AlwaysOnlineServer({} as never) as any;
+    server.preparedRelay = {}; server.verifiedConfiguration = server.configurationKey();
+    const prepare = vi.spyOn(server, 'applyConfiguration').mockResolvedValue('paused');
+    const spawn = vi.spyOn(server, 'spawnPreparedRelay').mockImplementation(() => undefined);
+    await server.prepareForShutdown(); expect(prepare).not.toHaveBeenCalled();
+    active = true;
+    await server.prepareForShutdown(); expect(prepare).toHaveBeenCalledOnce();
+    server.dispose(); expect(spawn).not.toHaveBeenCalled();
+  });
   it('keeps the verified relay enabled when Sync and Claim is off', async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? false : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
     const verify = vi.fn(async () => true);

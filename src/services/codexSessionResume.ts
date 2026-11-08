@@ -43,6 +43,7 @@ import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCod
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { sendCodexQuestionReply } from './codexQuestionReply';
+import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli } from './codexCliRuntime';
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -1140,7 +1141,9 @@ async function startAppServerSession(options: {
   let detachPrompts: () => void = () => undefined;
   let threadId: string | undefined;
   try {
-    rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd);
+    const executable = await resolveCodexCliExecutable(true);
+    if (path.resolve(resolveCodexHome()) !== home) throw new Error("The Codex home changed while preparing the CLI. No session was started.");
+    rpc = await openCodexAppServer(executable, cwd);
     recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: appServerTransport.getStore() ?? "stdio" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
@@ -1261,7 +1264,10 @@ async function sendAppServerSessionMessage(options: {
   const abort = () => { void rpc?.close(); };
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd, options.signal);
+    const executable = await resolveCodexCliExecutable(true);
+    options.signal?.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error("The Codex home changed while preparing the CLI. No message was sent.");
+    rpc = await openCodexAppServer(executable, cwd, options.signal);
     options.signal?.throwIfAborted();
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { home: path.resolve(home), rpc });
@@ -2924,7 +2930,7 @@ export function getCodexCliPathCandidates(
   );
 }
 
-async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
+async function resolveCodexCliExecutable(allowInstall = false): Promise<CodexCliExecutable> {
   const configuredPath = (
     sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<string>("codexCliPath", "") ?? ""
   ).trim();
@@ -2935,7 +2941,9 @@ async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
     localAppData: process.env["LOCALAPPDATA"],
     appData: process.env["APPDATA"],
     path: process.env["PATH"],
-    bundledExtensionPath
+    bundledExtensionPath,
+    extensionsRoot: process.env["VSCODE_EXTENSIONS"],
+    storageRoot: getCodexManagerStorageRoot()
   });
   if (
     cliExecutableCache?.signature === signature &&
@@ -2956,58 +2964,36 @@ async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
   const candidates = [
     configuredPath || undefined,
     ...getCodexCliPathCandidates(),
-    bundledExtensionPath
-      ? path.join(
-          bundledExtensionPath,
-          "bin",
-          process.platform === "win32"
-            ? process.arch === "arm64"
-              ? "windows-arm64"
-              : "windows-x86_64"
-            : process.platform === "darwin"
-              ? process.arch === "arm64"
-                ? "macos-aarch64"
-                : "macos-x86_64"
-              : process.arch === "arm64"
-                ? "linux-aarch64"
-                : "linux-x86_64",
-          process.platform === "win32" ? "codex.exe" : "codex"
-        )
-      : undefined
+    bundledExtensionPath ? bundledCodexCli(bundledExtensionPath) : undefined,
+    managedCodexCli()
   ].filter((candidate): candidate is string => Boolean(candidate));
-  for (const candidate of candidates) {
-    if (
-      await fs
-        .stat(candidate)
-        .then((stat) => stat.isFile())
-        .catch(() => false)
-    ) {
-      const extension = path.extname(candidate).toLowerCase();
-      const executable =
-        extension === ".js" || extension === ".cjs" || extension === ".mjs"
-          ? { command: process.execPath, prefixArgs: [candidate] }
-          : { command: candidate, prefixArgs: [], shell: extension === ".cmd" || extension === ".bat" };
-      cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
-      return executable;
+  // Scan installed extension directories only when the fast candidates miss.
+  for (const source of [() => Promise.resolve(candidates), () => discoverBundledCodexCli()]) {
+    for (const candidate of await source()) {
+      if (await fs.stat(candidate).then(stat => stat.isFile()).catch(() => false)) {
+        let resolvedCandidate = candidate;
+        const extension = path.extname(candidate).toLowerCase();
+        if (extension === ".cmd" || extension === ".bat") {
+          const npmScript = path.join(path.dirname(candidate), "node_modules", "@openai", "codex", "bin", "codex.js");
+          if (await fs.stat(npmScript).then(stat => stat.isFile()).catch(() => false)) resolvedCandidate = npmScript;
+        }
+        const resolvedExtension = path.extname(resolvedCandidate).toLowerCase();
+        const executable =
+          resolvedExtension === ".js" || resolvedExtension === ".cjs" || resolvedExtension === ".mjs"
+            ? { command: process.execPath, prefixArgs: [resolvedCandidate] }
+            : { command: candidate, prefixArgs: [], shell: extension === ".cmd" || extension === ".bat" };
+        cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
+        return executable;
+      }
     }
   }
-  if (process.platform === "win32") {
-    const npmScript = process.env["APPDATA"]
-      ? path.join(process.env["APPDATA"], "npm", "node_modules", "@openai", "codex", "bin", "codex.js")
-      : undefined;
-    if (
-      npmScript &&
-      (await fs
-        .stat(npmScript)
-        .then((stat) => stat.isFile())
-        .catch(() => false))
-    ) {
-      const executable = { command: process.execPath, prefixArgs: [npmScript] };
-      cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
-      return executable;
-    }
+  if (allowInstall) {
+    const script = await installManagedCodexCli();
+    const executable = { command: process.execPath, prefixArgs: [script] };
+    cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
+    return executable;
   }
-  return { command: "codex", prefixArgs: [] };
+  throw new Error("Codex CLI was not found on this PC. Start a session to install it automatically, install it with npm install -g @openai/codex, or set CODEX_CLI_PATH.");
 }
 
 /** Check whether the Codex CLI can be launched on this PC without changing state. */
@@ -3365,7 +3351,7 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
             } catch { entry.expiresAt = 0; reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
           };
           try {
-            execFile("powershell.exe", args,
+            execFile(path.join(process.env["SystemRoot"] ?? process.env["WINDIR"] ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), args,
               { timeout: Math.max(1, deadline - Date.now()), maxBuffer: 256 * 1024, windowsHide }, completed);
           } catch (error) { completed(error); }
         };

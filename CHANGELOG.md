@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.7
+
+- Discover the installed Codex extension's CLI independently of VS Code, prefer npm's direct launcher on Windows, and install a verified local CLI for explicit turns when none is present.
+- Use the Windows system PowerShell path for writer checks so standalone follow-ups work with a minimal PATH.
+- Start the prepared background host before VS Code closes shared storage, and release the dashboard port during shutdown.
+- Preserve the local device ID across VS Code and Node; keep local selection during temporary remote-only discovery.
+- Record standalone startup, port waits, readiness, shutdown, and failures in the existing SQLite system log when enabled.
+
 ## 1.7.6
 
 - Preserve the shared dashboard password and browser login across VS Code and standalone Node handoff, using a salted verifier and session fingerprints in SQLite.

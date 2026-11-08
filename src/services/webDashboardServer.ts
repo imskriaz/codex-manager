@@ -534,7 +534,6 @@ export class WebDashboardServer implements vscode.Disposable {
     this.conversationShares = new ConversationShares(context.secrets);
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
-    void context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
     this.oauth = new DashboardOAuthCoordinator(
       repo,
       () => undefined,
@@ -668,7 +667,13 @@ export class WebDashboardServer implements vscode.Disposable {
       this.encryptedSync ? waitWithin(this.encryptedSync.getPresenceDeviceId(), 5_000, 'Dashboard device identity is unavailable. Retry shortly.') : undefined,
       waitWithin(this.auth.refresh(), 5_000, 'Dashboard authentication is unavailable. Retry shortly.')
     ]);
-    if (deviceId) this.deviceId = deviceId;
+    if (revision !== this.serverStartRevision || this.peerStopped || !this.isEnabled()) return;
+    await runCrossWindowExclusive("identity:dashboard", "Dashboard device identity", async () => {
+      if (revision !== this.serverStartRevision || this.peerStopped) return;
+      const saved = this.context.globalState?.get<string>("codexManager.webDashboard.deviceId");
+      this.deviceId = deviceId ?? saved ?? this.deviceId;
+      if (saved !== this.deviceId) await this.context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
+    }, { waitMs: 2_000 });
     if (revision !== this.serverStartRevision || this.peerStopped || !this.isEnabled()) return;
     this.server = http.createServer((request, response) => {
       void this.handle(request, response).catch((error) => {

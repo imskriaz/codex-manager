@@ -37,7 +37,6 @@ import {
   readNewCodexCliSessionSummary,
   readCodexCliSessions,
   getCodexSessionReadNotice,
-  isCodexCliAvailable,
   readCodexCliSessionMessages,
   renameCodexCliSession,
   setCodexSessionGoalStatus,
@@ -1948,9 +1947,6 @@ async function handleStartCodexCliSession(
   payload: DashboardActionPayload | undefined
 ) {
   ensureCliIntegrationEnabled();
-  if (!(await isCodexCliAvailable())) {
-    throw new Error("Codex CLI is not available on this PC. Install the official Codex CLI, add it to PATH, or set CODEX_CLI_PATH, then try again.");
-  }
   const sessionId = await startCodexCliSession({
     text: payload?.text ?? "",
     attachments: payload?.attachments,

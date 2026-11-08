@@ -5,7 +5,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 // Disposable storage and port: never stop the user's running dashboard.
 const root = await mkdtemp(path.join(os.tmpdir(), "manager-node-handoff-"));
@@ -30,6 +30,9 @@ const secrets = new Map([
 ]);
 const auth = new DashboardAuth({ get: async key => secrets.get(key) }, {});
 await auth.refresh();
+const deviceId = randomUUID();
+store.set("global", "codexManager.webDashboard.deviceId", deviceId);
+writeSqliteStateFile(path.join(root, "logging-settings.json"), JSON.stringify({ enabled: true, retentionDays: 3, level: "info" }));
 const placeholder = net.createServer(socket => socket.destroy());
 await new Promise(resolve => placeholder.listen(0, "127.0.0.1", resolve));
 const port = placeholder.address().port;
@@ -89,6 +92,7 @@ try {
   assert.equal(readSqliteStateFile(pidPath), String(first.child.pid));
   let response = await remote("/api/state", { headers: { cookie: `codex_dashboard_session=${legacyToken}` } });
   assert.equal(response.status, 200, "existing browser login must survive VS Code -> Node");
+  assert.equal((await response.json()).connectedPeers.find(peer => peer.local).id, deviceId, "Node must retain the VS Code device identity");
   response = await remote("/login");
   assert.ok((await response.text()).includes('type="password"'), "standalone must show the password form");
   response = await remote("/login", { method: "POST", body: "password=wrong", headers: { "content-type": "application/x-www-form-urlencoded" } });
@@ -109,14 +113,22 @@ try {
   assert.equal(background.code, 0, background.output);
   assert.match(background.output, /running in background/);
   await ready();
-  assert.equal((await remote("/api/state", { headers: { cookie } })).status, 200, "login must survive background restart");
+  response = await remote("/api/state", { headers: { cookie } });
+  assert.equal(response.status, 200, "login must survive background restart");
+  assert.equal((await response.json()).connectedPeers.find(peer => peer.local).id, deviceId);
   const logout = await remote("/logout", { method: "POST", headers: { cookie, origin: "https://dashboard.example" } });
   assert.equal(logout.status, 303);
   await auth.refresh();
   assert.ok(!JSON.parse(await auth.readSessions()).some(session => session.fingerprint === createHash("sha256").update(cookie.split("=")[1]).digest("hex")), "VS Code must see Node logout");
   assert.equal((await remote("/api/state", { headers: { cookie } })).status, 401);
   await stop();
-  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "shared-logout"], timings }));
+  const logs = await SqliteStateStore.open(path.join(root, "manager_logs.sqlite"));
+  try {
+    const messages = logs.keys("logs").map(key => logs.get("logs", key)).filter(record => record.scope === "node-host").map(record => record.message);
+    for (const message of ["Standalone startup started", "Standalone ready", "Standalone startup failed", "Standalone shutdown started"])
+      assert.ok(messages.includes(message), `Shared system log must retain: ${message}`);
+  } finally { logs.close(); }
+  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "shared-logout", "shared-diagnostics"], timings }));
 } finally {
   if (placeholder.listening) await new Promise(resolve => placeholder.close(resolve));
   try { await stop(); } catch { /* The host may already be stopped or not yet started. */ }
