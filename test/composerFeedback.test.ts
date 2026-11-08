@@ -33,3 +33,11 @@ it('uses task context without account placeholders and preserves changed-file ac
   expect(open).toHaveBeenCalledOnce();
   expect(nodes(TurnUsageStrip({ privacyMode: true, onOpenChanges: open })).some(node => node.props.class === 'cli-turn-context')).toBe(false);
 });
+
+it('keeps the mobile account name from being squeezed out by quota metadata', () => {
+  const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
+  expect(css).toContain('.cli-turn-usage-strip .cli-turn-account:has(.cli-turn-account-name) { max-width: none; }');
+  expect(css).toContain('@media (max-width: 420px)');
+  expect(css).toContain('max-width: min(54vw, 220px);');
+  expect(css).toContain('.cli-turn-usage-strip .cli-turn-quota { gap: 5px; }');
+});

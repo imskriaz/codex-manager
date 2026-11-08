@@ -51,7 +51,7 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
@@ -144,7 +144,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       void save(current.current).then(saved => {
         if (epoch !== generation.current || !owned.current) return;
         if (!saved) throw new Error('Browser storage could not save the steer state. The message was kept and was not sent.');
-        const requestId = options.current.send(item.draft);
+        const requestId = options.current.steer ? options.current.steer(item.draft) : options.current.send(item.draft);
         if (!requestId) throw new Error('The steer was not sent. The message is kept in the queue.');
         const sent = current.current.map(entry => entry.id === id ? { ...entry, requestId, durable: true } : entry);
         update(sent); void save(sent);

@@ -1879,7 +1879,7 @@ function App() {
     status={browserHostStatus} lastSyncAt={browserLastSyncAt}
     onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })}
     onDismiss={hostReload && !reloadInProgress ? dismissReload : undefined} /> : null;
-  const offlineAccessibility = useModalAccessibility(Boolean(snapshot) && dashboardUnavailable && !isCliSessionsPath(browserPath), () => undefined);
+  const offlineAccessibility = useModalAccessibility(Boolean(snapshot) && dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath), () => undefined);
   useEffect(() => { if (dashboardUnavailable) document.querySelectorAll<HTMLElement>(':popover-open').forEach(element => element.hidePopover?.()); }, [dashboardUnavailable]);
   useEffect(() => { if (selectedPeer?.connected) noticeControllerRef.current?.connectionRestored(true); }, [selectedPeer?.id, selectedPeer?.connected]);
   const hasPendingActions = state.pendingActions.length > 0;
@@ -1895,7 +1895,7 @@ function App() {
         id="dashboard-main"
       >
         <section class="section loading-section">
-          {connectionFailed ? <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
+          {connectionFailed ? hasBrowserWorkspaceShell(browserPath) ? <WorkspaceConnectionBanner stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
@@ -2736,7 +2736,7 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {isCliSessionsPath(browserPath) && connectionBannerStage
+      {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage
         ? createPortal(<WorkspaceConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />, document.body)
         : null}
       {notice && !dashboardUnavailable && (!isCliSessionsPath(browserPath) || notice.level !== 'info')
@@ -2777,7 +2777,7 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {dashboardUnavailable && !isCliSessionsPath(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}>{recovery ?? <ConnectionRecovery stage={browserHostStage} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />}</div>, document.body) : null}
+        {dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}>{recovery ?? <ConnectionRecovery stage={browserHostStage} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />}</div>, document.body) : null}
         {!dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? recovery : null}
         <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
@@ -3153,11 +3153,11 @@ function App() {
         />
       }
 
-      // connectionStatus={recovery} remains the dashboard/task presentation; workspace uses the single portal banner.
+      // Workspace routes use the single portal recovery banner.
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
-              connectionStatus={isCliSessionsPath(browserPath) ? null : recovery}
+              connectionStatus={null}
                 browser={isBrowserDashboard}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}

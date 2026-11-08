@@ -913,6 +913,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     send: value => followUpMode === 'steer' && canSteer && steeringTurnId
       ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
       : props.onSend({ ...value, sandboxMode: undefined, projectPath: props.selectedSession?.projectPath }),
+    steer: value => steeringTurnId && canSteer
+      ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
+      : undefined,
     restore: value => {
       const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: [] };
       if (!canRestoreCliComposerDraft(current, value)) { reportLocalFeedback({ level: 'warning', message: 'Your newer composer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; }

@@ -16798,6 +16798,11 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .task-detail-panel .task-detail-tabs { flex: none; }
   .task-detail-panel .task-session-compose .cli-composer { width: 100%; }
   .cli-turn-usage-strip .cli-turn-account { max-width: 80px; }
+  .cli-turn-usage-strip .cli-turn-account:has(.cli-turn-account-name) { max-width: none; }
+  .cli-turn-usage-strip .cli-turn-quota { gap: 5px; }
+}
+@media (max-width: 420px) {
+  .cli-turn-usage-strip .cli-turn-account:has(.cli-turn-account-name) { max-width: min(54vw, 220px); }
 }
 @media (prefers-reduced-motion: reduce) { .cli-context-meter-value { transition: none; } }
 

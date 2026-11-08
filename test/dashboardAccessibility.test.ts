@@ -64,7 +64,8 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toContain("if (!snapshot)");
     expect(source).not.toContain("if (!snapshot || selectedPeerOffline)");
     expect(source).toContain('const connectionBannerStage: ConnectionStage | undefined = reloadStatus ?? connectionIssue');
-    expect(source).toContain('connectionStatus={recovery}');
+    expect(source).toContain('connectionStatus={null}');
+    expect(source).toContain('hasBrowserWorkspaceShell(browserPath) && connectionBannerStage');
     expect(source).not.toContain('function BrowserConnectionBanner');
     expect(source).toContain('notice && !dashboardUnavailable');
     expect(source).not.toContain('dashboard-peer-offline');

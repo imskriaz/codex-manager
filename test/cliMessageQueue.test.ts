@@ -26,7 +26,7 @@ import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 const draft = (text = 'First') => ({ text, attachments: [] });
 const entry = (patch: Partial<CliQueuedMessage> = {}): CliQueuedMessage => ({ id: 'one', draft: draft(), state: 'sending', createdAt: Date.now(), seenIds: ['old'], ...patch });
 let options: Parameters<typeof useCliMessageQueue>[0], queue: ReturnType<typeof useCliMessageQueue>;
-const send = vi.fn(), restore = vi.fn(), feedback = vi.fn(), locks = vi.fn();
+const send = vi.fn(), steer = vi.fn(), restore = vi.fn(), feedback = vi.fn(), locks = vi.fn();
 function render(patch: Partial<typeof options> = {}) {
   options = { ...options, ...patch }; harness.cursor = 0; harness.dirty = false;
   queue = useCliMessageQueue(options); harness.effects.splice(0).forEach(effect => effect()); return queue;
@@ -34,7 +34,7 @@ function render(patch: Partial<typeof options> = {}) {
 async function flush() { for (let i = 0; i < 40; i++) { await Promise.resolve(); if (harness.dirty) render(); } }
 beforeEach(() => {
   vi.useFakeTimers(); harness.slots = []; harness.cursor = 0; harness.effects = []; harness.dirty = false; harness.records.clear();
-  send.mockReset().mockImplementation(() => 'request-' + send.mock.calls.length); restore.mockReset().mockReturnValue(true); feedback.mockReset();
+  send.mockReset().mockImplementation(() => 'request-' + send.mock.calls.length); steer.mockReset().mockImplementation(() => 'steer-' + steer.mock.calls.length); restore.mockReset().mockReturnValue(true); feedback.mockReset();
   harness.read.mockReset().mockImplementation(async key => structuredClone(harness.records.get(key)));
   harness.writes.mockReset().mockImplementation(async (key, value) => { harness.records.set(key, structuredClone(value)); return true; });
   locks.mockReset().mockImplementation(async (name, _options, work) => work({ name }));
@@ -148,13 +148,15 @@ it('shows accepted guidance immediately before subsequent output and replaces ea
 });
 
 it('steers a queued message immediately and keeps its row in the sending state', async () => {
-  render({ canDispatch: true }); await flush();
+  render({ canDispatch: false, steer }); await flush();
   const id = queue.enqueue(draft('Steer this now'))!; await flush();
+  options.canDispatch = true;
   queue.steerNow(id);
-  expect(queue.items[0]?.state).toBe('sending');
   await flush();
-  expect(send).toHaveBeenCalledExactlyOnceWith(draft('Steer this now'));
-  expect(queue.items[0]).toMatchObject({ id, state: 'sending', requestId: 'request-1' });
+  expect(queue.items[0]?.state).toBe('sending');
+  expect(steer).toHaveBeenCalledExactlyOnceWith(draft('Steer this now'));
+  expect(send).not.toHaveBeenCalled();
+  expect(queue.items[0]).toMatchObject({ id, state: 'sending', requestId: 'steer-1' });
 });
 
 it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {

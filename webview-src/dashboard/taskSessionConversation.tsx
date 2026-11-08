@@ -76,6 +76,9 @@ export function TaskSessionConversation(props: {
     canDispatch: props.connected && !access.pending && !resume.pending && !props.session.archived && props.session.status !== 'unknown' && !stopping && (!running || followUpMode === 'steer' && !!steerTurnId),
     turnId: followUpMode === 'steer' && running ? steerTurnId : undefined,
     send: value => props.sendAction(followUpMode === 'steer' && running && steerTurnId ? 'steerCodexCliSessionTurn' : 'sendCodexCliSessionMessage', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId, ...(followUpMode === 'steer' && running && steerTurnId ? { expectedTurnId: steerTurnId } : {}) }),
+    steer: value => steerTurnId && running
+      ? props.sendAction('steerCodexCliSessionTurn', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId, expectedTurnId: steerTurnId })
+      : undefined,
     restore: value => { if (!canRestoreCliComposerDraft(current.current, value)) { report({ level: 'warning', message: 'Your newer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; } current.current = restoreFailedCliComposerDraft(current.current, value); setDraft(current.current); return true; },
     feedback: message => report({ level: 'warning', message })
   });
