@@ -133,11 +133,6 @@
           "scope": "machine",
           "markdownDescription": "Workspace: add chats and terminals to the dashboard."
         },
-        "codexManager.taskBoardEnabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show the compact project task board with Idea, Planned, Running, and Completed columns."
-        },
         "codexManager.apiAccessEnabled": {
           "type": "boolean",
           "default": false,

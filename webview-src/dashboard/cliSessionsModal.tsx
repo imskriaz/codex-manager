@@ -160,7 +160,6 @@ export type CliSessionsPageProps = {
   browser?: boolean;
   dashboardMode?: boolean;
   taskBoardActive?: boolean;
-  taskBoardEnabled?: boolean;
   onTasks?: () => void;
   onApi?: () => void;
   /** Show the remote dashboard sign-out action in the avatar menu. */
@@ -1127,7 +1126,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <div class="cli-sidebar-toolbar">
                 <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
                 <button type="button" class="cli-dashboard-nav cli-workspace-nav" aria-current={props.selectedSession ? "page" : undefined} onClick={() => { if (mobileLayout) setRailCollapsed(true); returnToSessionList(); }} title="Open workspace"><SidebarIcon /><span>Workspace</span></button>
-                {props.taskBoardEnabled ? <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => props.onTasks?.()} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button> : null}
+                <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => props.onTasks?.()} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav>

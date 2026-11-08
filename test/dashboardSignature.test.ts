@@ -89,7 +89,7 @@ function createState(overrides?: {
 }
 
 describe("buildDashboardStateSignature", () => {
-  it.each(["apiAccessEnabled", "taskBoardEnabled"] as const)("publishes %s changes to other open clients", key => {
+  it.each(["apiAccessEnabled"] as const)("publishes %s changes to other open clients", key => {
     const state = createState();
     const before = buildDashboardStateSignature(state);
     state.settings[key] = key === "apiAccessEnabled";

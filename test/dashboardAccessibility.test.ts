@@ -175,11 +175,12 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(tools).toContain('class={`maintenance-report${storage ? " has-storage" : ""}`}');
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const webDashboard = settings.indexOf('props.lang === "zh" ? "浏览器面板"');
-    const taskBoard = settings.indexOf('title="Project task board"');
+    const alwaysActive = settings.indexOf('title="Always Active"');
     const dashboardApi = settings.indexOf('title="Dashboard API"');
     expect(webDashboard).toBeGreaterThanOrEqual(0);
-    expect(taskBoard).toBeGreaterThan(webDashboard);
-    expect(dashboardApi).toBeGreaterThan(taskBoard);
+    expect(alwaysActive).toBeGreaterThan(webDashboard);
+    expect(settings).not.toContain('title="Project task board"');
+    expect(dashboardApi).toBeGreaterThan(alwaysActive);
     expect(tools.indexOf('class="maintenance-sort"')).toBeLessThan(tools.indexOf('class="maintenance-selected-count"'));
     expect(tools).not.toContain('aria-label="Sessions Management"');
     expect(tools).toContain("projectEntries");

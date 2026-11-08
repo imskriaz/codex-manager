@@ -31,7 +31,6 @@ export class ExtensionSettingsStore {
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "auto",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", true),
-      taskBoardEnabled: config.get<boolean>("taskBoardEnabled", true),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
       codexSessionTransport: readCodexSessionTransport(config),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10)),

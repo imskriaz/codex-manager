@@ -16,7 +16,6 @@ export type DashboardSettingKey =
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
-  | "taskBoardEnabled"
   | "apiAccessEnabled"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
@@ -64,7 +63,6 @@ export interface DashboardSettings {
   codexAppRestartMode: "auto" | "manual";
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
-  taskBoardEnabled?: boolean;
   apiAccessEnabled?: boolean;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */

@@ -276,18 +276,6 @@ export function SettingsOverlay(props: {
                           ? "已停用。"
                           : "Disabled."}
                   </div>
-                  <SettingsToggleBlock
-                    title="Always Active"
-                    sub="Keep the local dashboard and system services running after VS Code closes."
-                    enabled={props.settings.alwaysActive === true}
-                    onToggle={(enabled) => patchAndSend("alwaysActive", enabled)}
-                  >
-                    <div class="settings-note">
-                      {props.settings.webDashboardEnabled && props.settings.webSocketServerEnabled !== false
-                        ? "The standalone Node host will keep using port 39875 after VS Code closes."
-                        : "Enable Web Dashboard and WS Cross System for this host to stay active."}
-                    </div>
-                  </SettingsToggleBlock>
                   <div class="settings-integration-grid">
                     <SettingsToggleBlock
                       title={
@@ -322,11 +310,17 @@ export function SettingsOverlay(props: {
                       </div>
                     </SettingsToggleBlock>
                     <SettingsToggleBlock
-                      title="Project task board"
-                      sub="Show Idea, Planned, Running, and Completed project work with offline drafts."
-                      enabled={props.settings.taskBoardEnabled !== false}
-                      onToggle={(enabled) => patchAndSend("taskBoardEnabled", enabled)}
-                    />
+                      title="Always Active"
+                      sub="Keep the local dashboard and system services running after VS Code closes."
+                      enabled={props.settings.alwaysActive === true}
+                      onToggle={(enabled) => patchAndSend("alwaysActive", enabled)}
+                    >
+                      <div class="settings-note">
+                        {props.settings.webDashboardEnabled && props.settings.webSocketServerEnabled !== false
+                          ? "The standalone Node host will keep using port 39875 after VS Code closes."
+                          : "Enable Web Dashboard and WS Cross System for this host to stay active."}
+                      </div>
+                    </SettingsToggleBlock>
                     <SettingsToggleBlock
                       title="Dashboard API"
                       sub="Allow generated Bearer tokens to call the local dashboard API."

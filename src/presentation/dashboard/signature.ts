@@ -67,7 +67,6 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.displayLanguage,
     state.settings.cliIntegrationEnabled ? "1" : "0",
     state.settings.apiAccessEnabled === true ? "1" : "0",
-    state.settings.taskBoardEnabled !== false ? "1" : "0",
     state.settings.codexCliPath ?? "",
     state.settings.codexAppPath,
     state.settings.resolvedCodexAppPath,

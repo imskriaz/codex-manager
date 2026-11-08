@@ -2780,13 +2780,13 @@ function App() {
         {dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}>{recovery ?? <ConnectionRecovery stage={browserHostStage} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />}</div>, document.body) : null}
         {!dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? recovery : null}
         <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
-        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
+        <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
           connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
-        /></div> : null}
+        /></div>
         {snapshot.indexHealth.status !== "healthy" ? (
           <section class="section">
             <RecoveryPanel
@@ -3161,7 +3161,6 @@ function App() {
                 browser={isBrowserDashboard}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
-              taskBoardEnabled={snapshot.settings.taskBoardEnabled !== false}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
               onApi={() => setApiTokenOpen(true)}
               showLogout={isBrowserDashboard}
