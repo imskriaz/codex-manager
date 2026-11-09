@@ -35,7 +35,7 @@ it('shows a button for old questions and closes immediately after queueing once'
   render({ autoOpen: false }); await flush(); expect(find('form')).toBeUndefined();
   find('button').props.onClick(); find('textarea').props.onInput({ currentTarget: { value: 'Typed answer' } });
   const form = find('form'); form.props.onSubmit({ preventDefault() {} }); form.props.onSubmit({ preventDefault() {} });
-  expect(submit).toHaveBeenCalledOnce(); expect(submit.mock.calls[0]![0]).toContain('Typed answer'); expect(find('form')).toBeUndefined(); expect(find('button').props.disabled).toBe(true);
+  expect(submit).toHaveBeenCalledOnce(); expect(submit.mock.calls[0]![0]).toContain('Typed answer'); expect(render()).toBeNull();
 });
 it('closes an automatic question when work continues but keeps a failed enqueue editable', async () => {
   render(); await flush(); render({ autoOpen: false }); expect(find('form')).toBeUndefined();
@@ -63,7 +63,7 @@ it('hides an open prompt when its answer arrives from another client and after r
   expect(render({ onReply: undefined })).toBeNull();
 });
 
-it('keeps queued answers visible until confirmed and hides only after every question is answered', async () => {
+it('hides the answered question banner while its answer is queued and after confirmation', async () => {
   const message = { ...props.message, questions: [{ title: 'First?' }, { title: 'Second?' }] };
   const first = { id: 'first', role: 'user' as const, text: sessionQuestionReply(message, { '0': 'Yes' }) };
   render({ message, answered: answeredSessionQuestionIds([first]) }); await flush();
@@ -71,9 +71,22 @@ it('keeps queued answers visible until confirmed and hides only after every ques
   const second = { id: 'second', role: 'user' as const, text: sessionQuestionReply(message, { '1': 'No' }) };
   const answered = answeredSessionQuestionIds([first, second]);
   const queued = render({ answered, pending: true });
-  expect(nodes(queued).some(node => node.props['aria-label'] === 'Queued Codex answer')).toBe(true);
-  expect(nodes(queued).some(node => node.type === 'form')).toBe(false);
+  expect(queued).toBeNull();
   expect(render({ pending: false })).toBeNull();
+});
+
+it('restores an unanswered prompt and its draft when the queued answer fails or is removed', async () => {
+  render(); await flush();
+  find('textarea').props.onInput({ currentTarget: { value: 'Retained answer' } });
+  find('form').props.onSubmit({ preventDefault() {} });
+  expect(render()).toBeNull();
+  const text = sessionQuestionReply(props.message, { '0': 'Retained answer' });
+  expect(render({ pending: true, answered: answeredSessionQuestionIds([{ id: 'queued', role: 'user', text }]) })).toBeNull();
+  render({ pending: false, answered: new Set() });
+  find('button').props.onClick();
+  expect(find('textarea').props.value).toBe('Retained answer');
+  find('form').props.onSubmit({ preventDefault() {} });
+  expect(submit).toHaveBeenCalledTimes(2);
 });
 
 it('keeps the prompt available when a reply is incomplete or belongs to another question', async () => {

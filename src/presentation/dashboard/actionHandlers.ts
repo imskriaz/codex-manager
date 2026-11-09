@@ -22,6 +22,7 @@ import { fetchResetCredits } from "../../services/quota";
 import { fetchAccountDailyUsage } from "../../services/usage";
 import {
   archiveCodexCliSession,
+  isAppServerTurnSettling,
   cancelCodexCliSessionTurn,
   CodexCliTurnCancelledError,
   deleteCodexCliSession,
@@ -2225,7 +2226,7 @@ async function handleArchiveCodexCliSession(sessionId: string | undefined) {
   const current = await readCodexArchiveMaintenanceState(sessionId, resolveCodexHome(), true);
   if (!current) throw new Error('This session was not found. Refresh sessions before retrying.');
   if (current.archived) return { notice: { level: 'info' as const, message: 'Codex session is already archived.' } };
-  if (current.status !== 'idle') throw new Error('Stop the active turn and refresh its running state before archiving.');
+    if (current.status !== 'idle' && !isAppServerTurnSettling(resolveCodexHome(), sessionId)) throw new Error('Stop the active turn and refresh its running state before archiving.');
   await archiveCodexCliSession(sessionId);
   return {
     notice: { level: "info" as const, message: "Codex session archived." }

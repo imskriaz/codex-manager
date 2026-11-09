@@ -95,7 +95,7 @@ function isAppServerTurnCancelled(sessionId: string): boolean {
   const active = activeAppServerTurns.get(sessionId);
   return active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
 }
-function isAppServerTurnSettling(home: string, sessionId: string): boolean {
+export function isAppServerTurnSettling(home: string, sessionId: string): boolean {
   const active = activeAppServerTurns.get(sessionId);
   const live = active?.turnId && active.home === path.resolve(home) ? getCodexSessionLiveState(sessionId) : undefined;
   return Boolean(live && live.turnId === active?.turnId && !["starting", "running"].includes(live.status));
@@ -593,6 +593,8 @@ export async function readCodexCliSessionSummary(
 /** Archived cleanup must work even when the native renderer cannot answer IPC. */
 export async function readCodexArchiveMaintenanceState(sessionId: string, home = resolveCodexHome(), includeActive = false): Promise<{ archived: boolean; status: "idle" | "running" | "unknown" } | undefined> {
   validateSessionId(sessionId);
+  // User cleanup needs current ownership, including a writer that just released or acquired its lock.
+  writerLockProbes.delete(path.join(home, SESSION_LOCK_DIRECTORY));
   const nativeRecord = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
   const record = nativeRecord ?? (getSqliteStateStore()?.get('session-file-cleanup', `${getCodexHomeStateKey(home)}:${sessionId.toLowerCase()}`) ? { archived: true } : undefined);
   if (!record || record.archived === undefined) {
@@ -1953,7 +1955,7 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
 export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
   validateSessionId(sessionId);
   const home = resolveCodexHome();
-  if (ownsSessionTurn(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+  if (ownsSessionTurn(home, sessionId) && !isAppServerTurnSettling(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
     const archived = await readCodexArchiveMaintenanceState(sessionId, home, !options.archivedOnly);
@@ -2738,6 +2740,7 @@ function validateSessionId(sessionId: string): void {
 function runCliSessionMutation<T>(sessionId: string, operationLabel: string, task: () => Promise<T>): Promise<T> {
   const home = resolveCodexHome();
   return runCrossWindowExclusive(`codex:session:${sessionId.toLowerCase()}`, operationLabel, async () => {
+    await waitForCancelledTurnRelease(home, sessionId);
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before retrying this action.');
     try { return await task(); }
     finally {

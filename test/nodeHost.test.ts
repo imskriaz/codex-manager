@@ -2,13 +2,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => ({
   start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
-  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), flushSessions: vi.fn()
+  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), captureRecovery: vi.fn(), flushSessions: vi.fn()
 }));
 vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context }));
 vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; setAccountSwitchCoordinator() {} } }));
 vi.mock("../src/services/encryptedSync", () => ({ EncryptedSyncManager: class { async start() {} dispose() {} } }));
 vi.mock("../src/infrastructure/config/proxyEnvironment", () => ({ initializeCodexProxyEnvironment: async () => undefined, disposeCodexProxyEnvironment: vi.fn() }));
-vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
+vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; prepareForShutdown() {} publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
 vi.mock("../src/storage/sqliteState", () => ({
   getSqliteStateStore: () => ({ close: host.close }), readSqliteStateFile: host.readPid,
   writeSqliteStateFile: host.writePid, deleteSqliteStateFile: host.deletePid
@@ -16,7 +16,7 @@ vi.mock("../src/storage/sqliteState", () => ({
 vi.mock("../src/utils/crossWindowOperations", () => ({ configureCrossWindowOperationCoordinator: host.coordinate }));
 vi.mock("../src/utils/persistentLog", () => ({ registerPersistentLogging: host.registerLogs, disposePersistentLogging: host.closeLogs, recordPersistentEvent: host.log }));
 vi.mock("../src/services/nodeBackgroundServices", () => ({ registerNodeBackgroundServices: host.background }));
-vi.mock("../src/services/codexSessionAutoResume", () => ({ cancelCodexSessionAutoResume: host.cancelRecovery }));
+vi.mock("../src/services/codexSessionAutoResume", () => ({ cancelCodexSessionAutoResume: host.cancelRecovery, prepareCodexSessionsForExtensionHostRestart: host.captureRecovery }));
 vi.mock("../src/services/sessionRecording", () => ({ disposeSessionRecording: host.flushSessions }));
 import { startNodeHost } from "../src/node";
 
@@ -57,6 +57,9 @@ it("waits for VS Code's port release, writes the SQLite PID only after bind, and
   expect(host.close).toHaveBeenCalledOnce();
   expect(host.closeLogs).toHaveBeenCalledWith(true);
   expect(host.cancelRecovery).toHaveBeenCalledOnce();
+  expect(host.captureRecovery).toHaveBeenCalledOnce();
+  expect(host.captureRecovery.mock.invocationCallOrder[0]).toBeLessThan(host.stop.mock.invocationCallOrder[0]!);
+  expect(host.captureRecovery.mock.invocationCallOrder[0]).toBeLessThan(host.close.mock.invocationCallOrder[0]!);
   expect(host.flushSessions).toHaveBeenCalledOnce();
 });
 
@@ -66,6 +69,7 @@ it("refuses a competing direct launch and leaves the active owner's PID intact",
   host.readPid.mockReturnValue("999999");
   await expect(startNodeHost()).rejects.toThrow("already owned");
   expect(host.background).not.toHaveBeenCalled();
+  expect(host.captureRecovery).not.toHaveBeenCalled();
   expect(host.start).toHaveBeenCalledOnce();
   expect(host.log).toHaveBeenCalledWith("error", "node-host", "Standalone startup failed", expect.any(Object), expect.any(Error));
   expect(host.writePid).not.toHaveBeenCalled();
@@ -89,5 +93,19 @@ it("closes storage and the repository when repository initialization fails", asy
   host.repoInit.mockRejectedValueOnce(new Error("SQLITE_FULL"));
   await expect(startNodeHost()).rejects.toThrow("SQLITE_FULL");
   expect(host.start).not.toHaveBeenCalled();
+  expect(host.close).toHaveBeenCalledOnce();
+  expect(host.captureRecovery).not.toHaveBeenCalled();
+});
+
+it.each(['failed', 'timeout'] as const)('retains earlier recovery and completes shutdown when final capture %s', async mode => {
+  vi.useFakeTimers();
+  if (mode === 'failed') host.captureRecovery.mockRejectedValue(new Error('SQLITE_FULL'));
+  else host.captureRecovery.mockImplementation((_context, _enabled, _running, _open, signal: AbortSignal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })));
+  await startNodeHost();
+  const stop = process.listeners('SIGTERM').find(listener => !signals.has(listener))!;
+  stop();
+  await vi.advanceTimersByTimeAsync(mode === 'timeout' ? 5_001 : 0);
+  expect(host.log).toHaveBeenCalledWith('warning', 'node-host', expect.stringContaining('previous snapshot retained'), undefined, expect.any(Error));
+  expect(host.captureRecovery).toHaveBeenCalledOnce();
   expect(host.close).toHaveBeenCalledOnce();
 });

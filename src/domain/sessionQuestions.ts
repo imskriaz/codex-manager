@@ -13,15 +13,18 @@ export function readSessionQuestions(value: unknown): NonNullable<DashboardCliSe
 export function answeredSessionQuestionIds(messages: DashboardCliSessionMessage[]) {
   const answered = new Set<string>();
   for (const reply of messages) {
-    const match = reply.role === 'user' && reply.text.match(/^\s*<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>\s*$/);
-    if (!match) continue;
-    try {
+    if (reply.role !== 'user') continue;
+    for (const match of reply.text.matchAll(/<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>/g)) try {
       const value: unknown = JSON.parse(match[1]!);
       const rows: unknown[] = Array.isArray(value) ? value : [value];
       for (const row of rows) {
         if (!row || typeof row !== 'object') continue;
         const reply = row as { questionItemId?: unknown; answer?: unknown };
-        if (typeof reply.questionItemId === 'string' && typeof reply.answer === 'string' && reply.answer.trim()) answered.add(reply.questionItemId);
+        if (typeof reply.questionItemId === 'string' && typeof reply.answer === 'string' && reply.answer.trim()) {
+          let id = reply.questionItemId;
+          try { id = JSON.stringify(JSON.parse(id)); } catch { /* Keep legacy non-JSON IDs unchanged. */ }
+          answered.add(id);
+        }
       }
     } catch { /* Incomplete replies remain visible as normal messages. */ }
   }

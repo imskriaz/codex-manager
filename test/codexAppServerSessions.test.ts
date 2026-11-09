@@ -716,7 +716,7 @@ describe("native App Server new sessions", () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(getCodexSessionLiveState(id)?.status).toBe("cancelled");
   });
-  it('accepts a follow-up after completion while the previous private writer is still closing', async () => {
+  it.each(['follow-up', 'archive', 'delete', 'new-session-delete'])('accepts %s after completion while the previous private writer is still closing', async operation => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
     let finish!: () => void, release!: () => void, ready!: () => void;
@@ -724,22 +724,25 @@ describe("native App Server new sessions", () => {
     const closing = new Promise<void>(resolve => { release = resolve; });
     const started = new Promise<void>(resolve => { ready = resolve; });
     const notifications = new Set<(method: string, value: unknown) => void>();
-    const rpc = { request: vi.fn(async () => ({ sandbox: { type: 'readOnly' } })), onServerRequest: () => () => undefined,
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: 'readOnly' } })), onServerRequest: () => () => undefined,
       onNotification: (listener: (method: string, value: unknown) => void) => { notifications.add(listener); return () => notifications.delete(listener); },
       close: vi.fn(() => closing), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, onStarted: (id: string) => void) => { onStarted('first-turn'); ready(); await turn; }) };
-    const next = { ...rpc, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, onStarted: (id: string) => void) => { onStarted('next-turn'); }) };
+    const next = { ...rpc, request: vi.fn(async () => ({ sandbox: { type: 'readOnly' } })), close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, onStarted: (id: string) => void) => { onStarted('next-turn'); }) };
     mocks.open.mockResolvedValueOnce(rpc).mockResolvedValue(next);
-    const first = sendCodexCliSessionMessage({ sessionId: id, text: 'First', projectPath: root, sandboxMode: 'read-only' });
+    const first = operation === 'new-session-delete' ? startCodexCliSession({ text: 'First', projectPath: root, sandboxMode: 'read-only' }) : sendCodexCliSessionMessage({ sessionId: id, text: 'First', projectPath: root, sandboxMode: 'read-only' });
     try {
       await started;
       for (const notify of notifications) notify('turn/completed', { threadId: id, turn: { id: 'first-turn', status: 'completed' } });
       finish();
       await vi.waitFor(() => expect(rpc.close).toHaveBeenCalled());
-      const followUp = sendCodexCliSessionMessage({ sessionId: id, text: 'Follow-up', projectPath: root, sandboxMode: 'read-only' });
+      const followUp = operation === 'archive' ? archiveCodexCliSession(id) : operation.includes('delete') ? deleteCodexCliSession(id) : sendCodexCliSessionMessage({ sessionId: id, text: 'Follow-up', projectPath: root, sandboxMode: 'read-only' });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(next.request).not.toHaveBeenCalled();
       release();
       await first;
       await expect(followUp).resolves.toBeUndefined();
-      expect(next.startAndWaitForTurn).toHaveBeenCalledOnce();
+      if (operation === 'follow-up') expect(next.startAndWaitForTurn).toHaveBeenCalledOnce();
+      else expect(next.request).toHaveBeenCalledWith(operation === 'archive' ? 'thread/archive' : 'thread/delete', expect.anything(), expect.anything());
     } finally { finish(); release(); await first; }
   });
   it("reports initialization failure without silently falling back to CLI exec", async () => {

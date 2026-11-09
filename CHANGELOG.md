@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.7-pre.4
+
+- Save a final bounded recovery snapshot before a standalone host releases its storage, so a restart during an active turn does not rely on the last background refresh. Retain previous recovery and log a warning if the save cannot complete.
+- Include the running build version in standalone readiness diagnostics.
+- Hide answered question banners immediately, recognize formatted reply IDs and replies with follow-up text, and restore editable questions when their queued answers fail.
+- Let archive and delete wait for a completed private turn to release its writer; keep active writers protected.
+
 ## 1.7.7-pre.3
 
 - Increase dashboard text by 5%, apply Dashboard Zoom to browser workspaces and task boards, and default missing zoom preferences to 100%.

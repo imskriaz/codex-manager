@@ -433,6 +433,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private server: http.Server | undefined;
   private serverStart: Promise<void> | undefined;
   private serverStartRevision = 0;
+  private shuttingDown = false;
   private serverRetryAt = 0;
   private legacyPasswordCleanupStarted = false;
   private readonly webSocketClients = new Set<WebSocket>();
@@ -728,6 +729,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.connectPeerSocket();
     void this.browserPush.hasSubscriptions().then(enabled => { if (!this.peerStopped) { this.pushWatching = enabled; this.refreshCliSessionRealtimeLifecycle(); } }).catch(error => console.warn('[codexManager] question notification monitoring unavailable', error));
   }
+
+  prepareForShutdown(): void { this.shuttingDown = true; }
 
   async stop(): Promise<void> {
     this.serverStartRevision++;
@@ -1513,6 +1516,12 @@ export class WebDashboardServer implements vscode.Disposable {
   ): Promise<{ messages: DashboardHostMessage[]; reloadAfterResponse: boolean }> {
     const messages: DashboardHostMessage[] = [];
     let reloadAfterResponse = false;
+    if (this.shuttingDown && message.type !== 'dashboard:notification-response') {
+      const error = 'The standalone host is restarting. This action was not started; reconnect before retrying.';
+      if (message.type === 'dashboard:action') messages.push({ type: 'dashboard:action-result', requestId: message.requestId, action: message.action, accountId: message.accountId, status: 'failed', error });
+      else messages.push({ type: 'dashboard:notice', level: 'warning', message: error });
+      return { messages, reloadAfterResponse };
+    }
     if (message.type === "dashboard:notification-response") {
       resolveMirroredNotification(message.notificationId, message.action);
       return { messages, reloadAfterResponse };

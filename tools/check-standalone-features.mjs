@@ -4,7 +4,7 @@ import { copyFile, mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promi
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { createRequire } from "node:module";
 
 assert.ok(process.argv.includes("--mutate"), "Pass --mutate for disposable browser and AI action checks.");
@@ -55,6 +55,44 @@ try {
     assert.equal(result?.status, "completed", result?.error || `${name}: missing result`);
     return result.payload;
   };
+  if (process.argv.includes('--restart-recovery')) {
+    store.set('settings-overrides:global', 'autoResumeEnabled', true);
+    store.set('settings-overrides:global', 'autoSwitchEnabled', true);
+    const created = await action('startCodexCliSession', { projectPath: path.join(root, 'workspace'), sandboxMode: 'danger-full-access', autoApprove: true,
+      text: 'This is a disposable restart test. Run node -e "setTimeout(()=>{},30000)" exactly once. After it finishes or is interrupted, reply exactly RESTART RECOVERY OK. If you receive Continue if not completed, do not repeat the command; just reply RESTART RECOVERY OK. Do not create goals or change files.' });
+    const sessionId = created.cliSession.id;
+    const deadline = Date.now() + 90_000;
+    while (true) {
+      const history = await action('getCodexCliSessionMessages', { sessionId });
+      if ([...history.cliSessionMessages, ...(history.cliSessionLive?.messages ?? [])].some(message => message.role !== 'user' && message.kind === 'command' && /setTimeout/.test(JSON.stringify(message)))) break;
+      assert.ok(Date.now() < deadline, 'Restart fixture did not start its command');
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    // Remove the fixture's prior periodic snapshot to exercise the final shutdown save.
+    const namespace = 'workspace:' + createHash('sha256').update(require('vscode').Uri.file(root).fsPath).digest('hex');
+    for (const key of ['codexManager.autoResumeSessionIds', 'codexManager.autoResumeOpenSessionIds']) store.set(namespace, key, []);
+    await fetch(origin + '/shutdown', { method: 'POST', headers: { 'X-Codex-Admin': admin }, signal: AbortSignal.timeout(3000) });
+    assert.equal(await hostDone, 0, 'Standalone shutdown completed');
+    assert.ok(['codexManager.autoResumeSessionIds', 'codexManager.autoResumeOpenSessionIds'].some(key => store.get(namespace, key)?.includes(sessionId)), 'Final shutdown captured the active session');
+    console.log('PASS graceful shutdown saved active work with an empty prior snapshot');
+    ({ child: host, done: hostDone } = run('start-node.cjs', [], environment, path.join(root, 'workspace')));
+    const restartDeadline = Date.now() + 120_000;
+    for (;;) {
+      try {
+        const history = await action('getCodexCliSessionMessages', { sessionId });
+        if (history.cliSessionLive?.status === 'completed' && history.cliSessionMessages.some(message => message.role === 'assistant' && message.text.includes('RESTART RECOVERY OK'))) {
+          assert.ok(history.cliSessionMessages.filter(message => message.role === 'user' && message.text.trim() === 'Continue if not completed').length <= 1, 'Recovery sent at most one continuation');
+          break;
+        }
+      } catch (error) { if (host.exitCode !== null) throw error; }
+      assert.ok(Date.now() < restartDeadline, 'Session did not complete after standalone restart');
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    await action('archiveCodexCliSession', { sessionId });
+    await action('deleteCodexCliSession', { sessionId, confirmed: true });
+    assert.ok(!(await action('listCodexCliSessions')).cliSessions.some(session => session.id === sessionId));
+    console.log('PASS restarted standalone continued, archived and deleted its test session');
+  } else {
   const taskProject = path.join(root, "workspace");
   await action('importCurrent');
   console.log('PASS standalone current account import');
@@ -90,6 +128,7 @@ try {
   const result = await run("check-live-actions.mjs", ["--mutate"], environment, repository).done;
   assert.equal(result, 0, "Standalone browser feature checks failed.");
   console.log(JSON.stringify({ passed: true, host: "standalone", cli: "fresh-managed-install", vsCodeRequired: false }));
+  }
 } finally {
   if (host && host.exitCode === null) {
     try { await fetch(origin + "/shutdown", { method: "POST", headers: { "X-Codex-Admin": admin }, signal: AbortSignal.timeout(3000) }); } catch { host.kill(); }

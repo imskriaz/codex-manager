@@ -11,7 +11,7 @@ import { getCodexManagerStorageRoot } from "./utils/storageRoot";
 import { disposePersistentLogging, registerPersistentLogging, recordPersistentEvent } from "./utils/persistentLog";
 import { waitWithin } from "./utils/concurrency";
 import { registerNodeBackgroundServices } from "./services/nodeBackgroundServices";
-import { cancelCodexSessionAutoResume } from "./services/codexSessionAutoResume";
+import { cancelCodexSessionAutoResume, prepareCodexSessionsForExtensionHostRestart } from "./services/codexSessionAutoResume";
 import { disposeSessionRecording } from "./services/sessionRecording";
 import { EncryptedSyncManager } from "./services/encryptedSync";
 import { getCodexManagerConfiguration } from "./infrastructure/config/extensionSettings";
@@ -49,14 +49,26 @@ export async function startNodeHost(): Promise<void> {
   repo.setAccountSwitchCoordinator(sync);
   const dashboard = new WebDashboardServer(context, repo, sync, { failOnAddressInUse: true });
   const pidFile = process.env["CODEX_MANAGER_PID_FILE"];
+  let ownsDashboard = false;
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => closing ??= (async () => {
     recordPersistentEvent("info", "node-host", "Standalone shutdown started", { pid: process.pid });
+    dashboard.prepareForShutdown();
+    cancelCodexSessionAutoResume("Standalone is shutting down.");
+    if (ownsDashboard) {
+      const controller = new AbortController();
+      try {
+        await waitWithin(prepareCodexSessionsForExtensionHostRestart(context, true, undefined, undefined, controller.signal),
+          5_000, "Standalone recovery capture timed out. The previous snapshot was retained.", controller.signal);
+        recordPersistentEvent("info", "node-host", "Standalone shutdown recovery saved");
+      } catch (error) {
+        recordPersistentEvent("warning", "node-host", "Standalone shutdown recovery could not be confirmed; previous snapshot retained", undefined, error);
+      } finally { controller.abort(); }
+    }
     await dashboard.stop();
     dashboard.dispose();
     sync.dispose();
     disposeCodexProxyEnvironment();
-    cancelCodexSessionAutoResume("Standalone is shutting down.");
     for (const subscription of context.subscriptions) subscription.dispose();
     disposeSessionRecording();
     repo.dispose();
@@ -79,7 +91,7 @@ export async function startNodeHost(): Promise<void> {
     const deadline = Date.now() + (process.env["CODEX_MANAGER_HANDOFF"] === "1" ? 8_000 : 0);
     let waitingForPort = false;
     for (;;) {
-      try { await dashboard.start(); break; }
+      try { await dashboard.start(); ownsDashboard = true; break; }
       catch (error) {
         if (closing || Date.now() >= deadline || !(error instanceof Error) || !error.message.includes("already owned by another host")) throw error;
         if (!waitingForPort) recordPersistentEvent("info", "node-host", "Waiting for the current dashboard host to release the port", { pid: process.pid });
@@ -94,7 +106,7 @@ export async function startNodeHost(): Promise<void> {
     registerNodeBackgroundServices(context, repo, dashboard, id =>
       !getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false) || syncReady && sync.canAutomateAccount(id));
     if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));
-    recordPersistentEvent("info", "node-host", "Standalone ready", { pid: process.pid, url: dashboard.getUrl() });
+    recordPersistentEvent("info", "node-host", "Standalone ready", { pid: process.pid, url: dashboard.getUrl(), version: (context.extension.packageJSON as { version: string }).version });
   } catch (error) {
     recordPersistentEvent("error", "node-host", "Standalone startup failed", { pid: process.pid }, error);
     await shutdown();

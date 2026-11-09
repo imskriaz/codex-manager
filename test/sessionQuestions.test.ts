@@ -1,9 +1,21 @@
 import { notificationTargetUrl } from '../src/domain/notificationTarget';
 import { expect, it } from 'vitest';
-import { activeSessionQuestion, readSessionQuestions, sessionQuestionReply, unansweredSessionQuestions } from '../src/domain/sessionQuestions';
+import { activeSessionQuestion, answeredSessionQuestionIds, readSessionQuestions, sessionQuestionReply, unansweredSessionQuestions } from '../src/domain/sessionQuestions';
 import { parseCodexTokenUsage, validMessage } from '../src/domain/codexSessionLive';
 import { parseCodexAppServerThreadItems } from '../src/services/codexSessionResume';
 import { cliContextUsage, resolveCliComposerSettings } from '../webview-src/dashboard/cliSessionComposerState';
+
+it('detects native answers with formatted IDs and surrounding follow-up text without hiding unrelated questions', () => {
+  const question = { id: 'ask', role: 'assistant' as const, text: '', questions: [{ title: 'First?' }, { title: 'Second?' }] };
+  const text = '<send_user_message_question_reply>\n' + JSON.stringify([{ questionItemId: '["request_user_input_async", "ask", 0]', answer: 'Yes' }]) + '\n</send_user_message_question_reply>\nPlease continue.';
+  const reply = { id: 'reply', role: 'user' as const, text };
+  const answered = answeredSessionQuestionIds([question, reply]);
+  expect(answered.has(JSON.stringify(['request_user_input_async', 'ask', 0]))).toBe(true);
+  expect(answered.has(JSON.stringify(['request_user_input_async', 'ask', 1]))).toBe(false);
+  expect(unansweredSessionQuestions([question, reply])).toEqual([question]);
+  expect(answeredSessionQuestionIds([{ ...reply, role: 'assistant' }]).size).toBe(0);
+  expect(answeredSessionQuestionIds([{ ...reply, text: text.replace('"Yes"', '" "') }]).size).toBe(0);
+});
 
 it('preserves async Codex questions and sends native question IDs with selectable or typed answers', () => {
   const messages = parseCodexAppServerThreadItems({ thread: { turns: [{ id: 'turn', items: [{ id: 'ask', type: 'agentMessage', text: '', questions: [{ title: 'Which layout?', options: ['Compact','Spacious'] }] }] }] } });

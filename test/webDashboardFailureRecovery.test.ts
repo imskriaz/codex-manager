@@ -26,6 +26,19 @@ function createServer() {
   return { server, internal };
 }
 
+it('rejects new actions and settings while the standalone recovery snapshot is sealing', async () => {
+  const { server, internal } = createServer();
+  executeAction.mockClear();
+  server.prepareForShutdown();
+  try {
+    const result = await internal.processClientMessage({ type: 'dashboard:action', action: 'startCodexCliSession', requestId: 'during-shutdown' });
+    expect(result.messages).toEqual([expect.objectContaining({ type: 'dashboard:action-result', requestId: 'during-shutdown', status: 'failed', error: expect.stringContaining('not started') })]);
+    const setting = await internal.processClientMessage({ type: 'dashboard:setting', key: 'alwaysActive', value: false });
+    expect(setting.messages).toEqual([expect.objectContaining({ type: 'dashboard:notice', level: 'warning' })]);
+    expect(executeAction).not.toHaveBeenCalled();
+  } finally { await server.stop(); server.dispose(); }
+});
+
 it("keeps standby peer heartbeats free of session scans and account builds, then follows browser visibility", async () => {
   const { server } = createServer();
   const internal = server as any;

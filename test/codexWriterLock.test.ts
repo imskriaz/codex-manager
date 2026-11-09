@@ -2,14 +2,15 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { readCodexArchiveMaintenanceState, readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 
-const probe = vi.hoisted(() => ({ code: undefined as string | undefined, nativeMode: "", calls: [] as { command: string; args: string[]; options: { windowsHide: boolean; timeout: number } }[] }));
+const probe = vi.hoisted(() => ({ code: undefined as string | undefined, nativeMode: "", held: [] as string[], calls: [] as { command: string; args: string[]; options: { windowsHide: boolean; timeout: number } }[] }));
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
   return { ...actual, execFile: (...args: any[]) => {
     if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0])) && probe.nativeMode) {
       probe.calls.push({ command: args[0], args: args[1], options: args[2] });
+      if (probe.nativeMode === 'held') { args.at(-1)(null, JSON.stringify(probe.held)); return {}; }
       if (probe.nativeMode === "slow") { setTimeout(() => args.at(-1)(null, "[]"), 5200); return {}; }
       if (probe.nativeMode === "incomplete") { args.at(-1)(null, "{}"); return {}; }
       if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
@@ -31,7 +32,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";
 const roots: string[] = [];
-afterEach(async () => { probe.code = undefined; probe.nativeMode = ""; probe.calls = []; await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { probe.code = undefined; probe.nativeMode = ""; probe.held = []; probe.calls = []; await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-writer-probe-"));
   roots.push(root);
@@ -42,6 +43,15 @@ async function fixture() {
 }
 
 describe("writer lock evidence", () => {
+  it.skipIf(process.platform !== 'win32')('refreshes cached lock ownership before archive or deletion', async () => {
+    const root = await fixture();
+    probe.nativeMode = 'held'; probe.held = [path.join(root, 'thread-writer-locks', `${id}.lock`)];
+    expect(await readCodexCliSessionSummary(id, root)).toMatchObject({ status: 'running' });
+    probe.held = [];
+    expect(await readCodexArchiveMaintenanceState(id, root, true)).toMatchObject({ status: 'idle' });
+    probe.held = [path.join(root, 'thread-writer-locks', `${id}.lock`)];
+    expect(await readCodexArchiveMaintenanceState(id, root, true)).toMatchObject({ status: 'running' });
+  });
   it.skipIf(process.platform !== "win32")("distinguishes a fresh orphaned turn from a held writer before recovery", async () => {
     const root = await fixture();
     await mkdir(path.join(root, "sessions"));

@@ -14,7 +14,7 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
   const edited = useRef(false), submitting = useRef(false);
   const questions = message.questions?.map((question, index) => ({ ...question, index })).filter(question => !answered.has(JSON.stringify(['request_user_input_async', message.id, question.index]))) ?? [];
   const visible = !!onReply && !queued && (open || autoOpen && !expired);
-  useEffect(() => { if (!questions.length) { submitting.current = false; setQueued(false); } }, [questions.length]);
+  useEffect(() => { if (!pending) { submitting.current = false; setQueued(false); } }, [pending, questions.length]);
   useEffect(() => {
     if (!onReply) return;
     let disposed = false;
@@ -34,8 +34,7 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
     setAnswers(next);
     void writeBrowserCache(key, next).then(saved => { if (!saved) setOutcome('Browser storage could not save this answer. It is kept in this tab; copy it before closing.'); });
   };
-  if (!questions.length && !pending) return null;
-  if (!questions.length) return <section class="cli-question-message" aria-label="Queued Codex answer">{message.questions?.map((question, index) => <p key={index}>{question.title}</p>)}<small>Answer queued</small></section>;
+  if (!questions.length || queued) return null;
   return <section class="cli-question-message" aria-label="Codex question">
     {!visible ? <>{questions.map(question => <p key={question.index}>{question.title}</p>)}{onReply ? <button type="button" disabled={queued} onClick={() => setOpen(true)} aria-expanded={false}>{queued ? 'Answer queued' : 'Answer'}</button> : null}</> :
       <form class="codex-request-panel cli-question-prompt" aria-label="Answer Codex question" onSubmit={event => {
