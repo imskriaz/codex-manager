@@ -694,6 +694,20 @@ describe("executeDashboardActionMessage", () => {
     }
   });
 
+  it.each(['completed', 'failed'] as const)('accepts a follow-up while the matching %s Manager turn releases its writer', async status => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({ get: (key: string, fallback?: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = '01a04882-d037-7a42-ad24-9afb61901188';
+    const session = { id: sessionId, title: 'Finishing', status: 'running', locked: true, runningBy: 'Codex Manager', steerTurnId: 'turn-1', archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    readCodexCliSessionsMock.mockResolvedValueOnce([session]);
+    readCodexCliSessionMessagesMock.mockResolvedValueOnce([]);
+    const service = await import('../src/services/codexSessionLive');
+    vi.spyOn(service, 'getCodexSessionLiveState').mockReturnValue({ sessionId, streamId: sessionId, turnId: 'turn-1', status, sequence: 1, updatedAt: Date.now(), messages: [] });
+    const result = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'sendCodexCliSessionMessage', requestId: `settling-${status}`, payload: { sessionId, text: 'Continue' } });
+    expect(result.status).toBe('completed');
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
+  });
+
   it("rejects a reply while another writer owns the session", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
       get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)

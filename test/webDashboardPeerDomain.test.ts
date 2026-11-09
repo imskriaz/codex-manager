@@ -49,6 +49,24 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+it('replays live activity and forces vault delivery once per peer connection, not on heartbeats', async () => {
+  const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
+  const replay = vi.spyOn(internal, 'sendPeerAggregate').mockResolvedValue(undefined);
+  const vault = vi.spyOn(internal, 'publishPeerVault').mockResolvedValue(true);
+  const aggregate = vi.spyOn(internal, 'broadcastPeerAggregate').mockResolvedValue(undefined);
+  await internal.handlePeerMessage(JSON.stringify(peer()), socket);
+  await vi.advanceTimersByTimeAsync(5000);
+  await internal.handlePeerMessage(JSON.stringify(peer()), socket);
+  expect(replay).toHaveBeenCalledOnce();
+  expect(vault).toHaveBeenCalledExactlyOnceWith(true);
+  expect(aggregate).toHaveBeenCalledTimes(2);
+  const replacement = { ...socket, send: vi.fn() };
+  await vi.advanceTimersByTimeAsync(5000);
+  await internal.handlePeerMessage(JSON.stringify(peer()), replacement);
+  expect(replay).toHaveBeenCalledTimes(2);
+  expect(vault).toHaveBeenCalledTimes(2);
+});
+
 describe("canonical cross-PC WebSocket domain", () => {
   it('delivers authenticated remote notices once to push and browsers, retaining the system name', async () => {
     const source = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() }, browser = { readyState: 1, send: vi.fn(), close: vi.fn() };

@@ -1,4 +1,7 @@
 :root {
+  --dashboard-text-scale: 1.05;
+  --dashboard-viewport-height: calc(100dvh / var(--dashboard-zoom, 1));
+  --dashboard-viewport-width: calc(100vw / var(--dashboard-zoom, 1));
   --bg-base: #0d1117;
   --bg-surface: #161b22;
   --bg-elevated: #1c2333;
@@ -163,7 +166,7 @@ body {
   background: var(--bg-base);
   color: var(--text);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: calc(14px * var(--dashboard-text-scale, 1));
   line-height: 1.5;
   scrollbar-color: var(--border-default) transparent;
 }

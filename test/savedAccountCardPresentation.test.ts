@@ -147,7 +147,7 @@ describe("saved account card presentation", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(source).toContain('primaryQuotaExhausted ? "out-of-quota" : ""');
-    expect(styles).toMatch(/\.saved-card\.out-of-quota,[\s\S]*\.saved-table-row\.out-of-quota\s*{[^}]*background:/);
+    expect(styles).toMatch(/\.saved-card\.out-of-quota,[\s\S]*\.saved-table-row\.out-of-quota[^{]*{[^}]*background:/);
     expect(styles).toMatch(/background:\s*color-mix\(in srgb, var\(--danger\) 9%, var\(--bg-surface\)\)/);
   });
 

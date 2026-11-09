@@ -102,7 +102,7 @@ export function OverviewSection(props: {
   onDisableAll: () => void;
   showCliSessions?: boolean;
   onOpenCliSessions?: () => void;
-  onOpenCodex: () => void;
+  onOpenCodex?: () => void;
   onResumeSessions: () => void;
   resumeSessionsPending: boolean;
   codexOpenPending: boolean;
@@ -508,7 +508,7 @@ export function OverviewSection(props: {
                           ) : null}
                           {props.showCliSessions ? <>
                             <div class="overview-menu-section" role="presentation">{props.lang === "zh" ? "工作区" : props.lang === "zh-hant" ? "工作區" : "Workspace"}</div>
-                            <button type="button" role="menuitem" disabled={props.codexOpenPending} onClick={() => { setMoreOpen(false); props.onOpenCodex(); }}><CodexSessionsIcon />Codex</button>
+                            {props.onOpenCodex ? <button type="button" role="menuitem" disabled={props.codexOpenPending} onClick={() => { setMoreOpen(false); props.onOpenCodex?.(); }}><CodexSessionsIcon />Codex</button> : null}
                             <button type="button" role="menuitem" disabled={props.resumeSessionsPending} onClick={() => { setMoreOpen(false); props.onResumeSessions(); }}><span class="overview-menu-icon" aria-hidden="true">↻</span>Resume</button>
                           </> : null}
                         </div>,

@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 
 assert.ok(process.argv.includes("--mutate"), "Pass --mutate for disposable browser and AI action checks.");
 const sourceHome = process.env.CODEX_HOME || path.join(homedir(), ".codex");
+for (const key of Object.keys(process.env)) if (key.startsWith("CODEX_MANAGER_")) delete process.env[key];
 const root = await mkdtemp(path.join(tmpdir(), "manager-standalone-features-"));
 const repository = path.resolve(import.meta.dirname, "..");
 process.env.CODEX_MANAGER_STORAGE_ROOT = root;

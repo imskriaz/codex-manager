@@ -33,7 +33,7 @@ describe("authoritative session turn identifiers", () => {
     ]);
   });
 
-  it("renders native compaction markers once without displaying replacement history", async () => {
+  it.each([false, true])("renders native compaction markers once in either order (reverse: %s)", async reverse => {
     const home = await mkdtemp(path.join(os.tmpdir(), "codex-compaction-history-"));
     const id = "01a04882-d037-7a42-ad24-9afb61901199";
     const file = path.join(home, "sessions", `rollout-${id}.jsonl`);
@@ -41,8 +41,13 @@ describe("authoritative session turn identifiers", () => {
       await mkdir(path.dirname(file));
       await writeFile(file, [
         { type: "turn_context", payload: { turn_id: "turn-1" } },
-        { type: "compacted", payload: { message: "private replacement history" } },
-        { type: "event_msg", payload: { type: "context_compacted" } }
+        ...(reverse ? [
+          { type: "event_msg", payload: { type: "context_compacted" } },
+          { type: "compacted", payload: { message: "private replacement history" } }
+        ] : [
+          { type: "compacted", payload: { message: "private replacement history" } },
+          { type: "event_msg", payload: { type: "context_compacted" } }
+        ])
       ].map(row => JSON.stringify(row)).join("\n") + "\n");
       const messages = await readCodexCliSessionMessages(id, home);
       expect(messages).toHaveLength(1);
@@ -50,6 +55,13 @@ describe("authoritative session turn identifiers", () => {
       expect(JSON.stringify(messages)).not.toContain("private replacement history");
       await appendFile(file, JSON.stringify({ type: "event_msg", payload: { type: "context_compacted" } }) + "\n");
       expect(await readCodexCliSessionMessages(id, home)).toHaveLength(2);
+      await appendFile(file, JSON.stringify({ type: 'compacted', payload: {} }) + '\n');
+      expect(await readCodexCliSessionMessages(id, home)).toHaveLength(2);
+      await appendFile(file, [
+        { type: 'compacted', payload: {} },
+        { type: 'event_msg', payload: { type: 'context_compacted' } }
+      ].map(row => JSON.stringify(row)).join('\n') + '\n');
+      expect(await readCodexCliSessionMessages(id, home)).toHaveLength(3);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 

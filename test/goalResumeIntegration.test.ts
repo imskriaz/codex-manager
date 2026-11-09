@@ -108,7 +108,7 @@ it.each(["active", "none"])("recovers %s work despite a recent writer lock and o
   await mkdir(path.join(home, "thread-writer-locks"));
   await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
   vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
-  expect((await sessionEditor.readCodexCliSessionSummary(id, home))?.status).toBe("running");
+  expect((await sessionEditor.readCodexCliSessionSummary(id, home))?.status).toBe(process.platform === 'win32' ? 'idle' : 'running');
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockImplementationOnce(async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);

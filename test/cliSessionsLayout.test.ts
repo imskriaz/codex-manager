@@ -395,7 +395,7 @@ describe("sessions sidebar layout", () => {
 
     expect(source).toContain('props.onSwitchAccount(peerId, accountId)');
     expect(source).not.toContain('class="cli-pc-group-heading"');
-    expect(source).toContain('onOpenInCodex={() => props.onOpenInCodex(props.selectedSession!)}');
+    expect(source).toContain('onOpenInCodex={props.standalone ? undefined : () => props.onOpenInCodex(props.selectedSession!)}');
     expect(source).toContain("Open in Codex</button>");
     const sessionRowStart = source.indexOf("const renderSession =");
     const sessionRowEnd = source.indexOf("const returnToSessionList", sessionRowStart);
@@ -465,7 +465,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("props.renderAccounts?.()");
     expect(source).not.toContain('class="cli-account-submenu"');
     expect(css).toContain('.cli-account-center-header');
-    expect(css).toContain('width: min(360px, calc(100vw - 16px));');
+    expect(css).toContain('width: min(360px, calc(var(--dashboard-viewport-width, 100vw) - 16px));');
     expect(css).toContain('.cli-account-choice');
     expect(css).toContain('.cli-account-quota-track');
     expect(css).toContain('.cli-account-navigation');
@@ -483,7 +483,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("height: 30px;");
     expect(css).not.toContain(".cli-environment-popover");
     expect(css).toMatch(/\.cli-workspace \.cli-context-add-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*auto;/);
-    expect(css).toContain("width: min(124px, calc(100vw - 16px));");
+    expect(css).toContain("width: min(124px, calc(var(--dashboard-viewport-width, 100vw) - 16px));");
     expect(css).toContain('.cli-account-popover-wide');
   });
 
@@ -609,7 +609,7 @@ describe("sessions sidebar layout", () => {
 
   it("guards the workspace against narrow viewport overflow", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.cli-workspace \.cli-workspace-grid,[\s\S]*?max-width: 100vw;/);
+    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.cli-workspace \.cli-workspace-grid,[\s\S]*?max-width: var\(--dashboard-viewport-width, 100vw\);/);
     expect(css).toContain(".cli-workspace .cli-composer-controls {");
     expect(css).toContain("flex-wrap: wrap;");
     expect(css).toContain(".cli-account-logout-form {");

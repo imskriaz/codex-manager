@@ -22,13 +22,14 @@ export function useAnchoredPopover(open: boolean, anchor: { current?: Pick<HTMLE
       const trigger = anchor.current;
       if (!trigger?.isConnected) { menu.style.visibility = 'hidden'; return; }
       const viewport = window.visualViewport;
+      const zoom = Number(document.body.style.zoom) || 1;
       const bounds = { left: viewport?.offsetLeft ?? 0, top: viewport?.offsetTop ?? 0, width: viewport?.width ?? innerWidth, height: viewport?.height ?? innerHeight };
-      Object.assign(menu.style, { boxSizing: 'border-box', position: 'fixed', margin: '0', right: 'auto', bottom: 'auto', minWidth: '0', maxWidth: `${Math.max(0, bounds.width - 16)}px`, maxHeight: `${Math.max(0, bounds.height - 16)}px`, overflowY: 'auto' });
+      Object.assign(menu.style, { boxSizing: 'border-box', position: 'fixed', margin: '0', right: 'auto', bottom: 'auto', minWidth: '0', maxWidth: `${Math.max(0, bounds.width - 16) / zoom}px`, maxHeight: `${Math.max(0, bounds.height - 16) / zoom}px`, overflowY: 'auto' });
       const rect = trigger.getBoundingClientRect(), size = menu.getBoundingClientRect();
       const position = anchoredPopoverPosition(rect, size, bounds, align);
-      Object.assign(menu.style, { left: `${position.left}px`, top: `${position.top}px`, visibility: 'visible' });
+      Object.assign(menu.style, { left: `${position.left / zoom}px`, top: `${position.top / zoom}px`, visibility: 'visible' });
       menu.dataset['placement'] = position.opensAbove ? 'above' : 'below';
-      menu.style.setProperty('--popover-arrow-left', `${Math.max(14, Math.min(size.width - 14, (rect.left + rect.right) / 2 - position.left))}px`);
+      menu.style.setProperty('--popover-arrow-left', `${Math.max(14, Math.min(size.width - 14, (rect.left + rect.right) / 2 - position.left)) / zoom}px`);
     };
     place();
     const observer = new ResizeObserver(place); observer.observe(menu); if (anchor.current instanceof Element) observer.observe(anchor.current);

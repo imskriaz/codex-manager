@@ -205,9 +205,9 @@ function App() {
     };
   }, [isBrowserDashboard]);
   useEffect(() => {
-    if (isBrowserDashboard) return;
     const value = clampWebviewZoom(webviewZoom);
     document.body.style.zoom = String(value);
+    document.documentElement.style.setProperty('--dashboard-zoom', String(value));
     try { window.localStorage.setItem(WEBVIEW_ZOOM_STORAGE_KEY, String(value)); } catch { /* optional persistence */ }
   }, [isBrowserDashboard, webviewZoom]);
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
@@ -2974,7 +2974,7 @@ function App() {
             onDisableAll={() => sendAction("disableAll")}
             showCliSessions={snapshot.settings.cliIntegrationEnabled === true}
             onOpenCliSessions={openCliSessions}
-            onOpenCodex={() => sendAction("openNewCodexWebview")}
+            onOpenCodex={cliComposerConfig?.terminalSupported === false ? undefined : () => sendAction("openNewCodexWebview")}
             onResumeSessions={() => sendAction("resumeCodexSessions")}
             resumeSessionsPending={isActionPending("resumeCodexSessions")}
             codexOpenPending={isActionPending("openNewCodexWebview")}

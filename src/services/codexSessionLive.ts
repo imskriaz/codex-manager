@@ -66,7 +66,7 @@ export function reserveCodexSessionLive() {
     publishDashboardRealtime({ type: "dashboard:codex-session-live", state });
   };
   return {
-    attach(id: string, rpc: CodexAppServerRpc, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancellingBeforeStart = () => false) {
+    attach(id: string, rpc: CodexAppServerRpc, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancelled = () => false) {
       if (entry) throw new Error("The live Codex stream is already attached.");
       if (disposed) throw new Error("The live Codex stream reservation has expired.");
       sessionId = id.toLowerCase();
@@ -85,7 +85,7 @@ export function reserveCodexSessionLive() {
       });
       offDisconnect = rpc.onDisconnect?.((error) => {
         if (!entry) return;
-        entry.reducer.finish(isCancellingBeforeStart() ? "cancelled" : "disconnected", error.message);
+        entry.reducer.finish(isCancelled() ? "cancelled" : "disconnected", error.message);
         entry.finishedAt = Date.now();
         flush();
       });

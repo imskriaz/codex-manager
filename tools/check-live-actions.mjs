@@ -46,6 +46,12 @@ await page.addInitScript(() => {
   const NativeWebSocket = window.WebSocket;
   window.WebSocket = class extends NativeWebSocket {
     constructor(...args) { super(...args); window.__liveSockets.push(this); }
+    send(data) {
+      if (window.__delayNextStart && typeof data === 'string' && data.includes('"action":"startCodexCliSession"')) {
+        window.__delayNextStart = false;
+        setTimeout(() => super.send(data), 1000);
+      } else super.send(data);
+    }
   };
   window.__dropStartAcknowledgment = false;
   window.__droppedStartAcknowledgment = undefined;
@@ -122,6 +128,7 @@ const addTool = async name => {
 };
 let terminalId;
 let terminalSupported = true;
+let observer;
 try {
   await page.goto(`${origin}/workspace`);
   const list = await action("listCodexCliSessions");
@@ -149,11 +156,23 @@ try {
     await open(stale.id);
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly LIVE DESKTOP OK. Do not run tools or modify files.");
-    const created = await clickAction("startCodexCliSession", () => page.getByRole("button", { name: "Send message", exact: true }).click());
+    observer = await context.newPage();
+    await observer.goto(`${origin}/workspace`);
+    await observer.locator('.cli-session-row-select').first().waitFor();
+    const previousRows = await observer.locator('.cli-session-row').count();
+    await page.evaluate(() => { window.__delayNextStart = true; });
+    const creating = clickAction("startCodexCliSession", () => page.getByRole("button", { name: "Send message", exact: true }).click());
+    await page.locator('.cli-session-row.is-starting').waitFor({ timeout: 1000 });
+    const created = await creating;
     owned.add(created.payload.cliSession.id);
     assert.equal(path.resolve(created.payload.cliSession.projectPath).toLowerCase(), path.resolve(stale.projectPath).toLowerCase(), "New chat retains the selected session's project");
     await page.locator(".cli-session-message.is-assistant").filter({ hasText: "LIVE DESKTOP OK" }).waitFor({ timeout: 120_000 });
     await waitIdle(created.payload.cliSession.id);
+    await observer.waitForFunction(count => document.querySelectorAll('.cli-session-row').length > count, previousRows, { timeout: 10000 });
+    const title = (await action('listCodexCliSessions')).payload.cliSessions.find(session => session.id === created.payload.cliSession.id)?.title;
+    assert.ok(title?.trim(), 'New sessions expose a nonempty title');
+    assert.equal(await page.locator('.cli-conversation-title h1').textContent(), title);
+    await observer.locator('.cli-session-row strong').filter({ hasText: title }).first().waitFor({ timeout: 10000 });
   });
   await record("mobile new chat and first response", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -204,6 +223,7 @@ try {
     await page.getByRole("textbox", { name: "Session name", exact: true }).fill("Disposable live action check");
     const renamed = await clickAction("renameCodexCliSession", () => page.locator(".cli-rename-form").getByRole("button", { name: "Save", exact: true }).click());
     assert.equal(renamed.payload?.cliSession?.title, "Disposable live action check");
+    await observer.locator('.cli-session-row strong[title="Disposable live action check"]').waitFor({ timeout: 10000 });
     await page.reload();
     await page.locator(".cli-conversation-title h1").waitFor();
     assert.equal(await page.locator(".cli-conversation-title h1").textContent(), "Disposable live action check");
@@ -347,6 +367,9 @@ try {
     assert.ok(restored.payload.terminalSnapshot.content.includes('STREAM END'));
   });
   } else await record('standalone hides Terminal tabs, add option and overview shortcut', async () => {
+    await page.getByRole('button', { name: 'Session actions', exact: true }).click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Open in Codex', exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
     await addTool('Env');
     assert.equal(await page.getByRole('tab', { name: 'Terminal', exact: true }).count(), 0);
     assert.equal(await page.locator('.cli-inspector-shortcuts button').filter({ hasText: 'Terminals' }).count(), 0);
@@ -449,6 +472,11 @@ try {
   const accountState = await (await fetch(`${origin}/api/state`)).json();
   await record(accountState.accounts?.length ? "live account filter counts, search, card/table views and quota metrics" : "empty account dashboard", async () => {
     await page.goto(`${origin}/`);
+    if (!terminalSupported) {
+      await page.locator('.overview-more-wrap button').first().click();
+      assert.equal(await page.getByRole('menuitem', { name: 'Codex', exact: true }).count(), 0);
+      await page.keyboard.press('Escape');
+    }
     if (!accountState.accounts?.length) {
       await page.locator("#dashboard-main").waitFor();
       assert.equal(await page.locator(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").count(), 0);

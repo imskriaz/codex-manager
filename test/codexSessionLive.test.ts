@@ -12,6 +12,19 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it.each(['compaction', 'image'] as const)('merges rollout and live %s mirrors once without losing repeated events', kind => {
+    const activity = { id: kind === 'compaction' ? 'compacted-2' : '2-image', kind, text: 'Activity', status: 'completed' as const, turnId: 'turn-1', ...(kind === 'image' ? { images: [{ src: 'data:image/png;base64,AA==' }] } : {}) };
+    const reply = { id: 'reply', role: 'assistant' as const, text: 'Working', turnId: 'turn-1' };
+    const earlier = { ...activity, id: 'earlier', turnId: 'earlier-turn' };
+    const state = { ...reducer().snapshot(), turnId: 'turn-1', messages: [{ ...activity, id: 'protocol-item' }, reply] };
+    for (const truncated of [false, true]) {
+      const merged = combineCliLiveMessages([earlier, activity, reply], { ...state, truncated });
+      expect(merged.map(item => item.id)).toEqual(['earlier', activity.id, 'reply']);
+      expect(combineCliLiveMessages(merged, { ...state, truncated })).toEqual(merged);
+      const repeated = combineCliLiveMessages([earlier, activity, reply], { ...state, truncated, messages: [state.messages[0]!, { ...state.messages[0]!, id: 'second-item' }, reply] });
+      expect(repeated.filter(item => item.kind === kind)).toHaveLength(3);
+    }
+  });
   it.each([false, true])("merges image mirrors with different IDs and missing previews (truncated %s)", truncated => {
     const images = [{ src: 'data:image/png;base64,AA==', alt: 'Attached image' }];
     const prompt = { id: 'saved-image', role: 'user' as const, text: 'Review this', turnId: 'turn-1', images };

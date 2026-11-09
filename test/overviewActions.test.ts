@@ -27,7 +27,7 @@ describe("overview actions", () => {
     expect(overview).not.toContain("onSetPassword");
     expect(overview).toContain("props.onManageTags()");
     expect(overview).not.toContain("props.onPrivacyToggle()");
-    expect(overview).toContain("props.onOpenCodex()");
+    expect(overview).toContain("props.onOpenCodex?.()");
     expect(overview).toContain("props.onResumeSessions()");
     expect(overview).not.toContain("Show All Sessions");
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain('id="privacyToggleButton"');

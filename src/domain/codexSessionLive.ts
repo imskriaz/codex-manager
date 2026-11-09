@@ -275,6 +275,20 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
       ...(!item.textAttachments?.length && previous.textAttachments?.length ? { textAttachments: previous.textAttachments } : {}),
       ...(!item.images?.length && previous.images?.length ? { images: previous.images } : {}) } : item;
   });
+  // Rollout markers and live protocol items can describe the same activity with different IDs.
+  const matchedActivities = new Set<string>();
+  for (const [index, item] of messages.entries()) {
+    if (saved.has(item.id) || !live.turnId || !["compaction", "image"].includes(item.kind ?? "")) continue;
+    const before = messages.slice(0, index).reverse().find(candidate => saved.has(candidate.id));
+    const after = messages.slice(index + 1).find(candidate => saved.has(candidate.id));
+    const start = before ? history.findIndex(candidate => candidate.id === before.id) + 1 : 0;
+    const end = after ? history.findIndex(candidate => candidate.id === after.id) : history.length;
+    const echo = history.slice(start, end).find(candidate => candidate.kind === item.kind && candidate.turnId === live.turnId &&
+      !matchedActivities.has(candidate.id) && !messages.some(other => other.id === candidate.id) &&
+      (item.kind === 'compaction' ? /^(?:context-compacted|compacted|compaction-pair)-/.test(candidate.id) :
+        /^\d+-/.test(candidate.id) && !!item.images?.length && JSON.stringify(candidate.images?.map(image => image.src)) === JSON.stringify(item.images.map(image => image.src))));
+    if (echo) { matchedActivities.add(echo.id); messages[index] = { ...echo, ...item, id: echo.id }; }
+  }
   // Native transcripts can assign a different ID to the accepted steering echo.
   const matchedUsers = new Set<string>();
   for (const [index, item] of messages.entries()) {

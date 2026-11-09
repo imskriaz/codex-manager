@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
 
 // Disposable storage and port: never stop the user's running dashboard.
+for (const key of Object.keys(process.env)) if (key.startsWith("CODEX_MANAGER_")) delete process.env[key];
 const root = await mkdtemp(path.join(os.tmpdir(), "manager-node-handoff-"));
 const project = path.resolve(import.meta.dirname, "..");
 process.env.CODEX_MANAGER_STORAGE_ROOT = root;

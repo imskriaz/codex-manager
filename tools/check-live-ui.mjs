@@ -128,6 +128,54 @@ try {
     results.push({ width, loadMs, timings, sessions: sessions.length, children: childIds.length, messages, newChat: createdSessionId ? "first response passed" : "not requested", reconnect: "passed" });
     await context.close();
   }
+  if (process.argv.includes('--workspace-assets')) {
+    for (const width of [1440, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+      const page = await context.newPage();
+      await useWorkspaceDashboardAssets(page, origin);
+      const errors = []; page.on('pageerror', error => errors.push(error.message));
+      for (const zoom of [.8, 1, 1.4]) {
+        await page.addInitScript(value => localStorage.setItem('codexManager.webviewZoom.v1', String(value)), zoom);
+        for (const route of ['/', '/workspace', '/tasks']) {
+          await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
+          await page.locator('#dashboard-main').waitFor({ state: 'attached' });
+          await page.waitForFunction(value => Number(document.body.style.zoom) === value, zoom);
+          for (const theme of ['light', 'dark', 'auto']) {
+            await page.evaluate(value => { document.documentElement.dataset.theme = value; document.body.classList.toggle('vscode-light', value === 'auto'); }, theme);
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${route} ${width}px ${zoom} ${theme}: no horizontal overflow`);
+            const shell = page.locator('.cli-workspace').first();
+            if (await shell.isVisible()) assert.ok((await shell.boundingBox()).height <= 902, 'Zoomed workspace fits viewport height');
+            if (route === '/') {
+              const borders = await page.locator('.saved-card.quota-exhausted:visible, .saved-table-row.quota-exhausted:visible').evaluateAll(cards => cards.map(card => {
+                const probe = document.createElement('span'); probe.style.color = 'var(--border-default)'; card.append(probe);
+                const neutral = getComputedStyle(probe).color, border = getComputedStyle(card).borderTopColor;
+                const classes = card.className, transition = card.style.transition;
+                card.style.transition = 'none'; card.classList.add('active', 'selected');
+                probe.style.color = 'var(--danger)';
+                const selected = getComputedStyle(card).borderTopColor, danger = getComputedStyle(probe).color;
+                card.className = classes; card.style.transition = transition; probe.remove();
+                return { border, neutral, selected, danger };
+              }));
+              assert.ok(borders.every(card => card.border !== card.neutral), 'Quota status border survives theme rules');
+              assert.ok(borders.every(card => card.selected === card.danger), 'Quota status stays visible on selected active accounts');
+              if (zoom === 1.4 && await page.locator('.saved-overflow-trigger:visible').count()) {
+                await page.locator('.saved-overflow-trigger:visible').first().click();
+                const menu = page.locator('.saved-overflow-menu-portal:visible').first();
+                await menu.waitFor();
+                const bounds = await menu.boundingBox();
+                assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 2 && bounds.y + bounds.height <= 902, 'Zoomed account menu stays within viewport');
+                await page.keyboard.press('Escape');
+              }
+            }
+          }
+        }
+      }
+      assert.deepEqual(errors, [], 'Zoomed dashboard has no browser errors');
+      await page.screenshot({ path: path.join(output, `zoom-${width}.png`) });
+      console.log(`${width}px: dashboard, workspace and tasks fit at 80%, 100%, 140% in light, dark and automatic light themes`);
+      await context.close();
+    }
+  }
   await writeFile(path.join(output, "results.json"), JSON.stringify(results, null, 2));
   const timingSummary = Object.fromEntries(['loadMs', 'socketMs', 'firstLiveMs', 'reconnectMs'].map(key => {
     const samples = results.map(result => key === 'loadMs' ? result.loadMs : result.timings[key]).filter(Number.isFinite).sort((a, b) => a - b);

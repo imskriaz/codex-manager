@@ -91,6 +91,15 @@ function getRecentNewSession(id: string, home = resolveCodexHome()) {
 }
 const newSessionFailures = new Map<string, Error>();
 const activeAppServerTurns = new Map<string, { home: string; rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; cancelConfirmed?: boolean; stop?: Promise<boolean> }>();
+function isAppServerTurnCancelled(sessionId: string): boolean {
+  const active = activeAppServerTurns.get(sessionId);
+  return active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
+}
+function isAppServerTurnSettling(home: string, sessionId: string): boolean {
+  const active = activeAppServerTurns.get(sessionId);
+  const live = active?.turnId && active.home === path.resolve(home) ? getCodexSessionLiveState(sessionId) : undefined;
+  return Boolean(live && live.turnId === active?.turnId && !["starting", "running"].includes(live.status));
+}
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean>; cancelled?: boolean }>();
 const nativeTurnObservers = new Map<string, { turnId?: string; cancelled?: boolean }>();
 const observedNativeStops = new Map<string, Promise<boolean>>();
@@ -1155,7 +1164,7 @@ async function startAppServerSession(options: {
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
     if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
     threadId = candidateThreadId;
-    live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
+    live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => isAppServerTurnCancelled(threadId!));
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, threadId);
     const applied = await syncCodexSessionAccess(rpc, threadId, { ...sessionAccessSettings(options.sandboxMode!, cwd), ...(options.autoApprove !== undefined ? { approvalPolicy: options.autoApprove ? "never" : "on-request" } : {}) }, result);
     if (!rememberSessionAccess(home, threadId, applied.access, applied.settings)) throw new Error('Codex applied the access choice, but recovery storage could not save it. Refresh before starting this session again.');
@@ -1176,15 +1185,13 @@ async function startAppServerSession(options: {
     live.finish("completed");
     return threadId;
   } catch (error) {
-    const active = threadId ? activeAppServerTurns.get(threadId) : undefined;
-    const cancelled = error instanceof CodexAppServerTurnInterruptedError || active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || (threadId !== undefined && isAppServerTurnCancelled(threadId));
     live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
     if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     detachPrompts();
-    if (threadId) activeAppServerTurns.delete(threadId);
-    try { await rpc?.close(); } finally { live.dispose(); }
+    try { await rpc?.close(); } finally { if (threadId) activeAppServerTurns.delete(threadId); live.dispose(); }
   }
 }
 
@@ -1193,7 +1200,7 @@ async function waitForCancelledTurnRelease(home: string, sessionId: string, time
   while (Date.now() < deadline) {
     const app = activeAppServerTurns.get(sessionId);
     const native = ownedNativeTurn(home, sessionId);
-    if ((!app || !app.cancelRequested) && (!native || !native.cancelled)) return;
+    if ((!app || !app.cancelRequested && !isAppServerTurnSettling(home, sessionId)) && (!native || !native.cancelled)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
 }
@@ -1308,7 +1315,7 @@ async function sendAppServerSessionMessage(options: {
     if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
       throw new Error('This session was explicitly stopped while starting. It was left stopped.');
     if (!await needsContinuation()) return;
-    live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => isAppServerTurnCancelled(options.sessionId));
     onAttempt?.(true);
     await rpc.startAndWaitForTurn(options.sessionId, params, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
@@ -1319,16 +1326,14 @@ async function sendAppServerSessionMessage(options: {
     });
     live.finish("completed");
   } catch (error) {
-    const active = activeAppServerTurns.get(options.sessionId);
-    const cancelled = error instanceof CodexAppServerTurnInterruptedError || error instanceof CodexCliTurnCancelledError || active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || error instanceof CodexCliTurnCancelledError || isAppServerTurnCancelled(options.sessionId);
     live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
     if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     options.signal?.removeEventListener("abort", abort);
     detachPrompts();
-    activeAppServerTurns.delete(options.sessionId);
-    try { await rpc?.close(); } finally { live.dispose(); }
+    try { await rpc?.close(); } finally { activeAppServerTurns.delete(options.sessionId); live.dispose(); }
   }
   });
 }
@@ -2740,7 +2745,7 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
       try { const store = getSqliteStateStore(); if (store && !maintenanceConnection.getStore()) invalidateSessionCatalogue(store, home); }
       catch (error) { recordPersistentEvent("warning", "session-list", "Changed history will refresh when storage recovers", undefined, error); }
     }
-  });
+  }, { waitMs: isAppServerTurnSettling(home, sessionId) ? 5_000 : 0 });
 }
 
 export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string, requireAvailable = true): Promise<string> {
@@ -3302,6 +3307,8 @@ async function inspectCliSessionRunning(
   if (nativeRunning !== undefined) return nativeRunning;
   if (liveRunning) return true;
   const hasLock = Boolean(stat?.isFile() && !stat.isSymbolicLink());
+  // A recent orphaned lock is not a live Windows writer after a host crash.
+  if (hasLock && process.platform === "win32") return isWriterLockHeld(lockPath);
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
@@ -3875,10 +3882,14 @@ function mergeCliTranscriptMessage(
             (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call")
         )
       : -1;
-  // Official rollouts persist the replacement history immediately before its event.
-  if (existingIndex < 0 && message.kind === "compaction" && message.id.startsWith("context-compacted-") &&
-    messages.at(-1)?.kind === "compaction" && messages.at(-1)?.id.startsWith("compacted-") && messages.at(-1)?.turnId === message.turnId)
+  // Native replacement history and its completion event may arrive in either order.
+  if (existingIndex < 0 && message.kind === "compaction" &&
+    messages.at(-1)?.kind === "compaction" && messages.at(-1)?.turnId === message.turnId &&
+    (message.id.startsWith("context-compacted-") && messages.at(-1)?.id.startsWith("compacted-") ||
+      message.id.startsWith("compacted-") && messages.at(-1)?.id.startsWith("context-compacted-"))) {
     existingIndex = messages.length - 1;
+    message = { ...message, id: `compaction-pair-${message.id.replace(/^(?:context-compacted|compacted)-/, '')}` };
+  }
   if (
     existingIndex < 0 &&
     message.kind &&

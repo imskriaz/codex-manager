@@ -42,6 +42,17 @@ async function fixture() {
 }
 
 describe("writer lock evidence", () => {
+  it.skipIf(process.platform !== "win32")("distinguishes a fresh orphaned turn from a held writer before recovery", async () => {
+    const root = await fixture();
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "interrupted" } }) + "\n");
+    probe.nativeMode = "recover";
+    await expect(readCodexCliSessionSummary(id, root)).resolves.toMatchObject({ status: "idle", interrupted: true, locked: false });
+    probe.code = "EBUSY";
+    await expect(readCodexCliSessionSummary(id, root)).resolves.toMatchObject({ status: "running", interrupted: false, locked: true });
+    probe.code = undefined;
+    await expect(readCodexCliSessionSummary(id, root)).resolves.toMatchObject({ status: "idle", interrupted: true, locked: false });
+  });
   it.skipIf(process.platform !== "win32")("lets a Windows probe finish after the old five-second deadline", async () => {
     const root = await fixture();
     probe.nativeMode = "slow";

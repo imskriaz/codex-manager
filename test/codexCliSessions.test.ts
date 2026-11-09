@@ -553,7 +553,7 @@ describe("Codex session integration", () => {
     ].join("\n"));
 
     await expect(readCodexCliSessions(root)).resolves.toMatchObject([
-      { id: sessionId, title: "Demo", status: "running", projectPath: "D:/repo", sessionSurface: "vscode", runningBy: "another Codex process", canStop: false }
+      { id: sessionId, title: "Demo", status: process.platform === "win32" ? "idle" : "running", projectPath: "D:/repo", sessionSurface: "vscode", runningBy: process.platform === "win32" ? undefined : "another Codex process", canStop: false }
     ]);
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([
       { role: "user", text: "Hello" },
@@ -1087,7 +1087,7 @@ describe("Codex session integration", () => {
     });
   });
 
-  it("requires active transcript evidence for recent locks without applying the dashboard display limit", async () => {
+  it("requires held Windows writers instead of relying on recent lock and transcript timestamps", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-running-sessions-"));
     roots.push(root);
     const secondId = "01a04882-d037-7a42-ad24-9afb61901189";
@@ -1099,7 +1099,7 @@ describe("Codex session integration", () => {
     await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }));
 
-    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([sessionId]);
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual(process.platform === "win32" ? [] : [sessionId]);
   });
 });
 

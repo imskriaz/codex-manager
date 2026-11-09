@@ -90,7 +90,7 @@ describe("app-server initialization recovery", () => {
       expect(processChild.kill).toHaveBeenCalledOnce();
     } finally { Object.defineProperty(process, "platform", platform); }
   });
-  it("accepts a child exit racing Windows taskkill reporting that its PID is gone", async () => {
+  it.each([false, true])("accepts a child exit racing Windows taskkill (exit notification late: %s)", async late => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", { value: "win32" });
     const processChild = Object.assign(child(), { pid: 12345 });
@@ -100,7 +100,9 @@ describe("app-server initialization recovery", () => {
       const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
       processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
       const rpc = await opening, closing = rpc.close();
-      processChild.emit("exit", 0); killer.emit("exit", 128);
+      if (!late) processChild.emit("exit", 0);
+      killer.emit("exit", 128);
+      if (late) processChild.emit("exit", 0);
       await expect(closing).resolves.toBeUndefined();
       expect(processChild.kill).not.toHaveBeenCalled();
     } finally { Object.defineProperty(process, "platform", platform); }

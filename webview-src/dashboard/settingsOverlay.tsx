@@ -207,7 +207,7 @@ export function SettingsOverlay(props: {
               <div class="settings-block settings-block-wide" data-setting="webview-zoom">
                 <div class="settings-block-head">
                   <div class="settings-block-title">Dashboard zoom</div>
-                  <div class="settings-block-sub">Control the Codex Manager dashboard scale in this VS Code webview.</div>
+                  <div class="settings-block-sub">Scale the entire dashboard, workspace, task board, and dialogs on this device.</div>
                 </div>
                 <SettingsDiscreteSlider
                   value={Math.round(props.webviewZoom * 100)}

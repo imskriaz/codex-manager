@@ -2064,7 +2064,6 @@ export class WebDashboardServer implements vscode.Disposable {
       if (!this.hasWorkspaceViewer()) { this.refreshCliSessionRealtimeLifecycle(); return; }
       this.localCliSessionsReadAt = 0;
       void this.publishCliSessionsRealtime();
-      this.publishLocalStateChange();
     }, Math.max(CLI_SESSION_WATCH_DEBOUNCE_MS, this.cliSessionRefreshAfter - Date.now()));
     this.cliSessionChangeTimer.unref?.();
   }
@@ -2123,7 +2122,7 @@ export class WebDashboardServer implements vscode.Disposable {
         this.localCliSessionsRetryAt = Date.now() + 30_000;
         recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason: error instanceof Error ? error.message : String(error) });
       }).finally(() => {
-        this.cliSessionRefreshAfter = Math.max(Date.now() + 2_000, this.localCliSessionsRetryAt);
+        this.cliSessionRefreshAfter = Math.max(Date.now() + CLI_SESSION_WATCH_DEBOUNCE_MS, this.localCliSessionsRetryAt);
         this.cliSessionPublish = undefined;
         if (this.cliSessionPublishQueued) {
           this.cliSessionPublishQueued = false;
@@ -2138,6 +2137,13 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     const sessions = await this.readLocalCliSessions(true);
     if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return;
+    const previous = this.localPeerState ?? this.lastLocalPeerState;
+    if (previous) {
+      this.localPeerStateRevision++;
+      this.localPeerState = this.lastLocalPeerState = { ...previous, sessions };
+    }
+    void this.publishPeerSessions();
+    if (this.peerSockets.size) void this.broadcastPeerAggregate().catch(error => console.warn("[codexManager] session catalogue delivery failed", error));
     // Keep revisions monotonic across extension-host restarts. An already-open
     // browser page may otherwise reject a fresh revision that restarted at 1.
     const revision = (this.cliSessionRealtimeRevision = Math.max(this.cliSessionRealtimeRevision + 1, Date.now()));
@@ -2864,11 +2870,14 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       if (!(await this.acceptPeerSession(message, false))) return;
       if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
+      const reconnect = !this.authenticatedPeerSockets.has(sourceSocket) || this.peerSockets.get(message.deviceId!) !== sourceSocket;
       this.authenticatedPeerSockets.add(sourceSocket);
       this.peerSockets.set(message.deviceId!, sourceSocket);
       this.notifyDashboardPeers();
-      await this.sendPeerAggregate(sourceSocket);
-      void this.publishPeerVault(true);
+      if (reconnect) {
+        await this.sendPeerAggregate(sourceSocket);
+        void this.publishPeerVault(true);
+      }
       void this.broadcastPeerAggregate();
       this.publishRealtimeState();
     } catch {

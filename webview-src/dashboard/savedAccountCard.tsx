@@ -24,7 +24,7 @@ import {
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
-import { isDashboardMainQuotaExhausted } from "./accountSorting";
+import { isDashboardMainQuotaExhausted, isDashboardAccountOutOfQuota } from "./accountSorting";
 
 export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
@@ -284,6 +284,7 @@ export function SavedAccountCard(props: {
     props.selected ? "selected" : "",
     hasErrorHealth ? "health-error" : "",
     primaryQuotaExhausted ? "out-of-quota" : "",
+    isDashboardAccountOutOfQuota(account) ? "quota-exhausted" : "",
     runningOnOtherDevice ? "remote-device" : ""
   ]
     .filter(Boolean)

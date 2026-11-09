@@ -106,12 +106,12 @@ it('publishes successful peer tag changes without waiting for a storage watcher'
   } finally { await server.stop(); server.dispose(); }
 });
 
-it("coalesces file changes during an active read, delivers the last change, and stays idle afterwards", async () => {
+it("coalesces file changes without account or vault work, delivers the last change, and stays idle afterwards", async () => {
   vi.useFakeTimers();
   const { server } = createServer(), internal = server as any;
   let viewing = true, finish!: () => void;
   vi.spyOn(internal, "hasWorkspaceViewer").mockImplementation(() => viewing);
-  vi.spyOn(internal, "publishLocalStateChange").mockImplementation(() => undefined);
+  const accountRefresh = vi.spyOn(internal, "publishLocalStateChange").mockImplementation(() => undefined);
   const refresh = vi.spyOn(internal, "publishCliSessionsRealtimeCore")
     .mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }))
     .mockResolvedValue(undefined);
@@ -123,6 +123,7 @@ it("coalesces file changes during an active read, delivers the last change, and 
     finish(); await first;
     await vi.advanceTimersByTimeAsync(2_000);
     expect(refresh).toHaveBeenCalledTimes(2);
+    expect(accountRefresh).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refresh).toHaveBeenCalledTimes(2);
     internal.scheduleCliSessionRefresh();
@@ -130,6 +131,25 @@ it("coalesces file changes during an active read, delivers the last change, and 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(refresh).toHaveBeenCalledTimes(2);
   } finally { await server.stop(); server.dispose(); vi.useRealTimers(); }
+});
+
+it('publishes a changed catalogue to browsers and peers while retaining cached account data', async () => {
+  const { server } = createServer(), internal = server as any;
+  const sessions = [{ id: 'session', title: 'Changed title', status: 'idle' }];
+  const accounts = [{ id: 'account' }];
+  internal.localPeerState = { sessions: [], accounts, enablementRegistry: [] };
+  vi.spyOn(internal, 'hasWorkspaceViewer').mockReturnValue(true);
+  vi.spyOn(internal, 'readLocalCliSessions').mockResolvedValue(sessions);
+  const peer = vi.spyOn(internal, 'publishPeerSessions').mockResolvedValue(undefined);
+  const vault = vi.spyOn(internal, 'publishPeerVault').mockResolvedValue(true);
+  buildState.mockClear();
+  try {
+    await internal.publishCliSessionsRealtimeCore();
+    expect(internal.localPeerState).toMatchObject({ sessions, accounts });
+    expect(peer).toHaveBeenCalledOnce();
+    expect(buildState).not.toHaveBeenCalled();
+    expect(vault).not.toHaveBeenCalled();
+  } finally { await server.stop(); server.dispose(); }
 });
 
 describe("browser action completion during state failure", () => {

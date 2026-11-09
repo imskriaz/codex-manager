@@ -1235,7 +1235,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onRefresh={props.onRefreshMessages}
                 onRename={props.onRename}
                 onFork={props.onFork}
-                onOpenInCodex={() => props.onOpenInCodex(props.selectedSession!)}
+                onOpenInCodex={props.standalone ? undefined : () => props.onOpenInCodex(props.selectedSession!)}
                 onCopyLink={props.onCopyLink}
                 onShare={() => setShareOpen(true)}
                 onArchive={() => props.onArchive(props.selectedSession!)}

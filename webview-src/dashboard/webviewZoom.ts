@@ -5,7 +5,8 @@ export const WEBVIEW_ZOOM_STORAGE_KEY = "codexManager.webviewZoom.v1";
 
 export function readWebviewZoom(): number {
   try {
-    const stored = Number(window.localStorage.getItem(WEBVIEW_ZOOM_STORAGE_KEY));
+    const raw = window.localStorage.getItem(WEBVIEW_ZOOM_STORAGE_KEY);
+    const stored = raw?.trim() ? Number(raw) : NaN;
     return Number.isFinite(stored) ? clampWebviewZoom(stored) : 1;
   } catch {
     return 1;
@@ -13,6 +14,7 @@ export function readWebviewZoom(): number {
 }
 
 export function clampWebviewZoom(value: number): number {
+  if (!Number.isFinite(value)) return 1;
   return Math.min(WEBVIEW_ZOOM_MAX, Math.max(WEBVIEW_ZOOM_MIN, Number(value.toFixed(2))));
 }
 

@@ -47,6 +47,7 @@ beforeEach(async () => {
   await mkdir(path.dirname(transcript));
   await mkdir(path.dirname(lock));
   await writeFile(lock, "");
+  mocks.heldLocks.add(lock);
   await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Session" }));
   await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: home } }) + "\n" + event("task_started"));
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "codexSessionTransport" ? "cli" : fallback } as vscode.WorkspaceConfiguration);
@@ -297,6 +298,7 @@ describe("shared running-session detection and auto resume", () => {
   });
 
   it("detects a long Windows writer even when Node can open its shared lock file", async () => {
+    mocks.heldLocks.clear();
     const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
     try {
       Object.defineProperty(process, "platform", { value: "win32" });
@@ -309,7 +311,7 @@ describe("shared running-session detection and auto resume", () => {
     } finally { Object.defineProperty(process, "platform", descriptor); }
   });
 
-  it("surfaces a Windows probe timeout and recovers from fresh transcript evidence", async () => {
+  it("retains a Windows probe failure until writer ownership can be verified", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
     try {
       Object.defineProperty(process, "platform", { value: "win32" });
@@ -318,6 +320,8 @@ describe("shared running-session detection and auto resume", () => {
       mocks.nativeProbeError = true;
       await expect(readRunningCodexSessionIds(home)).rejects.toThrow("Windows session writer inspection failed");
       await appendFile(transcript, event("task_started", "fresh-turn"));
+      await expect(readRunningCodexSessionIds(home)).rejects.toThrow("Windows session writer inspection failed");
+      mocks.nativeProbeError = false;
       expect(await readRunningCodexSessionIds(home)).toEqual([id]);
       await appendFile(transcript, event("task_complete", "fresh-turn"));
       expect(await readRunningCodexSessionIds(home)).toEqual([]);
@@ -489,6 +493,7 @@ describe("shared running-session detection and auto resume", () => {
     expect(await readRunningCodexSessionIds(home)).toEqual([]);
     await writeFile(transcript, event("task_started"));
     expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+    mocks.heldLocks.clear();
     await rm(transcript);
     expect(await readRunningCodexSessionIds(home)).toEqual([]);
     mocks.heldLocks.add(lock);

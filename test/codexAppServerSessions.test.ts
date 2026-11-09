@@ -705,14 +705,42 @@ describe("native App Server new sessions", () => {
   });
   it("keeps acknowledged Stop cancelled when closing the private connection disconnects the turn", async () => {
     let disconnect!: (error: Error) => void;
+    let notifyDisconnect!: (error: Error) => void;
     const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: "readOnly" } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined,
-      close: vi.fn(() => { disconnect?.(new CodexAppServerDisconnectedError("Connection closed")); }),
+      onDisconnect: (listener: typeof notifyDisconnect) => { notifyDisconnect = listener; return () => undefined; },
+      close: vi.fn(() => { const error = new CodexAppServerDisconnectedError("Connection closed"); notifyDisconnect?.(error); disconnect?.(error); }),
       startAndWaitForTurn: vi.fn((_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => new Promise<void>((_resolve, reject) => { disconnect = reject; started("stop-turn"); })) };
     mocks.open.mockResolvedValue(rpc);
     await expect(startCodexCliSession({ text: "First prompt", projectPath: root, sandboxMode: "read-only" })).resolves.toBe(id);
     expect(await cancelCodexCliSessionTurn(id)).toBe(true);
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(getCodexSessionLiveState(id)?.status).toBe("cancelled");
+  });
+  it('accepts a follow-up after completion while the previous private writer is still closing', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    let finish!: () => void, release!: () => void, ready!: () => void;
+    const turn = new Promise<void>(resolve => { finish = resolve; });
+    const closing = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { ready = resolve; });
+    const notifications = new Set<(method: string, value: unknown) => void>();
+    const rpc = { request: vi.fn(async () => ({ sandbox: { type: 'readOnly' } })), onServerRequest: () => () => undefined,
+      onNotification: (listener: (method: string, value: unknown) => void) => { notifications.add(listener); return () => notifications.delete(listener); },
+      close: vi.fn(() => closing), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, onStarted: (id: string) => void) => { onStarted('first-turn'); ready(); await turn; }) };
+    const next = { ...rpc, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, onStarted: (id: string) => void) => { onStarted('next-turn'); }) };
+    mocks.open.mockResolvedValueOnce(rpc).mockResolvedValue(next);
+    const first = sendCodexCliSessionMessage({ sessionId: id, text: 'First', projectPath: root, sandboxMode: 'read-only' });
+    try {
+      await started;
+      for (const notify of notifications) notify('turn/completed', { threadId: id, turn: { id: 'first-turn', status: 'completed' } });
+      finish();
+      await vi.waitFor(() => expect(rpc.close).toHaveBeenCalled());
+      const followUp = sendCodexCliSessionMessage({ sessionId: id, text: 'Follow-up', projectPath: root, sandboxMode: 'read-only' });
+      release();
+      await first;
+      await expect(followUp).resolves.toBeUndefined();
+      expect(next.startAndWaitForTurn).toHaveBeenCalledOnce();
+    } finally { finish(); release(); await first; }
   });
   it("reports initialization failure without silently falling back to CLI exec", async () => {
     mocks.open.mockRejectedValue(new Error("initialize unavailable"));

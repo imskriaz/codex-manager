@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-// Selection fixtures own no OS locks; the writer-lock integration suite tests the actual probes.
+const locks = vi.hoisted(() => new Set<string>());
+// Model fixture writers explicitly; actual Windows handles are covered by the writer-lock suite.
+vi.mock('fs/promises', async original => {
+  const fs = await original<typeof import('fs/promises')>();
+  return { ...fs, open: (...args: Parameters<typeof fs.open>) => locks.has(String(args[0]))
+    ? Promise.reject(Object.assign(new Error('Writer held'), { code: 'EBUSY' })) : fs.open(...args) };
+});
 vi.mock("child_process", async (original) => {
   const child = await original<typeof import("child_process")>();
   return { ...child, execFile: (...args: any[]) => {
@@ -24,6 +30,7 @@ const ids = [
   "01a04882-d037-7a42-ad24-9afb61901190"
 ];
 afterEach(async () => {
+  locks.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture(
@@ -35,6 +42,7 @@ async function fixture(
   await mkdir(path.join(home, "sessions"));
   for (const [index, id] of ids.entries()) {
     await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
+    locks.add(path.join(home, 'thread-writer-locks', `${id}.lock`));
     await writeFile(
       path.join(home, "sessions", `rollout-${id}.jsonl`),
       JSON.stringify({ type: "session_meta", payload: { id, source: sources[index], cwd: home } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }) + "\n"
@@ -191,6 +199,7 @@ describe("auto resume selection", () => {
     const home = await fixture();
     goals(home, ["active", "active", "active"]);
     await rm(path.join(home, "sessions"), { recursive: true });
+    locks.clear();
     const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
     db.exec("CREATE TABLE threads (id TEXT, source TEXT, cwd TEXT)");
     const insert = db.prepare("INSERT INTO threads VALUES (?, ?, ?)");
@@ -209,6 +218,7 @@ describe("auto resume selection", () => {
       '{"type":"session_meta","payload":{"source":{"subagent":"review"},"instructions":"' + "x".repeat(1100000)
     );
     await writeFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`), "partial");
+    locks.delete(path.join(home, 'thread-writer-locks', `${ids[2]}.lock`));
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0]]);
     await expect(readAutoResumeCodexSessionIds(home, [home], ids, undefined, "open")).rejects.toThrow("metadata is missing or incomplete");
   });
@@ -261,6 +271,7 @@ describe("auto resume selection", () => {
 
   it("rejects future-dated locks and transcripts instead of treating them as permanently live", async () => {
     const home = await fixture();
+    locks.clear();
     const future = new Date(Date.now() + 60 * 60 * 1000);
     for (const id of ids) {
       await utimes(path.join(home, "thread-writer-locks", `${id}.lock`), future, future);
@@ -287,6 +298,7 @@ describe("auto resume selection", () => {
   });
   it("retains interrupted parents after a stopped process or reboot without calling stale locks running", async () => {
     const home = await fixture();
+    locks.clear();
     const old = new Date(Date.now() - 60 * 60 * 1000);
     for (const id of ids) {
       await utimes(path.join(home, "thread-writer-locks", `${id}.lock`), old, old);

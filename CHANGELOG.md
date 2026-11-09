@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.7-pre.3
+
+- Increase dashboard text by 5%, apply Dashboard Zoom to browser workspaces and task boards, and default missing zoom preferences to 100%.
+- Preserve exhausted-account borders across themes, selection and hover in both account layouts, and merge mirrored compaction/image events without hiding separate activities.
+- Keep acknowledged Stop requests marked cancelled when their private app-server connection closes before the turn promise settles.
+- Accept an immediate follow-up while the completed turn releases its writer, using a bounded wait while retaining conflicts for active turns.
+- Verify Windows writer ownership instead of treating a recently orphaned lock as an active turn during standalone Auto Resume.
+- Hide Open in Codex and the dashboard Codex command in standalone while retaining browser session actions.
+- Extend live browser checks to verify optimistic session creation and session/title updates in a second connected browser without reloading.
+- Publish session-list changes promptly to peers without rebuilding account views or syncing the vault for each transcript write. Replay live snapshots and force vault delivery only when a peer connects, avoiding repeated heartbeat traffic behind live responses.
+
 ## 1.7.7-pre.2
 
 - Use the shared SQLite account vault as the primary credential store for VS Code and standalone Node.
