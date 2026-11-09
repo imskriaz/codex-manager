@@ -13,7 +13,7 @@ export type Database = {
   close(): void;
 };
 
-export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "session-preferences" | "state" | "auth";
+export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "session-preferences" | "state" | "auth" | "secrets";
 type ChangeListener = { topics: ReadonlySet<SqliteTopic>; changed: (topics: ReadonlySet<SqliteTopic>) => void };
 
 export class SqliteStateStore {
@@ -58,6 +58,9 @@ export class SqliteStateStore {
       this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_dashboard_auth_${operation} AFTER ${operation} ON state
         WHEN ${row}.namespace='dashboard-auth'
         BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('auth',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_secrets_${operation} AFTER ${operation} ON state
+        WHEN ${row}.namespace='secrets'
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('secrets',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
     }
     this.notificationsReady = true;
   }

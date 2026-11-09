@@ -874,6 +874,7 @@ export interface DashboardCliModelOption {
 }
 
 export interface DashboardCliComposerConfig {
+  terminalSupported?: boolean;
   models: DashboardCliModelOption[];
   /** Workspace folders available as the Codex project working directory. */
   projects?: DashboardCliProject[];

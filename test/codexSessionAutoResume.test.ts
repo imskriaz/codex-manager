@@ -46,6 +46,19 @@ function createContext(initial?: unknown) {
 const readNativeTabs = sessionEditor.readOpenCodexSessionIds;
 const selectNativeSessions = autoResumeSelection.readAutoResumeCodexSessionIds;
 
+it("restores Node work through the private app-server without opening an editor", async () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
+  Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("continued");
+  try {
+    expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] });
+    expect(open).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal), "automatic", "private");
+  } finally { resume.mockRestore(); open.mockRestore(); Reflect.deleteProperty(vscode.env, "appHost"); }
+});
+
 it("retries incomplete startup recovery at most three times and cancels retries for manual work", async () => {
   vi.useFakeTimers();
   try {

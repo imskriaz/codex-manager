@@ -398,11 +398,15 @@ export class CodexAppServerRpc {
       // A Node or shell shim can own a Codex grandchild holding the writer handle.
       if (!treeStopped) {
         const failed = () => {
-          failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
-          treeStopped = true; kill(); finish();
+          treeStopped = true;
+          if (!this.childExited) {
+            failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
+            kill();
+          }
+          finish();
         };
         try {
-          const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+          const killer = spawn(path.join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
           killer.once("error", failed);
           killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; kill(); finish(); } });
           killer.unref();

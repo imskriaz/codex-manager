@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as vscode from "vscode";
 import { CodexNativeOwnerUnavailableError, observeRunningCodexSession, readCodexCliSessionSummary, readManuallyStoppedCodexSessionIds, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
@@ -8,7 +9,7 @@ import { clearCodexSessionManualStop, readCodexSessionPreferences } from "./code
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
-export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic", connection: "native" | "private" = "native"): Promise<"running" | "continued" | "goal" | "idle"> {
+export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic", connection: "native" | "private" = vscode.env.appHost === "node" ? "private" : "native"): Promise<"running" | "continued" | "goal" | "idle"> {
   const home = resolveCodexHome();
   const key = `${home}:${sessionId}`;
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };

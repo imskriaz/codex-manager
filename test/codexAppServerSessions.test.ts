@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile, appendFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import { CodexAppServerDisconnectedError } from "../src/services/codexAppServerRpc";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -701,6 +702,17 @@ describe("native App Server new sessions", () => {
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally { finish(); await completed; await new Promise((resolve) => setTimeout(resolve, 0)); }
     expect(rpc.close).toHaveBeenCalled();
+  });
+  it("keeps acknowledged Stop cancelled when closing the private connection disconnects the turn", async () => {
+    let disconnect!: (error: Error) => void;
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: "readOnly" } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined,
+      close: vi.fn(() => { disconnect?.(new CodexAppServerDisconnectedError("Connection closed")); }),
+      startAndWaitForTurn: vi.fn((_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => new Promise<void>((_resolve, reject) => { disconnect = reject; started("stop-turn"); })) };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(startCodexCliSession({ text: "First prompt", projectPath: root, sandboxMode: "read-only" })).resolves.toBe(id);
+    expect(await cancelCodexCliSessionTurn(id)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(getCodexSessionLiveState(id)?.status).toBe("cancelled");
   });
   it("reports initialization failure without silently falling back to CLI exec", async () => {
     mocks.open.mockRejectedValue(new Error("initialize unavailable"));

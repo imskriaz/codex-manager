@@ -791,6 +791,10 @@ async function runDashboardAction(
           });
     }
     case "reloadPrompt":
+      if (vscode.env.appHost === "node") {
+        await ctx.repo.syncActiveAccountFromAuthFile();
+        await ctx.publishState(true);
+      }
       return handleReloadPrompt(account, payload, ctx.hostKind === "browser");
     case "reauthorize":
       if (account) {
@@ -1849,6 +1853,12 @@ async function handleReloadPrompt(
   payload: DashboardActionPayload | undefined,
   browserHost = false
 ) {
+  if (vscode.env.appHost === "node") {
+    return {
+      reloadScheduled: false,
+      notice: { level: "info" as const, message: "Standalone host is already active; account state was refreshed." }
+    };
+  }
   if (browserHost || payload?.confirmed === true || payload?.forceReload || !account) {
     return {
       reloadScheduled: true,

@@ -1,4 +1,5 @@
 import { CodexNativeOwnerUnavailableError } from '../src/services/codexSessionResume';
+import * as vscode from "vscode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ summary: vi.fn(), stopped: vi.fn(), send: vi.fn(), goal: vi.fn(), observe: vi.fn(), files: vi.fn(), log: vi.fn() }));
 vi.mock("../src/services/codexSessionResume", () => ({ CodexNativeOwnerUnavailableError: class extends Error {}, observeRunningCodexSession: mocks.observe, readManuallyStoppedCodexSessionIds: mocks.stopped, readCodexCliSessionSummary: mocks.summary, sendCodexCliSessionMessage: mocks.send, resumeCodexSessionGoal: mocks.goal, resolveCodexHome: () => "recovery-test", toSessionLogRef: () => "session-ref" }));
@@ -18,6 +19,14 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("post-load session recovery", () => {
+  it("uses the private writer in Node without depending on a VS Code tab", async () => {
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+    try {
+      expect(await resumeCodexSessionWork("session")).toBe("continued");
+      expect(mocks.summary).toHaveBeenCalledWith("session", "recovery-test", false);
+      expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ preferPrivate: true }));
+    } finally { Reflect.deleteProperty(vscode.env, "appHost"); }
+  });
   it('keeps a manually stopped active goal idle during automatic recovery', async () => {
     mocks.stopped.mockResolvedValue(['session']);
     mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', interrupted: true, goal: { status: 'active' } });

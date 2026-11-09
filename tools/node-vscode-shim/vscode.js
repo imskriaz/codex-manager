@@ -46,25 +46,49 @@ const window = {
   onDidChangeActiveTextEditor: () => new Disposable(), onDidChangeActiveTerminal: () => new Disposable(),
   onDidStartTerminalShellExecution: undefined, onDidEndTerminalShellExecution: undefined,
   onDidCloseTerminal: undefined, onDidChangeTerminalShellIntegration: undefined,
-  showInformationMessage: async (message, ...items) => { console.log(`[info] ${message}`); return items[0]; },
-  showWarningMessage: async (message, ...items) => { console.warn(`[warning] ${message}`); return items[0]; },
-  showErrorMessage: async (message, ...items) => { console.error(`[error] ${message}`); return items[0]; },
+  showInformationMessage: async message => { console.log(`[info] ${message}`); return undefined; },
+  showWarningMessage: async message => { console.warn(`[warning] ${message}`); return undefined; },
+  showErrorMessage: async message => { console.error(`[error] ${message}`); return undefined; },
   showInputBox: async () => undefined, showQuickPick: async () => undefined, showOpenDialog: async () => undefined,
   withProgress: async (_options, task) => task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => new Disposable() }),
   createOutputChannel: name => ({ name, appendLine: line => console.log(`[${name}] ${line}`), append: () => undefined, clear: () => undefined, show: () => undefined, dispose: () => undefined }),
   createStatusBarItem: () => ({ text: "", tooltip: "", command: undefined, show: () => undefined, hide: () => undefined, dispose: () => undefined }),
-  createTerminal: () => undefined, createWebviewPanel: () => { throw new Error("VS Code webviews are unavailable in Node host."); }
+  createTerminal: options => {
+    if (!options?.pty) throw new Error("Use a shared workspace terminal in standalone mode.");
+    let disposed = false;
+    const terminal = {
+      name: options.name || "Terminal", creationOptions: options, processId: Promise.resolve(undefined),
+      state: { isInteractedWith: false },
+      show() { window.activeTerminal = terminal; }, hide() {},
+      sendText(text, addNewLine = true) { if (!disposed) options.pty.handleInput?.(text + (addNewLine ? "\r" : "")); },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        options.pty.close();
+        const index = window.terminals.indexOf(terminal);
+        if (index >= 0) window.terminals.splice(index, 1);
+        if (window.activeTerminal === terminal) window.activeTerminal = undefined;
+      }
+    };
+    window.terminals.push(terminal);
+    queueMicrotask(() => { if (!disposed) options.pty.open(undefined); });
+    return terminal;
+  }, createWebviewPanel: () => { throw new Error("VS Code webviews are unavailable in Node host."); }
 };
 
 const commands = new Map();
 const commandApi = {
   registerCommand(name, handler) { commands.set(name, handler); return new Disposable(() => commands.delete(name)); },
-  executeCommand(name, ...args) { const handler = commands.get(name); return handler ? handler(...args) : undefined; }
+  async executeCommand(name, ...args) {
+    const handler = commands.get(name);
+    if (!handler) throw new Error(`This action requires VS Code (${name}). Use its browser equivalent when available.`);
+    return handler(...args);
+  }
 };
 
 module.exports = {
   Disposable, EventEmitter, Uri, workspace, window, commands: commandApi,
-  env: { language: process.env.LANG ?? "en", sessionId: `node-${process.pid}`, appRoot: process.cwd(), shell: process.env.SHELL, openExternal: async () => false, clipboard: { writeText: async () => undefined } },
+  env: { appHost: "node", language: process.env.LANG ?? "en", sessionId: `node-${process.pid}`, appRoot: process.cwd(), shell: process.env.SHELL, openExternal: async () => false, clipboard: { writeText: async () => undefined } },
   extensions: { getExtension: () => undefined },
   authentication: { getSession: async () => undefined },
   ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },

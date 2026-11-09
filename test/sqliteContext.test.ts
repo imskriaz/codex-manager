@@ -110,7 +110,10 @@ describe("SQLite extension context and settings migration", () => {
     const migrated = await initializeSqliteContext(original);
     expect(migrated.globalState.get("accountPreference")).toBe(true);
     expect(migrated.workspaceState.get("recovery")).toEqual(["saved-id"]);
-    expect(migrated.secrets).toBe(original.secrets);
+    expect(migrated.secrets).not.toBe(original.secrets);
+    await migrated.secrets.store("test-key", "shared");
+    expect(getSqliteStateStore()!.get("secrets", "test-key")).toBe("shared");
+    expect(original.secrets.store).not.toHaveBeenCalled();
     const config = getCodexManagerConfiguration();
     vi.mocked(nativeConfig.get).mockClear();
     expect(config.get("autoResumeEnabled")).toBe(true);

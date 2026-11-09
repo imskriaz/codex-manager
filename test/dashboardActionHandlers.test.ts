@@ -98,6 +98,19 @@ afterAll(async () => {
 });
 
 describe("manual Codex navigation and recovery", () => {
+  it('refreshes standalone state on Reload without scheduling an editor restart', async () => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    try {
+      const ctx = createContext();
+      const syncActive = vi.fn().mockResolvedValue(undefined);
+      ctx.repo = { syncActiveAccountFromAuthFile: syncActive, flush: vi.fn() } as never;
+      const result = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'reloadPrompt', requestId: 'node-reload', payload: { forceReload: true } });
+      expect(syncActive).toHaveBeenCalledOnce();
+      expect(ctx.publishState).toHaveBeenCalledWith(true);
+      expect(result).toMatchObject({ status: 'completed', payload: { reloadScheduled: false, notice: { message: expect.stringContaining('Standalone') } } });
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('workbench.action.reloadWindow');
+    } finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+  });
   it.each([true, false])('bulk saves the account reset permission and retains partial failures (%s)', async allowed => {
     const records = [{ id: 'one' }, { id: 'two' }];
     const save = vi.fn(async (id: string) => { if (id === 'two') throw new Error('Storage full'); });

@@ -618,6 +618,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void | Awaited<ReturnType<typeof resumeCodexSessionWork>>> = async (sessionId, signal) => {
+    if (vscode.env.appHost === "node") return resumeCodexSessionWork(sessionId, signal, "automatic", "private");
     const startedAt = Date.now();
     const home = resolveCodexHome();
     const details = { sessionRef: toSessionLogRef(sessionId), recoveryPath: "vscode" };

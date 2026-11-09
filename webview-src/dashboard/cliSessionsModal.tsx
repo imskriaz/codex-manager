@@ -158,6 +158,7 @@ type ComposerDraft = CliComposerDraft;
 
 export type CliSessionsPageProps = {
   browser?: boolean;
+  standalone?: boolean;
   dashboardMode?: boolean;
   taskBoardActive?: boolean;
   onTasks?: () => void;
@@ -746,17 +747,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const workspacePeer = props.peers?.find(peer => peer.id === (props.selectedSession?.deviceId ?? props.selectedPeerId)) ?? props.peers?.find(peer => peer.local);
   const workspaceSystemName = getSensitiveDisplayValue(props.selectedSession?.deviceName ?? workspacePeer?.name ?? (props.selectedSession?.remote ? 'Remote PC' : 'This PC'), props.privacyMode, 'name');
   const contextProjectState = contextTabsByProject[contextProjectKey] ?? emptyWorkspaceProject();
+  const activeContextTab = props.standalone && contextProjectState.active === 'terminal' ? 'env' : contextProjectState.active;
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
     if (toolsCollapsed || !props.selectedSession) return;
-    const kind = workspaceTabKind(contextProjectState.active), path = workspaceTabPath(contextProjectState.active);
+    const kind = workspaceTabKind(activeContextTab), path = workspaceTabPath(activeContextTab);
     if (kind === 'files') { if (path) props.onReadFile(path, toolProjectPath); else props.onListFiles(toolProjectPath); }
     else if (toolProjectPath && (kind === 'env' || kind === 'git')) props.onRefreshEnvironment(toolProjectPath);
-  }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed, props.connected]);
+  }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed, props.connected, props.standalone]);
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
-  const contextTabs = contextProjectState.tabs;
-  const activeContextTab = contextProjectState.active;
+  const contextTabs = props.standalone ? contextProjectState.tabs.filter(tab => tab !== 'terminal') : contextProjectState.tabs;
   const terminalDraft = contextProjectState.draft ?? '';
   const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), draft } }));
   useEffect(() => { setContextAddOpen(false); }, [contextProjectKey]);
@@ -854,6 +855,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return candidates.filter(agent => ids.has(agent.id));
   }, [props.sessions, props.messages, props.selectedSession?.id, props.selectedSession?.deviceId]);
   const selectContextTab = (tab: WorkspaceTab): void => {
+    if (props.standalone && tab === 'terminal') return;
     setActiveContextTab(tab);
     if (toolProjectPath && (tab === 'env' || tab === 'git')) props.onRefreshEnvironment(toolProjectPath);
     const filePath = workspaceTabPath(tab);
@@ -867,6 +869,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   };
   const openContextTab = (tab: WorkspaceToolTab, filePath?: string): void => {
+    if (props.standalone && tab === 'terminal') return;
     if (tab === "reviews") setBranchReview(false);
     const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;
     const tabId: WorkspaceTab = resolvedFilePath ? `${tab === "agents" ? "agent" : tab === "files" ? "file" : "review"}:${resolvedFilePath}` : tab;
@@ -1372,6 +1375,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onPush={() => runGitAction('push')}
           onRefreshEnvironment={(gitHistory) => props.onRefreshEnvironment(toolProjectPath, undefined, gitHistory)}
           onBranchReview={() => { openContextTab('reviews'); setBranchReview(true); props.onRefreshEnvironment(toolProjectPath, true); }}
+          hideTerminal={props.standalone === true}
           terminalWidth={layout.terminalWidth}
           draft={terminalDraft}
           results={props.terminalResults}
@@ -1944,6 +1948,7 @@ function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: No
 }
 
 function WorkspaceEnvironmentView(props: {
+  hideTerminal?: boolean;
   liveState?: DashboardCodexSessionLiveState;
   environment?: DashboardWorkspaceEnvironment; session?: DashboardCliSessionSummary; projectPath?: string;
   systemName: string;
@@ -1963,7 +1968,7 @@ function WorkspaceEnvironmentView(props: {
       <section><h3>Project</h3><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></section>
       <section><h3>Session</h3><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', props.session?.sessionSurface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></section>
       {environment?.isGitRepository ? <section><h3>Repository</h3><dl>{detail('Branch', environment.branch)}{detail('Tracking', environment.upstream ?? 'No upstream')}{detail('Changes', environment.changes)}{detail('Ahead / behind', `${environment.ahead} / ${environment.behind}`)}</dl></section> : null}
-      <section><h3>Tools overview</h3><div class="cli-inspector-shortcuts"><button type="button" aria-label="Open Git" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('git')}><WorkspaceToolIcon kind="branch" /><span>Git</span><small>{environment?.availability ? 'Folder unavailable' : environment ? environment.isGitRepository ? `${environment.changes} changed` : 'No repository' : 'Not verified'}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span><small>{props.editedFiles} recorded edits{props.dirtyFiles ? ` · ${props.dirtyFiles} unsaved` : ''}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('terminal')}><TerminalIcon /><span>Terminals</span><small>{projectTerminals.length} project · {props.terminals.length} observed</small></button><button type="button" onClick={() => props.onOpen('agents')}><WorkspaceToolIcon kind="agents" /><span>Agents</span><small>{props.agents.length} recorded · {runningAgents} running{unknownAgents ? ` · ${unknownAgents} unknown` : ''}</small></button><button type="button" onClick={() => props.onOpen('reviews')}><ReviewIcon /><span>Reviews</span><small>{props.editedFiles} recorded files</small></button></div></section>
+      <section><h3>Tools overview</h3><div class="cli-inspector-shortcuts"><button type="button" aria-label="Open Git" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('git')}><WorkspaceToolIcon kind="branch" /><span>Git</span><small>{environment?.availability ? 'Folder unavailable' : environment ? environment.isGitRepository ? `${environment.changes} changed` : 'No repository' : 'Not verified'}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span><small>{props.editedFiles} recorded edits{props.dirtyFiles ? ` · ${props.dirtyFiles} unsaved` : ''}</small></button>{!props.hideTerminal ? <button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('terminal')}><TerminalIcon /><span>Terminals</span><small>{projectTerminals.length} project · {props.terminals.length} observed</small></button> : null}<button type="button" onClick={() => props.onOpen('agents')}><WorkspaceToolIcon kind="agents" /><span>Agents</span><small>{props.agents.length} recorded · {runningAgents} running{unknownAgents ? ` · ${unknownAgents} unknown` : ''}</small></button><button type="button" onClick={() => props.onOpen('reviews')}><ReviewIcon /><span>Reviews</span><small>{props.editedFiles} recorded files</small></button></div></section>
       {props.agents.length ? <section><h3>Agents</h3><div class="cli-inspector-shortcuts">{props.agents.slice(0, 3).map(agent => <button type="button" key={cliSessionTargetKey(agent)} title={agent.title} onClick={() => props.onOpen('agents', agent.id)}><WorkspaceToolIcon kind="agents" /><span>{agent.agentName ?? agent.title}</span><small>{agent.status === 'running' ? 'Running' : agent.status === 'unknown' ? 'Not verified' : 'Ready'}</small></button>)}{props.agents.length > 3 ? <button type="button" onClick={() => props.onOpen('agents')}>View all {props.agents.length} agents</button> : null}</div></section> : null}
       <section aria-label="Session usage details"><h3>Session usage</h3>{props.liveState?.tokenUsage || props.session?.tokenUsage || props.liveState?.rateLimits ? <LiveTurnDetails state={props.liveState} usage={props.liveState?.tokenUsage ?? props.session?.tokenUsage} /> : <p class="settings-note">Usage has not been reported for this session.</p>}</section>
     </div>
@@ -2212,6 +2217,7 @@ export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]
 }
 
 function WorkspaceContextPanel(props: {
+  hideTerminal?: boolean;
   liveState?: DashboardCodexSessionLiveState;
   targetDeviceId?: string;
   workspaceGitPending?: boolean;
@@ -2316,17 +2322,18 @@ function WorkspaceContextPanel(props: {
     activeTab?.closest("span")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [props.activeTab, props.tabs.length]);
   if (props.collapsed) return <aside class="cli-terminal-panel is-collapsed" aria-hidden="true" />;
+  const visibleTabs = props.hideTerminal ? props.tabs.filter(tab => tab !== 'terminal') : props.tabs;
   const activeKind = workspaceTabKind(props.activeTab);
   const activePath = workspaceTabPath(props.activeTab);
   return <aside class="cli-terminal-panel cli-context-panel-v3" aria-label="Workspace tools">
     <div class="cli-context-edge-resizer" role="separator" aria-label="Resize terminal panel" aria-orientation="vertical" aria-valuemin={220} aria-valuenow={Math.round(props.terminalWidth)} tabIndex={0} onPointerDown={props.onResizePointerDown} onKeyDown={props.onResizeKeyDown} onDblClick={props.onResizeReset}><span /></div>
-    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={event => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab, index) => {
+    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={event => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{visibleTabs.map((tab, index) => {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
-    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
+    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal')).every(tab => visibleTabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
-    {props.activeTab === 'env' ? <WorkspaceEnvironmentView liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGit key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
+    {props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGit key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
     </div>
   </aside>;

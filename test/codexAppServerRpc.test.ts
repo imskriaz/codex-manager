@@ -69,7 +69,7 @@ describe("app-server initialization recovery", () => {
       processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
       const rpc = await opening;
       const closing = rpc.close();
-      expect(mocks.spawn).toHaveBeenLastCalledWith("taskkill", ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      expect(mocks.spawn).toHaveBeenLastCalledWith(expect.stringMatching(/[\\/]System32[\\/]taskkill\.exe$/i), ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: "ignore" });
       expect(processChild.kill).not.toHaveBeenCalled();
       processChild.emit("exit", 0); killer.emit("exit", 0); await closing;
       await rpc.close(); expect(mocks.spawn).toHaveBeenCalledTimes(2);
@@ -88,6 +88,21 @@ describe("app-server initialization recovery", () => {
       const rpc = await opening; const closing = rpc.close();
       killer.emit("exit", 0); await closing;
       expect(processChild.kill).toHaveBeenCalledOnce();
+    } finally { Object.defineProperty(process, "platform", platform); }
+  });
+  it("accepts a child exit racing Windows taskkill reporting that its PID is gone", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const processChild = Object.assign(child(), { pid: 12345 });
+    const killer = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    mocks.spawn.mockReturnValueOnce(processChild).mockReturnValueOnce(killer);
+    try {
+      const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+      processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+      const rpc = await opening, closing = rpc.close();
+      processChild.emit("exit", 0); killer.emit("exit", 128);
+      await expect(closing).resolves.toBeUndefined();
+      expect(processChild.kill).not.toHaveBeenCalled();
     } finally { Object.defineProperty(process, "platform", platform); }
   });
   it("never targets an exited child PID for process-tree cleanup", async () => {

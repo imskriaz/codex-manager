@@ -1,4 +1,5 @@
 import { getCodexHomeStateKey } from "../../codex";
+import * as vscode from "vscode";
 
 let currentWindowRuntimeAccountId: string | undefined;
 let queuedAccountSwitch: { fromAccountId?: string; toAccountId: string; queuedAt: number } | undefined;
@@ -15,6 +16,7 @@ export function setCurrentWindowRuntimeAccountId(accountId?: string): void {
 }
 
 export function needsWindowReloadForAccount(accountId?: string): boolean {
+  if (vscode.env.appHost === "node") return false;
   return Boolean(accountId) && currentWindowRuntimeAccountId !== accountId;
 }
 

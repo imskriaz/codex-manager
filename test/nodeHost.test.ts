@@ -2,17 +2,22 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => ({
   start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
-  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn()
+  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), flushSessions: vi.fn()
 }));
 vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context }));
-vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; } }));
-vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; getUrl() { return "http://127.0.0.1:39875"; } } }));
+vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; setAccountSwitchCoordinator() {} } }));
+vi.mock("../src/services/encryptedSync", () => ({ EncryptedSyncManager: class { async start() {} dispose() {} } }));
+vi.mock("../src/infrastructure/config/proxyEnvironment", () => ({ initializeCodexProxyEnvironment: async () => undefined, disposeCodexProxyEnvironment: vi.fn() }));
+vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
 vi.mock("../src/storage/sqliteState", () => ({
   getSqliteStateStore: () => ({ close: host.close }), readSqliteStateFile: host.readPid,
   writeSqliteStateFile: host.writePid, deleteSqliteStateFile: host.deletePid
 }));
 vi.mock("../src/utils/crossWindowOperations", () => ({ configureCrossWindowOperationCoordinator: host.coordinate }));
 vi.mock("../src/utils/persistentLog", () => ({ registerPersistentLogging: host.registerLogs, disposePersistentLogging: host.closeLogs, recordPersistentEvent: host.log }));
+vi.mock("../src/services/nodeBackgroundServices", () => ({ registerNodeBackgroundServices: host.background }));
+vi.mock("../src/services/codexSessionAutoResume", () => ({ cancelCodexSessionAutoResume: host.cancelRecovery }));
+vi.mock("../src/services/sessionRecording", () => ({ disposeSessionRecording: host.flushSessions }));
 import { startNodeHost } from "../src/node";
 
 let signals: Set<(...args: any[]) => void>;
@@ -40,6 +45,7 @@ it("waits for VS Code's port release, writes the SQLite PID only after bind, and
   await vi.advanceTimersByTimeAsync(150); await launch;
   expect(host.start).toHaveBeenCalledTimes(2);
   expect(host.coordinate).toHaveBeenCalledOnce();
+  expect(host.background).toHaveBeenCalledOnce();
   expect(host.registerLogs).toHaveBeenCalledOnce();
   expect(host.log).toHaveBeenCalledWith("info", "node-host", "Standalone ready", expect.any(Object));
   expect(host.writePid).toHaveBeenCalledWith("always-online-relay.pid", String(process.pid));
@@ -50,6 +56,8 @@ it("waits for VS Code's port release, writes the SQLite PID only after bind, and
   expect(host.deletePid).toHaveBeenCalledWith("always-online-relay.pid");
   expect(host.close).toHaveBeenCalledOnce();
   expect(host.closeLogs).toHaveBeenCalledWith(true);
+  expect(host.cancelRecovery).toHaveBeenCalledOnce();
+  expect(host.flushSessions).toHaveBeenCalledOnce();
 });
 
 it("refuses a competing direct launch and leaves the active owner's PID intact", async () => {
@@ -57,6 +65,7 @@ it("refuses a competing direct launch and leaves the active owner's PID intact",
   host.start.mockRejectedValue(new Error("port already owned by another host"));
   host.readPid.mockReturnValue("999999");
   await expect(startNodeHost()).rejects.toThrow("already owned");
+  expect(host.background).not.toHaveBeenCalled();
   expect(host.start).toHaveBeenCalledOnce();
   expect(host.log).toHaveBeenCalledWith("error", "node-host", "Standalone startup failed", expect.any(Object), expect.any(Error));
   expect(host.writePid).not.toHaveBeenCalled();

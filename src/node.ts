@@ -10,33 +10,12 @@ import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOpe
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
 import { disposePersistentLogging, registerPersistentLogging, recordPersistentEvent } from "./utils/persistentLog";
 import { waitWithin } from "./utils/concurrency";
-
-type NodeSecretStorage = vscode.SecretStorage;
-
-function createNodeSecretStorage(): NodeSecretStorage {
-  const listeners = new Set<(event: { key: string }) => void>();
-  const getStore = () => {
-    const store = getSqliteStateStore();
-    if (!store) throw new Error("Manager SQLite is not initialized.");
-    return store;
-  };
-  return {
-    keys: async () => getStore().keys("node-secrets"),
-    get: async (key) => getStore().get<string>("node-secrets", key),
-    store: async (key, value) => {
-      getStore().set("node-secrets", key, value);
-      for (const listener of listeners) listener({ key });
-    },
-    delete: async (key) => {
-      getStore().set("node-secrets", key, undefined);
-      for (const listener of listeners) listener({ key });
-    },
-    onDidChange: (listener) => {
-      listeners.add(listener);
-      return { dispose: () => listeners.delete(listener) };
-    }
-  } as NodeSecretStorage;
-}
+import { registerNodeBackgroundServices } from "./services/nodeBackgroundServices";
+import { cancelCodexSessionAutoResume } from "./services/codexSessionAutoResume";
+import { disposeSessionRecording } from "./services/sessionRecording";
+import { EncryptedSyncManager } from "./services/encryptedSync";
+import { getCodexManagerConfiguration } from "./infrastructure/config/extensionSettings";
+import { initializeCodexProxyEnvironment, disposeCodexProxyEnvironment } from "./infrastructure/config/proxyEnvironment";
 
 function createMemento(): vscode.Memento {
   const values = new Map<string, unknown>();
@@ -58,7 +37,7 @@ function createContext(): vscode.ExtensionContext {
     storageUri: vscode.Uri.file(process.env["CODEX_MANAGER_WORKSPACE_STORAGE"] ?? process.env["CODEX_MANAGER_STORAGE_ROOT"] ?? extensionRoot),
     globalState: createMemento(),
     workspaceState: createMemento(),
-    secrets: createNodeSecretStorage(),
+    secrets: undefined,
     subscriptions: []
   } as unknown as vscode.ExtensionContext;
 }
@@ -66,20 +45,26 @@ function createContext(): vscode.ExtensionContext {
 export async function startNodeHost(): Promise<void> {
   const context = await initializeSqliteContextWithRetry(createContext());
   const repo = new AccountsRepository(context);
-  const dashboard = new WebDashboardServer(context, repo, undefined, { failOnAddressInUse: true });
+  const sync = new EncryptedSyncManager(context, repo);
+  repo.setAccountSwitchCoordinator(sync);
+  const dashboard = new WebDashboardServer(context, repo, sync, { failOnAddressInUse: true });
   const pidFile = process.env["CODEX_MANAGER_PID_FILE"];
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => closing ??= (async () => {
     recordPersistentEvent("info", "node-host", "Standalone shutdown started", { pid: process.pid });
     await dashboard.stop();
     dashboard.dispose();
+    sync.dispose();
+    disposeCodexProxyEnvironment();
+    cancelCodexSessionAutoResume("Standalone is shutting down.");
+    for (const subscription of context.subscriptions) subscription.dispose();
+    disposeSessionRecording();
     repo.dispose();
     if (pidFile) {
       try { if (readSqliteStateFile(pidFile) === String(process.pid)) deleteSqliteStateFile(pidFile); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
     await disposePersistentLogging(true);
-    for (const subscription of context.subscriptions) subscription.dispose();
     getSqliteStateStore()?.close();
   })();
   const exit = (): void => { void shutdown().then(() => process.exit(0), error => { console.error("[codexManager] Node shutdown failed", error); process.exit(1); }); };
@@ -89,6 +74,7 @@ export async function startNodeHost(): Promise<void> {
     await waitWithin(registerPersistentLogging(context), 2_000, "Standalone diagnostics initialization timed out.").catch(error => console.warn("[codexManager] standalone diagnostics unavailable", error));
     recordPersistentEvent("info", "node-host", "Standalone startup started", { pid: process.pid });
     await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
+    await initializeCodexProxyEnvironment().catch(error => console.warn("[codexManager] standalone provider connection settings failed:", error));
     await repo.init();
     const deadline = Date.now() + (process.env["CODEX_MANAGER_HANDOFF"] === "1" ? 8_000 : 0);
     let waitingForPort = false;
@@ -101,6 +87,12 @@ export async function startNodeHost(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 150));
       }
     }
+    let syncReady = false;
+    const syncStartup = sync.start().then(() => { syncReady = true; dashboard.publishLocalStateChange(); })
+      .catch(error => console.warn("[codexManager] standalone account claims could not initialize:", error));
+    await waitWithin(syncStartup, 2_000, "Standalone claims are still loading.").catch(error => console.warn("[codexManager]", error));
+    registerNodeBackgroundServices(context, repo, dashboard, id =>
+      !getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false) || syncReady && sync.canAutomateAccount(id));
     if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));
     recordPersistentEvent("info", "node-host", "Standalone ready", { pid: process.pid, url: dashboard.getUrl() });
   } catch (error) {

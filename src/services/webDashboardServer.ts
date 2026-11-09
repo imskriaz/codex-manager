@@ -1576,7 +1576,7 @@ export class WebDashboardServer implements vscode.Disposable {
         payload,
         error: result.errorMessage
       });
-      reloadAfterResponse =
+      reloadAfterResponse = vscode.env.appHost !== "node" &&
         result.status === "completed" && (message.action === "unloadAuth" || result.payload?.reloadScheduled === true);
     } else if (message.type === "dashboard:setting") {
       try {
@@ -1589,7 +1589,7 @@ export class WebDashboardServer implements vscode.Disposable {
             level: "info",
             message: `${message.value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the change.`
           });
-          reloadAfterResponse = true;
+          reloadAfterResponse = vscode.env.appHost !== "node";
         } else messages.push({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
       } catch (error) {
         // Return the stored value below so an optimistic control cannot stay on after a failed write.
@@ -3038,7 +3038,7 @@ export class WebDashboardServer implements vscode.Disposable {
         } satisfies PeerActionResultMessage)
       );
       if (
-        result.status === "completed" &&
+        vscode.env.appHost !== "node" && result.status === "completed" &&
         (message.action === "unloadAuth" || result.payload?.reloadScheduled === true)
       ) {
         scheduleExtensionHostReload(

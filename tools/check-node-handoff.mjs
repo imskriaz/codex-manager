@@ -28,9 +28,16 @@ const secrets = new Map([
   [DASHBOARD_PASSPHRASE_KEY, password],
   ["codexManager.webDashboard.sessions.v1", JSON.stringify([{ fingerprint: createHash("sha256").update(legacyToken).digest("hex"), expiresAt: Date.now() + 60_000 }])]
 ]);
-const auth = new DashboardAuth({ get: async key => secrets.get(key) }, {});
-await auth.refresh();
 const deviceId = randomUUID();
+secrets.set("codexManager.encryptedSync.deviceId", deviceId);
+const { createSqliteSecretStorage } = require("../out/storage/sqliteSecrets.js");
+const vscode = require("vscode");
+vscode.env.appHost = "desktop";
+const subscriptions = [];
+const sharedSecrets = await createSqliteSecretStorage(store, { keys: async () => [...secrets.keys()], get: async key => secrets.get(key) }, subscriptions);
+vscode.env.appHost = "node";
+const auth = new DashboardAuth(sharedSecrets, {});
+await auth.refresh();
 store.set("global", "codexManager.webDashboard.deviceId", deviceId);
 writeSqliteStateFile(path.join(root, "logging-settings.json"), JSON.stringify({ enabled: true, retentionDays: 3, level: "info" }));
 const placeholder = net.createServer(socket => socket.destroy());
@@ -135,6 +142,7 @@ try {
   for (const child of children) child.kill();
   await Promise.allSettled([...children].map(child => new Promise(resolve => child.once("exit", resolve))));
   configureSqliteStateStore(undefined);
+  for (const subscription of subscriptions) subscription.dispose();
   store.close();
   assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
   await rm(root, { recursive: true, force: true });

@@ -90,7 +90,7 @@ function getRecentNewSession(id: string, home = resolveCodexHome()) {
   return recent?.home === path.resolve(home) ? recent : undefined;
 }
 const newSessionFailures = new Map<string, Error>();
-const activeAppServerTurns = new Map<string, { home: string; rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
+const activeAppServerTurns = new Map<string, { home: string; rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; cancelConfirmed?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean>; cancelled?: boolean }>();
 const nativeTurnObservers = new Map<string, { turnId?: string; cancelled?: boolean }>();
 const observedNativeStops = new Map<string, Promise<boolean>>();
@@ -922,7 +922,8 @@ async function readKnownProjectRoots(home: string, force = false): Promise<strin
 
 export function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
   const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
-  return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome));
+  return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome))
+    .then(config => vscode.env.appHost === "node" ? { ...config, terminalSupported: false } : config);
 }
 
 async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {
@@ -1175,7 +1176,8 @@ async function startAppServerSession(options: {
     live.finish("completed");
     return threadId;
   } catch (error) {
-    const cancelled = error instanceof CodexAppServerTurnInterruptedError || (threadId !== undefined && activeAppServerTurns.get(threadId)?.cancelRequested === true && !activeAppServerTurns.get(threadId)?.turnId);
+    const active = threadId ? activeAppServerTurns.get(threadId) : undefined;
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
     live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
     if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
@@ -1317,7 +1319,8 @@ async function sendAppServerSessionMessage(options: {
     });
     live.finish("completed");
   } catch (error) {
-    const cancelled = error instanceof CodexAppServerTurnInterruptedError || error instanceof CodexCliTurnCancelledError || (activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    const active = activeAppServerTurns.get(options.sessionId);
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || error instanceof CodexCliTurnCancelledError || active?.cancelConfirmed === true || (active?.cancelRequested === true && !active.turnId);
     live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
     if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
@@ -1673,6 +1676,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     if (!activeAppServer.turnId) { void activeAppServer.rpc.close(); return true; }
     recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: appServerTransport.getStore() ?? "stdio" });
     activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(async () => {
+      activeAppServer.cancelConfirmed = true;
       cancelCodexAppServerPrompts(sessionId);
       // Interrupt acknowledgement can arrive before Codex releases the
       // writer process running a command. Close this private connection now
@@ -1680,7 +1684,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
       await Promise.resolve(activeAppServer.rpc.close());
       return true;
     }).catch(error => {
-      activeAppServer.cancelRequested = false;
+      if (!activeAppServer.cancelConfirmed) activeAppServer.cancelRequested = false;
       activeAppServer.stop = undefined;
       throw error;
     });

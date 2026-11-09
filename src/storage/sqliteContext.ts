@@ -6,6 +6,7 @@ import { configureSqliteStateStore, createSqliteMemento, SqliteStateStore } from
 import { migrateManagerStorage } from "./storageMigration";
 import { fireSqliteConfigurationChanges } from "./configurationEvents";
 import { migrateRelayStartup } from "../utils/relayStartup";
+import { createSqliteSecretStorage } from "./sqliteSecrets";
 
 const WORKSPACE_ID_KEY = "codexManager.sqliteWorkspaceId";
 let configurationNamespace: string | undefined;
@@ -54,7 +55,8 @@ export async function initializeSqliteContext(context: vscode.ExtensionContext):
       }
     }));
     context.subscriptions.push({ dispose: store.subscribe(["settings"], publishConfigurationChanges) });
-    return Object.create(context, { globalState: { value: globalState }, workspaceState: { value: workspaceState } }) as vscode.ExtensionContext;
+    const secrets = await createSqliteSecretStorage(store, context.secrets, context.subscriptions);
+    return Object.create(context, { globalState: { value: globalState }, workspaceState: { value: workspaceState }, secrets: { value: secrets } }) as vscode.ExtensionContext;
   } catch (error) {
     configurationNamespace = undefined;
     configurationStore = undefined;

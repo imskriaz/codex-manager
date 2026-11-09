@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.7-pre.2
+
+- Use the shared SQLite account vault as the primary credential store for VS Code and standalone Node.
+- Migrate existing VS Code credentials without deleting the legacy copy, so account switching, automatic switching, and project-task Play remain available after the editor closes.
+- Add standalone checks for project-task Play and account switching without a VS Code reload.
+- Register the shared manual and scheduled quota commands in Node, initialize its provider connection settings, and keep account ownership checks active for automation.
+- Hide the Terminal tab and its add/overview controls in standalone. Reload refreshes account state without attempting an editor restart.
+
+## 1.7.7-pre.1
+
+- Provide standalone shared-terminal lifecycle support and retain cancelled status when an acknowledged Stop closes its private app-server.
+- Start the existing session queue, recording, Auto Resume, quota and token refresh services in standalone Node after it owns the dashboard port.
+- Resume directly through the private app-server in Node and avoid VS Code reload prompts after standalone account switches.
+- Stop background services and flush session recording before closing standalone storage.
+
 ## 1.7.7
 
 - Discover the installed Codex extension's CLI independently of VS Code, prefer npm's direct launcher on Windows, and install a verified local CLI for explicit turns when none is present.

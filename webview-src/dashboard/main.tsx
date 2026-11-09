@@ -1596,8 +1596,8 @@ function App() {
   const workspaceRootsKey = cliComposerConfig?.projects?.map((project) => project.path).join("\n") ?? "";
   const viewingBrowserWorkspace = isBrowserDashboard && isCliSessionsPath(browserPath) && snapshot?.settings.cliIntegrationEnabled === true;
   useEffect(() => {
-    if (viewingBrowserWorkspace && realtimeConnected) requestWorkspaceTerminals();
-  }, [viewingBrowserWorkspace, realtimeConnected, requestWorkspaceTerminals]);
+    if (viewingBrowserWorkspace && realtimeConnected && cliComposerConfig?.terminalSupported !== false) requestWorkspaceTerminals();
+  }, [viewingBrowserWorkspace, realtimeConnected, requestWorkspaceTerminals, cliComposerConfig?.terminalSupported]);
   useEffect(() => {
     if (!viewingBrowserWorkspace) return;
     const projectPath = selectedCliSession ? selectedCliSession.projectPath : cliComposerConfig?.projects?.[0]?.path;
@@ -3153,7 +3153,8 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               connectionStatus={null}
-                browser={isBrowserDashboard}
+              browser={isBrowserDashboard}
+              standalone={cliComposerConfig?.terminalSupported === false}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}

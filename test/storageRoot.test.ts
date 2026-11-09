@@ -1,13 +1,20 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCodexManagerStorageRoot } from "../src/utils/storageRoot";
 
 describe("Codex Manager storage root", () => {
+  afterEach(() => vi.unstubAllEnvs());
   it("uses a version-independent folder below the user home directory", () => {
+    vi.stubEnv("CODEX_MANAGER_STORAGE_ROOT", "");
     expect(getCodexManagerStorageRoot(path.join("C:", "Users", "test"))).toBe(
       path.join("C:", "Users", "test", ".codex")
     );
+  });
+
+  it("uses the explicit standalone data directory in both hosts", () => {
+    vi.stubEnv("CODEX_MANAGER_STORAGE_ROOT", path.resolve("output/custom-data"));
+    expect(getCodexManagerStorageRoot()).toBe(path.resolve("output/custom-data"));
   });
 
   it("does not allow production code to use VS Code's extension-owned filesystem storage", async () => {

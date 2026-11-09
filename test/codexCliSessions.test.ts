@@ -54,6 +54,13 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('reports terminal support from the current host even when the composer configuration is shared', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'codex-composer-host-')); roots.push(home);
+    expect((await readCodexCliComposerConfig(home)).terminalSupported).toBeUndefined();
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    try { expect((await readCodexCliComposerConfig(home)).terminalSupported).toBe(false); }
+    finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+  });
   it('opens saved history without waiting on runtime inspection while leaving an unverified writer locked', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'codex-display-only-')); roots.push(home);
     await mkdir(path.join(home, 'sessions'));

@@ -42,6 +42,11 @@ const errors = [];
 page.on("pageerror", error => errors.push(error.message));
 await page.addInitScript(() => {
   window.__liveEvents = [];
+  window.__liveSockets = [];
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = class extends NativeWebSocket {
+    constructor(...args) { super(...args); window.__liveSockets.push(this); }
+  };
   window.__dropStartAcknowledgment = false;
   window.__droppedStartAcknowledgment = undefined;
   window.addEventListener("message", event => {
@@ -105,7 +110,7 @@ const open = async id => {
   await page.waitForFunction(session => document.querySelector('.cli-conversation-title h1')?.textContent === session.title && (!session.projectPath || document.querySelector('.cli-conversation-project')?.getAttribute('title') === session.projectPath), session);
 };
 const waitIdle = async id => {
-  await page.waitForFunction(id => ["completed", "cancelled", "failed"].includes(window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id).at(-1)?.state.status), id, { timeout: 120_000 });
+  await page.waitForFunction(id => ["completed", "cancelled", "failed", "disconnected"].includes(window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id).at(-1)?.state.status), id, { timeout: 120_000 });
 };
 const addTool = async name => {
   const tab = page.getByRole("tab", { name, exact: true });
@@ -116,14 +121,15 @@ const addTool = async name => {
   await page.getByRole("menuitem", { name, exact: true }).click();
 };
 let terminalId;
+let terminalSupported = true;
 try {
   await page.goto(`${origin}/workspace`);
   const list = await action("listCodexCliSessions");
-  const projects = list.payload.cliComposerConfig.projects;
-  assert.ok(projects.length, "The live host must have an open workspace");
+  terminalSupported = list.payload.cliComposerConfig.terminalSupported !== false;
+  const projects = list.payload.cliComposerConfig.projects ?? [];
   let stale;
   for (const candidate of list.payload.cliSessions) {
-    if (candidate.archived || candidate.subAgent || candidate.remote || !candidate.projectPath || projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(candidate.projectPath).toLowerCase())) continue;
+    if (!owned.has(candidate.id) || candidate.archived || candidate.subAgent || candidate.remote || !candidate.projectPath || projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(candidate.projectPath).toLowerCase())) continue;
     try {
       await stat(candidate.projectPath);
       stale = candidate;
@@ -311,6 +317,7 @@ try {
   let terminalEpoch, terminalSequence = 0;
   const typeTerminal = data => action('workspaceTerminal', { projectPath: project, terminalId, terminalRequest: {operation:'input',clientId:terminalClient,epoch:terminalEpoch,sequence:++terminalSequence,data} });
   const waitTerminal = text => page.waitForFunction(({terminalId,text}) => window.__liveEvents.filter(event=>event.type==='dashboard:terminal-output'&&event.output.raw&&event.output.terminalId===terminalId).map(event=>event.output.chunk).join('').includes(text), {terminalId,text});
+  if (terminalSupported) {
   await record('Shared terminal creation and raw streaming', async () => {
     const created = await action('workspaceTerminal', {projectPath:project,terminalProfile:'powershell',terminalRequest:{operation:'create',clientId:terminalClient,operationId:randomUUID()}});
     terminalId=created.payload.workspaceTerminal.id;terminalEpoch=created.payload.terminalSnapshot.epoch;
@@ -339,10 +346,18 @@ try {
     const restored=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:terminalClient}});
     assert.ok(restored.payload.terminalSnapshot.content.includes('STREAM END'));
   });
+  } else await record('standalone hides Terminal tabs, add option and overview shortcut', async () => {
+    await addTool('Env');
+    assert.equal(await page.getByRole('tab', { name: 'Terminal', exact: true }).count(), 0);
+    assert.equal(await page.locator('.cli-inspector-shortcuts button').filter({ hasText: 'Terminals' }).count(), 0);
+    await page.getByRole('button', { name: 'Add workspace tool', exact: true }).click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Terminal', exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
+  });
   await record("Git Environment, commit and local-remote push", async () => {
     if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
     await addTool("Env");
-    const inspected = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Refresh Environment", exact: true }).click());
+    const inspected = await action("getWorkspaceEnvironment", { projectPath: project });
     assert.ok(inspected.payload.workspaceEnvironment, "The environment panel returned a real repository state");
     const scopedEnvironment = await action("getWorkspaceEnvironment", { projectPath: project });
     assert.equal(path.resolve(scopedEnvironment.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
@@ -404,7 +419,7 @@ try {
     await page.locator(".cli-reviews-view").waitFor();
     await addTool("Agents");
     if (await page.locator(".cli-agent-row").count() === 0) await page.getByText("No sub-agents recorded for this session.", { exact: true }).waitFor();
-    for (const name of ["Files", "Terminal", "Reviews", "Agents"]) await addTool(name);
+    for (const name of ["Files", ...(terminalSupported ? ["Terminal"] : []), "Reviews", "Agents"]) await addTool(name);
   });
   await record("Fork, archive, restore, delete and refreshed list", async () => {
     const fork = await action("forkCodexCliSession", { sessionId });
@@ -423,6 +438,7 @@ try {
   });
   await record("offline/reconnect recovery without runtime errors", async () => {
     await context.setOffline(true);
+    await page.evaluate(() => window.__liveSockets.forEach(socket => socket.close()));
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === false, null, { timeout: 45_000 });
     await context.setOffline(false);
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === true);
@@ -430,8 +446,14 @@ try {
     await action("listCodexCliSessions");
     assert.deepEqual(errors, []);
   });
-  await record("live account filter counts, search, card/table views and quota metrics", async () => {
+  const accountState = await (await fetch(`${origin}/api/state`)).json();
+  await record(accountState.accounts?.length ? "live account filter counts, search, card/table views and quota metrics" : "empty account dashboard", async () => {
     await page.goto(`${origin}/`);
+    if (!accountState.accounts?.length) {
+      await page.locator("#dashboard-main").waitFor();
+      assert.equal(await page.locator(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").count(), 0);
+      return;
+    }
     await page.locator(".header-count-link").first().waitFor();
     await page.locator('input[name="account-search"]').fill("");
     for (const filter of await page.locator(".header-count-link").all()) {
@@ -457,6 +479,9 @@ try {
     await page.screenshot({ path: path.join(output, "accounts.png") });
   });
 } finally {
+  await writeFile(path.join(output, "owned.json"), JSON.stringify({ project, sessions: [...owned] }));
+  await context.setOffline(false);
+  await page.goto(`${origin}/workspace`);
   for (const sessionId of owned) {
     await record("cleanup disposable session", async () => {
       const sessions = (await action("listCodexCliSessions")).payload.cliSessions;
