@@ -737,6 +737,84 @@ describe("Codex session integration", () => {
     await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
   });
 
+  it.each([true, false])('hides inherited parent history in a forked child transcript (native ordinal %s)', async nativeOrdinal => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'codex-child-history-')); roots.push(root);
+      await mkdir(path.join(root, 'sessions'));
+      const rows = [
+        { type: 'session_meta', payload: { id: sessionId, forked_from_id: 'parent', source: { subagent: { thread_spawn: { parent_thread_id: 'parent' } } }, ...(nativeOrdinal ? { subagent_history_start_ordinal: 4 } : {}) } },
+        { type: 'session_meta', payload: { id: 'parent', source: 'vscode' } },
+        { type: 'compacted', payload: { message: 'Inherited context' } },
+        { type: 'turn_context', payload: { turn_id: 'parent-turn' } },
+        { type: 'response_item', payload: { type: 'message', id: 'parent-user', role: 'user', content: [{ type: 'input_text', text: 'Parent request' }] } },
+        ...(!nativeOrdinal ? [{ type: 'event_msg', payload: { type: 'task_started', turn_id: 'child-turn' } }] : []),
+        { type: 'turn_context', payload: { turn_id: 'child-turn' } },
+        { type: 'response_item', payload: { type: 'message', id: 'child-user', role: 'user', content: [{ type: 'input_text', text: 'Child request' }] } },
+      ];
+      await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: 'child-user', role: 'user', text: 'Child request', turnId: 'child-turn' }]);
+      expect(await readCodexCliSessionMessages(sessionId, root)).toHaveLength(1);
+      await expect(readCodexCliSessionInitialPrompt(sessionId, root)).resolves.toBe('Child request');
+  });
+
+  it.each([true, false])('preserves ordinary user forks and older children without inherited forks (ordinary fork %s)', async ordinaryFork => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'codex-preserved-fork-')); roots.push(root);
+      await mkdir(path.join(root, 'sessions'));
+      await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), [
+        { type: 'session_meta', payload: { id: sessionId, ...(ordinaryFork ? { source: 'vscode', forked_from_id: 'parent' } : { source: { subagent: { thread_spawn: { parent_thread_id: 'parent' } } } }) } },
+        { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Retained request' }] } },
+      ].map(row => JSON.stringify(row)).join('\n') + '\n');
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ role: 'user', text: 'Retained request' }]);
+  });
+
+  it.each([true, false])('retains a child history boundary across appended and partial records (native ordinal %s)', async nativeOrdinal => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'codex-child-appended-history-')); roots.push(root);
+      await mkdir(path.join(root, 'sessions'));
+      const file = path.join(root, 'sessions', `rollout-${sessionId}.jsonl`);
+      await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { forked_from_id: 'parent', source: { subagent: {} }, ...(nativeOrdinal ? { subagent_history_start_ordinal: 1 } : {}) } }));
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual([]);
+      await writeFile(file, '\n' + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Inherited request' }] } }) + '\n', { flag: 'a' });
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual([]);
+      const started = JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'child-turn' } });
+      await writeFile(file, started.slice(0, -1), { flag: 'a' });
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual([]);
+      await writeFile(file, '}\n' + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Own request' }] } }) + '\n', { flag: 'a' });
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ text: 'Own request', turnId: 'child-turn' }]);
+      expect(await readCodexCliSessionMessages(sessionId, root)).toHaveLength(1);
+  });
+
+  it('keeps inherited child history out of paged and cold tail reads', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-child-history-page-')); roots.push(root);
+    await mkdir(path.join(root, 'sessions'));
+    const file = path.join(root, 'sessions', `rollout-${sessionId}.jsonl`);
+    const prefix = [
+      { type: 'session_meta', payload: { forked_from_id: 'parent', source: { subagent: {} }, subagent_history_start_ordinal: 1 } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Inherited '.repeat(30000) }] } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n';
+    const own = [
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'child-turn' } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Own request' }] } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n';
+    await writeFile(file, prefix + own);
+    const page = await readCodexCliSessionMessagePage(sessionId, undefined, root);
+    expect(page.messages).toMatchObject([{ text: 'Own request', turnId: 'child-turn' }]);
+    expect(page.messages).toHaveLength(1);
+    const inheritedPage = await readCodexCliSessionMessagePage(sessionId, String(Buffer.byteLength(prefix)), root);
+    expect(inheritedPage.messages).toEqual([]);
+    const originalRead = safeReads.readSafeFileSnapshot;
+    const spy = vi.spyOn(safeReads, 'readSafeFileSnapshot').mockImplementation(async (target, options) => {
+      const snapshot = await originalRead(target, options);
+      if (target === file && options.maxBytes === MAX_CHAT_WIRE_BYTES) {
+        const startOffset = Buffer.byteLength(prefix) - 20;
+        return { ...snapshot, startOffset, buffer: snapshot.buffer.subarray(startOffset), bytesRead: snapshot.buffer.length - startOffset };
+      }
+      return snapshot;
+    });
+    try {
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ text: 'Own request', turnId: 'child-turn' }]);
+      expect(await readCodexCliSessionMessages(sessionId, root)).toHaveLength(1);
+    } finally { spy.mockRestore(); }
+  });
+
   it("reads only appended transcript data after the first message load", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-incremental-transcript-"));
     roots.push(root);

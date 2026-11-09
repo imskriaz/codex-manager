@@ -1,5 +1,6 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const configurationDefaults = require("../../package.json").contributes.configuration.properties;
 
 class Disposable {
   constructor(fn = () => undefined) { this.fn = fn; this.isDisposed = false; }
@@ -28,8 +29,8 @@ const workspace = {
   onDidChangeConfiguration: configurationChanges.event,
   getConfiguration(section = "") {
     return {
-      get(key, fallback) { return values.has(`${section}.${key}`) ? values.get(`${section}.${key}`) : fallback; },
-      inspect(key) { return { defaultValue: undefined, globalValue: values.get(`${section}.${key}`) }; },
+      get(key, fallback) { const full = `${section}.${key}`; return values.has(full) ? values.get(full) : configurationDefaults[full]?.default ?? fallback; },
+      inspect(key) { const full = `${section}.${key}`; return { defaultValue: configurationDefaults[full]?.default, globalValue: values.get(full) }; },
       async update(key, value) { const full = `${section}.${key}`; if (value === undefined) values.delete(full); else values.set(full, value); configurationChanges.fire({ affectsConfiguration: name => name === section || name === full || full.startsWith(`${name}.`) }); }
     };
   },

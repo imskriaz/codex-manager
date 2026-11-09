@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.7.7-pre.4",
+  "version": "1.7.7",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -147,7 +147,7 @@
         "codexManager.modelCapacityAutoSwitchEnabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Switch to another verified capable account after consecutive model-capacity failures, only when no other session is running. Requires Auto Switch."
+          "markdownDescription": "Switch to another verified capable account after consecutive model-capacity failures, only when no other session is running. Standalone retries verified capacity interruptions with bounded backoff when Auto Resume permits. Requires Auto Switch."
         },
         "codexManager.modelCapacityFailureCount": {
           "type": "number",
@@ -172,7 +172,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": true,
-          "markdownDescription": "With Auto Switch on, recover unfinished parent chats after a VS Code restart in official Codex conversation tabs. Paused goals stay paused."
+          "markdownDescription": "With Auto Switch on, recover unfinished parent chats after restart, using official Codex tabs in VS Code or private turns in standalone. Also permits bounded standalone capacity retries. Per-session overrides apply; paused goals stay paused."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",

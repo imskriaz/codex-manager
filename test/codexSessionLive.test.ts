@@ -40,6 +40,41 @@ describe("Codex live current turn", () => {
     const distinct = { ...prompt, id: 'different-image', images: [{ src: 'data:image/png;base64,AQ==' }] };
     expect(combineCliLiveMessages([prompt, reply], { ...state, messages: [distinct, reply] }).filter(message => message.role === 'user')).toHaveLength(2);
   });
+  it("hydrates interleaved accepted steering echoes from a truncated snapshot without repeating user messages", () => {
+    const turnId = 'active-turn';
+    const image = [{ src: 'data:image/png;base64,AA==', alt: 'Attached image' }];
+    const question = { id: 'msg_saved-question', role: 'user' as const, kind: 'message' as const, text: 'Rename this conversation', turnId };
+    const upload = { ...question, id: 'msg_saved-upload', text: 'Please review the attached image files.', images: image };
+    const secondUpload = { ...upload, id: 'msg_saved-second-upload', text: 'Another screenshot', images: [{ src: 'data:image/png;base64,AQ==' }] };
+    const command = { id: 'command', kind: 'command' as const, text: 'Inspect state', turnId };
+    const reply = { id: 'reply', role: 'assistant' as const, text: 'Reviewing', turnId };
+    const nextCommand = { ...command, id: 'next-command' };
+    const history = [question, command, upload, reply, nextCommand, secondUpload];
+    const state = { ...reducer().snapshot(), turnId, truncated: true, messages: [
+      { ...question, id: 'live-question' }, command,
+      { ...upload, id: 'live-upload', text: `${upload.text}\n\n[Image unavailable]`, images: [] }, reply, nextCommand,
+      { ...secondUpload, id: 'live-second-upload', text: `${secondUpload.text}\n\n[Image unavailable]`, images: [] },
+    ] };
+    const merged = combineCliLiveMessages(history, state);
+    expect(merged).toEqual(history);
+    expect(combineCliLiveMessages(merged, state)).toEqual(merged);
+  });
+  it.each([false, true])('keeps repeated image uploads when a truncated suffix omits earlier user echoes (anchor %s)', anchored => {
+    const prompt = { id: 'saved-first', role: 'user' as const, kind: 'message' as const, text: 'Review this', turnId: 'turn-1', images: [{ src: 'data:image/png;base64,AA==' }] };
+    const second = { ...prompt, id: 'saved-second', images: [{ src: 'data:image/png;base64,AQ==' }] };
+    const third = { ...second, id: 'saved-third' };
+    const reply = { id: 'reply', role: 'assistant' as const, text: 'Working', turnId: 'turn-1' };
+    const history = [prompt, second, third, ...(anchored ? [reply] : [])];
+    const state = { ...reducer().snapshot(), turnId: 'turn-1', truncated: true, messages: [
+      { ...second, id: 'live-second', text: 'Review this\n\n[Image unavailable]', images: [] },
+      { ...third, id: 'live-third', text: 'Review this\n\n[Image unavailable]', images: [] },
+      ...(anchored ? [reply] : []),
+    ] };
+    const merged = combineCliLiveMessages(history, state);
+    expect(merged).toEqual(history);
+    expect(combineCliLiveMessages(merged, state)).toEqual(merged);
+    expect(combineCliLiveMessages(history, { ...state, messages: state.messages.slice(1) })).toEqual(history);
+  });
   it("removes a previously merged retry from task history after recovery or stream replacement", () => {
     const live = reducer(); live.started("turn-1");
     live.accept("error", params({ error: { message: "Reconnecting... 1/5" }, willRetry: true }));

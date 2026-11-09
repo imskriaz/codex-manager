@@ -348,6 +348,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') recoveryRead.current(); }, 15_000);
     return () => clearInterval(timer);
   }, [connectionInterrupted, props.connected, props.selectedSession?.id, props.selectedSession?.deviceId]);
+  useEffect(() => {
+    if (props.connected === false || props.selectedSession?.status !== "unknown") return;
+    // Verify in the background while the saved queue waits; do not turn a
+    // temporary inspection gap into a blocking toast or lost composer draft.
+    const timer = setInterval(() => { if (document.visibilityState !== "hidden") props.onRefresh(); }, 1000);
+    return () => clearInterval(timer);
+  }, [props.connected, props.selectedSession?.id, props.selectedSession?.deviceId, props.selectedSession?.status, props.onRefresh]);
 
   const [goalDeleteTarget, setGoalDeleteTarget] = useState<string>();
   const [section, setSection] = useState<CliSessionSection>("active");
@@ -908,7 +915,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     props.onBackToList();
   };
 
-  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : props.selectedSession?.status === 'unknown' ? 'Waiting for a verified session state before sending.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending && !canSteer ? 'Waiting for the current action to finish.' : currentTurnRunning && !(followUpMode === 'steer' && canSteer) ? 'Waiting for the current turn to finish.' : undefined;
+  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending && !canSteer ? 'Waiting for the current action to finish.' : currentTurnRunning && !(followUpMode === 'steer' && canSteer) ? 'Waiting for the current turn to finish.' : undefined;
   const messageQueue = useCliMessageQueue({ connected: props.connected !== false,
     scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
     canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && (!props.sending || canSteer) && !access.pending && !resume.pending && (!currentTurnRunning || followUpMode === 'steer' && canSteer)),
@@ -1481,7 +1488,7 @@ export function ConversationHeader(props: {
         </div> : null}
       </div>
     </> : null}</div>
-    {renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized) { props.onRename?.(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={() => { setName(props.session.title); setRenaming(false); props.onRenameCancelled?.(); }}>Cancel</button><button type="submit" disabled={!name.trim()}>Save</button></form> : null}
+    {renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized && !props.busy && !props.sending) { props.onRename?.(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={() => { setName(props.session.title); setRenaming(false); props.onRenameCancelled?.(); }}>Cancel</button><button type="submit" disabled={!name.trim() || props.busy || props.sending}>Save</button></form> : null}
   </header>;
 }
 
@@ -1728,7 +1735,7 @@ export function ImageLightbox({ image: initialImage, images, initialIndex = 0, o
   const alt = image.alt || "Image preview";
   return createPortal(
       <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); move(event.key === 'ArrowLeft' ? -1 : 1); } else accessibility.onKeyDown(event); }} onTouchStart={event => { touch.current = event.touches[0]?.clientX; }} onTouchEnd={event => { const end = event.changedTouches[0]?.clientX; if (!zoomed && touch.current !== undefined && end !== undefined && Math.abs(end - touch.current) > 50) move(end < touch.current ? 1 : -1); touch.current = undefined; }} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
-        <div class="cli-image-lightbox-toolbar"><span class="cli-image-lightbox-actions" role="group" aria-label="Image controls"><a href={image.src} download={`codex-image-${index + 1}`} aria-label="Download image" title="Download image"><Icon><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" title="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
+        <div class="cli-image-lightbox-toolbar"><span class="cli-image-lightbox-actions" role="group" aria-label="Image controls">{gallery.length > 1 ? <><button type="button" aria-label="Previous image" title="Previous image (Left arrow)" onClick={() => move(-1)}><Icon><path d="m14 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button><button type="button" aria-label="Next image" title="Next image (Right arrow)" onClick={() => move(1)}><Icon><path d="m10 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></button></> : null}<a href={image.src} download={`codex-image-${index + 1}`} aria-label="Download image" title="Download image"><Icon><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon></a><button type="button" aria-label="Close image preview" title="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
         {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <div ref={stageRef} class={`cli-image-stage ${zoomed ? "is-zoomed" : ""}`} onTouchStart={event => {
           event.stopPropagation();
           const first = event.touches[0], second = event.touches[1];
@@ -2162,7 +2169,7 @@ function isTurnActivity(message: DashboardCliSessionMessage): boolean {
 function isGroupableTurnActivity(message: DashboardCliSessionMessage): boolean {
   // Image activities stay as their own rich preview card; tool/command/file
   // activity from the same turn is consolidated behind one disclosure.
-  return isTurnActivity(message) && message.kind !== "reasoning" && message.kind !== "image" && message.kind !== "collaboration" && message.kind !== "compaction";
+  return isTurnActivity(message) && message.kind !== "reasoning" && message.kind !== "image" && (message.kind !== "collaboration" || message.status === "completed") && message.kind !== "compaction";
 }
 
 function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {

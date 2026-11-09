@@ -9,6 +9,7 @@ import * as diagnostics from "../src/utils/persistentLog";
 import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import * as sessionEditors from "../src/services/codexSessionResume";
+import * as sessionRecovery from "../src/services/codexSessionRecovery";
 import * as workspaceTools from "../src/services/workspaceTools";
 import * as autoResume from "../src/services/codexSessionAutoResume";
 
@@ -184,6 +185,15 @@ describe("manual Codex navigation and recovery", () => {
     expect(result.payload?.notice).toMatchObject({ level: "info", message: expect.stringContaining("Goal resumed") });
     expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
   });
+  it("resumes standalone goals privately without requiring the official extension",async()=>{
+    enableSessions();Object.defineProperty(vscode.env,'appHost',{configurable:true,value:'node'});
+    readCodexCliSessionSummaryMock.mockResolvedValue({id,title:'Goal',status:'idle',goal:{objective:'Finish',status:'paused'}});
+    vi.spyOn(sessionEditors,'setCodexSessionGoalStatus').mockResolvedValue(undefined);
+    const open=vi.spyOn(sessionEditors,'openCodexSessionInVsCode').mockRejectedValue(new Error('Official extension unavailable'));
+    const resume=vi.spyOn(sessionEditors,'resumeCodexSessionGoal').mockResolvedValue(undefined);
+    try {const result=await executeDashboardActionMessage({...createContext(),hostKind:'browser'},{type:'dashboard:action',requestId:'node-goal',action:'setCodexSessionGoalStatus',payload:{sessionId:id,goalStatus:'active'}});expect(result.payload?.notice?.level).toBe('info');expect(open).not.toHaveBeenCalled();expect(resume).toHaveBeenCalledWith(expect.objectContaining({id}),expect.any(AbortSignal),'user',true);}
+    finally {Reflect.deleteProperty(vscode.env,'appHost');}
+  });
   it("reports a confirmed goal activation separately when continuation is unavailable", async () => {
     enableSessions();
     readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Stopped goal", status: "idle", goal: { objective: "Finish", status: "paused" } });
@@ -206,6 +216,31 @@ describe("manual Codex navigation and recovery", () => {
     expect((await executeDashboardActionMessage(ctx, request)).status).toBe("completed");
     expect(open).toHaveBeenCalledTimes(2);
     expect(close).not.toHaveBeenCalled();
+  });
+  it("recovers standalone Play requests privately without opening VS Code", async () => {
+    enableSessions();
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockRejectedValue(new Error("VS Code is unavailable"));
+    const resume = vi.spyOn(sessionRecovery, "resumeCodexSessionWork").mockResolvedValue("continued");
+    readCodexCliSessionsMock.mockResolvedValue([{ id, title: "Interrupted", status: "idle", interrupted: true, goal: null }]);
+    try {
+      const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "standalone-play", action: "resumeCodexSessions" });
+      expect(result).toMatchObject({ status: "completed", payload: { notice: { level: "info", message: expect.stringContaining("recovered in the background") } } });
+      expect(open).not.toHaveBeenCalled();
+      expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal), "user", "private");
+    } finally { Reflect.deleteProperty(vscode.env, "appHost"); }
+  });
+  it("keeps standalone session opens in the dashboard even when an editor-open flag is sent", async () => {
+    enableSessions();
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockRejectedValue(new Error("VS Code is unavailable"));
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Session", status: "idle", goal: null });
+    readCodexCliSessionMessagesMock.mockResolvedValue([]);
+    try {
+      const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "standalone-open", action: "openCodexCliSession", payload: { sessionId: id, openInVsCode: true } });
+      expect(result).toMatchObject({ status: "completed", payload: { notice: { message: "Opened the session in the standalone dashboard." } } });
+      expect(open).not.toHaveBeenCalled();
+    } finally { Reflect.deleteProperty(vscode.env, "appHost"); }
   });
   it("preserves uncertain sessions and reports partial opens and missing sessions", async () => {
     enableSessions();

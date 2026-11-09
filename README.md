@@ -53,7 +53,7 @@ Eight views in two rows. Click an image for the full-size screenshot. All identi
 
 ### Connect your PCs
 
-1. Install Codex Manager on each PC and keep VS Code running for live sessions and workspace controls.
+1. Install Codex Manager on each PC. Keep VS Code open, or enable **Always Active** with Node.js installed to keep the standalone host running after VS Code closes.
 2. Enable **Web Dashboard** and **WS Cross System**, configure the same shared dashboard password, and use the same HTTPS dashboard domain on your PCs.
 3. Open the dashboard in your browser and choose a PC in the sidebar. Its sessions, projects, and enabled accounts load in that system's context.
 4. Use the workspace tabs for **Env, Files, Git, Reviews, Agents, and Terminal**. Chat file links open in the Files panel, keeping the conversation visible.
@@ -66,9 +66,9 @@ Enable **Auto Switch → Auto resume sessions** to recover eligible work after a
 
 ## Requirements
 
-- VS Code 1.101 or newer.
-- Node.js 22.13 or newer for the optional detached relay.
-- A working Codex installation and a writable `CODEX_HOME` (the default Codex location is used when `CODEX_HOME` is not set).
+- VS Code 1.101 or newer for the extension, or Node.js 22.13 or newer for standalone.
+- Node.js 22.13 or newer for **Always Active** background hosting.
+- A writable `CODEX_HOME` and saved signed-in accounts. Workspace sessions use the official Codex app-server/CLI; the AI proxy uses saved accounts directly.
 - Node.js 22.13 or newer when building and testing from source.
 - A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
@@ -161,11 +161,13 @@ Enable **Always Active** in the same Settings panel to keep the local Node host 
 
 The background host prefers an installed Node.js 22.13+ runtime and falls back to VS Code's compatible runtime. Windows handoff and login startup run with hidden windows. The browser uses the same shared password and retains its login when hosts change; SQLite stores the shared login configuration, a salted password verifier, and session fingerprints. Password changes revoke existing logins. After upgrading from an older version, reload VS Code once before closing it so the shared login state can migrate. Handoff can briefly reconnect while the previous host releases the port; a competing launch never stops the active host.
 
-VS Code and Node retain the same local device ID. Temporary discovery gaps keep the selected system instead of switching to another PC. With System log enabled, standalone startup, readiness, port waits, shutdown, and failures appear in the same SQLite log as VS Code diagnostics.
+VS Code and Node retain the same local device ID. Temporary discovery gaps keep the selected system. If a remote PC stays offline for five seconds while the local host is connected, the browser returns to the local workspace. Pending remote actions are never replayed locally. With System log enabled, standalone startup, readiness, port waits, shutdown, and failures appear in the same SQLite log as VS Code diagnostics.
 
 For a standalone Node launch from a source checkout, run `npm run compile` first, then `npm start` (or `node tools/start-node.cjs`). The host serves `http://127.0.0.1:39875` and refuses a second process on the same port. Stop it with Ctrl+C; VS Code can take over the same database and port on its next start.
 
 Standalone hides the Terminal tab and its add/overview controls. Files, Git, reviews, agents, sessions, and account controls remain available.
+
+Standalone retries verified capacity interruptions up to four times with increasing delays, retaining its attempt count in SQLite. It uses the existing Auto Switch, Model Capacity Auto Switch and global/per-session Auto Resume settings. Manual Stop, explicit goal pause, session disablement, ownership conflicts and uncertain failures prevent replay. Goal Resume in Node uses the private app-server without opening a VS Code tab.
 
 Node also starts the shared queue, session recording, Auto Resume, quota refresh, token refresh, and model-capacity recovery services. Recovery uses a private app-server connection without opening VS Code. Account changes apply to new turns without a VS Code reload. Account automation uses the shared ownership coordinator in both hosts. Authenticated peer synchronization works in standalone; the VS Code Settings Sync transport requires VS Code.
 
@@ -373,6 +375,48 @@ Send `Authorization: Bearer <token>`. For example:
 ```
 
 API tokens use HTTP endpoints; they cannot open an unrestricted dashboard WebSocket. Project-scoped responses exclude other projects' session lists and account/credential payloads. Operation-only tokens covering all projects do not receive appended dashboard snapshots unless they also grant `state`. A timeout is an unconfirmed outcome: inspect current state before retrying a live operation.
+
+Completed goals are removed automatically after their turn releases its writer. Active, paused and replacement goals are preserved; unavailable storage or a busy writer retains the goal for retry.
+
+### AI proxy: OpenAI and Claude formats
+
+Use the same host and port as the dashboard, in VS Code or standalone. Enable
+**Dashboard API** and use an existing all-operations Manager key, or grant
+**aiProxy** to an all-project key. Project-scoped keys cannot use the AI proxy.
+The key stays the same when Always Active hands the port between hosts.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/models` | Discover models available to the active saved account. |
+| `GET /v1/models/{id}` | Read one available model. |
+| `POST /v1/chat/completions` | OpenAI Chat Completions, including SSE streaming. |
+| `POST /v1/responses` | OpenAI Responses, including SSE streaming. |
+| `POST /v1/messages` | Claude Messages format, including SSE streaming. |
+
+Set an OpenAI client's base URL to `http://127.0.0.1:39875/v1` and API key to your
+Manager key. For a Claude client, use `http://127.0.0.1:39875` and the same key;
+`x-api-key` and Bearer authentication are accepted. Discover a model before using
+it. Claude format uses the discovered Codex models; it does not add Claude models.
+
+```bash
+curl http://127.0.0.1:39875/v1/models -H "Authorization: Bearer <MANAGER_KEY>"
+curl http://127.0.0.1:39875/v1/chat/completions \
+  -H "Authorization: Bearer <MANAGER_KEY>" -H "Content-Type: application/json" \
+  -d '{"model":"<DISCOVERED_MODEL>","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+Text, image inputs, function tools and tool results are translated. Function calls
+are returned to the client and never execute on the host. Unsupported features
+return explicit errors. The saved-account backend may reject model-specific
+parameters. Responses are not stored as workspace sessions.
+
+Requests use the active saved account and the existing token-renewal opt-in.
+Quota/auth rejection can invoke normal Auto Switch, preserving locks, account
+ownership, enabled state and session-wait settings. Partial output and uncertain
+network failures are never automatically replayed. Revoking a Manager key or
+turning Dashboard API off blocks subsequent requests. At most eight requests run
+at once; excess requests return HTTP 429. Client disconnect and host shutdown
+cancel upstream work. Use HTTPS for access beyond the local machine.
 
 ### Offline cache and reconnect
 

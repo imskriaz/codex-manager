@@ -195,6 +195,7 @@ let cliModelListCache:
   { codexHome: string; models: DashboardCliComposerConfig["models"]; fetchedAt: number } | undefined;
 let cliModelListProbe: Promise<DashboardCliComposerConfig["models"]> | undefined;
 let cliModelListProbeHome: string | undefined;
+type CliTranscriptContext = { turnId?: string; sessionMetadataSeen?: boolean; inheritedRecordsRemaining?: number; awaitingChildStart?: boolean };
 type CliTranscriptMessageCache = {
   size: number;
   mtimeMs: number;
@@ -203,7 +204,7 @@ type CliTranscriptMessageCache = {
   nextSequence: number;
   messages: DashboardCliSessionMessage[];
   windowed: boolean;
-  currentTurnId?: string;
+  turnContext: CliTranscriptContext;
 };
 type CliTranscriptReadResult = {
   messages: DashboardCliSessionMessage[];
@@ -479,13 +480,17 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
   return [...result.values()];
 }
 
-export async function clearCodexSessionGoal(sessionId: string): Promise<void> {
+export async function clearCodexSessionGoal(sessionId: string, completedObjective?: string): Promise<void> {
   validateSessionId(sessionId);
-  const details = { sessionRef: toSessionLogRef(sessionId), actor: "manager", origin: "user", method: "thread/goal/clear" };
+  const details = { sessionRef: toSessionLogRef(sessionId), actor: "manager", origin: completedObjective === undefined ? "user" : "completed-goal-cleanup", method: "thread/goal/clear" };
   recordPersistentEvent("info", "session-goal", "Goal clear requested", details);
   try {
     await runCliSessionMutation(sessionId, "Clear Codex goal", async () => {
       if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("This conversation is running. Stop it before clearing its goal.");
+      if (completedObjective !== undefined) {
+        const goal = (await readCodexSessionGoals(resolveCodexHome(), [sessionId]))?.get(sessionId);
+        if (goal?.status !== 'complete' || goal.objective !== completedObjective) return;
+      }
       await runCodexAppServerRequest("thread/goal/clear", { threadId: sessionId });
     });
     recordPersistentEvent("info", "session-goal", "Goal clear confirmed", details);
@@ -1260,9 +1265,15 @@ async function sendAppServerSessionMessage(options: {
   const nativeStarted = (turnId: string) => nativeTurnStarted(home, options.sessionId, turnId);
   const startNative = async () => {
     onAttempt?.(true);
-    const started = await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted);
-    if (!started) onAttempt?.(false);
-    return started;
+    try {
+      const started = await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted);
+      if (!started) onAttempt?.(false);
+      return started;
+    } catch (error) {
+      if (isCodexCapacityInterruption(error instanceof Error ? error.message : String(error)) && !ownedNativeTurn(home, options.sessionId))
+        publishNativeTurnState(home, options.sessionId, 'failed', undefined, randomUUID(), error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   };
   if (!options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNative()) {
     options.onStarted?.();
@@ -1430,6 +1441,8 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
     })), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", signal);
   } catch (error) {
     recordPersistentEvent("warning", "session-goal", "Goal recovery failed", { sessionRef: toSessionLogRef(session.id), origin, phase, goalStatus, recoveryRetained: true }, error);
+    if (!accepted && isCodexCapacityInterruption(error instanceof Error ? error.message : String(error)))
+      publishNativeTurnState(home, session.id, 'failed', undefined, randomUUID(), error instanceof Error ? error.message : String(error));
     if (!accepted) live.finish("failed", error instanceof Error ? error.message : String(error));
     throw error;
   } finally { live.dispose(accepted); }
@@ -1873,18 +1886,23 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
   const normalized = name.trim().replace(/\s+/g, " ");
   if (!normalized) throw new Error("Enter a session name before saving.");
   if (normalized.length > 160) throw new Error("Keep the session name under 160 characters.");
-  await runCliSessionMutation(sessionId, "Codex session rename", () =>
-    runCodexAppServerRequest("thread/name/set", { threadId: sessionId, name: normalized })
-  );
-  const recent = getRecentNewSession(sessionId);
-  if (recent) recent.summary = { ...recent.summary, title: normalized };
-  try {
-    writeCodexSessionTitleOverride(resolveCodexHome(), sessionId, normalized);
-  } catch (error) {
-    // The native rename is already committed; Manager can reconcile the title
-    // from the native transcript when its optional cache becomes available.
-    recordPersistentEvent("warning", "session-list", "Native title changed but the local title cache is unavailable", { sessionRef: toSessionLogRef(sessionId) }, error);
-  }
+  const home = resolveCodexHome();
+  await runCrossWindowExclusive(`codex:session-name:${sessionId.toLowerCase()}`, "Codex session rename", async () => {
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. The rename was not sent.');
+    const active = activeAppServerTurns.get(sessionId);
+    if (active?.home === path.resolve(home)) await active.rpc.request("thread/name/set", { threadId: sessionId, name: normalized }, 10_000);
+    else await runCodexAppServerRequest("thread/name/set", { threadId: sessionId, name: normalized }, 10_000);
+    const recent = getRecentNewSession(sessionId);
+    if (recent) recent.summary = { ...recent.summary, title: normalized };
+    try {
+      writeCodexSessionTitleOverride(home, sessionId, normalized);
+      const store = getSqliteStateStore();
+      if (store) invalidateSessionCatalogue(store, home);
+    } catch (error) {
+      // The native rename is already committed; its transcript can restore the optional cache.
+      recordPersistentEvent("warning", "session-list", "Native title changed but the local title cache is unavailable", { sessionRef: toSessionLogRef(sessionId) }, error);
+    }
+  });
 }
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
@@ -1990,9 +2008,10 @@ export async function readCodexCliSessionInitialPrompt(sessionId: string, home =
     signal.throwIfAborted(); if (!file) return null;
     const snapshot = await readSafeFileSnapshot(file, { maxBytes: 512 * 1024, startOffset: 0, timeoutMs: 3000 });
     const raw = snapshot.endOffset < snapshot.size ? splitCompleteJsonlRecords(snapshot.buffer).complete : snapshot.buffer;
+    const turnContext: CliTranscriptContext = {};
     for (const [line] of raw.toString('utf8').matchAll(/[^\n]+/g)) {
       signal.throwIfAborted();
-      const message = parseCliSessionMessage(line, 0);
+      const message = parseTaggedCliSessionMessage(line, 0, turnContext);
       if (message?.role === 'user' && message.text.trim() && !/^(?:# AGENTS\.md instructions|<user_instructions>)/.test(message.text.trimStart())) {
         const value = JSON.parse(line) as { payload?: Record<string, unknown> };
         const payload = value.payload ?? {}, item = payload['item'] && typeof payload['item'] === 'object' ? payload['item'] as Record<string, unknown> : payload;
@@ -2029,12 +2048,13 @@ export async function readCodexCliSessionMessagePage(sessionId: string, before?:
       windowBytes = Math.min(MAX_SESSION_TRANSCRIPT_READ_BYTES, windowBytes * 2);
       page = await readPage(); raw = page.buffer.subarray(0, Math.max(0, end - page.startOffset));
     }
+    boundary = page.startOffset;
     if (page.startOffset > 0) {
       if (page.buffer[0] === 0x0a) { boundary += 1; raw = raw.subarray(1); }
       else { raw = Buffer.alloc(0); warnings.push('A history record exceeds the 25 MB read limit. Open the native conversation to inspect that record.'); }
     }
   }
-  const parsed = parseCliTranscriptLines(raw.toString('utf8'), boundary, {});
+  const parsed = parseCliTranscriptLines(raw.toString('utf8'), boundary, await readCliTranscriptContextBefore(transcript, boundary));
   return { messages: await hydrateSessionImages(parsed.messages), olderThan: boundary > 0 ? String(boundary) : undefined, warnings };
 }
 
@@ -3755,7 +3775,7 @@ async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTra
     const combined = Buffer.concat([cached.remainder, snapshot.buffer]);
     const split = splitCompleteJsonlRecords(combined);
     let remainder = split.remainder;
-    const turnContext = { turnId: cached.currentTurnId };
+    const turnContext = { ...cached.turnContext };
     const parsed = parseCliTranscriptLines(split.complete.toString("utf8"), cached.nextSequence, turnContext);
     const addedMessages = parsed.messages;
     let nextSequence = parsed.nextSequence;
@@ -3767,6 +3787,7 @@ async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTra
       if (mergeCliTranscriptMessage(addedMessages, trailingMessage)) nextSequence += 1;
       remainder = Buffer.alloc(0);
     }
+    else if (trailingText.trim()) { try { JSON.parse(trailingText); remainder = Buffer.alloc(0); } catch { /* Keep incomplete metadata for the next append. */ } }
     const mergedMessages = [...cached.messages];
     for (const message of addedMessages) mergeCliTranscriptMessage(mergedMessages, message);
     next = {
@@ -3777,17 +3798,19 @@ async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTra
       nextSequence,
       messages: mergedMessages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
       windowed: cached.windowed,
-      currentTurnId: turnContext.turnId
+      turnContext
     };
   } else {
     let raw = snapshot.buffer;
+    let boundary = snapshot.startOffset;
     if (snapshot.startOffset > 0) {
       const firstNewline = raw.indexOf(0x0a);
+      boundary += firstNewline >= 0 ? firstNewline + 1 : raw.length;
       raw = firstNewline >= 0 ? raw.subarray(firstNewline + 1) : Buffer.alloc(0);
     }
     const split = splitCompleteJsonlRecords(raw);
     let remainder = split.remainder;
-    const turnContext: { turnId?: string } = {};
+    const turnContext = await readCliTranscriptContextBefore(transcriptPath, boundary);
     const parsed = parseCliTranscriptLines(split.complete.toString("utf8"), 0, turnContext);
     const messages = parsed.messages;
     let nextSequence = parsed.nextSequence;
@@ -3797,6 +3820,7 @@ async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTra
       if (mergeCliTranscriptMessage(messages, trailingMessage)) nextSequence += 1;
       remainder = Buffer.alloc(0);
     }
+    else if (trailingText.trim()) { try { JSON.parse(trailingText); remainder = Buffer.alloc(0); } catch { /* Keep incomplete metadata for the next append. */ } }
     next = {
       size: snapshot.endOffset,
       mtimeMs: snapshot.mtimeMs,
@@ -3805,7 +3829,7 @@ async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTra
       nextSequence,
       messages: messages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
       windowed: snapshot.startOffset > 0,
-      currentTurnId: turnContext.turnId
+      turnContext
     };
   }
   cliTranscriptMessageCache.delete(cacheKey);
@@ -3837,7 +3861,27 @@ function splitCompleteJsonlRecords(buffer: Buffer): { complete: Buffer; remainde
     : { complete: Buffer.alloc(0), remainder: buffer };
 }
 
-function parseCliTranscriptLines(raw: string, startingSequence: number, turnContext: { turnId?: string }): { messages: DashboardCliSessionMessage[]; nextSequence: number } {
+async function readCliTranscriptContextBefore(transcriptPath: string, boundary: number): Promise<CliTranscriptContext> {
+  const context: CliTranscriptContext = {};
+  let offset = 0, remainder = Buffer.alloc(0);
+  const deadline = Date.now() + 3000;
+  while (offset < boundary) {
+    if (Date.now() >= deadline) throw new Error('The child session history boundary could not be read in time. Retry opening the conversation.');
+    const prefix = await readSafeFileSnapshot(transcriptPath, { maxBytes: Math.min(64 * 1024, boundary - offset), startOffset: offset, timeoutMs: Math.max(1, deadline - Date.now()) });
+    if (!prefix.bytesRead) break;
+    offset = prefix.endOffset;
+    const split = splitCompleteJsonlRecords(Buffer.concat([remainder, prefix.buffer]));
+    remainder = Buffer.from(split.remainder);
+    for (const [line] of split.complete.toString('utf8').matchAll(/[^\n]+/g)) {
+      parseTaggedCliSessionMessage(line, 0, context);
+      if (context.sessionMetadataSeen && !context.awaitingChildStart && !context.inheritedRecordsRemaining) return { sessionMetadataSeen: true };
+    }
+    if (remainder.length > MAX_SESSION_TRANSCRIPT_READ_BYTES) throw new Error('The session metadata exceeds the history read limit.');
+  }
+  return context;
+}
+
+function parseCliTranscriptLines(raw: string, startingSequence: number, turnContext: CliTranscriptContext): { messages: DashboardCliSessionMessage[]; nextSequence: number } {
   const messages: DashboardCliSessionMessage[] = [];
   let sequence = startingSequence;
   for (const [line] of raw.matchAll(/[^\n]+/g)) {
@@ -3848,12 +3892,29 @@ function parseCliTranscriptLines(raw: string, startingSequence: number, turnCont
   return { messages, nextSequence: sequence };
 }
 
-function parseTaggedCliSessionMessage(line: string, sequence: number, context: { turnId?: string }): DashboardCliSessionMessage | undefined {
+function parseTaggedCliSessionMessage(line: string, sequence: number, context: CliTranscriptContext): DashboardCliSessionMessage | undefined {
   let endsTurn = false;
   let eventTurnId: string | undefined;
   try {
-    const value = JSON.parse(line) as { type?: string; turn_id?: string; turnId?: string; payload?: { type?: string; turn_id?: string; turnId?: string; id?: string } };
+    const value = JSON.parse(line) as { type?: string; turn_id?: string; turnId?: string; payload?: { type?: string; turn_id?: string; turnId?: string; id?: string; source?: unknown; forked_from_id?: unknown; subagent_history_start_ordinal?: unknown } };
     const payload = value.payload;
+    if (!context.sessionMetadataSeen) {
+      context.sessionMetadataSeen = true;
+      if (value.type === 'session_meta' && typeof payload?.forked_from_id === 'string' && readSubAgentMetadata(payload.source).subAgent) {
+        const ordinal = payload.subagent_history_start_ordinal;
+        if (Number.isSafeInteger(ordinal) && (ordinal as number) >= 0) context.inheritedRecordsRemaining = ordinal as number;
+        else context.awaitingChildStart = true;
+        return undefined;
+      }
+    } else if (context.inheritedRecordsRemaining) {
+      context.inheritedRecordsRemaining -= 1;
+      return undefined;
+    }
+    if (context.awaitingChildStart) {
+      if (value.type !== 'event_msg' || payload?.type !== 'task_started') return undefined;
+      context.awaitingChildStart = false;
+      context.turnId = undefined;
+    }
     const id = payload?.turn_id ?? payload?.turnId ?? value.turn_id ?? value.turnId;
     if (typeof id === "string" && id.length <= 256) eventTurnId = id;
     if (eventTurnId && (value.type === "turn_context" || payload?.type === "task_started")) context.turnId = eventTurnId;

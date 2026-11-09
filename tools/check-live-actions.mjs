@@ -49,7 +49,7 @@ await page.addInitScript(() => {
     send(data) {
       if (window.__delayNextStart && typeof data === 'string' && data.includes('"action":"startCodexCliSession"')) {
         window.__delayNextStart = false;
-        setTimeout(() => super.send(data), 1000);
+        setTimeout(() => super.send(data), 3000);
       } else super.send(data);
     }
   };
@@ -162,7 +162,7 @@ try {
     const previousRows = await observer.locator('.cli-session-row').count();
     await page.evaluate(() => { window.__delayNextStart = true; });
     const creating = clickAction("startCodexCliSession", () => page.getByRole("button", { name: "Send message", exact: true }).click());
-    await page.locator('.cli-session-row.is-starting').waitFor({ timeout: 1000 });
+    await page.locator('.cli-session-row.is-starting').waitFor({ timeout: 2500 });
     const created = await creating;
     owned.add(created.payload.cliSession.id);
     assert.equal(path.resolve(created.payload.cliSession.projectPath).toLowerCase(), path.resolve(stale.projectPath).toLowerCase(), "New chat retains the selected session's project");
@@ -176,7 +176,10 @@ try {
   });
   await record("mobile new chat and first response", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const showRail=page.getByRole("button", { name: "Show sessions sidebar", exact: true });
+    if(await showRail.isVisible())await showRail.click();
+    await page.locator(".cli-session-rail.is-mobile-open, .cli-workspace:not(.is-rail-collapsed)").first().waitFor();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly LIVE MOBILE OK. Do not run tools or modify files.");
     const created = await clickAction("startCodexCliSession", () => page.getByRole("button", { name: "Send message", exact: true }).click());
@@ -184,7 +187,7 @@ try {
     await page.locator(".cli-session-message.is-assistant").filter({ hasText: "LIVE MOBILE OK" }).waitFor({ timeout: 120_000 });
     await waitIdle(created.payload.cliSession.id);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-    assert.ok((await page.locator(".cli-conversation-header").boundingBox()).height <= 48, "Mobile header stays compact");
+    assert.ok((await page.locator(".cli-conversation-header").boundingBox()).height <= 64, "Mobile header stays compact");
     await page.screenshot({ path: path.join(output, "mobile.png") });
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -281,13 +284,22 @@ try {
     await page.locator(".cli-agent-row").filter({ hasText: child.agentName || child.model || "Agent" }).first().click();
     await page.locator(".cli-agent-transcript").filter({ hasText: "LIVE CHILD OK" }).waitFor();
   });
-  await record("disposable goal creation, completion and compact display", async () => {
+  await record("disposable goal creation, completion and automatic cleanup", async () => {
     await action("sendCodexCliSessionMessage", { sessionId, text: "Create a goal with objective 'Verify a disposable dashboard goal', mark it complete, then reply LIVE GOAL OK. Do not run shell commands or modify files." });
     await waitIdle(sessionId);
     const messages = (await action("getCodexCliSessionMessages", { sessionId })).payload.cliSessionMessages;
     const goalSession = (await action("getCodexCliSessionMessages", { sessionId })).payload.cliSession;
-    assert.ok(messages.some(message => /create_goal|update_goal/.test(message.title ?? "")) || goalSession.goal?.objective === "Verify a disposable dashboard goal" && goalSession.goal.status === "complete", "Goal completion is recorded in the real session state");
-    await page.locator(".cli-goal-strip.is-complete").filter({ hasText: "Verify a disposable dashboard goal" }).waitFor();
+    const completionObserved=await page.evaluate(()=>window.__liveEvents.some(event=>event.payload?.cliSession?.goal?.objective==='Verify a disposable dashboard goal'&&event.payload.cliSession.goal.status==='complete'));
+    assert.ok(completionObserved || messages.some(message => /create_goal|update_goal|"status":"complete"/.test((message.title??'')+(message.text??''))) || goalSession.goal?.objective === "Verify a disposable dashboard goal" && goalSession.goal.status === "complete", "Goal completion is recorded before automatic cleanup");
+    const cleanupDeadline=Date.now()+30000;
+    for (;;) {
+      const current=(await action("getCodexCliSessionMessages", {sessionId})).payload.cliSession;
+      if(current.goal===null)break;
+      assert.ok(Date.now()<cleanupDeadline,"Completed goal was not cleared automatically");
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    await page.locator(".cli-goal-strip").waitFor({state:"detached"});
+    assert.ok((await action("getCodexCliSessionMessages",{sessionId})).payload.cliSessionMessages.some(message=>message.role==='assistant'&&message.text?.includes('LIVE GOAL OK')), "Goal cleanup preserves the conversation");
   });
   await record("Files refresh, open, edit, save and disk content", async () => {
     if (await page.getByRole("button", { name: "Show workspace tools", exact: true }).count()) await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();

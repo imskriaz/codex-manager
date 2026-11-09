@@ -107,8 +107,6 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
       store.set('model-capacity', key, next);
       const threshold = normalizeModelCapacityFailures(getCodexManagerConfiguration().get<number>('modelCapacityFailureCount', 3));
       if (outcome !== true || disposed || !enabled() || next.count < threshold || !canUseAccount(accountId)) return;
-      const switched = await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount, modelCapacityAccountId: accountId, capacityStillNeeded: () => !disposed && epoch === revision && enabled() && next.count >= normalizeModelCapacityFailures(getCodexManagerConfiguration().get<number>('modelCapacityFailureCount', 3)) && home === resolveCodexHome() && captureSessionAccount() === accountId });
-      if (!switched) return;
       try {
         await setCapacityTag(repo, view, accountId, true);
         const tags = getSqliteStateStore()?.get<CapacityTagLedger>('model-capacity-tags', key) ?? {};
@@ -117,6 +115,8 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
       } catch (error) {
         publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: `The Capacity tag could not be saved. Existing tags were kept. ${error instanceof Error ? error.message : ''}` });
       }
+      const switched = await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount, modelCapacityAccountId: accountId, capacityStillNeeded: () => !disposed && epoch === revision && enabled() && next.count >= normalizeModelCapacityFailures(getCodexManagerConfiguration().get<number>('modelCapacityFailureCount', 3)) && home === resolveCodexHome() && captureSessionAccount() === accountId });
+      if (!switched) publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Model capacity threshold reached. Automatic switching was deferred by account availability, ownership, lock or running-session rules. The account remains flagged for capacity.' });
     })).catch(error => {
       observed.delete(eventId);
       console.warn('[codexManager] model capacity recovery could not complete', error);

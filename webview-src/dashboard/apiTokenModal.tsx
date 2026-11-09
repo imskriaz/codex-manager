@@ -25,7 +25,7 @@ export function ApiTokenModal(props: {
   const [createdToken, setCreatedToken] = useState<string>(), [copyStatus, setCopyStatus] = useState('');
   useEffect(() => { if (props.token) setCreatedToken(props.token); }, [props.token]);
   useEffect(() => { if (!props.open) {setCreatedToken(undefined);setCredential('');setCreateOpen(false);setCopyStatus('');setAccess(undefined);setInspection('');setResult('');requestRef.current?.abort();} }, [props.open]);
-  const allowedPermissions = ['state', ...(allProjects ? ['settings'] : []), ...DASHBOARD_API_ACTIONS.filter(action => allProjects || PROJECT_API_ACTIONS.has(action))];
+  const allowedPermissions = ['state', ...(allProjects ? ['settings','aiProxy'] : []), ...DASHBOARD_API_ACTIONS.filter(action => allProjects || PROJECT_API_ACTIONS.has(action))];
   const browser = location.protocol === 'http:' || location.protocol === 'https:';
   const canUse = props.enabled && props.connected && !props.pending && !props.uncertain;
   useEffect(() => {
@@ -84,6 +84,7 @@ export function ApiTokenModal(props: {
     </div> : tab === 'explorer' ? <div class="api-panel api-explorer-panel">
       <div class="api-explorer-row"><strong>GET /api/state</strong><p>Reads dashboard state, or only the scoped project. Requires state permission.</p></div>
       <div class="api-explorer-row"><strong>GET /api/schema</strong><p>Lists operations allowed by the supplied token.</p></div>
+      <div class="api-explorer-row"><strong>AI proxy · same host and API key</strong><p>GET /v1/models discovers available Codex models. POST /v1/chat/completions and /v1/responses accept OpenAI format; POST /v1/messages accepts Claude format. Streaming, images and function tools are supported. Use a host-wide key with aiProxy permission or all operations. Claude format uses your Codex models.</p></div>
       <div class="api-explorer-row"><strong>POST /api/message</strong><pre>{JSON.stringify({ type: 'dashboard:action', requestId: 'unique-request-id', action: operation, payload: { ...(PROJECT_API_ACTIONS.has(operation as never) ? { projectPath: '/absolute/host/project' } : {}) } }, null, 2)}</pre></div>
       <label>Operation<select aria-label="Operation" value={operation} onChange={event => setOperation(event.currentTarget.value)}>{DASHBOARD_API_ACTIONS.map(action => <option value={action}>{action}</option>)}</select></label>
       <p class="settings-note">Send Authorization: Bearer &lt;token&gt;. Account operations such as refreshAll require an all-project token with that operation granted. Project tokens cannot access other projects, accounts, terminal control, or global settings. Write actions retain their normal confirmation fields.</p>

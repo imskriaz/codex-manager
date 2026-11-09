@@ -14,7 +14,7 @@ import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
-import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
+import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 
@@ -533,6 +533,15 @@ describe("native App Server new sessions", () => {
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
   });
+  it("rechecks a completed goal before automatic clear and preserves replacement or active goals", async () => {
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    seedGoal("active");
+    const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
+    await clearCodexSessionGoal(id, "Do all work");
+    expect(rpc.request).not.toHaveBeenCalled();
+  });
   it("allows storage cleanup for a deleted project without running a turn in another workspace", async () => {
     await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: path.join(root, "deleted-project") } }) + "\n");
@@ -542,6 +551,15 @@ describe("native App Server new sessions", () => {
     expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/archive", "thread/unarchive", "thread/goal/clear", "thread/delete"]);
     await expect(sendCodexCliSessionMessage({ sessionId: id, text: "Continue" })).rejects.toThrow();
     expect(mocks.open).toHaveBeenCalledTimes(4);
+  });
+  it("publishes a capacity rejection before native turn acceptance for automatic account handling", async () => {
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    vi.mocked(startNativeCodexSessionTurn).mockRejectedValueOnce(new Error("Selected model is at capacity. Please try a different model."));
+    const events: unknown[]=[];const stop=subscribeDashboardRealtime(message=>{if(message.type==='dashboard:codex-session-live'&&message.state.status==='failed')events.push(message.state);});
+    try {await expect(sendCodexCliSessionMessage({sessionId:id,text:'Continue'})).rejects.toThrow('capacity');expect(events).toHaveLength(1);expect(events[0]).toMatchObject({sessionId:id,status:'failed',error:expect.stringContaining('capacity')});}
+    finally {stop();}
   });
   it.each([true, false])("continues through the native owner without duplicating its writer (known owner: %s)", async known => {
     const directory = path.join(root, "sessions"); await mkdir(directory);
@@ -611,6 +629,35 @@ describe("native App Server new sessions", () => {
     expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete"]);
     expect(mocks.open.mock.calls.map(([, cwd]) => cwd)).toEqual([root,root,root,root]);
     expect(mocks.spawn).not.toHaveBeenCalled(); expect(rpc.close).toHaveBeenCalledTimes(4);
+  });
+  it('renames a running private turn through its existing connection without waiting for its writer', async () => {
+    let finish!: () => void;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, sandbox: { type: 'dangerFullAccess' }, activePermissionProfile: { id: ':danger-full-access' }, approvalPolicy: 'never' })), onServerRequest: () => () => undefined, onNotification: () => () => undefined,
+      close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('rename-active'); await completed; }) };
+    mocks.open.mockResolvedValue(rpc);
+    try {
+      await startCodexCliSession({ text: 'Keep working', projectPath: root });
+      await renameCodexCliSession(id, '  Updated   title  ');
+      expect(mocks.open).toHaveBeenCalledOnce();
+      expect(rpc.request).toHaveBeenLastCalledWith('thread/name/set', { threadId: id, name: 'Updated title' }, 10_000);
+      expect(rpc.close).not.toHaveBeenCalled();
+      expect(getCodexSessionLiveState(id)?.status).toBe('running');
+      expect(readNewCodexCliSessionSummary(id)?.title).toBe('Updated title');
+      expect(readCodexSessionTitleOverrides(root, [id]).get(id)).toBe('Updated title');
+    } finally { finish(); await completed; await new Promise(resolve => setTimeout(resolve, 0)); }
+  });
+  it.each(['Owner disconnected', 'App-server request timed out'])('keeps the saved title when rename fails: %s', async error => {
+    const rpc = { request: vi.fn().mockRejectedValue(new Error(error)), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(renameCodexCliSession(id, 'Unconfirmed title')).rejects.toThrow(error);
+    expect(rpc.request).toHaveBeenCalledExactlyOnceWith('thread/name/set', { threadId: id, name: 'Unconfirmed title' }, 10_000);
+    expect(readCodexSessionTitleOverrides(root, [id]).has(id)).toBe(false);
+    expect(rpc.close).toHaveBeenCalledOnce();
+  });
+  it.each(['   ', 'x'.repeat(161)])('validates a new title before opening an app-server', async title => {
+    await expect(renameCodexCliSession(id, title)).rejects.toThrow();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
   it("rejects a different selected project instead of sending in an unrelated workspace", async () => {
     const project = path.join(root, "recorded-project"); await mkdir(project); await mkdir(path.join(root, "sessions"));

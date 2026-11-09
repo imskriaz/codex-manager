@@ -267,13 +267,13 @@ function App() {
   const cliListRequestRevisions = useRef(new Map<string, number>());
   const cliListViewTarget = useRef<string>();
   const peerAccountsRevision = useRef(new Map<string, number>());
-  const optimisticSessions = useRef(new Map<string, { session: DashboardCliSessionSummary; action: DashboardActionName }>());
+  const optimisticSessions = useRef(new Map<string, { session: DashboardCliSessionSummary; action: DashboardActionName; title?: string }>());
   const setCliSessions = useCallback((update: DashboardCliSessionSummary[] | ((current: DashboardCliSessionSummary[]) => DashboardCliSessionSummary[])) => {
     setCliSessionsState(current => {
       let sessions = typeof update === "function" ? update(current) : update;
-      for (const { session: target, action } of optimisticSessions.current.values()) {
+      for (const { session: target, action, title } of optimisticSessions.current.values()) {
         sessions = action === 'deleteCodexCliSession' ? sessions.filter(session => !sameCliSessionTarget(session, target))
-          : sessions.map(session => sameCliSessionTarget(session, target) ? { ...session, archived: action === 'archiveCodexCliSession' } : session);
+          : sessions.map(session => sameCliSessionTarget(session, target) ? action === 'renameCodexCliSession' ? { ...session, title: title! } : { ...session, archived: action === 'archiveCodexCliSession' } : session);
       }
       return sessions.filter(session => session.deviceId === cliListViewTarget.current);
     });
@@ -282,11 +282,12 @@ function App() {
     const pending = optimisticSessions.current.get(requestId);
     optimisticSessions.current.delete(requestId);
     if (restore && pending) {
+      const previous = pending.action === 'renameCodexCliSession' ? { title: pending.session.title } : { archived: pending.session.archived };
       setCliSessions(current => {
         const existing = current.find(session => sameCliSessionTarget(session, pending.session));
-        return [...current.filter(session => !sameCliSessionTarget(session, pending.session)), existing ? { ...existing, archived: pending.session.archived } : pending.session];
+        return [...current.filter(session => !sameCliSessionTarget(session, pending.session)), existing ? { ...existing, ...previous } : pending.session];
       });
-      setSelectedCliSession(current => current && sameCliSessionTarget(current, pending.session) ? { ...current, archived: pending.session.archived } : current);
+      setSelectedCliSession(current => current && sameCliSessionTarget(current, pending.session) ? { ...current, ...previous } : current);
     }
   };
   const messageRequestStreams = useRef(new Map<string, string | undefined>());
@@ -330,7 +331,14 @@ function App() {
     }
     return false;
   };
-  const [selectedCliSession, setSelectedCliSession] = useState<DashboardCliSessionSummary>();
+  const [selectedCliSession, setSelectedCliSessionState] = useState<DashboardCliSessionSummary>();
+  const setSelectedCliSession = useCallback((update: DashboardCliSessionSummary | undefined | ((current: DashboardCliSessionSummary | undefined) => DashboardCliSessionSummary | undefined)) => {
+    setSelectedCliSessionState(current => {
+      let next = typeof update === 'function' ? update(current) : update;
+      for (const pending of optimisticSessions.current.values()) if (next && pending.action === 'renameCodexCliSession' && sameCliSessionTarget(next, pending.session)) next = { ...next, title: pending.title! };
+      return next;
+    });
+  }, []);
   const [selectedPeerId, setSelectedPeerId] = useState<string>(() => isBrowserDashboard ? new URLSearchParams(window.location.search).get('device') || 'local' : 'local');
   const [cliSessionsMenuOpen, setCliSessionsMenuOpen] = useState(false);
   const [cliSessionsError, setCliSessionsError] = useState<string>();
@@ -673,18 +681,19 @@ function App() {
   cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
   const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
   const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): string | undefined => {
-    if (state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session) && (action !== "cancelCodexCliSessionTurn" || request.action === action))) {
+    if ((action !== "cancelCodexCliSessionTurn" && [...sessionActionRequests.current.values()].some(target => sameCliSessionTarget(target, session))) || state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session) && (action !== "cancelCodexCliSessionTurn" || request.action === action))) {
       showNotice({ level: 'warning', message: 'An action for this session is still pending. Wait for its result before retrying.' });
       return undefined;
     }
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
     if (requestId) {
       sessionActionRequests.current.set(requestId, session);
-      const previous = cliSessionsRef.current.find(item => sameCliSessionTarget(item, session));
-      if (previous && ['archiveCodexCliSession', 'unarchiveCodexCliSession', 'deleteCodexCliSession'].includes(action)) {
-        optimisticSessions.current.set(requestId, { session: previous, action });
+      const previous = cliSessionsRef.current.find(item => sameCliSessionTarget(item, session)) ?? (sameCliSessionTarget(selectedCliSessionRef.current, session) ? selectedCliSessionRef.current : undefined);
+      if (previous && ['renameCodexCliSession', 'archiveCodexCliSession', 'unarchiveCodexCliSession', 'deleteCodexCliSession'].includes(action)) {
+        const title = action === 'renameCodexCliSession' ? payload?.text?.trim().replace(/\s+/g, ' ') : undefined;
+        optimisticSessions.current.set(requestId, { session: previous, action, title });
         setCliSessions(current => current);
-        if (action !== 'deleteCodexCliSession') setSelectedCliSession(current => current && sameCliSessionTarget(current, session) ? { ...current, archived: action === 'archiveCodexCliSession' } : current);
+        if (action !== 'deleteCodexCliSession') setSelectedCliSession(current => current && sameCliSessionTarget(current, session) ? action === 'renameCodexCliSession' ? { ...current, title: title! } : { ...current, archived: action === 'archiveCodexCliSession' } : current);
       }
     }
     return requestId;
@@ -1696,6 +1705,27 @@ function App() {
     else url.searchParams.set("device", selectedPeerId);
     replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
   }, [isBrowserDashboard, browserPath, selectedPeerId, selectedPeer?.local]);
+
+  const localFallbackPeer = snapshot?.connectedPeers?.find(peer => peer.local && peer.connected);
+  const selectedRemoteOffline = selectedPeerId !== 'local' && !selectedPeer?.local && selectedPeer?.connected === false;
+  useEffect(() => {
+    if (!isBrowserDashboard || !realtimeConnected || !localFallbackPeer || !selectedRemoteOffline) return;
+    // Allow discovery time for unknown links; a confirmed offline peer falls back immediately.
+    const timer = window.setTimeout(() => {
+      setSelectedPeerId('local');
+      messageViewRevision.current++;
+      selectedCliSessionRef.current = undefined;
+      setSelectedCliSession(undefined);
+      setCliSessionMessages([]);
+      setCliSessionMessagesError(undefined);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('device');
+      if (isCliSessionsPath(url.pathname)) url.pathname = '/workspace';
+      replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
+      showNotice({ level: 'info', message: `${selectedPeer?.name ?? 'Remote PC'} is offline. Switched to ${localFallbackPeer.name}. Pending remote actions were not replayed locally.` });
+    }, snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && !peer.local && !peer.connected) ? 0 : 5000);
+    return () => window.clearTimeout(timer);
+  }, [isBrowserDashboard, realtimeConnected, localFallbackPeer?.id, selectedPeerId, selectedRemoteOffline, showNotice]);
 
   useLayoutEffect(() => {
     if (!snapshot?.settings.cliIntegrationEnabled) return;

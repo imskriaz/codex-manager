@@ -2094,12 +2094,12 @@ async function handleOpenCodexCliSession(sessionId: string | undefined, openInBr
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
   const session = await ensureCliSessionIsActive(sessionId);
-  if (openInBrowser) {
+  if (openInBrowser || vscode.env.appHost === "node") {
     return {
       cliSession: session,
       cliSessionMessages: await readCodexCliSessionMessages(sessionId),
       cliSessionLive: getCodexSessionLiveState(sessionId),
-      notice: { level: "info" as const, message: "Opened the session in the browser dashboard." }
+      notice: { level: "info" as const, message: vscode.env.appHost === "node" ? "Opened the session in the standalone dashboard." : "Opened the session in the browser dashboard." }
     };
   }
   await openCodexSessionInVsCode(sessionId, undefined, true);
@@ -2127,15 +2127,29 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
     if (Date.now() >= deadline) { failures.push("Remaining sessions timed out"); break; }
     const controller = new AbortController();
     try {
-      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), Math.min(45_000, deadline - Date.now()), "Opening the conversation timed out", controller.signal);
-      opened++;
-      if (await waitWithin(resumeCodexSessionWork(session.id, controller.signal, "user"), Math.min(25_000, Math.max(1, deadline - Date.now())), "Resuming the conversation was not confirmed", controller.signal) === "continued") continuationPrompts++;
+      if (vscode.env.appHost === "node") {
+        // Standalone owns the private app-server; opening a VS Code webview
+        // would fail even though the saved session can still be recovered.
+        const result = await waitWithin(
+          resumeCodexSessionWork(session.id, controller.signal, "user", "private"),
+          Math.min(45_000, Math.max(1, deadline - Date.now())),
+          "Background recovery was not confirmed",
+          controller.signal
+        );
+        if (result === "continued" || result === "running" || result === "goal") opened++;
+        if (result === "continued") continuationPrompts++;
+      } else {
+        await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), Math.min(45_000, deadline - Date.now()), "Opening the conversation timed out", controller.signal);
+        opened++;
+        if (await waitWithin(resumeCodexSessionWork(session.id, controller.signal, "user"), Math.min(25_000, Math.max(1, deadline - Date.now())), "Resuming the conversation was not confirmed", controller.signal) === "continued") continuationPrompts++;
+      }
     } catch (error) {
       failures.push(`${session.title}: ${toFailureMessage(error)}`);
     } finally { controller.abort(); }
   }
+  const standalone = vscode.env.appHost === "node";
   return { notice: { level: failures.length ? "warning" as const : "info" as const,
-    message: `${opened} conversation${opened === 1 ? "" : "s"} opened in VS Code.${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not open or resume; recovery was kept. ${failures[0]}` : ""}` } };
+    message: `${opened} conversation${opened === 1 ? "" : "s"} ${standalone ? "recovered in the background" : "opened in VS Code"}.${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not recover; recovery was kept. ${failures[0]}` : ""}` } };
 }
 
 async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload) {
@@ -2158,8 +2172,8 @@ async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload)
   if (status === "active") {
     const controller = new AbortController();
     try {
-      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), 45_000, "Opening this goal timed out.", controller.signal);
-      await resumeCodexSessionGoal({ ...session, goal: { ...session.goal, status } }, controller.signal, "user");
+      if (vscode.env.appHost !== 'node') await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), 45_000, "Opening this goal timed out.", controller.signal);
+      await resumeCodexSessionGoal({ ...session, goal: { ...session.goal, status } }, controller.signal, "user", ...(vscode.env.appHost === 'node' ? [true] as const : []));
       notice = { level: "info", message: "Goal resumed and continuation started." };
     } catch (error) {
       notice = { level: "warning", message: `The goal was set to active, but continuation was not confirmed: ${toFailureMessage(error)}. Check the session before retrying.` };

@@ -25,6 +25,7 @@ import {
 } from "./services/windowAccountMode";
 import { registerWorkspaceTerminalMonitoring } from "./services/workspaceTools";
 import { registerCodexSessionQueue } from './services/codexSessionQueue';
+import { registerCompletedGoalCleanup } from './services/completedGoalCleanup';
 import { disposeSqliteContext, initializeSqliteContextWithRetry } from "./storage/sqliteContext";
 import { showStorageRecovery } from "./presentation/storageRecovery";
 
@@ -84,6 +85,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   workbench = new AccountsWorkbench(context);
   registerSessionRecording(context);
   registerCodexSessionQueue(context);
+  registerCompletedGoalCleanup(context);
   if (getSqliteStateStore()) {
   const cleanup = () => {
     void runCrossWindowExclusive("background:storage-cleanup", "Storage cleanup", async () => {

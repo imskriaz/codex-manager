@@ -695,7 +695,7 @@ export function SavedAccountCard(props: {
                     >
                       <span class="saved-select-toggle-mark" aria-hidden="true"></span>
                     </button>
-                    <span class="saved-title-text">{emailDisplay}</span>
+                    <span class="saved-title-text" title={emailDisplay}>{emailDisplay}</span>
                     {account.switchQueued ? (
                       <button
                         class="pill warning saved-queued-badge"

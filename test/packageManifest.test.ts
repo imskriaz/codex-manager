@@ -152,7 +152,8 @@ describe("extension manifest configuration", () => {
     expect(property?.markdownDescription).not.toContain("Experimental");
     expect(property?.markdownDescription).toContain("Auto Switch on");
     expect(property?.markdownDescription).toContain("unfinished parent chats");
-    expect(property?.markdownDescription).toContain("VS Code restart");
+    expect(property?.markdownDescription).toContain("after restart");
+    expect(property?.markdownDescription).toContain("standalone");
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeOpenVsCode"]).toBeUndefined();
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"]).toBeUndefined();
   });

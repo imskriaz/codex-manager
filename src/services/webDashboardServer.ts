@@ -1,4 +1,5 @@
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
+import { AiProxy, isAiProxyPath } from './aiProxy';
 import { isCodexSessionAccess } from '../domain/codexSessionAccess';
 import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import { notificationTargetUrl } from '../domain/notificationTarget';
@@ -65,7 +66,7 @@ import {
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
-import { listCodexSessionLiveStates } from "./codexSessionLive";
+import { getCodexSessionLiveState, listCodexSessionLiveStates } from "./codexSessionLive";
 import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState, combineCliLiveMessages } from "../domain/codexSessionLive";
 import { isMaintenanceJob, type MaintenanceJob } from '../domain/maintenance';
@@ -79,7 +80,7 @@ import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTaskWi
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
-import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
+import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterruption, isCodexCapacityInterruption } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isDashboardHostReload, type DashboardHostReload } from "../domain/dashboard/hostReload";
@@ -434,6 +435,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private serverStart: Promise<void> | undefined;
   private serverStartRevision = 0;
   private shuttingDown = false;
+  private aiProxy?: AiProxy;
+  private sessionFailurePushTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private serverRetryAt = 0;
   private legacyPasswordCleanupStarted = false;
   private readonly webSocketClients = new Set<WebSocket>();
@@ -730,9 +733,12 @@ export class WebDashboardServer implements vscode.Disposable {
     void this.browserPush.hasSubscriptions().then(enabled => { if (!this.peerStopped) { this.pushWatching = enabled; this.refreshCliSessionRealtimeLifecycle(); } }).catch(error => console.warn('[codexManager] question notification monitoring unavailable', error));
   }
 
-  prepareForShutdown(): void { this.shuttingDown = true; }
+  prepareForShutdown(): void { this.shuttingDown = true; this.aiProxy?.stop(); for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer); this.sessionFailurePushTimers.clear(); }
 
   async stop(): Promise<void> {
+    for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer);
+    this.sessionFailurePushTimers.clear();
+    this.aiProxy?.stop(); this.aiProxy = undefined;
     this.serverStartRevision++;
     this.serverStart = undefined;
     this.projectShareEvents.close();
@@ -941,6 +947,10 @@ export class WebDashboardServer implements vscode.Disposable {
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (isAiProxyPath(path)) {
+      this.aiProxy ??= new AiProxy(this.context, this.repo, () => !this.shuttingDown && this.settingsStore.getDashboardSettings().apiAccessEnabled === true, id => this.encryptedSync?.canAutomateAccount(id) ?? true, () => this.publishLocalStateChange());
+      await this.aiProxy.handle(request, response, requestUrl); return;
+    }
     if (request.method === "POST" && path === "/shutdown") {
       const adminToken = process.env["CODEX_MANAGER_ADMIN_TOKEN"];
       if (!adminToken || request.headers["x-codex-admin"] !== adminToken) { response.statusCode = 403; response.end("Forbidden"); return; }
@@ -1923,7 +1933,7 @@ export class WebDashboardServer implements vscode.Disposable {
         this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);
     }
     this.notifyAsyncQuestions(state.sessionId, state.messages, state.deviceId);
-    if (state.status === "failed") void this.notifySessionCompletion(state);
+    this.scheduleSessionFailurePush(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       sendDashboardSocketMessage(socket, message);
@@ -2011,18 +2021,35 @@ export class WebDashboardServer implements vscode.Disposable {
     });
   }
 
+  private scheduleSessionFailurePush(state: DashboardCodexSessionLiveState): void {
+    this.sessionFailurePushTimers ??= new Map();
+    const key = JSON.stringify([state.deviceId ?? this.deviceId, state.sessionId]);
+    const previous = this.sessionFailurePushTimers.get(key);
+    if (previous) clearTimeout(previous);
+    this.sessionFailurePushTimers.delete(key);
+    if (state.status !== 'failed' || this.shuttingDown || Date.now()-state.updatedAt > 30_000) return;
+    if (this.sessionFailurePushTimers.size >= 100) return;
+    const timer = setTimeout(() => { this.sessionFailurePushTimers.delete(key); void this.notifySessionCompletion(state).catch(error => console.warn('[codexManager] session failure push could not be confirmed',error)); }, 10_000);
+    timer.unref?.(); this.sessionFailurePushTimers.set(key,timer);
+  }
+
   private async notifySessionCompletion(state: DashboardCodexSessionLiveState): Promise<void> {
     if (state.status !== "failed") return;
+    const current = () => state.deviceId ? this.remoteSessionLive.get(JSON.stringify([state.deviceId, state.sessionId])) : getCodexSessionLiveState(state.sessionId);
+    const superseded = () => { const latest = current(); return this.shuttingDown || !!latest && (latest.streamId !== state.streamId || latest.status !== 'failed' || latest.updatedAt > state.updatedAt); };
+    if (superseded()) return;
     const candidate = state.deviceId
       ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId && session.deviceId === state.deviceId)?.title
       : (await waitWithin(readCodexCliSessionRecoveryMetadata([state.sessionId]), 2_000, "Session title unavailable.").catch(() => ({} as Record<string, { title?: string }>)))[state.sessionId]?.title;
     const title = candidate?.trim() && candidate !== state.sessionId && candidate !== `Codex session ${state.sessionId.slice(0, 8)}` ? candidate : "Codex conversation";
+    if (superseded()) return;
+    const quota = isCodexQuotaInterruption(state.error ?? ''), capacity = isCodexCapacityInterruption(state.error ?? '');
     this.browserPush.notify({
       notificationId: `session-failed:${state.deviceId ?? this.deviceId}:${state.sessionId}:${state.streamId}`,
       title,
       systemName: state.deviceId ? this.peerSessions.get(state.deviceId)?.deviceName || "Remote system" : os.hostname(),
-      level: "error",
-      message: `Session failed. Open the dashboard to review “${title}”.`,
+      level: quota || capacity ? 'warning' : "error",
+      message: quota ? `Account usage limit interrupted “${title}”. Open the dashboard to check account switching and recovery.` : capacity ? `Model capacity interrupted “${title}”. Open the dashboard to check recovery.` : `Turn failed in “${title}”. Open the dashboard to review its latest state.`,
       url: `/workspace/${encodeURIComponent(state.sessionId)}${state.deviceId ? `?device=${encodeURIComponent(state.deviceId)}` : ""}`
     });
   }

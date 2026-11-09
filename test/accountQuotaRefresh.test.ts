@@ -1223,7 +1223,8 @@ describe("refreshSingleQuota token automation state", () => {
 
   });
 
-  it("refreshes a dashboard-capable candidate whose snapshot predates its session before switching", async () => {
+  it.each([false,true])("refreshes a stale candidate before switching, including capacity recovery (%s)", async capacity => {
+    vi.spyOn(runningSessions, 'readRunningCodexSessionIds').mockResolvedValue([]);
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
@@ -1257,7 +1258,7 @@ describe("refreshSingleQuota token automation state", () => {
     setCurrentWindowRuntimeAccountId(candidate.id);
 
     await expect(
-      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
+      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn(), deferHostReload: true }, capacity ? {modelCapacityAccountId:active.id,capacityStillNeeded:()=>true} : {})
     ).resolves.toBe(true);
 
     expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });

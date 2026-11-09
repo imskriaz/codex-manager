@@ -106,12 +106,14 @@ describe("canonical cross-PC WebSocket domain", () => {
     expect(internal.recentPeerNotifications()).toEqual([]);
   });
 
-  it('ignores stale and duplicate remote session failures before sending push', () => {
+  it('ignores stale and duplicate remote session failures before sending push', async () => {
     const completion = vi.spyOn(internal, 'notifySessionCompletion').mockResolvedValue(undefined);
     const state = { sessionId: '12345678-1234-1234-1234-123456789abc', streamId: '22345678-1234-1234-1234-123456789abc', deviceId: 'other-pc', sequence: 1, status: 'failed', updatedAt: Date.now(), messages: [] };
     internal.publishSessionLive({ ...state, updatedAt: Date.now() - 300000 });
     expect(completion).not.toHaveBeenCalled();
     internal.publishSessionLive(state); internal.publishSessionLive(state);
+    expect(completion).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10001);
     expect(completion).toHaveBeenCalledTimes(1);
   });
 

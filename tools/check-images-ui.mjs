@@ -13,14 +13,14 @@ export async function checkImagesUi(page, { origin, parentId, width, height, out
   assert.equal(await original.innerText(), '', 'Download is an accessible icon');
   assert.equal(await original.locator('svg').count(), 1);
   assert.ok(await original.getAttribute('download'));
-  assert.equal(await box.locator('button,a').count(), 2, 'Only download and close remain');
+  assert.ok([2,4].includes(await box.locator('button,a').count()), 'Gallery controls appear only for multiple images');
   assert.equal(await box.locator('strong,small').count(), 0, 'No title or counter consumes image space');
   const first = await original.getAttribute('href');
   await image.click(); assert.equal(await box.isVisible(), true);
   const beforeZoom = await image.boundingBox(), toolbar = await box.locator('.cli-image-lightbox-toolbar').boundingBox();
   const region = await stage.boundingBox();
   assert.ok(region.width >= width - 1 && region.height >= height - 1, 'The image stage fills the viewport');
-  assert.ok(toolbar.width < 110 && toolbar.height < 55, 'Two compact icons float above the image');
+  assert.ok(toolbar.width < 180 && toolbar.height < 55, 'Compact gallery controls float above the image');
   const pageScale = await page.evaluate(() => ({ width: innerWidth, scale: visualViewport.scale }));
   if (width >= 1000) { await stage.hover(); await page.mouse.wheel(0, -350); }
   else await stage.evaluate(element => {
@@ -39,13 +39,12 @@ export async function checkImagesUi(page, { origin, parentId, width, height, out
     await page.mouse.wheel(0, 5000); await page.waitForFunction(() => !document.querySelector('.cli-image-stage').classList.contains('is-zoomed'));
     const fitted = await image.boundingBox(); assert.ok(Math.abs(fitted.width - beforeZoom.width) < 2 && Math.abs(fitted.x - beforeZoom.x) < 2);
   }
-  await original.focus();
-  await page.keyboard.press('ArrowRight');
+  await box.getByRole('button',{name:'Next image',exact:true}).click();
   const second = await original.getAttribute('href'); assert.notEqual(second, first);
   await page.keyboard.press('ArrowRight');
   const third = await original.getAttribute('href'); assert.notEqual(third, second); assert.notEqual(third, first);
   await page.keyboard.press('ArrowRight'); assert.equal(await original.getAttribute('href'), first);
-  await page.keyboard.press('ArrowLeft'); assert.equal(await original.getAttribute('href'), third);
+  await box.getByRole('button',{name:'Previous image',exact:true}).click(); assert.equal(await original.getAttribute('href'), third);
   await page.screenshot({ path: path.join(output, `images-${width}x${height}.png`), animations: 'disabled' });
   await close.click(); await box.waitFor({ state: 'detached' }); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Preview Attachment preview');
   await trigger.click(); await image.evaluate(img => img.dispatchEvent(new Event('error'))); await box.getByRole('alert').waitFor(); assert.equal(await original.getAttribute('href'), first);

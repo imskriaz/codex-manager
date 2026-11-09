@@ -92,7 +92,7 @@ export function MetricRow(props: {
           <span class="metric-label">{props.metric.label}</span>
         </div>
         <div class="metric-row-summary">
-          <span class="metric-reset-inline">{resetLabel}</span>
+          <span class="metric-reset-inline" title={resetLabel}>{resetLabel}</span>
           <span class="percent" style={percentStyle}>
             {formatPercent(props.metric.percentage)}
           </span>

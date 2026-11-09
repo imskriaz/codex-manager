@@ -96,6 +96,12 @@ it('retries a Capacity tag conflict without dropping a concurrent user tag', asy
   repo.setAccountTags.mockImplementationOnce(async () => { tags.push('New'); throw Error('Tags changed in another window'); });
   emit(snapshot('race')); await flush(); expect(tags).toEqual(['Work', 'New', 'Capacity']);
 });
+it('keeps the Capacity flag when normal switch guards defer switching', async () => {
+  mocks.config.modelCapacityFailureCount = 1; mocks.switch.mockResolvedValue(false);
+  emit(snapshot('blocked')); await flush();
+  expect(tags).toEqual(['Work','Capacity']); expect(mocks.switch).toHaveBeenCalledOnce();
+  expect(notices.some(message=>message.includes('Automatic switching was deferred'))).toBe(true);
+});
 it('expires only auto-managed Capacity tags after two hours', () => {
   const now = 10_000_000;
   expect(isCapacityTagExpired(now - CAPACITY_TAG_TTL_MS, now)).toBe(true);

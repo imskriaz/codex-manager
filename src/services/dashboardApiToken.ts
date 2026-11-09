@@ -29,7 +29,7 @@ export async function createDashboardApiToken(context: vscode.ExtensionContext, 
   if (!name || name.length > 80) throw new Error('Name the token using at most 80 characters.');
   if (input.permissions !== undefined && !Array.isArray(input.permissions)) throw new Error('Choose valid API permissions.');
   const permissions = [...new Set(input.permissions ?? ['state', 'getProjectBoard', 'getProjectTaskDetails'])];
-  if (!permissions.length || permissions.some(permission => !['*', 'state', 'settings', ...DASHBOARD_API_ACTIONS].includes(permission))) throw new Error('Choose valid API permissions.');
+  if (!permissions.length || permissions.some(permission => !['*', 'state', 'settings', 'aiProxy', ...DASHBOARD_API_ACTIONS].includes(permission))) throw new Error('Choose valid API permissions.');
   if (input.projectPaths !== undefined && (!Array.isArray(input.projectPaths) || !input.projectPaths.length || input.projectPaths.length > 32 || input.projectPaths.some(item => typeof item !== 'string' || !item.trim()))) throw new Error('Choose between 1 and 32 project folders.');
   const projects = [...new Set(apiTokenProjects(input))];
   if (projects.length && permissions.some(permission => permission !== '*' && permission !== 'state' && !PROJECT_API_ACTIONS.has(permission as import('../domain/dashboard/types').DashboardActionName))) throw new Error('Project tokens can only grant operations within that project.');

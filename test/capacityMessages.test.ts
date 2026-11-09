@@ -95,9 +95,9 @@ it('keeps queued messages visible above the composer with inline actions', () =>
 
 it('lets the resized Account Center use columns without reserving a blank footer strip', () => {
   const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
-  expect(css).toContain('.cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }');
+  expect(css).toContain('.cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));');
   expect(css).toContain('max-height: calc(var(--dashboard-viewport-height, 100dvh) - 40px);');
-  expect(css).toContain('@media (max-width: 519px)');
+  expect(css).toContain('@container account-center (max-width: 340px)');
   expect(css).toContain('.cli-account-resize-footer { position: absolute;');
   expect(css).toContain('.cli-account-resize-footer small { display: none; }');
 });

@@ -1,14 +1,28 @@
 # Changelog
 
-## 1.7.7-pre.4
+## 1.7.7
 
+- Retry verified standalone capacity interruptions with bounded backoff and SQLite recovery state; resume goals without requiring the official VS Code webview.
+- Add labelled Previous/Next controls to the image viewer alongside keyboard and swipe navigation.
+- Show renamed conversations immediately, retain the title through stale updates and restore it on failure; reuse the active private connection without waiting for the turn to finish.
+- Match project and conversation text in the sidebar and keep agent navigation visible while scrolling.
+- Use the same manifest configuration defaults in standalone and VS Code, while preserving saved overrides.
+- Hide inherited parent context in forked agent views, group completed agent activity with completed tools, and reconcile repeated image uploads without duplicate live echoes.
+- Keep standalone Play, session opens and goal recovery on the private app-server; never send Node users to an unavailable VS Code webview. Verify unknown session state in the background while queued prompts wait.
+
+- Fall back to the connected local workspace when a selected remote PC stays offline; preserve in-flight remote action outcomes without replaying them locally.
+
+- Count native capacity rejections before turn acceptance, retain the Capacity flag when switching is deferred, and refresh stale replacement accounts before capacity switching.
+
+- Improve narrow Account Center cards with container-based layout, readable quota rows, wrapping filters and reachable controls. Automatically clear verified completed goals and suppress stale failure pushes after session recovery.
+- Add a saved-account AI proxy on the dashboard port with OpenAI Chat Completions, Responses and Claude Messages formats, streaming, images, client function tools and live model discovery. Reuse Manager API keys, SQLite credentials, token renewal, account ownership and normal switch rules.
+- Bound API concurrency, body and output sizes, deadlines and retries. Cancel upstream work on disconnect or shutdown; never replay a partial generation.
+- Keep proxy account switches from restarting the host during an HTTP response.
+- Include the standalone restart, recovery, account, real-time and layout fixes verified in the 1.7.7 development builds.
 - Save a final bounded recovery snapshot before a standalone host releases its storage, so a restart during an active turn does not rely on the last background refresh. Retain previous recovery and log a warning if the save cannot complete.
 - Include the running build version in standalone readiness diagnostics.
 - Hide answered question banners immediately, recognize formatted reply IDs and replies with follow-up text, and restore editable questions when their queued answers fail.
 - Let archive and delete wait for a completed private turn to release its writer; keep active writers protected.
-
-## 1.7.7-pre.3
-
 - Increase dashboard text by 5%, apply Dashboard Zoom to browser workspaces and task boards, and default missing zoom preferences to 100%.
 - Preserve exhausted-account borders across themes, selection and hover in both account layouts, and merge mirrored compaction/image events without hiding separate activities.
 - Keep acknowledged Stop requests marked cancelled when their private app-server connection closes before the turn promise settles.
@@ -17,24 +31,15 @@
 - Hide Open in Codex and the dashboard Codex command in standalone while retaining browser session actions.
 - Extend live browser checks to verify optimistic session creation and session/title updates in a second connected browser without reloading.
 - Publish session-list changes promptly to peers without rebuilding account views or syncing the vault for each transcript write. Replay live snapshots and force vault delivery only when a peer connects, avoiding repeated heartbeat traffic behind live responses.
-
-## 1.7.7-pre.2
-
 - Use the shared SQLite account vault as the primary credential store for VS Code and standalone Node.
 - Migrate existing VS Code credentials without deleting the legacy copy, so account switching, automatic switching, and project-task Play remain available after the editor closes.
 - Add standalone checks for project-task Play and account switching without a VS Code reload.
 - Register the shared manual and scheduled quota commands in Node, initialize its provider connection settings, and keep account ownership checks active for automation.
 - Hide the Terminal tab and its add/overview controls in standalone. Reload refreshes account state without attempting an editor restart.
-
-## 1.7.7-pre.1
-
 - Provide standalone shared-terminal lifecycle support and retain cancelled status when an acknowledged Stop closes its private app-server.
 - Start the existing session queue, recording, Auto Resume, quota and token refresh services in standalone Node after it owns the dashboard port.
 - Resume directly through the private app-server in Node and avoid VS Code reload prompts after standalone account switches.
 - Stop background services and flush session recording before closing standalone storage.
-
-## 1.7.7
-
 - Discover the installed Codex extension's CLI independently of VS Code, prefer npm's direct launcher on Windows, and install a verified local CLI for explicit turns when none is present.
 - Use the Windows system PowerShell path for writer checks so standalone follow-ups work with a minimal PATH.
 - Start the prepared background host before VS Code closes shared storage, and release the dashboard port during shutdown.
@@ -68,73 +73,34 @@
 - Let explicit Steer send during queue mode, show processing immediately, and keep queue action icons distinct and closely spaced.
 - Apply confirmed Auto approval to pending and future permission requests in the active turn, while keeping questions manual and failed responses visible.
 
-## 1.7.3-pre.14
+## 1.7.3
 
 - Keep queued steer prompts compact and inline above the composer, with direct edit controls and no secondary queue status blocks.
-
-## 1.7.3-pre.13
-
 - Stack queued steer-or-queue messages directly above the composer with inline steer, edit, delete, and queue controls.
-
-## 1.7.3-pre.12
-
 - Keep offline and reconnect explanations in the focused connection surface, including known HTTP, timeout, system-offline, reload-slow, reload-failed, and unknown-cause states.
 - Propagate account-switch reload state across connected dashboard hosts without replaying the switch, and keep compact recovery controls out of toast notifications.
-
-## 1.7.3-pre.11
-
 - Use the task conversation footer for its session title (or project name) when no account is available, keeping changed-file stats alongside it.
-
-## 1.7.3-pre.10
-
 - Fill the image viewer with the preview and compact download/close icons; open composer image thumbnails in the same viewer with wheel and pinch zoom.
 - Compact modal and notification surfaces, with explicit browser-offline, selected-system-offline, unreachable-host, reconnecting, and account-switch reload guidance.
 - Show the active account transition before reload and keep offline recovery inline without action toast spam.
-
-## 1.7.3-pre.9
-
 - Finish realtime recovery verification and the Node host storage/lint fixes for the workspace reliability changes below.
 - Remove the floating monitor header and make the full account/quota footer open Account Center from one click target.
-
-## 1.7.3-pre.8
-
 - Blend conversation toolbar icons and the workspace tools close button into their containers, retaining hover and keyboard focus feedback.
-
-## 1.7.3-pre.7
-
 - Keep Full access selected when new Codex sessions open, reconnect, or resume by preserving the explicit permission profile instead of a legacy sandbox override.
 - Confirm both the selected profile and effective permissions before reporting success, and report recovery storage failures before starting a new turn.
-
-## 1.7.3-pre.6
-
 - Replay saved live activity and prompts before loading dashboard accounts, with a bounded snapshot wait that preserves the live connection on failure.
 - Preserve healthy sockets on focus and network events, share repeated connection retries, and reject sends immediately when the transport buffer is full.
 - Keep session rows stable during token updates and skip redundant transcript reads while complete live history is authoritative. Ignore stale completion events without triggering refreshes.
 - Correct first-live and reconnect timings, include timing summaries in read-only UI checks, and fix the standalone host's storage regression.
-
-## 1.7.3-pre.5
-
 - Report bounded socket, first-live, and reconnect timings so workspace realtime performance can be measured safely.
-
-## 1.7.3-pre.4
-
 - Hide fixed dashboard notification toasts on mobile; action feedback remains available in the initiating control.
 - Add bounded host timing telemetry for socket open, first live event, and reconnect recovery.
-
-## 1.7.3-pre.2
-
 - Hide question prompts once every answer is confirmed, including answers from another client; keep partial questions and queued-answer status visible.
 - Add a Send now icon to move a queued message to the front, save its priority across reconnects, and send as soon as the session is ready.
 - Let a resized Account Center use multiple account columns and remove the reserved footer strip while keeping the resize control accessible.
 - Flatten Account Center cards and workspace session rows into square, borderless list items.
-
-## 1.7.3-pre.1
-
 - Open the complete mobile browser dashboard in Keep on top, including the conversation list, full available activity and tool calls, composer, approvals, queue, and workspace tools.
 - Preserve the original workspace, reuse the existing authenticated dashboard and send safeguards, and show blocked-window, opening-timeout, and loading/retry feedback.
-
-## 1.7.3
-
 - Keep the narrow Account Center search, filters, and view switch on one compact row on small screens, with consistent body typography and spacing.
 - Add the Capacity tag only after a successful automatic switch, clear auto-managed tags after two hours, and lower tagged accounts in the automatic queue.
 
@@ -165,7 +131,7 @@
 - Keep question notifications in Workspace until dismissed, including across reconnects and reloads, without showing the banner on Dashboard. Preserve question push delivery and deduplicate transcript question pushes across owner reconnects.
 - Show named sent-message and completed subagent activity links that open the recipient conversation, while keeping activity details separately expandable.
 
-## 1.6.10-pre.1
+## 1.6.10
 
 - Reopen closing browser database connections before cache transactions so saved queues and message sending recover without losing drafts or replaying sends. Always reload durable queues from storage across tab ownership changes.
 - Make the saved-queue Retry action text-only with visible keyboard focus.
@@ -177,12 +143,9 @@
 ## 1.6.8
 
 - Delete empty browser queues directly and reclaim legacy empty records that consumed queue capacity. Keep storage failures with their message or composer settings instead of duplicate toasts; restore unconfirmed removals in place.
-
 - Suppress all workspace information toasts and routine saved-session inspection notices, including progress mislabeled as warnings by older hosts. Preserve actionable failures.
-
 - Detect modern disabled and managed Codex permission profiles from native storage. Preserve effective folder and network restrictions across resume and restart.
 - Default new workspace sessions to Full access. Verify actual applied permissions before sending the first turn or confirming a change, and apply native permission patches in realtime.
-
 - Show model-capacity interruptions as one compact line across session activity types. Keep guidance in the tooltip and diagnostic details collapsed until opened.
 - Keep retry errors separate from active tool calls and bind delayed errors to their original turn. Deduplicate capacity errors within a turn.
 - Render terminal errors immediately, preserve structured capacity diagnostics, and match live and saved error rows to prevent duplicate failures.
@@ -194,7 +157,6 @@
 - Wrap and format tool arguments, results, commands, and debug output; preserve original copy text and diff alignment. Show model capacity failures as readable notices and open agent conversations by clicking their activity titles, with the chevron reserved for details.
 - Discover enabled project skills with `/`, insert skill mentions without sending, and open model or access settings from the command picker.
 - Keep independent session actions available, reject duplicate operations, and run archive/restore from session storage without waiting for project discovery. Archived bulk cleanup uses direct SQLite deletion with foreign-key cleanup and restart-safe transcript cleanup.
-
 - Keep questions on their conversation messages with an Answer button. Only a new question with no later activity opens automatically, for up to two minutes; old questions do not generate push notifications.
 - Queue answers immediately, close their form on submission, preserve composer drafts, and prevent duplicate answers across the queue, push actions, reconnects, and unconfirmed delivery.
 - Keep browser requests inside their owning session and remove the VS Code prompt modal. Preserve answer drafts and show failures with reviewed retry feedback.
@@ -204,20 +166,13 @@
 ## 1.6.6
 
 - Keep dismissed or answered request notifications hidden across reconnects and reloads; retain the actual prompt in its session and notify for new requests.
-
 - Add the missing Delete goal icon with confirmation, native Codex deletion and guarded feedback, preserving the conversation.
-
 - Identify browser tabs as System Name - Screen - Item, updating for selected sessions, tasks and shared views while respecting privacy mode.
-
 - Delete obsolete-project and already-missing conversations through Codex storage, reconcile confirmed stale Manager records, and diagnose Windows sandbox logon errors without changing access settings.
-
 - Revalidate native session ownership so a missed stop event cannot leave the session locked until a PC restart.
-
 - Recover from active-account reauthorization by selecting a verified eligible account, preserving session recovery and account ownership guards.
-
 - Share task actions across Board, List, Gantt and Calendar views; retain disconnected messages locally until confirmation and clear confirmed send records.
 - Dock task details beside the board with a compact single-line title; hide the duplicate project title in shared boards. Keep composer feedback inside its border and routine background checks quiet.
-
 - Slide through images across the session, including earlier and collapsed messages; keep one top toolbar, image-only zoom and keyboard navigation. Keep short message bubbles on one line when they fit.
 - Show Play in an empty composer for interrupted, unfinished sessions, with confirmed Resume feedback and duplicate prevention.
 - Balance composer controls at 32px on desktop and 30px on mobile, with smaller mobile icons and model text while retaining the context indicator size.
@@ -272,7 +227,6 @@
 - Compact the account center and mobile dashboard spacing, keep account selection in a bounded scroll area, and use clearer attachment, send, and switch icons.
 - Show separate account quota bars in the sidebar footer and running-session status bar. Two available limits share the row; a single available limit fills it, with saved and unavailable states preserved.
 - Keep WS Cross System connections and the verified startup relay working independently of Sync and Claim, without restarting peer connections when account sync is toggled.
-
 - Answer browser-session questions with suggested choices or custom text, and receive push notifications that open the waiting session. Respond to short approval requests from notifications and review longer requests in the dashboard.
 - Restore pending question and approval prompts after reconnects, keep answer drafts during temporary disconnections, and prevent duplicate responses.
 - Reduce workspace action overhead and resolve recorded project folders without unnecessary transcript discovery.
@@ -331,9 +285,7 @@
 ## 1.5.8
 
 - Show the per-session Auto Resume toggle for interrupted work in both session lists; retain explicit queue priorities and unconfirmed-start review controls.
-
 - Keep manual switch requests pending through required credential renewal and short auth commits instead of requiring a premature Retry. Valid credentials switch immediately; optional rotation and shared confirmation stay in the background.
-
 - Use the current portable preferences as defaults: enable Workspace, browser dashboard, automatic switching, quota refresh before switching, reload, Auto Resume, reset credits and warnings. Default all-account polling and Settings Sync saves to ten minutes, and desktop restart mode to automatic when enabled. Keep dashboard API access, System Log and Wait for running sessions off by default. Preserve explicit saved settings and keep private domains and executable paths unset.
 - Replay confirmed account releases after lost replies or restarts. Release previous claims before reserving the current account; failed cleanup retries without adding another reservation.
 - Open official VS Code conversation tabs directly for Auto Resume, removing the background attempt and separate window preference. Keep readiness, Pause/Stop and saved recovery protections, and accurately report the overall recovery deadline.
@@ -342,9 +294,7 @@
 ## 1.5.7
 
 - Remove the fixed quota-history record cap from SQLite, migration, and fallback storage. Keep configured time retention and bounded graph queries without discarding saved samples.
-
 - Replace the raw bootstrap message with a compact loading state and remove it when the dashboard mounts. Keep loaded session counts visible during remote refreshes while preserving offline and error feedback.
-
 - Make Largest conversations a selectable list ordered by file size, with confirmed deletion, partial-inspection warnings, progress, and fresh running-session and child-conversation protection.
 - Compact all Tools into a consistent list with a single title and system context, tighter report rows, and accessible search and refresh controls.
 - Show selection actions only when needed, keep whole-storage cleanup under More actions, and preserve explicit confirmations and progress feedback.
@@ -359,7 +309,6 @@
 - Require official runtime activity for recovery decisions. A retained writer lock or recent interrupted transcript can no longer consume saved recovery as an already running turn.
 - Open and verify the official conversation when readiness is absent, and retain recovery when native activity cannot be checked. Goals remain prompt-free.
 - Ignore empty temporary vault writes left by interrupted saves without discarding canonical account files or complete recovery snapshots. Startup recovery and background backup diagnostics honor System Log and no longer produce routine push notifications; explicit recovery actions retain warnings.
-
 - Restore tab-first Auto Resume by default for goals and non-goal sessions, continue goals without a new prompt, and send “Continue if not completed” only for interrupted non-goal chats through the ready official owner. No private server or unsupported goal-activation calls.
 - Retry temporary startup IPC disconnects within the readiness deadline; retain failed and uncertain recovery without duplicate sends.
 - Keep quota, capacity, and system-interrupted paused goals eligible while respecting explicit Pause, Stop, completion, and session policies. Preserve already running owners at startup.
@@ -369,7 +318,6 @@
 
 - Restore the compact Auto Resume icon toggle for running sessions, with distinct play/pause states. Hide resume-policy controls on idle sessions; use a clock-and-list queue icon, priority badges, and a visible warning for unconfirmed queue starts.
 - Use the existing session-count position for startup status, then show only the running count once ready. Remove the separate status badge and redundant server-status card from the session popover.
-
 - Consolidate Tools into Storage Management with storage summaries, project heatmap data, and one compact operation surface. Keep server status, running-session Auto Resume controls, and existing queue priorities compact.
 - Resume saved Codex work in the background through the existing native/app-server path without opening conversation editor windows or waiting for the Codex sidebar. The app-server initialize handshake remains the readiness check; existing tab cleanup and per-session state checks remain active. Open a conversation manually when you want its editor.
 
@@ -382,7 +330,6 @@
 ## 1.5.3
 
 - Wait for the main Codex sidebar startup trace before Auto Resume opens conversation tabs. Use a visible three-minute fallback when readiness cannot be confirmed, and retain recovery on an explicit sidebar startup failure or cancellation.
-
 - Close all existing Codex conversation and panel tabs before a VS Code reload so restored tabs cannot race Auto Resume into duplicates.
 
 ## 1.5.2
@@ -397,9 +344,7 @@
 - Flyouts follow the clicked control across scroll, resize, dynamic content, and the mobile keyboard; menus flip above when needed and stay within the visible viewport, with nested menus above their parent surfaces.
 - Make Locked account badges open the shared Unlock action in both list and card layouts, keeping failed unlocks visible and disabling offline actions.
 - Forward signed remote switch/reload/Auto Resume notices and warnings to browser/PWA push with their existing system names, bounded reconnect replay, duplicate rejection, and passive remote notices. Reject stale or duplicate session completion updates before notifying.
-
 - Replace the separate indefinite manual-selection pause with the existing visible 15-minute Auto Switch lock. More → Unlock resumes selection, lock expiry triggers a retry even when periodic refresh is off, and other windows read the current lock before switching. Retired pause metadata no longer blocks accounts.
-
 - Restore recently viewed system lists before paint while IndexedDB refreshes; bound the memory cache, preserve device isolation, invalidate removed data, and reject older responses after newer realtime updates.
 - Retain saved board content while its tab is hidden and restore recently viewed project boards before paint, without reusing another system's board.
 - Share composer and project discovery, limit folder checks and storage waits, and avoid unrelated project discovery before starting work in an already authorized project.
@@ -407,10 +352,8 @@
 - Use the same action-route status in native and browser dashboards. Keep cached remote data on disconnect and avoid native view refreshes for unchanged heartbeats.
 - Open chat file links in the workspace Files panel, including native paths, file URLs and line references. Keep normal web links external and preserve project containment checks.
 - Add a dashboard version badge, compact draft recovery and running-session controls, and refreshed documentation screenshots for browser management across connected PCs. Present Workspace and Auto Resume without experimental labels.
-
 - Authenticate dashboard interest in detached relay signatures consistently with current clients; reject malformed or tampered targets while retaining legacy peers. Show cached peers as disconnected when no action route exists.
 - Read large transcript snapshots in bounded 1 MB chunks and coalesce simultaneous reads, preserving byte limits, partial reads, fixed snapshot boundaries, and the five-second storage deadline.
-
 - Close previous Codex Manager tabs before reopening or restoring a dashboard, then create one fresh panel. Preserve other editors, reject dirty tabs and failed cleanup, coalesce concurrent opens, and keep recovery pending after failures.
 
 ## 1.4.3
@@ -418,16 +361,13 @@
 - Replace the command-log terminal panel with a shared pseudoterminal and xterm screen: native/browser shell parity for newly created shared terminals, ANSI and cursor handling, interactive input, screen restoration, sequence-fenced input, control handoff, resize, find, copy, rename and split views. Keep unsupported native-screen attachment explicit and do not cache or replay terminal input.
 - Expand Git into staged/working changes, diffs, paged history, branch and stash tools, fetch, fast-forward pull and push. Reject stale snapshots, preserve conflicts and deduplicate confirmed operations.
 - Add host-authenticated GitHub pull requests, issues, Actions and release panels, with detail views and confirmed writes. Keep credentials host-only, validate origin repositories, fence PR merge heads and release revisions, retain partial read warnings and report uncertain confirmations without replay.
-
 - Use a focused New task dialog with title, description, stage and attachments. Add attachments to comments, including attachment-only comments. Store payloads under the owning manager's `manager/attachments` folder beside its database; board responses and SQLite hold metadata only. Reuse session upload validation, retain offline drafts, support bounded on-demand preview/download, and enforce shared Files/Comments permissions. Reject invalid drafts before filesystem writes, recheck permissions after uploads, and clean up unreferenced failed uploads without removing confirmed files.
 - Keep small-screen task search inside the toolbar with an explicit close action that preserves the filter; Escape clears it. Size the project tab to its name.
-
 - Keep one system switcher in the sidebar, with a count badge only for multiple systems. Remove duplicate board/dashboard selectors, expose useful task metadata directly beneath titles, and reclaim the info-button space.
 - Tighten conversation title/project spacing, restore the workspace tools close button, and keep the right sidebar closed on welcome and new-chat screens.
 - Stop obsolete session-list refreshes from keeping controls disabled or replacing newer results with timeout errors. Remove the persistent checking-status block, show one appropriate automation control per sidebar session, and report manual flyout refresh results through the same feedback path as sidebar refresh.
 - Use stable system IDs for local browser caches, drafts, task boards and offline changes. Keep unverified legacy drafts for explicit recovery instead of automatically assigning them to the current PC. Reject late confirmations when the browser origin changes host.
 - Retire saved queue entries after confirmed native archive/delete actions, preserve uncertain claims, and report bookkeeping failures without replaying the native mutation. Keep open task metadata current without overwriting edits.
-
 ### Workspace layout
 - Replace the Environment flyout with a fixed first Env tab and one header toggle for the right inspector. Add a compact Git tab for branch/status, changed files, commit, push review and comparison; keep terminal profiles in Terminal and tool selection in a floating menu.
 - Keep Git closable, place the add button immediately after open tabs, and summarize every inspector tool in Env's aligned list, including agent status and unsaved file drafts. Compact session rows and goal/queue strips, including smaller unboxed pause controls, without shrinking phone session touch targets.
@@ -436,9 +376,7 @@
 - Keep optional notification-subscription prompts behind active sidebars and modal flows so they cannot cover account controls; retain action errors and warnings.
 - Keep inspector responses and drafts scoped to their project and system. Reject replies from an earlier context or replaced read, retain commit/file drafts through failures, and advance file revisions only after an acknowledged save without dropping newer edits. Clear terminal drafts on accepted streaming starts.
 - Parse bounded NUL-delimited Git status so renamed files and names with spaces/newlines remain accurate. Limit status and commits to the selected subproject, retaining staged work elsewhere in the repository.
-
 ### Compact task workspace and public parity
-
 - Use compact, full-height task columns with two-line cards, subtask counts, floating actions and information, and functional Board, List, Gantt, and Calendar views. Read dates and durations from observed session runs in the existing manager.sqlite database; show unavailable historical duration explicitly.
 - Move cards between columns to change board classification only. Moving never starts, pauses, resumes, or stops Codex; execution controls stay explicit. Archive and restore custom tasks independently, preserving session children and their running work. Custom tasks remain top-level containers; their New subtask action creates a session with its initial prompt as the description.
 - Render public project links with the main TaskBoard and task-detail code, conditionally restricting operations to the link's permissions. Reuse the session header and grouped transcript for public session links, hide both sidebars and private controls, and include tool calls, arguments, output, edits and images on newly created full-activity links. Existing message-only links keep their original grant. Local full-activity links bind their original source home instead of uploading and repeatedly persisting large transcript snapshots.
@@ -447,9 +385,7 @@
 - Redesign both share dialogs with content/access/expiry summaries, shared link-copy controls, editable permission check-all, and in-place revoke confirmation. Keep pending actions visible, preserve focus and choices, and report clipboard, offline, timeout, authentication and incomplete-response failures in the initiating dialog.
 - Keep task action feedback in a dismissible toast without inserting board or detail rows. Tighten two-line cards, omit empty subtask counts, reserve mobile logo clearance, and compact modal headers, task details, API tables and sharing controls.
 - Unify dialog typography, surfaces and action rows; split token creation into identity/project scope and operation permissions. Keep sharing checkboxes next to their descriptions. Use the common dialog shell for session links and preserve pending-request close protection. Reorganize task details with aligned properties, contextual conversation access and a compact comment composer.
-
 ### Sessions, recovery, and workspace
-
 - Keep account-warning choices in the browser dashboard, including warnings returned by another PC. Remove the warning's Later button, preserve the originating system for switching and reset confirmation, and dismiss mirrored native choices without opening a VS Code account picker.
 - Record verified native sessions and goals in SQLite in the background while the dashboard is closed. Keep running counts stable during partial discovery, preserve newer activity under recording-queue pressure, and retain recovery across reloads, storage contention, and unconfirmed starts.
 - Resume eligible recorded interruptions and unfinished active goals after native readiness is verified. Respect explicit Pause actions and exclude archived, child, completed, blocked, and budget-limited work. Treat model-capacity failures as interruptions and preserve provider errors until a later successful turn.
@@ -460,9 +396,7 @@
 - Reuse one scoped Codex app-server connection throughout archive cleanup, restore and goal cleanup instead of starting a process for every item. Retain per-session locks, running-state checks, selection/home restrictions, bounded concurrency and explicit failure reporting; close the process when the job finishes.
 - Update externally changed session titles and retire temporary rename overrides after native confirmation. Reapply current preferences to cached lists across windows.
 - Validate closed-project paths asynchronously for files, terminals, and Git operations. Preserve symlink containment, file revisions, ownership checks, cancellation, and timeout safeguards. Automatically create a terminal in the session project when the selected terminal has a different or unverifiable folder.
-
 ### Project tasks and sharing
-
 - Add project Kanban with **Idea, Planned, Running, Completed**, enabled by default. Store custom tasks, discovered sessions, and comments in indexed Manager SQLite tables with revision checks and idempotent retries.
 - Keep custom tasks on the top-level board and group session subtasks beneath them, or return a session to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
 - Open task details in a right panel for combined Activities, conversation files, and recorded changes. Keep archived sessions in Completed with an additional Archive filter. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
@@ -472,21 +406,16 @@
 - Create expiring public project links with selectable activity, conversation file, change, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
 - Preserve public submission drafts and retry identities across reloads; use a new identity for edited retries. Prevent duplicate submissions and edits during pending writes, disable offline actions immediately, and keep revoked boards cleared after search or filtering.
 - Update focused public boards and activity from scoped change events. Recheck permissions on every content read, close expired/revoked streams, coalesce bursts and overlapping refreshes, and release hidden/offline viewers. Bound connections and slow-client buffers without adding browser polling.
-
 - Make nested task cards their own drop targets, reject cyclic grouping, and catch up once when task-board changes arrive during a pending read. Preserve sidebar drag identity and revision checks.
 - Update legacy conversation shares through bounded event streams with expiry, revocation, slow-viewer limits and hidden/offline cleanup. Recovery screens recheck on focus, reconnect and return events instead of polling.
-
 ### API and offline behavior
-
 - Prevent slow HTTP reads from replacing newer live snapshots. Bound and deduplicate HTTP fallback actions alongside WebSocket actions; report missing confirmations and network failures as uncertain outcomes without replaying writes.
 - Add optional dashboard API access, off by default. Manage multiple named tokens in a compact table with a separate creation modal, scope them to selected projects or all projects, check all permissions and uncheck individual operations, revoke tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter every scoped request and result.
 - Require the state permission for appended dashboard snapshots even when an API token covers all projects; an operation-only token receives its action result without unrelated dashboard state.
 - Cache the data-free browser shell and bounded saved read views for offline reload. Reconcile task drafts and comments on reconnect with stable request IDs and visible conflict review. Preserve unsynced outbox entries when storage fills; never silently evict them.
 - Disable live-only actions offline. Session execution, terminal commands, filesystem and Git mutations, account changes, tokens, and public links are never queued for later execution.
 - Keep a working offline worker when an update cannot save its required shell assets. Let explicitly newer asset versions reach the network instead of serving an older controlling worker's bundle. Read only queued outbox entries during sync, and tolerate malformed or future-dated read-cache rows without deleting drafts.
-
 ### Dashboard and account automation
-
 - Keep Settings tabs in one row. On narrow screens, show the active label and other tabs as icons. Compact task, account, API, notification, and Running Sessions surfaces, with bounded columns and ellipsized titles.
 - Suppress the redundant post-action session-refresh notice and live-history display-limit banner. Remove confirmed missing conversations from the browser list/cache while retaining drafts and transient read failures.
 - Stop hidden task-view polling, avoid unchanged board/detail cache writes and rerenders, load static detail tabs on demand, and cache unchanged native title indexes. Preserve fast live activity refresh and offline drafts.
@@ -559,14 +488,12 @@
 - Reposition chart tooltips when their size changes and keep them within the viewport.
 - Reuse the bounded local transcript index during session list and chat opens, while invalidating on Codex state changes.
 - Stable repackaging of the audited dashboard, reload recovery, chart persistence, zero-token tooltip filtering, logging, and non-blocking operation fixes.
-
 - Hide accounts with zero tokens in chart tooltips while preserving totals and missing-data indicators.
 - Remember chart mode, time ranges, and period navigation on this device across reloads. Show each day's combined token total above its per-account usage, including missing and stale data.
 - Keep dashboard startup responsive when local session discovery, desktop app detection, credential reads, or optional usage-history saving is slow. Return a retryable error instead of leaving the state endpoint pending indefinitely.
 - Resolve restored conversation editors before closing all existing Codex session tabs, then reopen saved active and quota-paused goal sessions sequentially. Preserve unsaved tabs and durable recovery on cancellation, timeout, or failure.
 - Capture tab and sidebar goal recovery directly before reload instead of scanning the entire running-session history within the short reload budget.
 - Close Codex conversation tabs, extra Codex panels, and restored Codex Manager duplicates before managed reloads; seal eligible recovery before tab-close events can replace it.
-
 - Keep the newest diagnostic records when downloads hit their count or byte limit, and avoid rebuilding account state while polling the log console.
 - Keep notices short and plain, and send recoverable background failures to logs while automatic retries continue quietly.
 
@@ -574,13 +501,9 @@
 
 - Preserve restored Codex custom documents during Auto Resume to avoid editor-load races, focus each recovered conversation, and restore the dashboard without stealing focus.
 - Add a live diagnostic console with recent retained history, automatic retry, and log downloads.
-
 - Nest connection controls inside Web Dashboard, remove the CLI path control, give desktop restart and parallel accounts equal width, and move reload beside Auto Resume.
-
 - Capture running sidebar goals even without a conversation tab. Add shared log levels, redacted recent-log downloads, host-run correlation, and detailed capture/filter/restore decisions.
-
 - Make all dashboard settings compact with short, plain descriptions and remove stretched cards with empty space. Keep warnings and action results readable.
-
 - Look up goals for visible sessions directly so large goal histories cannot hide their status. Verify goal-only capture and restore with native goal storage, including quota-limited parents, paused goals, archived sessions, sub-agents, and failed storage.
 - Keep pending shared-account confirmation and background retry failures out of desktop, dashboard, and push notifications. Preserve background retries, diagnostics, known ownership conflicts, and explicit sync failures.
 - Coordinate account credentials, token renewal, provider request budgets, browser sessions, OAuth completion, file edits, and Git mutations across local windows through shared SQLite leases. Share compatible quota, credit, profile, subscription, and local-session reads; use one batch runner. Preserve newer credentials and metadata, reject stale reset-credit snapshots, and retain completed reads when their optional result cache cannot be saved.
@@ -617,7 +540,6 @@
 - Keep dashboard snapshots responsive while cached credentials refresh in the background, bound slow expired-token account switches, and move optional vault, relay, document, and push startup work off the critical path.
 - Prevent session inspection timeouts caused by sequential native status checks and premature Windows lock-probe deadlines.
 - Keep session history readable when running state cannot be verified, show the inspection error, and require a successful retry before sending or changing the session.
-
 - Nest workspace controls under Web Dashboard with dependent visibility, pair the host and domain cards and the CLI path and desktop restart cards, and give parallel window accounts a full-width row.
 - Group reset, session waiting, auto resume, and refresh-before-switch settings in a responsive two-column grid inside Automatic Account Switching.
 
@@ -640,7 +562,6 @@
 - Bound optional reload preparation to one 500 ms budget and persist account selection before reload. Refresh known expired credentials before applying them.
 - Refresh expired quota countdowns even when periodic polling is disabled. Retry still-zero provider snapshots with backoff and reuse successful post-reset checks.
 - Replay early browser snapshots when the UI becomes ready, preventing startup from getting stuck on Loading.
-
 - Bound optional profile, initial quota, dashboard snapshot, desktop restart, session discovery, and Git status work so completed manual actions can report promptly.
 - Refresh subscription details and evaluate quota automation without holding manual refresh completion. Keep reset verification and account ownership checks required.
 - Report provider errors accurately in single and batch refreshes; preserve successful chat and Git actions when follow-up reads fail.
@@ -667,11 +588,9 @@
 - Permit secure dashboard WebSockets explicitly and reconnect stale mobile connections after network changes, returning from suspension, or manual retry. Tighten mobile session title and metadata spacing.
 - Keep remote PCs visible in the picker when their session catalog arrives before peer presence metadata.
 - Polish browser notification cards, add provider-confirmed test notifications, standardize mobile text, and keep account search/filter/view controls on one row with one clear button.
-
 - Hide the desktop overview account-details block on small screens while retaining usage, quotas, and actions.
 - Compact small dashboard headers: remove the empty top spacer, use the logo as the left sidebar button, and omit the unrelated right floating workspace toggle.
 - Add explicit, expiring, revocable read-only conversation snapshot links that work without dashboard sign-in.
-
 - Add **Claim only the current account** with authenticated shared-host ownership checks, serialized switching, fenced releases, and PC labels. Preserve queued claims through conflicting sync updates.
 - Restore only verified running parent conversations across projects, preserve distinct native tabs, and use native runtime state to distinguish idle conversations from retained writer handles.
 - Discover concurrent running sessions from shared local evidence, including duplicate transcripts and sessions without writer locks or complete indexes, and keep browser and VS Code counts consistent.
@@ -981,9 +900,7 @@
 ## 1.0.1
 
 Codex Manager now provides a cleaner, more dependable way to manage accounts and work with Codex sessions from VS Code or the browser dashboard.
-
 ### Highlights
-
 - A compact, responsive dashboard with balanced account and quota panels.
 - A simpler layered account setup flow for OAuth, callback completion, current-account import, and JSON files.
 - Clear separation between active and archived Codex sessions.
@@ -993,9 +910,7 @@ Codex Manager now provides a cleaner, more dependable way to manage accounts and
 - File actions for opening, copying paths, and confirmed deletion; review actions for opening reviews or source files.
 - Real VS Code terminal integration, including running-terminal selection and profile-based terminal creation.
 - Visible success, warning, cancellation, and error feedback for user-started actions.
-
 ### Reliability
-
 - Improved browser-dashboard reconnect behavior and Cloudflare-hosted login handling.
 - Safer workspace file access and more dependable PowerShell command execution on Windows.
 - Packaging excludes local browser-test artifacts.
@@ -1003,4 +918,3 @@ Codex Manager now provides a cleaner, more dependable way to manage accounts and
 ## 1.0.0
 
 - Initial release.
-

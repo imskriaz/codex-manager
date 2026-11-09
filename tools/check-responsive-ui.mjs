@@ -1,3 +1,5 @@
+import { checkAccountCenterUi as checkNarrowAccountCenterUi } from './check-account-center-ui.mjs';
+import { checkSessionRenameUi } from './check-session-rename-ui.mjs';
 import { checkMessageTypesUi } from './check-message-types-ui.mjs';
 import { checkWorkMonitorUi } from './check-work-monitor-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
@@ -298,6 +300,12 @@ const mockHost = `(() => {
           else payload = {cliSessions:sessions,cliComposerConfig:config};
         }
         else if(message.action === 'getCodexCliSessionMessages' && window.__systemFixture && message.payload?.targetDeviceId === 'fixture-system') payload={cliSession:{id:'44444444-4444-4444-8444-444444444444',title:'Remote system session',status:'idle',projectPath:'E:/remote-project',deviceId:'fixture-system',remote:true},cliSessionMessages:[{id:'remote-reply',kind:'message',role:'assistant',text:'Remote system conversation'}]};
+        else if(message.action === 'renameCodexCliSession') {
+          const session = sessions.find(item=>item.id===message.payload.sessionId);
+          if(window.__failNextRename) {window.__failNextRename=false;error='Rename storage is unavailable. The original title was kept.';}
+          else payload={cliSession:{...session,title:message.payload.text.trim().replace(/\\s+/g,' ')},notice:{level:'info',message:'Session renamed.'}};
+          if(!window.__holdNextRename && !error) for(const item of sessions.filter(item=>item.id===session.id)) item.title=payload.cliSession.title;
+        }
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
@@ -386,6 +394,7 @@ const mockHost = `(() => {
         }
         if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'renameCodexCliSession' && window.__holdNextRename) {window.__holdNextRename=false;window.__heldRenameResult=structuredClone(result);return;}
         if(message.action === 'startCodexCliSession' && window.__holdNextStart) {window.__holdNextStart=false;window.__heldStartResult=result;return;}
         if(message.action === 'resumeCodexSessions' && window.__holdResumeClick) {window.__heldResumeResult=result;return;}
         if(message.action === 'steerCodexCliSessionTurn' && window.__holdNextSteer) {window.__holdNextSteer=false;window.__heldSteerResult=result;return;}
@@ -517,10 +526,7 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
   await page.keyboard.press('Escape');
   assert.equal(await center.isVisible(), true, 'Escape closes a child menu before account center');
   await card('rea***com').locator('.saved-select-toggle').click();
-  const view = center.locator('.dashboard-view-toggle');
-  await view.click();
-  assert.equal(await center.locator('.saved-table-row').count(), 9, 'The dashboard view toggle works in the mirror');
-  await view.click();
+  assert.equal(await center.locator('.dashboard-view-toggle').count(), 0, 'Account Center keeps the compact card view');
   const ready = () => card('rea***com');
   await ready().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).click();
   await ready().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
@@ -672,6 +678,12 @@ try {
       await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--rename')) {
+      await checkSessionRenameUi(page, { origin, parentId, runningId, width, height, output });
+      assert.deepEqual(errors, [], 'Session renaming has no browser errors');
+      results.push({ width, height, checks: 'Immediate title, single submission, stale snapshot protection, failure and timeout rollback, delayed completion isolated from another conversation' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--work-monitor')) {
       await page.goto(`${origin}/workspace/${parentId}`);
@@ -1048,6 +1060,9 @@ try {
       await captureDocsScreenshots(page,{origin,width,parentId});assert.deepEqual(errors,[]);
       results.push({width,height,checks:'documentation screenshots with fictional data'});await context.close();continue;
     }
+    if(process.argv.includes('--account-layout')){
+      await checkNarrowAccountCenterUi(page,{origin,output});assert.deepEqual(errors,[]);results.push({width,height,checks:'Account Center resize, narrow cards, quota visibility and no horizontal overflow'});await context.close();continue;
+    }
     if(process.argv.includes('--flyouts')){
       await checkFlyoutUi(page,{origin,parentId,width,height,output});assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Click-anchored account, More, graph, mobile, running/queue, workspace tools and account-center menus; resize bounds'});await context.close();continue;
@@ -1360,7 +1375,8 @@ try {
       const missingRail=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
       if(await missingRail.isVisible()) await missingRail.click();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.targetDeviceId==='missing-system'));
-      assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).inputValue(),'missing-system','An undiscovered system never falls back to local data');
+      await page.waitForFunction(()=>document.querySelector('.cli-rail-system select')?.value==='fixture-local',null,{timeout:10000});
+      assert.ok(!new URL(page.url()).searchParams.has('device'),'An unavailable system falls back to the connected local host');
       await page.goto(`${origin}/`);
       await page.locator('#dashboard-main').waitFor();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.viewing===true));
@@ -1415,7 +1431,7 @@ try {
       await page.getByRole('button',{name:'Open account center',exact:true}).click();
       const center=page.getByRole('dialog',{name:'Account center',exact:true});
       assert.equal(await center.getByRole('combobox',{name:'Account system',exact:true}).inputValue(),'fixture-system');
-      await center.getByText('Remote identity',{exact:true}).waitFor();
+      await center.locator('.saved-title-text').filter({hasText:'remote@example.test'}).waitFor();
       await page.keyboard.press('Escape');
       await picker.selectOption('fixture-local');
       await page.waitForFunction(()=>!window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId);
@@ -1474,11 +1490,15 @@ try {
       });
       assert.ok(await page.evaluate(()=>window.__reconnectViewport===document.querySelector('.cli-message-viewport')),'Connection recovery updates the existing view in place');
       await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:structuredClone(window.__uiSnapshot)}}));});
-      await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      const dispatched=await page.evaluate(()=>window.__uiActions.filter(action=>/sendCodex|startCodex|saveWorkspace|deleteWorkspace/.test(action.action||'')).length);
+      await page.waitForFunction(()=>document.querySelector('.cli-rail-system select')?.value==='fixture-local',null,{timeout:10000});
       await rail();
-      assert.equal(await picker.isEnabled(),true,'A disconnected system never removes the system picker');
-      const offlineSend=page.getByRole('button',{name:'Send message',exact:true});
-      if(await offlineSend.count()) assert.equal(await offlineSend.isDisabled(),true,'Remote execution stays disabled while browser remains online');
+      assert.equal(await picker.isEnabled(),true,'Local fallback leaves the system picker usable');
+      await page.waitForFunction(()=>location.pathname==='/workspace'&&!new URL(location.href).searchParams.has('device'));
+      await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
+      assert.equal(await page.getByText('Remote system conversation',{exact:true}).count(),0,'Offline remote context gives way to the local workspace');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(action=>/sendCodex|startCodex|saveWorkspace|deleteWorkspace/.test(action.action||'')).length),dispatched,'Failover never replays a remote mutation on local files or sessions');
+
       if(width<=760) {const hide=page.getByRole('button',{name:'Hide sessions sidebar',exact:true});if(await hide.isVisible())await hide.click();}
       await page.screenshot({path:path.join(output,`cached-reconnect-${width}x${height}.png`),animations:'disabled'});
       assert.deepEqual(errors,[]);

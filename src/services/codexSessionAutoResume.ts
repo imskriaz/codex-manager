@@ -831,13 +831,14 @@ export function isAutoResumeAvailable(): boolean {
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {
   if (!result.attempted) return undefined;
+  const standalone = vscode.env.appHost === "node";
   if (!result.opened && !result.failed.length) return "Auto Resume checked saved conversations; none needed continuation.";
   const titles = autoResumeTitles.get(result) ?? [];
   const titleText = titles.filter((entry) => entry.status === "opened").slice(0, 3).map((entry) => `“${entry.title}”`).join(", ");
   if (!result.failed.length)
-    return `Auto resume resumed ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"} in VS Code${titleText ? `: ${titleText}` : ""}.`;
+    return `Auto resume resumed ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"} ${standalone ? "in the background" : "in VS Code"}${titleText ? `: ${titleText}` : ""}.`;
   const failures = result.failed.slice(0, 3).map(failure => titles.find(entry => entry.sessionId === failure.sessionId)?.title)
     .filter((title): title is string => Boolean(title)).map(title => `“${title}”`).join(", ");
   const extra = result.failed.length > 3 ? `; and ${result.failed.length - 3} more` : "";
-  return `Auto resume resumed ${result.opened} of ${result.attempted} conversations in VS Code.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; open Codex to review.`;
+  return `Auto resume resumed ${result.opened} of ${result.attempted} conversations ${standalone ? "in the background" : "in VS Code"}.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; ${standalone ? "recovery will retry automatically." : "open Codex to review."}`;
 }

@@ -73,6 +73,10 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   assert.ok(await retry.evaluate(element => element.getBoundingClientRect().height <= parseFloat(getComputedStyle(element).lineHeight) + 2), 'Native retry stays on one line');
   await page.evaluate(({ messages, sessionId }) => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '77777777-7777-4777-8777-777777777777', sequence: 3, status: 'completed', updatedAt: Date.now(), messages } } })), { messages: fixtures, sessionId: parentId });
   await retry.waitFor({ state: 'hidden' });
+  const completedAgents=page.locator('.cli-activity-group-body > .cli-activity.is-collaboration');
+  assert.equal(await completedAgents.count(),3,'Completed agent events join the shared completed-activity group');
+  assert.equal(await completedAgents.first().evaluate(element=>element.closest('.cli-activity-group-details').open),false,'Completed agent work starts collapsed with the other tools');
+  assert.equal(await page.locator('.cli-activity-group').filter({has:page.locator('.cli-activity.is-collaboration')}).count(),1,'Adjacent agent and send-input activity share one disclosure');
   for (const group of await page.locator('.cli-activity-group-details').all()) if (!await group.evaluate(element => element.open)) await group.locator(':scope > summary').click();
   for (const kind of ['plan', 'command', 'tool-call', 'web-search', 'review', 'compaction', 'error', 'collaboration']) {
     const row = page.locator(`.cli-session-messages > .cli-activity.is-${kind}, .cli-activity-group-body > .cli-activity.is-${kind}`).first();

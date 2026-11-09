@@ -714,6 +714,25 @@ describe("sessions sidebar layout", () => {
     expect(items[7]).toMatchObject({ id: "command-3", status: "inProgress" });
   });
 
+  it('groups completed agent work with adjacent tools while preserving agent links and visible live or failed activity', () => {
+    const completed = { id: 'agent-done', kind: 'collaboration' as const, status: 'completed' as const, text: 'Reviewed changes',
+      debug: '{"receiverThreadIds":["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}' };
+    const active = { ...completed, id: 'agent-live', status: 'inProgress' as const };
+    const failed = { ...completed, id: 'agent-failed', status: 'failed' as const };
+    const unknown = { ...completed, id: 'agent-unknown', status: 'unknown' as const };
+    const items = consolidateSessionMessages([
+      { id: 'tool', kind: 'tool-call', status: 'completed', text: 'Read file' }, completed,
+      { id: 'command', kind: 'command', status: 'completed', text: 'Run check' }, active, failed, unknown
+    ]);
+    expect(items).toEqual([{ id: 'activity-group-tool', messages: [
+      { id: 'tool', kind: 'tool-call', status: 'completed', text: 'Read file' }, completed,
+      { id: 'command', kind: 'command', status: 'completed', text: 'Run check' }
+    ] }, active, failed, unknown]);
+    expect(consolidatedActivityLabel('messages' in items[0]! ? items[0].messages : [])).toBe('Used a tool, worked with an agent, ran a command');
+    const transitioned = consolidateSessionMessages([completed, { ...active, status: 'completed' }]);
+    expect(transitioned).toEqual([{ id: 'activity-group-agent-done', messages: [completed, { ...active, status: 'completed' }] }]);
+  });
+
   it("defaults the workspace rail to Active when no session is selected", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const stateEffectStart = source.indexOf("// A session deep link should open in its matching state tab");

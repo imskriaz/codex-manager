@@ -94,6 +94,8 @@ const AUTO_SWITCH_FAILURE_NOTICE_COOLDOWN_MS = 15 * 60 * 1000;
 
 export type RefreshView = {
   refresh(): void;
+  /** HTTP inference uses saved credentials directly and must finish before any host reload. */
+  deferHostReload?: boolean;
   markObservedAuthIdentity?: (accountId?: string) => void;
 };
 
@@ -725,10 +727,6 @@ async function evaluateAutoSwitchForActiveQuota(
     .sort(createAutoSwitchComparator());
 
   const next = candidates[0];
-  if (!next && modelCapacity) {
-    recordAutoSwitchDashboardNotice('Model capacity switch deferred: no verified capable account is available.', 'warning', { accountId: active.id });
-    return false;
-  }
   if (!next) {
     // The dashboard can show usable quota from the last snapshot while Auto
     // Select correctly refuses to switch on a stale or pre-session snapshot.
@@ -753,6 +751,11 @@ async function evaluateAutoSwitchForActiveQuota(
       }
       view.refresh();
       return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed, true);
+    }
+
+    if (modelCapacity) {
+      recordAutoSwitchDashboardNotice('Model capacity switch deferred: no verified capable account is available.', 'warning', { accountId: active.id });
+      return false;
     }
 
     if (reauthorization) {
@@ -984,7 +987,7 @@ async function evaluateAutoSwitchForActiveQuota(
   const switchMessage = modelCapacity ? `Consecutive model-capacity failures; switched to ${latestNext.email}.` : reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
   deferredForSessions = false; sessionWaitNotice = undefined;
 
-  await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated);
+  await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated, 'info', view.deferHostReload);
   return true;
 }
 
@@ -1183,7 +1186,7 @@ async function executeResetPlan(
   view.markObservedAuthIdentity?.(next.id);
   view.refresh();
   const switchMessage = `Reset quota for ${next.email} and switched to it (weekly threshold ${resetThreshold}%).`;
-  await finishAutoSwitchReload(next, switchMessage, userInitiated);
+  await finishAutoSwitchReload(next, switchMessage, userInitiated, 'info', view.deferHostReload);
   return true;
 }
 
@@ -1265,7 +1268,7 @@ async function executeResetFailureFallbackSwitch(
   // the account switch also requires a window reload or prompt.
   recordAutoSwitchDashboardNotice(switchMessage, "warning", { accountId: next.id, switchResult: "switched" });
   void vscode.window.showWarningMessage(switchMessage);
-  await finishAutoSwitchReload(next, switchMessage, userInitiated, "warning");
+  await finishAutoSwitchReload(next, switchMessage, userInitiated, "warning", view.deferHostReload);
   return true;
 }
 
@@ -1273,10 +1276,12 @@ async function finishAutoSwitchReload(
   account: CodexManagerAccountRecord,
   message: string,
   userInitiated = false,
-  level: "info" | "warning" = "info"
+  level: "info" | "warning" = "info",
+  deferHostReload = false
 ): Promise<void> {
-  void handleCodexAppRestartPreference({ allowManualPrompt: false });
   recordAutoSwitchDashboardNotice(message, level, { accountId: account.id, switchResult: "switched" });
+  if (deferHostReload) return;
+  void handleCodexAppRestartPreference({ allowManualPrompt: false });
   if (level === "info") void vscode.window.showInformationMessage(message);
   if (!needsWindowReloadForAccount(account.id)) return;
   if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {

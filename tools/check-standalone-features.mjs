@@ -23,6 +23,7 @@ const reservation = createServer(); await new Promise(resolve => reservation.lis
 const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
 const origin = `http://127.0.0.1:${port}`, admin = randomBytes(32).toString("hex");
 let host, hostDone;
+let switchAccounts;
 function run(script, args, environment, cwd) {
   const child = spawn(process.execPath, [path.join(repository, "tools", script), ...args], { env: environment, cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", chunk => process.stdout.write(chunk)); child.stderr.on("data", chunk => process.stderr.write(chunk));
@@ -34,9 +35,33 @@ try {
   const auth = JSON.parse(await readFile(path.join(root, 'auth.json'), 'utf8'));
   if (auth.tokens) auth.tokens.refresh_token = "";
   await writeFile(path.join(root, 'auth.json'), JSON.stringify(auth));
+  if (process.argv.includes('--account-switch')) {
+    const source = new (require('node:sqlite').DatabaseSync)(path.join(sourceHome, 'manager.sqlite'), { readOnly: true });
+    try {
+      const accounts = source.prepare('SELECT data FROM accounts').all().map(row => JSON.parse(row.data));
+      const candidates = accounts.flatMap(account => {
+        const secret = source.prepare('SELECT value FROM state WHERE namespace=? AND key=?').get('secrets', 'codex.account.' + account.id);
+        if (!secret) return [];
+        const raw = JSON.parse(secret.value);
+        if (typeof raw !== 'string') return [];
+        const tokens = JSON.parse(raw);
+        try { if (JSON.parse(Buffer.from(tokens.accessToken.split('.')[1], 'base64url')).exp * 1000 < Date.now() + 300000) return []; } catch { return []; }
+        return [{ account: { ...account, enabled: true, tokenRefreshEnabled: false }, tokens: { ...tokens, refreshToken: '' } }];
+      });
+      const exhausted = candidates.find(({ account }) => account.quotaSummary?.hourlyPercentage === 0 || account.quotaSummary?.weeklyPercentage === 0);
+      const healthy = candidates.find(({ account }) => account.quotaSummary?.hourlyPercentage > 10 && account.quotaSummary?.weeklyPercentage > 10);
+      assert.ok(exhausted && healthy, 'Account-switch check needs two unexpired saved logins: exhausted and available.');
+      switchAccounts = [exhausted, healthy];
+      require('../out/storage/sqliteAccounts.js').saveAccountIndex(store, { accounts: switchAccounts.map(item => item.account), currentAccountId: exhausted.account.id });
+      for (const item of switchAccounts) store.set('secrets', 'codex.account.' + item.account.id, JSON.stringify(item.tokens));
+      await writeFile(path.join(root, 'auth.json'), JSON.stringify({ tokens: { id_token: exhausted.tokens.idToken, access_token: exhausted.tokens.accessToken, refresh_token: '', account_id: exhausted.tokens.accountId } }));
+    } finally { source.close(); }
+  }
   await require("../out/utils/crossWindowOperations.js").configureCrossWindowOperationCoordinator(root);
-  const cli = await require("../out/services/codexCliRuntime.js").installManagedCodexCli();
-  store.set("settings-overrides:global", "codexCliPath", cli);
+  if (!process.argv.includes("--ai-proxy")) {
+    const cli = await require("../out/services/codexCliRuntime.js").installManagedCodexCli();
+    store.set("settings-overrides:global", "codexCliPath", cli);
+  }
   const environment = { ...process.env, CODEX_HOME: root, CODEX_MANAGER_PORT: String(port), CODEX_MANAGER_WORKSPACE_STORAGE: root, CODEX_MANAGER_ADMIN_TOKEN: admin, CODEX_MANAGER_HANDOFF: "", CODEX_MANAGER_UI_URL: origin };
   delete environment.CODEX_CLI_PATH;
   await mkdir(path.join(root, "workspace"));
@@ -55,7 +80,77 @@ try {
     assert.equal(result?.status, "completed", result?.error || `${name}: missing result`);
     return result.payload;
   };
-  if (process.argv.includes('--restart-recovery')) {
+  if (process.argv.includes('--account-switch')) {
+    const [exhausted, healthy] = switchAccounts;
+    for (const item of switchAccounts) await action('refresh', { accountId: item.account.id });
+    const switched = await action('switch', { accountId: healthy.account.id });
+    assert.equal(switched.reloadScheduled, false, 'Standalone switch applies without an editor reload');
+    const reload = await action('reloadPrompt', { forceReload: true });
+    assert.equal(reload.reloadScheduled, false);
+    await action('switch', { accountId: exhausted.account.id });
+    store.set('settings-overrides:global', 'autoSwitchEnabled', true);
+    await action('setAutoSwitchLock', { accountId: exhausted.account.id, lockMinutes: 0 });
+    await action('refresh', { accountId: exhausted.account.id });
+    const deadline = Date.now() + 30000;
+    let state;
+    do {
+      state = await (await fetch(origin + '/api/state')).json();
+      if (state.accounts.find(account => account.isActive)?.id === healthy.account.id) break;
+      assert.ok(Date.now() < deadline, 'Standalone did not automatically select the verified available account');
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } while (true);
+    assert.equal(JSON.parse(await readFile(path.join(root, 'auth.json'), 'utf8')).tokens.access_token, healthy.tokens.accessToken, 'Switch writes the selected saved credentials');
+    const started = await action('startCodexCliSession', { projectPath: path.join(root, 'workspace'), text: 'Reply exactly SWITCH OK. Do not use tools or create goals.' });
+    const sessionId = started.cliSession.id;
+    const responseDeadline = Date.now() + 120000;
+    for (;;) {
+      const history = await action('getCodexCliSessionMessages', { sessionId });
+      if (history.cliSessionLive?.status === 'completed') { assert.ok(history.cliSessionMessages.some(message => message.role === 'assistant' && message.text.includes('SWITCH OK'))); break; }
+      assert.notEqual(history.cliSessionLive?.status, 'failed', history.cliSessionLive?.error);
+      assert.ok(Date.now() < responseDeadline, 'Post-switch execution timed out');
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    assert.equal(host.exitCode, null, 'Account switches and Reload keep the same standalone host alive');
+    await action('archiveCodexCliSession', { sessionId });
+    await action('deleteCodexCliSession', { sessionId, confirmed: true });
+    console.log('PASS standalone real-account switch, Reload, automatic quota switch, post-switch execution, archive and delete on the same host');
+  } else if (process.argv.includes('--ai-proxy')) {
+    await action('importCurrent');
+    const token = (await action('generateApiToken', {tokenName:'Disposable proxy check',tokenPermissions:['aiProxy']})).apiToken;
+    assert.ok(token);
+    const headers = {Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
+    let started=performance.now();
+    const discovery=await fetch(origin+'/v1/models',{headers,signal:AbortSignal.timeout(30000)});
+    const catalogue=await discovery.json(); assert.equal(discovery.status,200,JSON.stringify(catalogue));
+    const model=catalogue.data[0]?.id;assert.ok(model);
+    console.log(JSON.stringify({check:'model discovery',ms:Math.round(performance.now()-started),count:catalogue.data.length}));
+    const claudeModels=await fetch(origin+'/v1/models?limit=1',{headers:{'x-api-key':token,'anthropic-version':'2023-06-01'},signal:AbortSignal.timeout(30000)}).then(r=>r.json());
+    assert.equal(claudeModels.data[0].type,'model');
+    for(const [endpoint,body] of [
+      ['/v1/chat/completions',{model,messages:[{role:'user',content:'Reply exactly PROXY_OK.'}]}],
+      ['/v1/responses',{model,input:'Reply exactly PROXY_OK.'}],
+      ['/v1/messages',{model,max_tokens:128,messages:[{role:'user',content:'Reply exactly PROXY_OK.'}]}],
+    ]) for(const stream of [false,true]) {
+      started=performance.now();
+      const result=await fetch(origin+endpoint,{method:'POST',headers,body:JSON.stringify({...body,stream}),signal:AbortSignal.timeout(180000)});
+      const firstByte=performance.now();const text=await result.text();assert.equal(result.status,200,text);
+      const chunks=stream?text.split('\n').filter(line=>line.startsWith('data: ')&&!line.includes('[DONE]')).map(line=>JSON.parse(line.slice(6))):[];
+      const answer=endpoint.endsWith('completions')?chunks.map(item=>item.choices?.[0]?.delta?.content||'').join(''):endpoint.endsWith('messages')?chunks.map(item=>item.delta?.text||'').join(''):chunks.filter(item=>item.type==='response.output_text.delta').map(item=>item.delta).join('');
+      assert.ok(stream?answer.includes('PROXY_OK'):text.includes('PROXY_OK'),text);
+      assert.ok(!text.includes('event: error'),text);
+      console.log(JSON.stringify({check:endpoint,stream,headersMs:Math.round(firstByte-started),totalMs:Math.round(performance.now()-started)}));
+    }
+    const tool=await fetch(origin+'/v1/chat/completions',{method:'POST',headers,body:JSON.stringify({model,messages:[{role:'user',content:'Call the echo function with value OK.'}],tools:[{type:'function',function:{name:'echo',parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false},strict:true}}],tool_choice:{type:'function',function:{name:'echo'}}}),signal:AbortSignal.timeout(180000)});
+    const toolResult=await tool.json();assert.equal(tool.status,200,JSON.stringify(toolResult));assert.equal(toolResult.choices[0].message.tool_calls[0].function.name,'echo');
+    const followup=await fetch(origin+'/v1/chat/completions',{method:'POST',headers,body:JSON.stringify({model,messages:[{role:'user',content:'Call echo with OK, then say PROXY_TOOL_OK after receiving the result.'},toolResult.choices[0].message,{role:'tool',tool_call_id:toolResult.choices[0].message.tool_calls[0].id,content:'OK'}]}),signal:AbortSignal.timeout(180000)});
+    const followupText=await followup.text();assert.equal(followup.status,200,followupText);assert.ok(followupText.includes('PROXY_TOOL_OK'),followupText);
+    const claudeTool=await fetch(origin+'/v1/messages',{method:'POST',headers:{'x-api-key':token,'content-type':'application/json','anthropic-version':'2023-06-01'},body:JSON.stringify({model,max_tokens:128,messages:[{role:'user',content:'Call echo with OK.'}],tools:[{name:'echo',input_schema:{type:'object',properties:{value:{type:'string'}},required:['value']}}],tool_choice:{type:'tool',name:'echo'}}),signal:AbortSignal.timeout(180000)});
+    const claudeToolResult=await claudeTool.json();assert.equal(claudeTool.status,200,JSON.stringify(claudeToolResult));assert.ok(claudeToolResult.content.some(item=>item.type==='tool_use'&&item.name==='echo'));
+    const image=await readFile(path.join(repository,'media','product-icons','codex-openai.png'));
+    const vision=await fetch(origin+'/v1/messages',{method:'POST',headers,body:JSON.stringify({model,max_tokens:128,messages:[{role:'user',content:[{type:'text',text:'Reply exactly PROXY_IMAGE_OK.'},{type:'image',source:{type:'base64',media_type:'image/png',data:image.toString('base64')}}]}]}),signal:AbortSignal.timeout(180000)});
+    const visionText=await vision.text();assert.equal(vision.status,200,visionText);assert.ok(visionText.includes('PROXY_IMAGE_OK'),visionText);
+    console.log('PASS live OpenAI/Responses/Claude discovery, non-streaming, streaming, client tool calls/results and image input without VS Code or CLI');
+  } else if (process.argv.includes('--restart-recovery')) {
     store.set('settings-overrides:global', 'autoResumeEnabled', true);
     store.set('settings-overrides:global', 'autoSwitchEnabled', true);
     const created = await action('startCodexCliSession', { projectPath: path.join(root, 'workspace'), sandboxMode: 'danger-full-access', autoApprove: true,

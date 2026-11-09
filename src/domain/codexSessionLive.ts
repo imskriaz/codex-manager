@@ -291,13 +291,15 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
   }
   // Native transcripts can assign a different ID to the accepted steering echo.
   const matchedUsers = new Set<string>();
-  for (const [index, item] of messages.entries()) {
+  // A bounded live snapshot is a suffix, so match repeated prompts from the end.
+  for (const [index, item] of live.truncated ? [...messages.entries()].reverse() : messages.entries()) {
     if (saved.has(item.id) || item.role !== "user" || item.kind && item.kind !== "message" || !live.turnId) continue;
     const before = messages.slice(0, index).reverse().find(candidate => saved.has(candidate.id));
     const after = messages.slice(index + 1).find(candidate => saved.has(candidate.id));
     const start = before ? history.findIndex(candidate => candidate.id === before.id) + 1 : 0;
     const end = after ? history.findIndex(candidate => candidate.id === after.id) : history.length;
-    const echo = history.slice(start, end).find(candidate => candidate.role === "user" && (!candidate.kind || candidate.kind === "message") &&
+    const candidates = history.slice(start, end);
+    const echo = (live.truncated ? candidates.reverse() : candidates).find(candidate => candidate.role === "user" && (!candidate.kind || candidate.kind === "message") &&
       candidate.turnId === live.turnId && !matchedUsers.has(candidate.id) && !messages.some(other => other.id === candidate.id) &&
       candidate.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === item.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() &&
       (!candidate.images?.length || !item.images?.length || JSON.stringify(candidate.images.map(image => image.src)) === JSON.stringify(item.images.map(image => image.src))) &&

@@ -61,6 +61,8 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   });
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('textbox', exact('Message Codex')).waitFor();
+  const sidebarFonts=await page.evaluate(()=>({session:getComputedStyle(document.querySelector('.cli-session-row-main strong')).fontSize,project:getComputedStyle(document.querySelector('.cli-project-select strong')).fontSize}));
+  assert.equal(sidebarFonts.session,sidebarFonts.project,'Project and conversation titles use the same sidebar text size');
   await page.evaluate(() => { window.__inspectorMode = true; });
   await show();
   await page.getByRole('tab', exact('Env')).click();
@@ -334,6 +336,15 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   const workspaceTabCount=await page.locator('.cli-context-tabs-v3 [role=tab]').count();
   await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).click();
   await page.getByText('Agent reviewer message',{exact:true}).waitFor();
+  const stickyNavigation = await page.locator('.cli-agent-workspace').evaluate(async element => {
+    const spacer=document.createElement('div');spacer.style.cssText='height:1200px;flex:none';element.append(spacer);
+    element.scrollTop=element.scrollHeight;
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const nav=element.querySelector('.cli-agent-tabs').getBoundingClientRect(),panel=element.getBoundingClientRect();
+    const result={scroll:element.scrollTop,top:nav.top-panel.top,bottom:nav.bottom-panel.top};
+    spacer.remove();element.scrollTop=0;return result;
+  });
+  assert.ok(stickyNavigation.scroll>100 && stickyNavigation.top>=-1 && stickyNavigation.top<=2 && stickyNavigation.bottom>5,'Agent navigation stays pinned while its conversation scrolls');
   assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab]').count(),workspaceTabCount,'Selecting an agent stays in the shared Agents panel');
   await page.screenshot({path:path.join(output,`workspace-agents-${width}.png`)});
   await page.getByRole('tab',{name:/All agents/}).click();

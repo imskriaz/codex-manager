@@ -83,7 +83,7 @@ it("uses local title metadata for failure push and never substitutes an ID or an
   const id = "01a04882-d037-7a42-ad24-9afb61901188";
   const read = vi.spyOn(sessionMetadata, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({ [id]: { title: "Fix startup tabs", updatedAt: Date.now() } });
   const notify = vi.fn();
-  const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, peerSessions: new Map([["target", { deviceName: "Worker Two" }]]), getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, remoteSessionLive: new Map(), peerSessions: new Map([["target", { deviceName: "Worker Two" }]]), getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
   const state = { sessionId: id, streamId: "stream", status: "failed" };
   try {
     for (const status of ["completed", "cancelled", "running"]) await server.notifySessionCompletion({ ...state, status });

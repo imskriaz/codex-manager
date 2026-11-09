@@ -6,6 +6,8 @@ import { initAutoSwitchRuntimeState } from "../presentation/workbench/autoSwitch
 import { registerAutoRefreshScheduler, registerTokenRefreshScheduler } from "../presentation/workbench/schedulerRegistration";
 import { registerSessionRecording } from "./sessionRecording";
 import { registerCodexSessionQueue } from "./codexSessionQueue";
+import { registerCompletedGoalCleanup } from './completedGoalCleanup';
+import { registerStandaloneCapacityRetry } from './standaloneCapacityRetry';
 import { registerWorkspaceTerminalMonitoring } from "./workspaceTools";
 import { registerModelCapacitySwitch } from "./modelCapacitySwitch";
 import { registerQuotaRecoveryAutoResume } from "./quotaRecoveryAutoResume";
@@ -27,6 +29,8 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   registerWorkspaceTerminalMonitoring(context);
   registerSessionRecording(context);
   registerCodexSessionQueue(context);
+  registerCompletedGoalCleanup(context);
+  registerStandaloneCapacityRetry(context, repo, canUseAccount);
   context.subscriptions.push(
     registerCodexSessionAutoResumeTracking(context),
     registerModelCapacitySwitch(repo, view, canUseAccount),
