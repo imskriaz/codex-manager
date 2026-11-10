@@ -61,6 +61,10 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it.each([false, true])('recognizes terminal sandbox failures while leaving provider retries active (%s)', async willRetry => {
+    await appendFile(transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'error', turn_id: 'turn-1', error: { message: 'Windows sandbox setup failed' }, will_retry: willRetry } }) + '\n');
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: willRetry ? 'running' : 'idle' });
+  });
   it.each(['disabled','managed'])('detects %s permission profiles directly from the native database',async type=>{
     const database=new DatabaseSync(path.join(home,'state_5.sqlite'));
     const policy=type==='disabled'?{type}:{type,file_system:{type:'restricted',entries:[{path:{type:'path',path:home},access:'write'}]},network:'restricted'};

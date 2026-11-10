@@ -45,3 +45,15 @@ it('changes approval independently, blocks duplicates, and waits for confirmatio
   emit({ type: 'dashboard:action-result', action: 'setCodexSessionAccess', requestId: 'access-1', status: 'completed', payload: { cliSession: { ...options.session!, access: { mode: 'workspace-write', approvalPolicy: 'never', updatedAt: 100001 } } } });
   expect(render().autoApprove).toBe(true); expect(render().mode).toBe('workspace-write');
 });
+
+it('turns auto approval off without changing Full access and preserves it on failure', () => {
+  render({ session: { ...options.session!, access: { mode: 'danger-full-access', profile: ':danger-full-access', approvalPolicy: 'never', updatedAt: 100000 } } }).change(undefined, false);
+  expect(send).toHaveBeenCalledExactlyOnceWith(undefined, false);
+  expect(render().autoApprove).toBe(true);
+  emit({ type: 'dashboard:action-result', action: 'setCodexSessionAccess', requestId: 'access-1', status: 'completed', payload: { cliSession: { ...options.session!, access: { mode: 'danger-full-access', profile: ':danger-full-access', approvalPolicy: 'on-request', updatedAt: 100001 } } } });
+  expect(render().autoApprove).toBe(false);
+  expect(render().mode).toBe('danger-full-access');
+  render().change(undefined, true);
+  emit({ type: 'dashboard:action-result', action: 'setCodexSessionAccess', requestId: 'access-1', status: 'failed', error: 'Owner disconnected' });
+  expect(render().autoApprove).toBe(false);
+});

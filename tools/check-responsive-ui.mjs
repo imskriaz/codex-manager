@@ -1,3 +1,4 @@
+import { checkProjectCreationUi } from './check-project-creation-ui.mjs';
 import { checkAccountCenterUi as checkNarrowAccountCenterUi } from './check-account-center-ui.mjs';
 import { checkSessionRenameUi } from './check-session-rename-ui.mjs';
 import { checkMessageTypesUi } from './check-message-types-ui.mjs';
@@ -293,6 +294,7 @@ const mockHost = `(() => {
           payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,...(i===2?{accountLabel:'former@example.test'}:{}),fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
           if(window.__docsFixture)payload.usageGraph.history=state.accounts.flatMap((account,index)=>Array.from({length:20},(_,point)=>({accountId:account.id,at:query.from+(query.to-query.from)*point/19,hourly:Math.max(0,98-index*8-Math.floor(point/3)*(index%3+1)*1.2-(point%3===2?0.4:0)),weekly:Math.max(0,92-index*8-point*.2)})));
         }
+        else if(message.action === 'browseWorkspaceFolders') payload={workspaceFolders:{path:message.payload?.parentFolder || 'D:/',parent:'D:/',roots:['D:/'],folders:message.payload?.parentFolder==='D:/Projects'?[]:[{name:'Projects',path:'D:/Projects'}]}};
         else if(message.action === 'getCodexSkills') { if(window.__failSkills) error='Skill discovery is offline. Retry when connected.'; else payload={cliSkills:[{name:'review-code',description:'Review code changes and check regressions'},{name:'ui-design',description:'Improve the interface'}]}; }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
@@ -648,7 +650,7 @@ try {
       assert.equal(await page.evaluate(() => Array.isArray(window.__uiActions)), true, 'The intercepted fixture host must be installed before UI actions');
       return response;
     };
-    if(process.argv.includes('--systems')) await page.addInitScript(()=>localStorage.setItem('codexManager.workspaceLayout.v2',JSON.stringify({sessionView:'projects'})));
+    if(process.argv.includes('--systems') || process.argv.includes('--project-creation')) await page.addInitScript(()=>localStorage.setItem('codexManager.workspaceLayout.v2',JSON.stringify({sessionView:'projects'})));
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
@@ -678,6 +680,11 @@ try {
       await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--project-creation')) {
+      await checkProjectCreationUi(page, { origin, width, output });
+      assert.deepEqual(errors, []); results.push({ width, height, checks: 'Folder browser and projects without sessions' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--rename')) {
       await checkSessionRenameUi(page, { origin, parentId, runningId, width, height, output });
@@ -805,10 +812,10 @@ try {
       results.push({width,height,checks:'session approvals, choices, custom and secret answers, navigation, failure, offline, reconnect, duplicates'});
       await context.close(); continue;
     }
-    if (process.argv.includes('--message-types')) {
+    if (process.argv.includes('--message-types') || process.argv.includes('--session-errors')) {
       await page.goto(origin + '/workspace/' + parentId);
       await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
-      await checkMessageTypesUi(page, { parentId, agentId, width, output });
+      await checkMessageTypesUi(page, { parentId, agentId, width, output, errorsOnly: process.argv.includes('--session-errors') });
       assert.deepEqual(errors, [], 'Message presentation has no browser runtime errors');
       results.push({ width, height, checks: 'Every transcript kind, wrapped tool output, capacity notice, agent links, slash skills and failure recovery' });
       await context.close(); continue;
@@ -1918,7 +1925,7 @@ try {
       return row.getBoundingClientRect().height <= (innerWidth<=760 ? 34 : 28) && Math.abs((title.top+title.height/2)-(time.top+time.height/2)) <= 2;
     })), "Folder rows keep title and elapsed time on one compact line");
     await page.getByRole('button',{name:'Collapse demo',exact:true}).click();
-    assert.equal(await page.getByRole("button", { name: "Expand empty-project-with-a-long-name", exact: true }).count(), 0, "Projects without sessions stay hidden");
+    assert.equal(await page.getByRole("button", { name: "Expand empty-project-with-a-long-name", exact: true }).count(), 1, "Projects without sessions stay visible");
     const searchBounds = await page.getByRole("searchbox", { name: "Search sessions", exact: true }).boundingBox();
     assert.ok(searchBounds && searchBounds.width >= railBounds.width - 40, "Search keeps full rail width");
     await page.getByRole("searchbox", { name: "Search sessions", exact: true }).fill("Running workspace");
@@ -2312,7 +2319,7 @@ try {
     await composer.fill("");
     await page.waitForFunction(height => Math.abs(document.querySelector(".cli-composer").getBoundingClientRect().height - height) <= 2, emptyComposerHeight);
     const projectSelect = page.getByRole("combobox", { name: "Project", exact: true });
-    assert.equal(await projectSelect.locator("option").count(), 2, "New chat includes projects with no listed sessions");
+    assert.equal(await projectSelect.locator("option").count(), 3, "New chat includes projects with no listed sessions and project creation");
     await projectSelect.selectOption("D:/empty-project-with-a-long-name");
     assert.equal(await projectSelect.inputValue(), "D:/empty-project-with-a-long-name", "Project can be changed");
     await projectSelect.selectOption("D:/demo");

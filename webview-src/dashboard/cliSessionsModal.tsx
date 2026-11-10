@@ -61,7 +61,7 @@ type WorkspaceFileDraft = { text: string; revision: string };
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
-import { filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 async function copyWorkspaceText(text: string): Promise<void> {
@@ -389,7 +389,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const field of fields) dirty.add(field);
     dirtyDraftFields.current.set(draftKey, dirty);
   };
-  const settings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession, props.browser ? "danger-full-access" : undefined);
+  const standaloneLocal = props.standalone && (!selectedDevice || selectedDevice === 'local' || props.peers?.some(peer => peer.local && peer.id === selectedDevice));
+  const resolvedSettings = resolveCliComposerSettings(composerDrafts[draftKey], props.composerConfig, props.selectedSession, props.browser ? "danger-full-access" : undefined);
+  const settings = standaloneLocal && !props.selectedSession ? { ...resolvedSettings, sandboxMode: 'danger-full-access' as const } : resolvedSettings;
   const { model, reasoningEffort, sandboxMode } = settings;
   const followUpMode = settings.followUpMode ?? 'steer';
   const access = useSessionAccess({ session: props.selectedSession, connected: props.connected !== false,
@@ -403,7 +405,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const setModel = (value?: string) => updateDraftSettings({ model: value });
   const setReasoningEffort = (value?: string) => updateDraftSettings({ reasoningEffort: value });
   const setSandboxMode = (value: DashboardCliSandboxMode) => updateDraftSettings({ sandboxMode: value });
-  const autoApprove = composerDrafts[draftKey]?.autoApprove === true;
+  const autoApprove = composerDrafts[draftKey]?.autoApprove ?? Boolean(standaloneLocal);
   const draft = composerDrafts[draftKey]?.text ?? "";
   const attachments = composerDrafts[draftKey]?.attachments ?? EMPTY_CHAT_ATTACHMENTS;
   const setDraft = (value: string | ((current: string) => string)): void => {
@@ -899,7 +901,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     (() => {
       const running = isCodexSessionRunning(session);
-      const canResume = !running && session.interrupted === true && !session.goal && !session.subAgent && !session.parentSessionId;
+      const canResume = canResumeCodexSession(session);
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
@@ -1170,7 +1172,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   return matches;
                 });
                 return { project, sessions };
-              }).filter(({ sessions }) => sessions.length > 0);
+              }).filter(({ sessions }) => sessions.length > 0 || (pc.local && section === 'active'));
               const unassigned = pc.sessions.filter((session) => !assigned.has(session.id));
                if (unassigned.length > 0) projectGroups.unshift({ project: { id: `${pc.id}:recents`, label: "Recent", path: "" }, sessions: unassigned });
                return <section class="cli-pc-group" key={pc.id}>
@@ -1184,8 +1186,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                          <button type="button" class="cli-project-select" aria-label={`${projectCollapsed ? "Expand" : "Collapse"} ${project.label}`} title={project.path || undefined} aria-expanded={!projectCollapsed} onClick={() => toggleGroup(groupId, true)}>
                            <EmptyFolderIcon /><span><strong>{project.label}</strong></span><small class={`cli-project-count ${runningSessions ? "cli-project-running" : ""}`} aria-label={`${runningSessions} running / ${sessions.length} total sessions`} title={`${runningSessions} running / ${sessions.length} total sessions`}>{runningSessions ? <><span class="cli-session-spinner" aria-hidden="true" />{runningSessions} / {sessions.length}</> : sessions.length}</small><span class="cli-project-fold" aria-hidden="true"><ChevronIcon /></span>
                          </button>
-                      </div>
-                      {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.slice(0,sessionLimits[groupId] ?? 50).map(session => renderSession(session, true))}<ScrollMore remaining={sessions.length-(sessionLimits[groupId] ?? 50)} onMore={() => growSessions(groupId)} /></div> : null}
+                       </div>
+                      {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.length === 0 ? <p role="status">No sessions yet. Start a new chat in this project.</p> : null}{sessions.slice(0,sessionLimits[groupId] ?? 50).map(session => renderSession(session, true))}<ScrollMore remaining={sessions.length-(sessionLimits[groupId] ?? 50)} onMore={() => growSessions(groupId)} /></div> : null}
                     </section>;
                   })}
                 </div>
@@ -1193,6 +1195,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             })}
           </div>}
           {props.loading && props.sessions.length === 0 ? <SessionRailSkeleton /> : null}
+          {props.composerConfig?.modelDiscoveryWarning ? <p class="cli-inspector-notice is-warning" role="status">{props.composerConfig.modelDiscoveryWarning}</p> : null}
           {props.error ? <InlineError text={props.error} retry={props.onRefresh} /> : null}
           {!props.loading && !props.error && visibleSessions.length === 0 ? <EmptySessions search={Boolean(search)} section={section} /> : null}
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
@@ -1300,8 +1303,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   permissionProfile={access.profile}
                   autoApprove={access.autoApprove} onAutoApprove={enabled => access.change(undefined, enabled)}
                   followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })}
+                  fullAccessOnly={standaloneLocal}
                   accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}
-                  accessStatus={access.status}
+                  accessStatus={access.status ?? (standaloneLocal ? 'Standalone uses Full access. Auto approve applies to the next turn.' : undefined)}
                   projectPath={props.selectedSession.projectPath ?? projectPath}
                   projectLocked
                   projects={composerProjects}
@@ -1344,7 +1348,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1500,7 +1504,7 @@ export function Composer(props: {
   draft: string; deviceId?: string; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean; onAutoApprove?: (enabled: boolean) => void;
   followUpMode?: 'queue' | 'steer'; onFollowUpMode?: (mode: 'queue' | 'steer') => void;
-  permissionProfile?: string; accessDisabled?: boolean; accessStatus?: string;
+  permissionProfile?: string; fullAccessOnly?: boolean; accessDisabled?: boolean; accessStatus?: string;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
   onResume?: () => void; resuming?: boolean; resumeDisabled?: boolean; feedback?: DashboardNotice;
@@ -1588,7 +1592,8 @@ export function Composer(props: {
             <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
             <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
           </div>
-        <label><span>Access</span><select name="sandbox-mode" value={props.autoApprove ? "auto-approve" : props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled} onChange={(event) => { const value = event.currentTarget.value; if (value === "auto-approve") { props.onAutoApprove?.(true); return; } props.onAutoApprove?.(false); props.onSandbox(value as DashboardCliSandboxMode); }}>{props.autoApprove ? <option value="auto-approve">Auto approve</option> : null}{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+        <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled || props.fullAccessOnly} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+          <label class="cli-approval-control"><span>Auto approve</span><span><input type="checkbox" aria-label="Auto approve" checked={props.autoApprove === true} disabled={props.accessDisabled || !props.onAutoApprove} onChange={event => props.onAutoApprove?.(event.currentTarget.checked)} />{props.autoApprove ? 'On' : 'Off'}</span></label>
           {props.onFollowUpMode ? <label><span>Follow-up</span><select name="follow-up-mode" aria-label="Follow-up mode" value={props.followUpMode ?? 'steer'} onChange={event => props.onFollowUpMode?.(event.currentTarget.value as 'queue' | 'steer')}><option value="steer">Steer now</option><option value="queue">Queue until turn completes</option></select></label> : null}
           {props.feedback && props.feedback.level !== 'info' ? <small class="cli-access-status" role="alert">{props.feedback.message}{props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}</small> : null}
           {props.accessStatus ? <small class="cli-access-status" role="status">{props.accessStatus}</small> : props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
@@ -1909,12 +1914,13 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
     if (attempt) retryLabel = `Reconnecting ${attempt[1]}/${attempt[2]}`;
     else if (retrying && seconds && seconds > 0 && seconds <= 86400) retryLabel = `Retrying · ${seconds}s delay`;
     const label = <span role="status" title={capacity ? "Selected model is at capacity. Choose another model or retry later." : message.text}>{capacity ? `Model at capacity${retrying ? ` · ${retryLabel}` : ''}` : retryLabel}</span>;
-    return message.debug ? <details class="cli-capacity-notice"><summary>{label}<ChevronIcon /></summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : <div class="cli-capacity-notice">{label}</div>;
+    return <div class="cli-capacity-notice">{label}{capacity ? <span class="cli-error-message">{message.text || message.result || 'Selected model is at capacity. Retry later.'}</span> : null}{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
   }
+  if (message.kind === 'error') return <div class="cli-activity is-error is-failed cli-error-notice" role="alert"><ActivityDetail message={message} />{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
-    <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.kind === "error" ? sessionFailureMessage(message.text) : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
+    <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
-      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? (message.kind === "error" && isSessionConnectionFailure(message.text) ? "Connection Interrupted" : activityLabel(message))}</strong><small>{activityMeta(message)}</small></span>
+      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
       <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : capacity ? "Capacity" : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
       {agentLink ? <button type="button" class="cli-agent-detail-toggle" aria-label={`${message.title || 'Agent activity'} details`} title="Expand activity details" onClick={event => { event.preventDefault(); event.stopPropagation(); const details = event.currentTarget.closest('details'); if (details) details.open = !details.open; }}><ChevronIcon /></button> : <ChevronIcon />}
     </summary>
@@ -2065,7 +2071,7 @@ export function groupCompletedTurns(items: ConsolidatedSessionItem[], running: b
     turn = [];
   };
   for (const item of items) {
-    if (!("messages" in item) && (item.kind === "compaction" || isCapacityMessage(item))) {
+    if (!("messages" in item) && (item.kind === "error" || item.kind === "compaction" || isCapacityMessage(item))) {
       flush(false);
       result.push(item);
       continue;
@@ -2567,6 +2573,13 @@ function SessionAccountFooter(props: {
   standalone?: boolean;
   onClose?: () => void;
 }) {
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    const changed = () => setMobile(query.matches);
+    query.addEventListener('change', changed);
+    return () => query.removeEventListener('change', changed);
+  }, []);
   const [size, setSize] = useState(loadAccountCenterSize);
   const [sizeNotice, setSizeNotice] = useState('');
   const resizing = useRef<{ id: number; x: number; y: number; width: number; height: number; previous?: AccountCenterSize }>();
@@ -2600,13 +2613,20 @@ function SessionAccountFooter(props: {
     props.onClose?.();
     if (restoreFocus) triggerRef.current?.focus();
   };
+  const previousAccount = useRef({ peerId: peer.id, accountId: props.account?.id });
+  useEffect(() => {
+    const previous = previousAccount.current;
+    previousAccount.current = { peerId: peer.id, accountId: props.account?.id };
+    if (open && previous.peerId === peer.id && previous.accountId && props.account?.id && previous.accountId !== props.account.id) closeMenu(true);
+  }, [open, peer.id, props.account?.id]);
   const openMenu = (focusSearch: boolean): void => {
     focusSearchOnOpen.current = focusSearch;
     const saved = loadAccountCenterSize(); setSize(saved); resized.current = saved;
     setOpen(true);
   };
-  const accessibility = useModalAccessibility(open && props.standalone === true, () => closeMenu(true));
-  useAnchoredPopover(open && !props.standalone, triggerRef, menuRef, 'start');
+  const modal = props.standalone || mobile;
+  const accessibility = useModalAccessibility(open && modal, () => closeMenu(true));
+  useAnchoredPopover(open && !modal, triggerRef, menuRef, 'start');
   useLayoutEffect(() => {
     if (!open) return;
     const outside = (event: Event): void => {
@@ -2615,7 +2635,7 @@ function SessionAccountFooter(props: {
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
     const keydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !document.querySelector('.overlay.open, .saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover')) { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
+      if (event.key === "Escape" && !document.querySelector('.overlay.open, .saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover, .workspace-menu-popover:popover-open')) { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
     };
     const frame = window.requestAnimationFrame(() => { if (focusSearchOnOpen.current) menuRef.current?.querySelector<HTMLInputElement>('[name="account-search"]')?.focus({ preventScroll: true }); });
     window.addEventListener("pointerdown", outside);
@@ -2634,7 +2654,7 @@ function SessionAccountFooter(props: {
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </button>}
-    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={props.standalone ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={props.standalone || undefined} style={size ? { '--account-center-width': `${size.width}px`, height: `min(${size.height}px, calc(100dvh - 24px))` } : undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" >
+    {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={modal ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={modal || undefined} style={size ? { '--account-center-width': `${size.width}px`, height: `min(${size.height}px, calc(100dvh - 24px))` } : undefined} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""}`} role="dialog" aria-label="Account center" >
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
       <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}

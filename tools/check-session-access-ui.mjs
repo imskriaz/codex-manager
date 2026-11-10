@@ -36,7 +36,7 @@ export async function checkSessionAccessUi(page,{origin,parentId,width,height,ou
   await access.selectOption('read-only');
   await page.waitForFunction(()=>document.querySelector('select[name="sandbox-mode"]')?.value==='read-only');
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='setCodexSessionAccess').length),1,'Changing access syncs once');
-  const approval = page.getByRole('checkbox', { name: 'Auto approval', exact: true });
+  const approval = page.getByRole('checkbox', { name: 'Auto approve', exact: true });
   await approval.click();
   await page.waitForFunction(() => document.querySelector('.cli-approval-control input')?.checked);
   assert.equal(await access.inputValue(), 'read-only', 'Approval changes preserve sandbox restrictions');

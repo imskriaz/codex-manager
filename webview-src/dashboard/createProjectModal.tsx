@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { DashboardCliProject, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
+import type { DashboardActionResultPayload, DashboardCliProject, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
 import { ModalShell } from "./primitives";
 
@@ -18,11 +18,22 @@ export function CreateProjectModal(props: {
   const [pending, setPending] = useState(false),
     [error, setError] = useState("");
   const request = useRef<{ id: string; timer: ReturnType<typeof setTimeout> }>();
+  const browseRequest = useRef<{ id: string; timer: ReturnType<typeof setTimeout> }>();
+  const [browsing, setBrowsing] = useState(false), [browserOpen, setBrowserOpen] = useState(false);
+  const [listing, setListing] = useState<DashboardActionResultPayload['workspaceFolders']>();
   const current = useRef(props);
   current.current = props;
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
       const message = event.data;
+      if (message?.type === 'dashboard:action-result' && message.requestId === browseRequest.current?.id) {
+        clearTimeout(browseRequest.current.timer);
+        browseRequest.current = undefined;
+        setBrowsing(false);
+        if (message.status === 'completed' && message.payload?.workspaceFolders) { setListing(message.payload.workspaceFolders); setError(''); }
+        else setError(message.error || 'Folder browsing was not confirmed. Retry when connected.');
+        return;
+      }
       if (message?.type !== "dashboard:action-result" || message.requestId !== request.current?.id) return;
       clearTimeout(request.current.timer);
       request.current = undefined;
@@ -36,6 +47,8 @@ export function CreateProjectModal(props: {
     window.addEventListener("message", receive);
     return () => {
       window.removeEventListener("message", receive);
+      if (browseRequest.current) clearTimeout(browseRequest.current.timer);
+      browseRequest.current = undefined;
       if (request.current) {
         clearTimeout(request.current.timer);
         request.current = undefined;
@@ -47,6 +60,16 @@ export function CreateProjectModal(props: {
       }
     };
   }, [props.deviceId]);
+  const browse = (parentFolder?: string) => {
+    if (browseRequest.current || pending || props.disabled) return;
+    if (!navigator.onLine) { setError('Reconnect before browsing folders on the selected system.'); return; }
+    setBrowserOpen(true); setBrowsing(true); setError('');
+    const id = createActionRequestId(true);
+    const timer = setTimeout(() => { if (browseRequest.current?.id !== id) return; browseRequest.current = undefined; setBrowsing(false); setError('Folder browsing timed out. Reconnect or try another folder.'); }, 12_000);
+    browseRequest.current = { id, timer };
+    try { postMessageToHost({ type: 'dashboard:action', requestId: id, action: 'browseWorkspaceFolders', payload: { parentFolder, targetDeviceId: props.deviceId, automatic: true } }); }
+    catch (failure) { clearTimeout(timer); browseRequest.current = undefined; setBrowsing(false); setError(failure instanceof Error ? failure.message : 'Folder browsing could not be sent.'); }
+  };
   const separator = folder.includes("\\") ? "\\" : "/";
   const destination =
     folder.trim() && name.trim()
@@ -138,6 +161,18 @@ export function CreateProjectModal(props: {
           />
           <small id="create-project-parent-help">A new folder named after your project will be created here.</small>
         </label>
+        <button type="button" disabled={pending || browsing || props.disabled} onClick={() => browse(folder.trim() || undefined)}>Browse folders…</button>
+        {browserOpen ? <section class="project-folder-browser" aria-label="Folders on selected system" aria-busy={browsing}>
+          {browsing ? <p role="status">Loading folders…</p> : null}
+          {listing ? <>
+            <nav aria-label="Folder locations">{listing.roots.map(root => <button type="button" disabled={browsing || pending} onClick={() => browse(root)}>{root}</button>)}<button type="button" disabled={browsing || pending || listing.parent === listing.path} onClick={() => browse(listing.parent)}>Up</button></nav>
+            <code>{listing.path}</code>
+            <div class="project-folder-list">{listing.folders.map(item => <button type="button" disabled={browsing || pending} onClick={() => browse(item.path)}>{item.name}</button>)}{!listing.folders.length ? <p>No subfolders.</p> : null}</div>
+            {listing.warning ? <p role="status">{listing.warning}</p> : null}
+            <button type="button" disabled={browsing || pending} onClick={() => { setFolder(listing.path); setBrowserOpen(false); }}>Select this folder</button>
+          </> : null}
+          <button type="button" onClick={() => { setBrowserOpen(false); }}>Close browser</button>
+        </section> : null}
         <div class="create-project-destination">
           <small>PROJECT FOLDER</small>
           <code>{destination}</code>

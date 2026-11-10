@@ -22,8 +22,9 @@ it('exposes Queue and Steer follow-up modes in Message settings', () => {
   expect(source).toContain('value="queue">Queue until turn completes');
   expect(source).toContain('value="steer">Steer now');
   expect(source).toContain('class="cli-turn-account-name"');
-  expect(source).toContain('value="auto-approve">Auto approve');
-  expect(source).not.toContain('class="cli-approval-control"');
+  expect(source).not.toContain('value="auto-approve">Auto approve');
+  expect(source).toContain('class="cli-approval-control"');
+  expect(source).toContain('type="checkbox" aria-label="Auto approve"');
 });
 
 it('uses task context without account placeholders and preserves changed-file actions', () => {

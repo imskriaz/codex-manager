@@ -11,7 +11,8 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await page.evaluate(() => { window.__holdNextApiList = true; });
     await page.getByRole('button', { name: 'Open account center', exact: true }).click();
     await page.getByRole('dialog', { name: 'Account center', exact: true }).getByRole('button', { name: 'API', exact: true }).click();
-    const list = page.getByRole('dialog', { name: 'API access', exact: true });
+    let list = page.getByRole('dialog', { name: 'API access', exact: true });
+    const main = list;
     await page.waitForFunction(() => !!window.__heldApiList);
     await list.getByRole('button', { name: '+ Create token', exact: true }).click();
     const form = page.getByRole('dialog', { name: 'Create API token', exact: true });
@@ -23,6 +24,8 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.equal(await form.getByRole('button', { name: 'Token created', exact: true }).isDisabled(), true);
     await form.getByRole('button', { name: 'Close token form', exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiList })));
+    await main.getByRole('button',{name:'Manage API keys',exact:true}).click();
+    list=page.getByRole('dialog',{name:'API keys',exact:true});
     await list.getByRole('cell', { name: 'First creation', exact: true }).waitFor();
     assert.equal(await list.locator('tbody tr').count(), 3, 'Stale listing cannot erase confirmed creation');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'API columns never widen the page');
@@ -42,22 +45,26 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await form.getByRole('alert').waitFor({ state: 'detached' });
     await form.getByRole('button', { name: 'Close token form', exact: true }).click();
     await list.getByRole('cell', { name: 'Unknown confirmation', exact: true }).waitFor();
+    await list.getByRole('button',{name:'Close key management',exact:true}).click();list=main;
     // Requests are intercepted; permission and presentation checks cannot mutate the live host.
     const sent = []; let failure = false;
     await page.route('**/api/schema', async route => {
       const token = route.request().headers().authorization;
       if (token?.includes('invalid')) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Token is invalid or revoked.' }) });
       const scoped = token?.includes('project');
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: scoped ? ['getProjectBoard'] : ['refreshAll'], token: { name: scoped ? 'Project reader' : 'Quota refresh', projectPaths: scoped ? ['D:/demo'] : [] } }) });
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: scoped ? ['getProjectBoard'] : ['refreshAll'], token: { name: scoped ? 'Project reader' : 'Quota refresh', projectPaths: scoped ? ['D:/demo'] : [], permissions: scoped ? ['state'] : ['state','aiProxy'] } }) });
     });
     await page.route('**/api/message', async route => {
       sent.push(route.request().postDataJSON());
       await route.fulfill({ status: failure ? 403 : 200, contentType: 'application/json', body: JSON.stringify(failure ? { error: 'Token was revoked after inspection.' } : { messages: [{ status: 'completed', payload: { notice: { level: 'info', message: 'Refresh completed.' } } }] }) });
     });
-    await list.getByRole('tab', { name: 'Test', exact: true }).click();
+    assert.equal(await list.getByRole('tab').count(),0,'Key creation and testing share one workspace');
+    assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+'/api/message','Absolute endpoint is visible in a copyable field');
+    if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,3);assert.ok(Math.max(...panels)-Math.min(...panels)<3,'Three balanced panels');}
     const tokenInput = list.getByLabel('Bearer token', { exact: true });
     const operations = list.getByLabel('Operation', { exact: true });
     const send = list.getByRole('button', { name: 'Send request once', exact: true });
+    assert.equal(await list.locator('.api-test-form > .api-section-heading').getByRole('button',{name:'Send request once',exact:true}).count(),1,'Send stays in the compact Request header');
     await tokenInput.fill('  cm_quota_fixture  ');
     await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'refreshAll');
     assert.deepEqual(await operations.locator('option').allTextContents(), ['refreshAll'], await operations.evaluate(element=>element.outerHTML));
@@ -82,6 +89,63 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.equal(await send.isDisabled(), true);
     assert.equal(await operations.isDisabled(), true);
     assert.equal(sent.length, 3, 'Inspection never sends actions or retries writes');
+    const proxy = []; let proxyFailure = false;
+    await page.route('**/v1/**',async route=>{
+      const request=route.request(); proxy.push({path:new URL(request.url()).pathname,body:request.postDataJSON()});
+      await route.fulfill({status:proxyFailure ? 429 : 200,contentType:'application/json',body:JSON.stringify(proxyFailure ? {error:{message:'Quota exhausted'}} : request.url().endsWith('/models') ? {data:[{id:'fixture-model'}]} : {output_text:'OK',choices:[{message:{content:'OK'}}],content:[{type:'text',text:'OK'}]})});
+    });
+    await tokenInput.fill('cm_project_fixture');
+    await operations.locator('option').filter({hasText:'getProjectBoard'}).waitFor({state:'attached'});
+    await list.locator('.api-endpoints button').filter({hasText:'/v1/models'}).click();
+    assert.equal(await send.isDisabled(),true,'Project-scoped keys cannot test the proxy');
+    await tokenInput.fill('cm_quota_fixture');
+    await page.waitForFunction(()=>!document.querySelector('.api-send-row .modal-primary-btn')?.disabled);
+    await send.click();
+    await list.locator('.api-test-result').filter({hasText:'fixture-model'}).waitFor();
+    for (const endpoint of ['/v1/chat/completions','/v1/responses','/v1/messages']) {
+      await list.locator('.api-endpoints button').filter({hasText:endpoint}).click();
+      await list.getByRole('button',{name:'Load example',exact:true}).click();
+      assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+endpoint);
+      const modelBounds=await list.getByLabel('Model ID',{exact:true}).boundingBox(),endpointBounds=await list.getByLabel('Endpoint',{exact:true}).boundingBox();assert.ok(endpointBounds.y>=modelBounds.y+modelBounds.height,'Endpoint sits below Model ID');
+      await list.getByLabel('Model ID',{exact:true}).fill('other-model');
+      assert.equal(JSON.parse(await list.getByLabel('Payload (JSON)',{exact:true}).inputValue()).model,'other-model','Model control updates the outgoing JSON');
+      await list.getByLabel('Model ID',{exact:true}).fill('fixture-model');
+      await send.click();
+      await list.locator('.api-test-result').filter({hasText:'HTTP 200'}).waitFor();
+      assert.equal(proxy.at(-1).path,endpoint);assert.equal(proxy.at(-1).body.model,'fixture-model');
+    }
+    const before=proxy.length;
+    await list.getByLabel('Payload (JSON)',{exact:true}).fill('{');await send.click();
+    await list.locator('.api-test-result').filter({hasText:'Request not confirmed'}).waitFor();
+    assert.equal(proxy.length,before,'Invalid JSON sends no request');
+    await list.getByRole('button',{name:'Load example',exact:true}).click();
+    proxyFailure=true;await send.click();
+    await list.locator('.api-test-result').filter({hasText:'HTTP 429'}).waitFor();
+    assert.equal(proxy.length,before+1,'Proxy errors are displayed without UI retries');
+    await page.screenshot({path:path.join(output,`api-playground-${width}x${height}.png`)});
+    await list.getByRole('button',{name:'Details',exact:true}).click();
+    const details=page.getByRole('dialog',{name:'Request details',exact:true});
+    await details.waitFor();assert.ok((await details.locator('pre').innerText()).includes('/v1/messages'),'Details contain only the selected endpoint request');
+    await details.getByRole('button',{name:'Close request details',exact:true}).click();
+    if (width===1440) {
+      let waiting;
+      let arrived;
+      let arrival=new Promise(resolve=>{arrived=resolve;});
+      const held=[];
+      await page.route('**/v1/messages',async route=>{held.push(route);arrived();await new Promise(resolve=>{waiting=resolve;});await route.abort().catch(()=>{});});
+      await send.click();await list.getByRole('button',{name:'Cancel request',exact:true}).waitFor();
+      await arrival;
+      await list.getByRole('button',{name:'Cancel request',exact:true}).click();
+      await list.locator('.api-test-result').filter({hasText:'Cancelled by user'}).waitFor();
+      assert.equal(held.length,1,'Cancellation never retries');waiting();
+      await page.clock.install();
+      arrival=new Promise(resolve=>{arrived=resolve;});
+      await send.click();await list.getByRole('button',{name:'Cancel request',exact:true}).waitFor();
+      await arrival;
+      await page.clock.runFor(60001);
+      await list.locator('.api-test-result').filter({hasText:'Request timed out'}).waitFor();
+      assert.equal(held.length,2,'Timeout never retries');waiting();await page.clock.resume();
+    }
     await list.getByRole('button', { name: 'Close', exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiCreate })));
     assert.equal(await list.count(), 0, 'Late confirmation never reopens API access');

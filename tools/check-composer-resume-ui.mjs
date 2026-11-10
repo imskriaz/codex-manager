@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 export async function checkComposerResumeUi(page,{origin,parentId,runningId,width,height,output}) {
+  const checkFailure = async scope => {
+    await scope.locator('.cli-composer-warning').waitFor();
+    await scope.getByRole('button', { name: 'Message settings', exact: true }).click();
+    await scope.getByRole('alert').filter({ hasText: 'Resume was not confirmed. Your work was kept.' }).first().waitFor();
+    await scope.getByRole('button', { name: 'Close message settings', exact: true }).click();
+  };
   await page.goto(`${origin}/workspace/${parentId}`);
   const input=page.getByRole('textbox',{name:'Message Codex',exact:true}),play=page.getByRole('button',{name:'Resume session',exact:true});
   await input.waitFor();
@@ -17,6 +23,16 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
     window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-resume-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
   },{id:parentId,patch});
   await update({status:'idle',interrupted:true,goal:{objective:'Delete fixture goal',status:'active'}});
+  if (width > 760) {
+    const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+    const opened = await show.isVisible(); if (opened) await show.click();
+    const row = page.locator('.cli-session-row').filter({ hasText: 'Evaluate stack beyond expectations' }).first();
+    await row.hover();
+    await row.getByRole('button', { name: /^Actions for / }).click();
+    await page.getByRole('menuitem', { name: 'Start / Resume', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    if (opened) await page.getByRole('button', { name: 'Hide sessions sidebar', exact: true }).click();
+  }
   const goalDelete=page.getByRole('button',{name:'Delete goal',exact:true});await goalDelete.waitFor();
   await goalDelete.click();const goalDialog=page.getByRole('dialog',{name:'Delete goal?',exact:true});await goalDialog.getByRole('button',{name:'Cancel',exact:true}).click();
   assert.equal(await goalDelete.isVisible(),true,'Cancellation preserves the goal');
@@ -48,7 +64,7 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
   assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true,'Resume blocks concurrent dispatch');
   await page.waitForFunction(()=>!!window.__heldResumeResult?.requestId);
   await page.evaluate(()=>{window.__holdResumeClick=false;dispatchEvent(new MessageEvent('message',{data:{...window.__heldResumeResult,status:'failed',error:'Resume was not confirmed. Your work was kept.'}}));});
-  await page.locator('.dashboard-notice-stack').filter({hasText:'Resume was not confirmed. Your work was kept.'}).waitFor();
+  await checkFailure(page);
   assert.equal(await input.inputValue(),'Keep this draft during Resume');
   await input.fill('');await play.waitFor();
   await update({interrupted:false});await play.waitFor({state:'hidden'});
@@ -77,7 +93,7 @@ export async function checkComposerResumeUi(page,{origin,parentId,runningId,widt
   const taskPlay=task.getByRole('button',{name:'Resume session',exact:true});await taskPlay.waitFor();await size(taskPlay);
   await page.evaluate(()=>{window.__failResumeClick=true;});
   const before=await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='resumeCodexSessions').length);
-  await taskPlay.click();await page.locator('.dashboard-notice-stack').filter({hasText:'Resume was not confirmed. Your work was kept.'}).waitFor();
+  await taskPlay.click();await checkFailure(task);
   assert.equal(await page.locator('.task-detail-panel textarea[name="codex-message"]').getAttribute('placeholder'),'Message Codex…','Task failures remain visible separately from the normal placeholder');
   assert.equal(await page.evaluate(()=>window.__uiActions.filter(x=>x.action==='resumeCodexSessions').length),before+1,'Task conversation uses the same session Resume action');
   await taskInput.fill('Task draft stays editable');await size(task.getByRole('button',{name:'Send message',exact:true}));

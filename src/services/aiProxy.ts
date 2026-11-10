@@ -349,6 +349,7 @@ export class AiProxy {
           "Select an enabled account available on this device in Account Center.",
           "api_error"
         );
+      if (tried.has(account.id)) throw new AiProxyError(503, 'The account switch is not confirmed yet. Retry after the active account updates.', 'api_error');
       let tokens = await waitWithin(
         this.repo.getTokens(account.id, { bypassCache: true }),
         5000,
@@ -370,7 +371,7 @@ export class AiProxy {
         );
       for (let renewal = 0; renewal < 2; renewal++) {
         signal.throwIfAborted();
-        const latest = await this.repo.getAccount(account.id);
+        const latest = await waitWithin(this.repo.getAccount(account.id), 5000, 'The active account could not be verified.', signal);
         if (!latest?.isActive || latest.enabled === false || !this.canUseAccount(account.id))
           throw new AiProxyError(409, "The active account changed. Retry the request.", "api_error");
         const dispatcher = getCodexProxyDispatcher();
@@ -404,7 +405,7 @@ export class AiProxy {
         }
         if ((status === 401 || status === 429) && !tried.has(account.id) && attempt < 2) {
           tried.add(account.id);
-          await waitWithin(
+          try { await waitWithin(
             refreshSingleQuota(this.repo, view, account.id, {
               forceRefresh: true,
               announce: false,
@@ -415,16 +416,20 @@ export class AiProxy {
             15_000,
             "Quota verification is still pending. Retry shortly.",
             signal
-          );
+          ); } catch (error) {
+            if (status !== 429 || signal.aborted) throw error;
+            console.warn('[codexManager] API quota refresh failed after a confirmed rejection; selecting a verified replacement.');
+          }
           const switched = await waitWithin(
             maybeAutoSwitchForActiveQuota(this.repo, view, {
+              ...(status === 429 ? { quotaRejectedAccountId: account.id } : {}),
               canUseAccount: (id) => !signal.aborted && (id === account.id || !tried.has(id)) && this.canUseAccount(id)
             }),
             15_000,
             "Account selection is still pending. Retry shortly.",
             signal
           );
-          if (switched) break;
+          if (switched || (await waitWithin(this.repo.getAccount(account.id), 5000, 'The account switch could not be verified.', signal))?.isActive === false) break;
         }
         if (status === 429)
           throw new AiProxyError(
@@ -491,7 +496,7 @@ export class AiProxy {
         for (const raw of rows.slice(0, 1000)) {
           const row = object(raw, "model"),
             id = row["slug"] ?? row["id"];
-          if (row["visibility"] === "hide") continue;
+          if (row['hidden'] === true || row['visibility'] === 'hide' || row['visibility'] === 'hidden') continue;
           if (typeof id === "string" && /^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(id) && !seen.has(id)) {
             data.push({ id, name: typeof row["display_name"] === "string" ? row["display_name"] : id });
             seen.add(id);

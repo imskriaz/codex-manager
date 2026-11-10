@@ -164,7 +164,7 @@ export function recordAutoSwitchDashboardNotice(
     ...options
   };
   persist();
-  publishDashboardRealtime({ type: 'dashboard:notice', level, message });
+  if (vscode.env.appHost !== 'node' || level === 'error') publishDashboardRealtime({ type: 'dashboard:notice', level, message });
 }
 
 export function consumeAutoSwitchNotice(): string | undefined {

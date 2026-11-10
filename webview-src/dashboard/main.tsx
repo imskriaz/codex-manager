@@ -1,4 +1,5 @@
 import { sessionFailureMessage } from '../../src/domain/sessionFailure';
+import { WorkspaceMenu } from './workspaceMenu';
 import { dashboardPageTitle } from './pageTitle';
 import { codexModelLabel } from "./helpers";
 import { isCodexSessionAccess } from '../../src/domain/codexSessionAccess';
@@ -221,6 +222,7 @@ function App() {
   const apiUncertainRef=useRef(false);
 
   const [apiTokens, setApiTokens] = useState<import('../../src/domain/dashboard/apiActions').DashboardApiToken[]>([]);
+  const [accountCenterView, setAccountCenterView] = useState<'cards' | 'list'>('cards');
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
       const stored = window.localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY);
@@ -2541,8 +2543,10 @@ function App() {
     />
   );
 
-  const renderAccountSection = (compact = false) => (
-          <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${compact ? "cards" : uiPreferences.view}`}>
+  const renderAccountSection = (compact = false) => {
+    const view = compact ? accountCenterView : uiPreferences.view;
+    return (
+          <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${view}`}>
             <div class="header accounts-section-header">
               <div>
                 <h2 class="header-title header-title-with-meta">
@@ -2683,7 +2687,8 @@ function App() {
                   </button>
                 ) : null}
               </label>
-              <label class="dashboard-select-control">
+              <label class="dashboard-select-control" title={compact ? `${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}` : undefined}>
+                {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h11M4 12h8M4 18h5m8-13v14m-3-3 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg> : null}
                 <select
                   value={accountSort}
                   onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
@@ -2708,8 +2713,9 @@ function App() {
                   ))}
                 </select>
               </label>
-              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
-              <label class="dashboard-select-control metric-priority-control">
+              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={compact ? `Filter by tag: ${uiPreferences.accountTag || 'All tags'}` : undefined}>{compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="7" cy="7" r="1.5" fill="currentColor" /></svg> : null}<select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
+              <label class="dashboard-select-control metric-priority-control" title={compact ? `${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}` : undefined}>
+                {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m8 10V4m8 15v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg> : null}
                 <select
                   value={uiPreferences.metricPriority}
                   aria-label={resolveUiText("metric", snapshot.lang)}
@@ -2728,33 +2734,44 @@ function App() {
                   ))}
                 </select>
               </label>
-              {!compact ? <div class="dashboard-view-controls">
+              <div class="dashboard-view-controls">
+                {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
+                  <button type="button" class="account-center-add" aria-label="Add account" title="Add account" disabled={prepareOAuthPending || snapshot.indexHealth.status === 'corrupted_unrecoverable'} onClick={modals.openAddAccountModal}><span aria-hidden="true">+</span><span>Add</span></button>
+                  <WorkspaceMenu label="More account actions" icon={<span aria-hidden="true">⋯</span>}>
+                    <button type="button" role="menuitem" disabled={isActionPending('refreshAll')} onClick={() => sendAction('refreshAll')}>{renderRefreshIcon()} Refresh all quotas</button>
+                    <button type="button" role="menuitem" disabled={syncPending} onClick={handleSyncNow}>Sync now</button>
+                    <button type="button" role="menuitem" onClick={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}>Manage tags</button>
+                    <button type="button" role="menuitem" onClick={modals.openImportModal}>Import accounts</button>
+                  </WorkspaceMenu>
+                </div> : null}
                 <button
                   type="button"
                   class="dashboard-view-toggle active"
-                  title={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  aria-label={resolveUiText(uiPreferences.view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  onClick={() =>
-                    setUiPreferences((current) => ({
+                  title={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+                  aria-label={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+                  onClick={() => {
+                    if (compact) setAccountCenterView(current => current === 'cards' ? 'list' : 'cards');
+                    else setUiPreferences((current) => ({
                       ...current,
                       view: current.view === "cards" ? "list" : "cards"
-                    }))
-                  }
+                    }));
+                  }}
                 >
-                  {uiPreferences.view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
+                  {view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
                 </button>
-              </div> : null}
+              </div>
             </div>
             <div class="accounts-grid">
               {sortedAccounts.map((account) => (
-                renderSavedAccount(account, !compact && uiPreferences.view === "list")
+                renderSavedAccount(account, view === "list")
               ))}
               {sortedAccounts.length === 0 ? (
                 <div class="accounts-empty-filter">{resolveUiText("noResults", snapshot.lang)}</div>
               ) : null}
             </div>
           </section>
-  );
+    );
+  };
 
   return (
     <>
@@ -3114,6 +3131,7 @@ function App() {
 
       <ApiTokenModal
         open={apiTokenOpen}
+        baseUrl={snapshot.apiBaseUrl}
         token={apiToken}
         tokens={apiTokens}
         projects={apiProjects}

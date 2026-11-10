@@ -115,6 +115,7 @@ it('recovers immediately after a standalone account change above the exhaustion 
   account.id = 'replacement'; account.quotaSummary!.hourlyPercentage = 80;
   await tick(); expect(mocks.resume).toHaveBeenCalledOnce();
   expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
+  expect(mocks.notice).not.toHaveBeenCalled();
 });
 
 it('captures a quota-failed private turn once and refreshes quota without waiting for a manual prompt', async () => {

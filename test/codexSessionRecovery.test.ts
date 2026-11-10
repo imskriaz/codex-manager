@@ -19,6 +19,20 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("post-load session recovery", () => {
+  it.each(['automatic', 'user'] as const)('uses the same private goal, interrupted-chat, and reconnect rules for %s recovery', async origin => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    try {
+      mocks.summary.mockResolvedValueOnce({ id: 'session', status: 'running', locked: true });
+      expect(await resumeCodexSessionWork('session', undefined, origin)).toBe('running');
+      expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.goal).not.toHaveBeenCalled();
+      mocks.summary.mockResolvedValueOnce({ id: 'session', status: 'idle', goal: { status: 'active' } });
+      expect(await resumeCodexSessionWork('session', undefined, origin)).toBe('goal');
+      expect(mocks.goal).toHaveBeenCalledWith(expect.objectContaining({ id: 'session' }), expect.any(AbortSignal), origin, true);
+      expect(mocks.send).not.toHaveBeenCalled();
+      expect(await resumeCodexSessionWork('session', undefined, origin)).toBe('continued');
+      expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: 'Continue if not completed', interruptedOnly: true, preferPrivate: true, clearManualStop: origin === 'user' }));
+    } finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+  });
   it('starts manual Play after startup verification is cancelled without replaying a launch', async () => {
     mocks.summary.mockImplementationOnce(() => new Promise(() => undefined));
     const controller = new AbortController();

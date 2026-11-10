@@ -181,6 +181,7 @@ export function ModalShell(props: {
   className?: string;
   closeDisabled?: boolean;
   closeOnBackdrop?: boolean;
+  headerActions?: ComponentChildren;
   onClose: () => void;
   children: ComponentChildren;
 }) {
@@ -207,6 +208,7 @@ export function ModalShell(props: {
       >
         <div class="settings-modal-head">
           <div class="settings-modal-title">{props.title}</div>
+          {props.headerActions}
           <button class="settings-close" type="button" aria-label={props.closeLabel} disabled={props.closeDisabled} onClick={props.onClose}>
             ×
           </button>

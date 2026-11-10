@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
 vi.mock("child_process", async (original) => ({ ...await original<typeof import("child_process")>(), spawn: mocks.spawn }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { setCodexSessionAccess, observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
+import { readCodexCliComposerConfig, setCodexSessionAccess, observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { resumeCodexSessionWork } from '../src/services/codexSessionRecovery';
 import { updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
@@ -41,6 +41,7 @@ beforeEach(async () => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback, inspect: () => ({ globalValue: "app-server-stdio", workspaceValue: "cli" }) } as unknown as vscode.WorkspaceConfiguration);
 });
 afterEach(async () => {
+  Reflect.deleteProperty(vscode.env, 'appHost');
   if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
   vi.clearAllMocks();
@@ -53,6 +54,73 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it('reports a conflicting standalone access change instead of silently accepting a restricted mode', async () => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    await expect(setCodexSessionAccess(id, 'workspace-write', false)).rejects.toThrow('Standalone sessions use Full access');
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+  it('saves an explicit Auto approve Off change for subsequent standalone continuations', async () => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Approval toggle' }) + '\n');
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    let settings = { permissions: ':danger-full-access', approvalPolicy: 'never' };
+    const listeners = new Set<(method: string, raw: unknown) => void>();
+    const rpc = { request: vi.fn(async (method: string) => {
+      if (method === 'thread/settings/update') {
+        settings = { permissions: ':danger-full-access', approvalPolicy: 'on-request' };
+        for (const listener of listeners) listener('thread/settings/updated', { threadId: id, threadSettings: settings });
+      }
+      return settings;
+    }), onNotification: (listener: (method: string, raw: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); }, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async () => {}) };
+    mocks.open.mockResolvedValue(rpc);
+    expect(await setCodexSessionAccess(id, undefined, false)).toMatchObject({ profile: ':danger-full-access', approvalPolicy: 'on-request' });
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', projectPath: root });
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ permissions: ':danger-full-access', approvalPolicy: 'on-request' }), expect.any(Number), expect.any(Function));
+  });
+  it.each([undefined, true, false])('keeps standalone Full with the chosen auto approval policy (%s) across turns', async autoApprove => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    const approvalPolicy = autoApprove === false ? 'on-request' : 'never';
+    const rpc = { request: vi.fn(async () => ({ thread: { id }, permissions: ':danger-full-access', approvalPolicy })), onNotification: () => () => undefined, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('standalone-start'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(startCodexCliSession({ text: 'Run', projectPath: root, sandboxMode: 'workspace-write', autoApprove })).resolves.toBe(id);
+    expect(rpc.request).toHaveBeenCalledWith('thread/start', { cwd: root, permissions: ':danger-full-access', approvalPolicy });
+    expect(readNewCodexCliSessionSummary(id)?.access).toMatchObject({ profile: ':danger-full-access', approvalPolicy });
+    await vi.waitFor(() => expect(rpc.close).toHaveBeenCalled());
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', projectPath: root });
+    expect(rpc.startAndWaitForTurn.mock.calls.at(-1)?.[1]).toMatchObject({ permissions: ':danger-full-access', approvalPolicy });
+  });
+  it.each(['confirmed', 'rejected', 'storage-full'] as const)('confirms and saves standalone Full before resuming an old restricted session (%s)', async scenario => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), [
+      { type: 'session_meta', payload: { id, cwd: root } },
+      { type: 'turn_context', payload: { sandbox_policy: { type: 'workspaceWrite' }, approval_policy: 'on-request' } }
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const full = { permissions: ':danger-full-access', approvalPolicy: 'never' };
+    const restricted = { permissions: ':workspace', approvalPolicy: 'on-request' };
+    const listeners = new Set<(method: string, raw: unknown) => void>();
+    const rpc = { request: vi.fn(async (method: string) => {
+      if (method === 'thread/resume') return scenario === 'storage-full' ? full : restricted;
+      for (const listener of listeners) listener('thread/settings/updated', { threadId: id, threadSettings: scenario === 'rejected' ? restricted : full });
+      return {};
+    }), onNotification: (listener: (method: string, raw: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); }, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async () => {}) };
+    mocks.open.mockResolvedValue(rpc);
+    const write = scenario === 'storage-full' ? vi.spyOn(preferenceStore, 'set').mockImplementation(() => { throw new Error('storage full'); }) : undefined;
+    try {
+      const result = sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', projectPath: root });
+      if (scenario === 'confirmed') {
+        await result;
+        expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining(full), expect.any(Number), expect.any(Function));
+      } else {
+        await expect(result).rejects.toThrow(scenario === 'rejected' ? 'different permissions' : 'recovery storage could not save');
+        expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+      }
+      expect(rpc.request).toHaveBeenCalledWith('thread/resume', { threadId: id, cwd: root, excludeTurns: true, ...full });
+      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+      expect(listeners.size).toBe(0);
+    } finally { write?.mockRestore(); }
+  });
   it('keeps a standalone Play continuation alive after acceptance and uses the standalone transport', async () => {
     Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
     await mkdir(path.join(root, 'sessions'));
@@ -64,7 +132,7 @@ describe("native App Server new sessions", () => {
     ].map(row => JSON.stringify(row)).join('\n') + '\n');
     let finish!: () => void;
     const completed = new Promise<void>(resolve => { finish = resolve; });
-    const rpc = { request: vi.fn(async () => ({})), onNotification: () => () => undefined, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('play-turn'); await completed; }) };
+    const rpc = { request: vi.fn(async () => ({ permissions: ':danger-full-access', approvalPolicy: 'never' })), onNotification: () => () => undefined, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('play-turn'); await completed; }) };
     mocks.open.mockResolvedValue(rpc);
     try {
       expect(await resumeCodexSessionWork(id, undefined, 'automatic', 'private')).toBe('idle');
@@ -860,4 +928,26 @@ it('resumes opaque managed permissions without replacing their exclusions with a
   await sendCodexCliSessionMessage({sessionId:id,text:'Continue',projectPath:root});
   expect(rpc.request).toHaveBeenCalledWith('thread/resume',{threadId:id,cwd:root,excludeTurns:true});
   const turn=rpc.startAndWaitForTurn.mock.calls[0]?.[1];expect(turn).not.toHaveProperty('sandboxPolicy');expect(turn).not.toHaveProperty('permissions');
+});
+
+it('discovers live models over stale cache, reads all pages and refreshes after credentials change', async () => {
+  await writeFile(path.join(root, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'stale-model', visibility: 'list' }] }));
+  await writeFile(path.join(root, 'config.toml'), 'model = "live-two"\n');
+  const request = vi.fn(async (_method: string, params: any) => params.cursor ? { data: [{ id: 'live-two', displayName: 'Live two', defaultReasoningEffort: 'high', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], nextCursor: null } : { data: [null, { id: 'live-one' }, { id: 'hidden', hidden: true }], nextCursor: 'next' });
+  mocks.open.mockResolvedValue({ request, close: vi.fn() });
+  const config = await readCodexCliComposerConfig(root);
+  expect(config.models.map(model => model.id)).toEqual(['live-one', 'live-two']);
+  expect(config.defaultModel).toBe('live-two'); expect(config.defaultReasoningEffort).toBe('high');
+  expect(request).toHaveBeenCalledWith('model/list', expect.objectContaining({ cursor: 'next' }), expect.any(Number));
+  await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(2);
+  await writeFile(path.join(root, 'auth.json'), JSON.stringify({ access_token: 'changed' }));
+  await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(4);
+});
+it.each(['offline', 'duplicate-cursor'])('keeps cached models with a warning when live discovery is incomplete: %s', async scenario => {
+  await writeFile(path.join(root, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'saved-model', visibility: 'list' }] }));
+  const request = vi.fn(async () => { if (scenario === 'offline') throw new Error('Disconnected'); return { data: [{ id: 'partial' }], nextCursor: 'same' }; });
+  mocks.open.mockResolvedValue({ request, close: vi.fn() });
+  const config = await readCodexCliComposerConfig(root);
+  expect(config.models.map(model => model.id)).toEqual(['saved-model']); expect(config.modelDiscoveryWarning).toContain('saved catalog');
+  if (scenario === 'duplicate-cursor') expect(request).toHaveBeenCalledTimes(2);
 });

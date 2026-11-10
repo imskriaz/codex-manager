@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as vscode from 'vscode';
 
 const { needsTokenRefreshMock, refreshTokensMock } = vi.hoisted(() => ({
   needsTokenRefreshMock: vi.fn(),
@@ -250,6 +251,14 @@ describe("resolveDashboardQueuedSwitch", () => {
 });
 
 describe("resolveTerminalNotice", () => {
+  it('keeps standalone automatic switches quiet while retaining explicit failures', () => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    try {
+      const notice = { level: 'warning' as const, message: 'Automatically switched.', createdAt: 1 };
+      expect(resolveTerminalNotice(notice, undefined, getDashboardCopy('en'))).toBeUndefined();
+      expect(resolveTerminalNotice({ ...notice, level: 'error' }, undefined, getDashboardCopy('en'))?.message).toBe(notice.message);
+    } finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+  });
   it("explains how to recover a chat after an automatic reload", () => {
     const notice = resolveTerminalNotice(
       {

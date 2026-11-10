@@ -489,6 +489,7 @@ export interface DashboardState {
   panelTitle: string;
   brandSub: string;
   logoUri: string;
+  apiBaseUrl?: string;
   /** Durable extension-owned marker; unlike webview storage, survives extension updates. */
   onboardingCompleted?: boolean;
   settings: DashboardSettings;
@@ -521,6 +522,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "browseWorkspaceFolders"
   | "createWorkspaceProject"
   | "addAccount"
   | "setPrivacyMode"
@@ -877,6 +879,7 @@ export interface DashboardCliModelOption {
 }
 
 export interface DashboardCliComposerConfig {
+  modelDiscoveryWarning?: string;
   terminalSupported?: boolean;
   models: DashboardCliModelOption[];
   /** Workspace folders available as the Codex project working directory. */
@@ -1105,6 +1108,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };
   workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;
   workspaceGit?: WorkspaceGitState;

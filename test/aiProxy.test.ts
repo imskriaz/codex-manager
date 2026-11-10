@@ -225,6 +225,8 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
         models: [
           { slug: "a", display_name: "A", supported_in_api: false },
           { slug: "hidden", visibility: "hide" },
+        { slug: "hidden-flag", hidden: true },
+        { slug: "hidden-word", visibility: "hidden" },
           { slug: "b", display_name: "B" }
         ]
       }) as never
@@ -274,19 +276,58 @@ it("accepts the native backend event stream when it omits Content-Type", async (
   expect(await result.text()).toContain("Hello 🌍");
 });
 
-it("uses the normal quota and switch rules before a bounded retry and defers host reload", async () => {
+it('forwards normal API calls without quota checks or account selection', async () => {
+  expect((await post('/v1/chat/completions', chat())).status).toBe(200);
+  expect(refreshSingleQuota).not.toHaveBeenCalled(); expect(maybeAutoSwitchForActiveQuota).not.toHaveBeenCalled();
+  expect(upstream).toHaveBeenCalledOnce();
+});
+
+it.each([401, 429])("checks rejected upstream status %s and retries only after a confirmed account switch", async status => {
   vi.mocked(upstream)
-    .mockResolvedValueOnce(new Response("", { status: 429 }) as never)
+    .mockResolvedValueOnce(new Response("", { status }) as never)
     .mockResolvedValueOnce(generation() as never);
+  const replacement = { ...active, id: 'account-b' };
   vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo, view, options) => {
     expect(view.deferHostReload).toBe(true);
-    expect(options?.canUseAccount?.("account-a")).toBe(true);
+    expect(options?.quotaRejectedAccountId).toBe(status === 429 ? active.id : undefined);
+    repo.listAccounts.mockResolvedValue([replacement]); repo.getAccount.mockResolvedValue(replacement);
+    repo.getTokens.mockResolvedValue({ idToken: '', accessToken: 'next-access', accountId: 'workspace-b' });
     return true;
   });
   expect((await post("/v1/chat/completions", chat())).status).toBe(200);
-  expect(refreshSingleQuota).toHaveBeenCalledOnce();
-  expect(maybeAutoSwitchForActiveQuota).toHaveBeenCalledOnce();
+  expect(refreshSingleQuota).toHaveBeenCalledOnce(); expect(maybeAutoSwitchForActiveQuota).toHaveBeenCalledOnce();
   expect(upstream).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(upstream).mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer next-access', 'ChatGPT-Account-Id': 'workspace-b' });
+});
+it('still selects a replacement after a confirmed 429 when quota inspection fails', async () => {
+  const replacement = {...active,id:'account-b'};
+  vi.mocked(upstream).mockResolvedValueOnce(new Response('',{status:429}) as never).mockResolvedValueOnce(generation() as never);
+  vi.mocked(refreshSingleQuota).mockRejectedValueOnce(new Error('Quota service offline'));
+  vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo,_view,options)=>{
+    expect(options?.quotaRejectedAccountId).toBe(active.id);
+    repo.listAccounts.mockResolvedValue([replacement]);repo.getAccount.mockResolvedValue(replacement);return true;
+  });
+  expect((await post('/v1/chat/completions',chat())).status).toBe(200);
+  expect(upstream).toHaveBeenCalledTimes(2);
+});
+
+it('does not replay the same rejected account when a switch reports success before active state confirms it', async () => {
+  vi.mocked(upstream).mockResolvedValueOnce(new Response('', { status: 429 }) as never);
+  vi.mocked(maybeAutoSwitchForActiveQuota).mockResolvedValueOnce(true);
+  const result = await post('/v1/chat/completions', chat());
+  expect(result.status).toBe(503); expect(await result.text()).toContain('switch is not confirmed');
+  expect(upstream).toHaveBeenCalledOnce();
+});
+it('uses a replacement selected by the main runtime while the error quota check was in progress', async () => {
+  const replacement = { ...active, id: 'account-b' };
+  vi.mocked(upstream).mockResolvedValueOnce(new Response('', { status: 429 }) as never).mockResolvedValueOnce(generation() as never);
+  vi.mocked(refreshSingleQuota).mockImplementationOnce(async () => {
+    repo.listAccounts.mockResolvedValue([replacement]);
+    repo.getAccount.mockResolvedValueOnce({ ...active, isActive: false }).mockResolvedValue(replacement);
+    return {};
+  });
+  expect((await post('/v1/chat/completions', chat())).status).toBe(200);
+  expect(upstream).toHaveBeenCalledTimes(2); expect(refreshSingleQuota).toHaveBeenCalledOnce();
 });
 
 it("does not replay blocked quota, network uncertainty or accepted partial failures", async () => {

@@ -1,9 +1,21 @@
 import * as vscode from "vscode";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { consumeAutoSwitchLockRelease, getAutoSwitchRuntimeSnapshot, initAutoSwitchRuntimeState, isAutoSwitchLocked, lockAutoSwitchForManualSelection, updateAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
+import { consumeAutoSwitchLockRelease, getAutoSwitchRuntimeSnapshot, initAutoSwitchRuntimeState, isAutoSwitchLocked, lockAutoSwitchForManualSelection, recordAutoSwitchDashboardNotice, updateAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
+import { subscribeDashboardRealtime } from '../src/services/dashboardRealtime';
 
 let update = vi.fn();
 let saved: Record<string, unknown> | undefined;
+it('updates standalone switch state without publishing automatic toasts', () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  const messages: unknown[] = [], stop = subscribeDashboardRealtime(message => messages.push(message));
+  try {
+    recordAutoSwitchDashboardNotice('Switched.', 'info', { accountId: 'next', switchResult: 'switched' });
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.accountId).toBe('next');
+    expect(messages).toEqual([]);
+    recordAutoSwitchDashboardNotice('Manual action failed.', 'error');
+    expect(messages).toContainEqual({ type: 'dashboard:notice', level: 'error', message: 'Manual action failed.' });
+  } finally { stop(); Reflect.deleteProperty(vscode.env, 'appHost'); }
+});
 beforeEach(() => {
   saved = { lockedAccountId: "account", lockedUntil: Date.now() + 60_000 };
   update = vi.fn(async (_key, value) => { saved = value; });

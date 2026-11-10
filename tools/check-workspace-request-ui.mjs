@@ -13,7 +13,7 @@ try {
   for (const width of process.argv.includes('--account-center-only') ? [] : [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', hasTouch: width < 760 });
     const page = await context.newPage(), errors = [];
-    await useWorkspaceDashboardAssets(page, origin);
+    if (!process.argv.includes('--installed')) await useWorkspaceDashboardAssets(page, origin);
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       window.__requestChecks = [];
@@ -41,6 +41,17 @@ try {
     assert.ok(await modal.evaluate(element => element.contains(document.activeElement)), 'Modal contains keyboard focus');
     await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
     await modal.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+    const approval = page.getByRole('checkbox', { name: 'Auto approve', exact: true });
+    const access = page.getByRole('combobox', { name: 'Access mode', exact: true });
+    await approval.waitFor();
+    assert.equal(await approval.isChecked(), true, 'Standalone auto approval defaults to On');
+    await approval.uncheck();
+    assert.equal(await approval.isChecked(), false, 'Auto approval can be turned Off');
+    assert.equal(await access.inputValue(), 'danger-full-access', 'Approval toggle preserves Full access');
+    await approval.check();
+    await page.screenshot({ path: path.join(output, `message-settings-${width}.png`) });
+    await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => window.__requestChecks.filter(event => event.type === 'dashboard:action-result' && event.action === 'createWorkspaceProject').length), 0, 'Read-only smoke never creates a project');
     await page.screenshot({ path: path.join(output, `workspace-${width}.png`) });
     await page.waitForFunction(() => window.__requestChecks.some(event => event.type === 'dashboard:action-result' && event.action === 'listCodexCliSessions' && event.payload?.cliSessions?.some(session => !session.remote && !session.archived && !session.subAgent && /[\\/]codex-manager[\\/]*$/i.test(session.projectPath ?? ''))));
@@ -78,10 +89,10 @@ try {
     results.push({ width, workflowMs: Date.now() - started, errors });
     await context.close();
   }
-  const accountContext = await browser.newContext({ viewport: { width: 390, height: 850 }, serviceWorkers: 'block' });
+  const accountContext = await browser.newContext({ viewport: { width: 390, height: 850 }, serviceWorkers: 'block', hasTouch: true });
   const accountPage = await accountContext.newPage(), accountErrors = [];
   accountPage.on('pageerror', error => accountErrors.push(error.message));
-  await useWorkspaceDashboardAssets(accountPage, origin);
+  if (!process.argv.includes('--installed')) await useWorkspaceDashboardAssets(accountPage, origin);
   await checkAccountCenterUi(accountPage, { origin, output });
   assert.deepEqual(accountErrors, []);
   await accountContext.close();

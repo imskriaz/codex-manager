@@ -10,7 +10,7 @@ import { parseCodexTokenUsage } from '../domain/codexSessionLive';
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
-import { isCodexCapacityInterruption, isCodexQuotaInterruption, isCodexSessionInspectionNotice } from "../domain/codexSessionState";
+import { isCodexCapacityInterruption, isCodexPermissionInterruption, isCodexQuotaInterruption, isCodexSessionInspectionNotice } from "../domain/codexSessionState";
 import { getNativeCodexSessionAccess, updateNativeCodexSessionAccess, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -950,12 +950,13 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
     readSmallOptionalFile(path.join(codexHome, "config.toml"), MAX_CONFIG_BYTES)
   ]);
   let models = parseCliModels(modelsRaw);
-  // The local cache is the fast path. Newer Codex builds can expose a richer
-  // live catalog through app-server (including provider-qualified IDs from
-  // OpenAI-compatible routers such as 9router), so recover from that source
-  // when the cache has not been created yet or contains no visible models.
-  if (!models.length && path.resolve(codexHome) === path.resolve(resolveCodexHome())) {
-    models = await readLiveCliModels(codexHome);
+  let modelDiscoveryWarning: string | undefined;
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome())) {
+    const auth = await readSmallOptionalFile(path.join(codexHome, 'auth.json'), MAX_CONFIG_BYTES);
+    const identity = createHash('sha256').update(JSON.stringify([auth, configRaw])).digest('hex');
+    const live = await readLiveCliModels(codexHome, identity);
+    if (live.length) models = live;
+    else modelDiscoveryWarning = models.length ? 'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.' : 'Models could not be discovered. Check Codex sign-in and refresh to retry.';
   }
   const configuredModel = readTomlString(configRaw, "model");
   const configuredEffort = readTomlString(configRaw, "model_reasoning_effort");
@@ -969,11 +970,12 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
   }
   return {
     models,
+    ...(modelDiscoveryWarning ? { modelDiscoveryWarning } : {}),
     ...(projects.length ? { projects } : {}),
     defaultModel: models.some((model) => model.id === configuredModel) ? configuredModel : models[0]?.id,
     defaultReasoningEffort: REASONING_EFFORT_PATTERN.test(configuredEffort ?? "")
       ? configuredEffort
-      : models[0]?.defaultReasoningEffort,
+      : (models.find(model => model.id === configuredModel) ?? models[0])?.defaultReasoningEffort,
     defaultSandboxMode: "danger-full-access"
   };
 }
@@ -1049,8 +1051,8 @@ export async function sendCodexCliSessionMessage(options: {
   await sendCodexQuestionReply(attachmentHome, options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId, attachmentHome), onAttempt => sendAppServerSessionMessage(options, cwd, onAttempt));
 }
 
-async function readLiveCliModels(codexHome: string): Promise<DashboardCliComposerConfig["models"]> {
-  const normalizedHome = path.resolve(codexHome);
+async function readLiveCliModels(codexHome: string, identity: string): Promise<DashboardCliComposerConfig["models"]> {
+  const normalizedHome = `${path.resolve(codexHome)}:${identity}`;
   const now = Date.now();
   const cache = cliModelListCache;
   const cacheTtl = cache?.models.length ? CLI_MODEL_LIST_CACHE_TTL_MS : CLI_MODEL_LIST_FAILURE_TTL_MS;
@@ -1059,15 +1061,23 @@ async function readLiveCliModels(codexHome: string): Promise<DashboardCliCompose
   cliModelListProbeHome = normalizedHome;
   cliModelListProbe = (async () => {
     try {
-      const response = await runCodexAppServerRequest<{ data?: unknown }>(
-        "model/list",
-        {
-          includeHidden: false,
-          limit: 100
-        },
-        APP_SERVER_MODEL_LIST_TIMEOUT_MS
-      );
-      return parseCliModels(JSON.stringify(response));
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('Model discovery timed out.')), APP_SERVER_MODEL_LIST_TIMEOUT_MS);
+      try {
+        const models: DashboardCliComposerConfig['models'] = [];
+        let cursor: string | undefined;
+        const seen = new Set<string>();
+        do {
+          const response = await waitWithin(runCodexAppServerRequest<{ data?: unknown; nextCursor?: string | null }>(
+            'model/list', { includeHidden: false, limit: 100, ...(cursor ? { cursor } : {}) }, APP_SERVER_MODEL_LIST_TIMEOUT_MS, controller.signal
+          ), APP_SERVER_MODEL_LIST_TIMEOUT_MS, 'Model discovery timed out.', controller.signal);
+          models.push(...parseCliModels(JSON.stringify(response)));
+          cursor = response.nextCursor ?? undefined;
+          if (cursor && (seen.has(cursor) || seen.size >= 10)) throw new Error('Model discovery returned incomplete pages.');
+          if (cursor) seen.add(cursor);
+        } while (cursor);
+        return [...new Map(models.map(model => [model.id, model])).values()];
+      } finally { clearTimeout(timer); controller.abort(); }
     } catch {
       // The composer can still open with an empty model list when the live
       // catalog is unavailable (for example while the CLI is signing in).
@@ -1079,8 +1089,7 @@ async function readLiveCliModels(codexHome: string): Promise<DashboardCliCompose
       return models;
     })
     .finally(() => {
-      cliModelListProbe = undefined;
-      cliModelListProbeHome = undefined;
+      if (cliModelListProbeHome === normalizedHome) { cliModelListProbe = undefined; cliModelListProbeHome = undefined; }
     });
   return cliModelListProbe;
 }
@@ -1139,6 +1148,7 @@ async function runNewCodexCliSession(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
+  if (vscode.env.appHost === 'node') options = { ...options, sandboxMode: 'danger-full-access', autoApprove: options.autoApprove ?? true };
   try { resolveCliProjectPath(options.projectPath); }
   catch { await readKnownProjectRoots(resolveCodexHome(), true); }
   return startAppServerSession(options, onStarted);
@@ -1232,16 +1242,21 @@ async function sendAppServerSessionMessage(options: {
   goalContinuation?: boolean;
   clearManualStop?: boolean;
 }, cwd: string, onAttempt?: (attempted: boolean) => void): Promise<void> {
+  const standalone = vscode.env.appHost === 'node';
+  if (standalone) options = { ...options, sandboxMode: 'danger-full-access', preferPrivate: true };
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   await waitForCancelledTurnRelease(resolveCodexHome(), options.sessionId);
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  const savedAccess = standalone ? readSavedCodexSessionAccess(resolveCodexHome(), options.sessionId)?.access : undefined;
+  const standaloneApproval = savedAccess?.mode === 'danger-full-access' ? savedAccess.approvalPolicy ?? 'never' : 'never';
   const params = {
     threadId: options.sessionId, input: options.goalContinuation ? [] : appServerChatInput(options.text.trim(), options.attachments), cwd,
     ...(options.model ? { model: options.model } : {}), ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
-    ...(options.sandboxMode ? sessionAccessSettings(options.sandboxMode, cwd) : {})
+    ...(options.sandboxMode ? sessionAccessSettings(options.sandboxMode, cwd) : {}),
+    ...(standalone ? { approvalPolicy: standaloneApproval } : {})
   };
   const transcript = await findCliSessionTranscript(resolveCodexHome(), options.sessionId, options.signal);
   await readRecentTranscriptTurnState(transcript);
@@ -1300,6 +1315,12 @@ async function sendAppServerSessionMessage(options: {
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { home: path.resolve(home), rpc });
     try {
+      if (standalone) {
+        const settings = { permissions: ':danger-full-access', approvalPolicy: standaloneApproval };
+        const current = await rpc.request('thread/resume', { threadId: options.sessionId, cwd, excludeTurns: true, ...settings });
+        const applied = await syncCodexSessionAccess(rpc, options.sessionId, settings, current);
+        if (!rememberSessionAccess(home, options.sessionId, applied.access, applied.settings)) throw new Error('Codex applied Full access, but recovery storage could not save it. No continuation was sent.');
+      } else {
       const stored = (await readStateSessionRecords(home, options.sessionId))[0];
       const savedAccess = readSavedCodexSessionAccess(home,options.sessionId);
       const remembered = savedAccess?.access;
@@ -1318,6 +1339,7 @@ async function sendAppServerSessionMessage(options: {
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
       if (!options.sandboxMode) Object.assign(params, defaultSandbox ? sessionAccessSettings('danger-full-access', cwd) : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
       if (!preserved && !opaqueProfile) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
+      }
     }
     catch (error) {
       if (options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
@@ -1610,6 +1632,10 @@ export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandb
   id = id.toLowerCase();
   if (mode !== undefined && !isCliSandboxMode(mode)) throw new Error('Choose Read only, Workspace write, or Full access.');
   if (autoApprove !== undefined && typeof autoApprove !== 'boolean' || mode === undefined && autoApprove === undefined) throw new Error('Choose permissions or an approval policy.');
+  if (vscode.env.appHost === 'node') {
+    if (mode && mode !== 'danger-full-access') throw new Error('Standalone sessions use Full access. Auto approve can be changed separately.');
+    mode = 'danger-full-access';
+  }
   const home = resolveCodexHome();
   return runCrossWindowExclusive(`codex:session-settings:${id}`, 'Change Codex access', async () => {
     const session = await readCodexCliSessionSummary(id, home);
@@ -2787,7 +2813,7 @@ function parseCliModels(raw: string | undefined): DashboardCliComposerConfig["mo
     const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed.models) ? parsed.models : parsed.data;
     if (!Array.isArray(source)) return [];
     const models = source
-      .map((value) => value as Record<string, unknown>)
+      .filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value))
       .map((model) => {
         const id = [model["slug"], model["id"], model["model"]]
           .find(
@@ -3465,6 +3491,9 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
           } else if (isCodexCapacityInterruption(JSON.stringify(record))) {
             capacityError = true;
             state = "failed";
+            turnId = eventTurnId ?? turnId;
+          } else if (isCodexPermissionInterruption(JSON.stringify(record))) {
+            state = 'failed';
             turnId = eventTurnId ?? turnId;
           }
         } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {

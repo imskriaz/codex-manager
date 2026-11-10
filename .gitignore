@@ -10,6 +10,7 @@ design-qa.md
 /docs/
 .claude
 .vscode
+.codex/config.toml
 .idea
 media/webview/dashboard
 .aitasks

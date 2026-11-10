@@ -569,6 +569,25 @@ describe("refreshSingleQuota token automation state", () => {
     if (switched) expect(getAutoSwitchRuntimeSnapshot().lastReason?.trigger).toBe('model_capacity');
   });
 
+  it.each(['switch','running','disabled','locked','foreign','no-candidate','identity-changed','missing-quota'])("uses confirmed backend quota rejection while retaining switch guards: %s", async scenario => {
+    vi.spyOn(vscode.workspace,'getConfiguration').mockReturnValue({get:(key:string,fallback:unknown)=>key==='autoSwitchWaitForSessionsEnabled' ? true : key==='autoSwitchEnabled' ? scenario!=='disabled' : fallback} as never);
+    const active=createAccount('rejected-active',true,90,90),next=createAccount('rejected-next',false,90,90);
+    if(scenario==='missing-quota') active.quotaSummary=undefined;
+    let reads=0;
+    const repo={listAccounts:vi.fn(async()=>{
+      reads++;
+      return scenario==='identity-changed'&&reads>1 ? [{...active,isActive:false},{...next,isActive:true}] : scenario==='no-candidate' ? [active] : [active,next];
+    }),switchAccount:vi.fn(async()=>undefined)};
+    vi.spyOn(runningSessions,'readRunningCodexSessionIds').mockResolvedValue(scenario==='running'?['another-session']:[]);
+    if(scenario==='locked')setAutoSwitchLock(active.id,60000);
+    try{
+      const expected=['switch','missing-quota'].includes(scenario);
+      expect(await maybeAutoSwitchForActiveQuota(repo as never,{refresh:vi.fn(),deferHostReload:true},{quotaRejectedAccountId:active.id,canUseAccount:id=>scenario!=='foreign'||id!==next.id})).toBe(expected);
+      expect(repo.switchAccount).toHaveBeenCalledTimes(expected?1:0);
+      if(expected)expect(getAutoSwitchRuntimeSnapshot().lastReason?.trigger).toBe('quota_rejected');
+    }finally{clearAutoSwitchLock(active.id);}
+  });
+
   it("waits for all running sessions, retries after completion, and rechecks before switching", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("wait-active", true, 0, 0);

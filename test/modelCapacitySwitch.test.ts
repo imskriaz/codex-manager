@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
+import * as operations from '../src/utils/crossWindowOperations';
 import type { AccountsRepository } from '../src/storage';
 import type { DashboardCodexSessionLiveState } from '../src/domain/dashboard/types';
-const mocks = vi.hoisted(() => ({ records: new Map<string, unknown>(), config: {} as Record<string, unknown>, account: 'active', home: 'D:/home', failStorage: false, running: vi.fn(), live: vi.fn(), switch: vi.fn(), inspect: vi.fn(), recent: vi.fn(), observe: vi.fn() }));
-vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ get: (n: string, k: string) => mocks.records.get(n + k), set: (n: string, k: string, value: unknown) => { if (mocks.failStorage) throw Error('Storage full'); mocks.records.set(n + k, structuredClone(value)); } }) }));
+const mocks = vi.hoisted(() => ({ records: new Map<string, unknown>(), config: {} as Record<string, unknown>, account: 'active', home: 'D:/home', failStorage: false, failTagLedger: false, running: vi.fn(), live: vi.fn(), switch: vi.fn(), inspect: vi.fn(), recent: vi.fn(), observe: vi.fn() }));
+vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ get: (n: string, k: string) => mocks.records.get(n + k), set: (n: string, k: string, value: unknown) => { if (mocks.failStorage || mocks.failTagLedger && n === 'model-capacity-tags') throw Error('Storage full'); mocks.records.set(n + k, structuredClone(value)); } }) }));
 vi.mock('../src/infrastructure/config/extensionSettings', async original => ({ ...await original<typeof import('../src/infrastructure/config/extensionSettings')>(), getCodexManagerConfiguration: () => ({ get: (key: string, fallback: unknown) => mocks.config[key] ?? fallback }) }));
 vi.mock('../src/services/sessionRecording', () => ({ captureSessionAccount: () => mocks.account }));
 vi.mock('../src/services/codexSessionResume', () => ({ resolveCodexHome: () => mocks.home, readRunningCodexSessionIds: mocks.running, onDidInspectRunningCodexSessions: mocks.inspect, readRecentRunningCodexSessionIds: mocks.recent, observeRunningCodexSession: mocks.observe }));
@@ -18,7 +20,7 @@ const emit = (state: DashboardCodexSessionLiveState) => publishDashboardRealtime
 const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
 const ledger = () => [...mocks.records.values()][0] as { count: number } | undefined;
 beforeEach(() => {
-  mocks.records.clear(); mocks.config = {}; mocks.account = 'active'; mocks.home = 'D:/home'; mocks.failStorage = false;
+  mocks.records.clear(); mocks.config = {}; mocks.account = 'active'; mocks.home = 'D:/home'; mocks.failStorage = false; mocks.failTagLedger = false;
   mocks.running.mockReset().mockResolvedValue([]); mocks.live.mockReset().mockReturnValue([]); mocks.switch.mockReset().mockResolvedValue(true);
   tags = ['Work']; notices = [];
   mocks.inspect.mockReset().mockReturnValue({ dispose: vi.fn() }); mocks.recent.mockReset().mockReturnValue([]); mocks.observe.mockReset();
@@ -118,4 +120,48 @@ it('preserves the streak for ignored outcomes and rejects malformed persisted co
   expect(countModelCapacityOutcome(state, 'a', 'ignored', undefined).count).toBe(1);
   expect(countModelCapacityOutcome(state, 'b', 'new', true).count).toBe(1);
   expect(countModelCapacityOutcome({ accountId: 'a', count: NaN, seen: [] }, 'a', 'new', true).count).toBe(1);
+});
+
+it('keeps standalone capacity feedback quiet while tagging and switching normally', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  try {
+    mocks.config.modelCapacityFailureCount = 1; mocks.switch.mockResolvedValue(false);
+    emit(snapshot('node-capacity')); await flush();
+    expect(tags).toEqual(['Work', 'Capacity']); expect(mocks.switch).toHaveBeenCalledOnce();
+    expect(notices).toEqual([]);
+  } finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+});
+it('does not add a permanent automatic Capacity tag when its expiry cannot be saved', async () => {
+  mocks.config.modelCapacityFailureCount = 1; mocks.failTagLedger = true;
+  emit(snapshot('full-expiry')); await flush();
+  expect(tags).toEqual(['Work']); expect(repo.setAccountTags).not.toHaveBeenCalled();
+  expect(mocks.switch).toHaveBeenCalledOnce();
+});
+it('defers expiry for a foreign account and removes only Capacity after ownership returns', async () => {
+  registration.dispose(); tags = ['Work', 'Capacity'];
+  const key = 'model-capacity-tags' + JSON.stringify([mocks.home]);
+  mocks.records.set(key, { active: Date.now() - CAPACITY_TAG_TTL_MS });
+  registration = registerModelCapacitySwitch(repo as unknown as AccountsRepository, { refresh: vi.fn() }, () => false);
+  await flush(); expect(tags).toEqual(['Work', 'Capacity']); expect(mocks.records.get(key)).toHaveProperty('active');
+  registration.dispose();
+  registration = registerModelCapacitySwitch(repo as unknown as AccountsRepository, { refresh: vi.fn() }, () => true);
+  await flush(); expect(tags).toEqual(['Work']); expect(mocks.records.get(key)).toEqual({});
+});
+it('does not count or tag an old account when activation changes during session inspection', async () => {
+  let inspected!: (ids: string[]) => void;
+  mocks.running.mockReturnValueOnce(new Promise<string[]>(resolve => { inspected = resolve; }));
+  emit(snapshot('old-account')); await flush(); mocks.account = 'new'; inspected([]); await flush();
+  expect(ledger()).toBeUndefined(); expect(repo.setAccountTags).not.toHaveBeenCalled(); expect(mocks.switch).not.toHaveBeenCalled();
+});
+it('leaves expiry untouched while the capacity operation lease is busy', async () => {
+  registration.dispose(); tags = ['Work', 'Capacity'];
+  const key = 'model-capacity-tags' + JSON.stringify([mocks.home]);
+  const saved = { active: Date.now() - CAPACITY_TAG_TTL_MS };
+  mocks.records.set(key, saved);
+  const lease = vi.spyOn(operations, 'runCrossWindowExclusive').mockRejectedValueOnce(new Error('Capacity selection owns the lease'));
+  registration = registerModelCapacitySwitch(repo as unknown as AccountsRepository, { refresh: vi.fn() }, () => true);
+  await flush();
+  expect(lease).toHaveBeenCalledWith(`model-capacity:${mocks.home}`, 'Expire Capacity tags', expect.any(Function), { background: true });
+  expect(tags).toEqual(['Work', 'Capacity']); expect(mocks.records.get(key)).toEqual(saved);
+  expect(repo.setAccountTags).not.toHaveBeenCalled();
 });

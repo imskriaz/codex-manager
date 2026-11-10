@@ -11,9 +11,13 @@ import { registerStandaloneCapacityRetry } from './standaloneCapacityRetry';
 import { registerWorkspaceTerminalMonitoring } from "./workspaceTools";
 import { registerModelCapacitySwitch } from "./modelCapacitySwitch";
 import { registerQuotaRecoveryAutoResume } from "./quotaRecoveryAutoResume";
-import { registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions, scheduleCodexSessionAutoResume, formatAutoResumeResult } from "./codexSessionAutoResume";
-import { publishDashboardRealtime } from "./dashboardRealtime";
+import { registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions, scheduleCodexSessionAutoResume } from "./codexSessionAutoResume";
 import { AccountsCommandService } from "../application/accounts/commandService";
+import { accountQuotaAvailability } from '../utils/quotaWindows';
+import { waitWithin } from '../utils/concurrency';
+import { resolveCodexHome } from './codexSessionResume';
+import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from '../application/accounts/autoQueueOrder';
+import { isAutoQueueSnapshotFresh } from '../domain/autoQueuePolicy';
 
 /** Start only after this host owns the port, so a rejected competing host cannot automate accounts. */
 export function registerNodeBackgroundServices(context: vscode.ExtensionContext, repo: AccountsRepository, dashboard: WebDashboardServer,
@@ -22,6 +26,12 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   const refresh = () => dashboard.publishLocalStateChange();
   const view = { refresh };
   const commands = new AccountsCommandService(context, repo, view, canUseAccount, undefined, canUseAccount);
+  const canResume = async () => {
+    const active = (await waitWithin(repo.listAccounts(), 5000, 'Startup recovery could not verify accounts.')).find(account => account.isActive);
+    if (active && active.enabled !== false && canUseAccount(active.id) && !active.resetCreditAttempt && accountQuotaAvailability(active) === 'available' && isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy())) return true;
+    await waitWithin(Promise.resolve(context.workspaceState.update(`codexManager.quotaRecovery:${resolveCodexHome()}`, true)), 5000, 'Startup recovery could not save deferred work.');
+    return false;
+  };
   context.subscriptions.push(
     vscode.commands.registerCommand("codexManager.refreshQuota", (account: Parameters<AccountsCommandService["refreshQuota"]>[0]) => commands.refreshQuota(account)),
     vscode.commands.registerCommand("codexManager.refreshAllQuotas", (options: Parameters<AccountsCommandService["refreshAllQuotas"]>[0]) => commands.refreshAllQuotas(options))
@@ -38,9 +48,9 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
     registerAutoRefreshScheduler({ context, repo, onRefresh: refresh, canRefreshAccount: canUseAccount }),
     registerTokenRefreshScheduler({ context, repo, view, checkIntervalMs: 15 * 60_000, skewSeconds: 5 * 60, canRefreshAccount: canUseAccount }),
     scheduleCodexSessionAutoResume(async () => {
-      const result = await resumePersistedCodexSessions(context);
-      const message = formatAutoResumeResult(result);
-      if (message) publishDashboardRealtime({ type: "dashboard:notice", level: result.failed.length ? "warning" : "info", message });
+      if (!(await canResume())) return true;
+      const result = await resumePersistedCodexSessions(context, undefined, undefined, canResume);
+      // Automatic standalone recovery is reflected by live session/account state; it must not block the UI with a toast.
       return result.failed.length > 0;
     })
   );

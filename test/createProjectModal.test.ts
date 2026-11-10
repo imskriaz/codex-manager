@@ -46,3 +46,21 @@ it('blocks offline submission and reports cancellation beside the action', () =>
   expect(find('p').find(node => node.props.role === 'alert')?.props.children).toContain('Reconnect');
   render().props.onClose(); expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: 'Project creation cancelled.' }));
 });
+
+const button = (label: string) => find('button').find(node => node.props.children === label)!;
+it('browses and selects a parent folder on the selected host without creating a project', () => {
+  button('Browse folders…').props.onClick(); button('Browse folders…').props.onClick();
+  expect(fixture.send).toHaveBeenCalledOnce();
+  expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'browseWorkspaceFolders', payload: expect.objectContaining({ targetDeviceId: 'selected-pc' }) }));
+  fixture.receive!({ data: { type: 'dashboard:action-result', requestId: 'create-id', status: 'completed', payload: { workspaceFolders: { path: 'D:\\Selected', parent: 'D:\\', folders: [], roots: ['D:\\'] } } } });
+  button('Select this folder').props.onClick();
+  expect(find('input')[1]?.props.value).toBe('D:\\Selected');
+  expect(props.onCreated).not.toHaveBeenCalled();
+});
+it('reports browse timeout and offline failure with input preserved', () => {
+  button('Browse folders…').props.onClick(); vi.advanceTimersByTime(12000);
+  expect(find('p').find(node => node.props.role === 'alert')?.props.children).toContain('timed out');
+  vi.stubGlobal('navigator', { onLine: false }); button('Browse folders…').props.onClick();
+  expect(find('p').find(node => node.props.role === 'alert')?.props.children).toContain('Reconnect');
+  expect(find('input')[0]?.props.value).toBe('new-project');
+});

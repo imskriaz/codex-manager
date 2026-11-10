@@ -74,6 +74,7 @@ const MAX_WARNINGS_PER_CYCLE = 1;
 const quotaWarningCounts = new Map<string, number>();
 let autoSwitchInFlight: Promise<boolean> | undefined;
 type AutoSwitchOptions = {
+  quotaRejectedAccountId?: string;
   modelCapacityAccountId?: string;
   capacityStillNeeded?: () => boolean;
   ignoreEnabled?: boolean;
@@ -578,6 +579,10 @@ export async function maybeAutoSwitchForActiveQuota(
   options: AutoSwitchOptions = {}
 ): Promise<boolean> {
   if (autoSwitchInFlight) {
+    if (options.quotaRejectedAccountId) {
+      await autoSwitchInFlight;
+      return maybeAutoSwitchForActiveQuota(repo, view, options);
+    }
     if (options.userInitiated && autoSwitchManualOverride) {
       // Promote the serialized operation rather than queueing a second auth
       // mutation. A click interrupts only optional session inspection; all
@@ -644,6 +649,8 @@ async function evaluateAutoSwitchForActiveQuota(
   // Missing configuration must not silently use the old 20% emergency value,
   // otherwise auto-switch can fire well before the configured 5% default.
   const modelCapacity = options.modelCapacityAccountId !== undefined;
+  const quotaRejected = options.quotaRejectedAccountId !== undefined;
+  const rejectionAllowed = () => getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true) && (options.canUseAccount?.(options.quotaRejectedAccountId!) ?? true);
   const capacityAllowed = () => getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && options.capacityStillNeeded?.() === true;
   if (modelCapacity && !capacityAllowed()) return false;
   const policy = getAccountAutoQueuePolicy();
@@ -652,10 +659,11 @@ async function evaluateAutoSwitchForActiveQuota(
   const hourlyQuotaControlEnabled = true;
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);
+  if (quotaRejected && (!active || active.id !== options.quotaRejectedAccountId || !rejectionAllowed())) return false;
   if (modelCapacity && (!active || active.id !== options.modelCapacityAccountId || !(options.canUseAccount?.(active.id) ?? true))) return false;
   const reauthorization = !!active && needsReauthorization(active);
   if (
-    active && !modelCapacity && !reauthorization &&
+    active && !modelCapacity && !quotaRejected && !reauthorization &&
     !refreshedActive &&
     (options.ignoreEnabled || active.enabled !== false) &&
     (!hasFreshQuotaSnapshot(active) || active.quotaError || !active.quotaSummary)
@@ -678,7 +686,7 @@ async function evaluateAutoSwitchForActiveQuota(
   if (
     !active ||
     (!options.ignoreEnabled && active.enabled === false) ||
-    (!modelCapacity && !reauthorization && (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)))
+    (!modelCapacity && !quotaRejected && !reauthorization && (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)))
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select unavailable — refresh the active account and retry.");
@@ -698,7 +706,7 @@ async function evaluateAutoSwitchForActiveQuota(
     active.quotaSummary!.hourlyPercentage <= hourlyThreshold;
   const activeWeeklyTriggered =
     !reauthorization && !!active.quotaSummary && hasComparableWeeklyWindow(active) && active.quotaSummary!.weeklyPercentage <= weeklyThreshold;
-  const shouldSwitch = modelCapacity || reauthorization || activeHourlyTriggered || activeWeeklyTriggered;
+  const shouldSwitch = quotaRejected || modelCapacity || reauthorization || activeHourlyTriggered || activeWeeklyTriggered;
   if (!shouldSwitch) {
     lastBlockedAutoSwitchKey = undefined;
     deferredForSessions = false;
@@ -753,8 +761,8 @@ async function evaluateAutoSwitchForActiveQuota(
       return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed, true);
     }
 
-    if (modelCapacity) {
-      recordAutoSwitchDashboardNotice('Model capacity switch deferred: no verified capable account is available.', 'warning', { accountId: active.id });
+    if (modelCapacity || quotaRejected) {
+      recordAutoSwitchDashboardNotice(`${quotaRejected ? 'Quota rejection' : 'Model capacity'} switch deferred: no verified capable account is available.`, 'warning', { accountId: active.id });
       return false;
     }
 
@@ -917,7 +925,7 @@ async function evaluateAutoSwitchForActiveQuota(
   }
 
   lastBlockedAutoSwitchKey = undefined;
-  const matchedRules = modelCapacity ? ['model-capacity'] : reauthorization ? ['reauthorize'] : buildMatchedRules();
+  const matchedRules = quotaRejected ? ['quota-rejected'] : modelCapacity ? ['model-capacity'] : reauthorization ? ['reauthorize'] : buildMatchedRules();
   // Session inspection can await native process checks. Complete it before
   // reading the state used to authorize the switch, since the user can switch
   // accounts or change automation settings while that inspection is pending.
@@ -934,7 +942,7 @@ async function evaluateAutoSwitchForActiveQuota(
     !latestActive ||
     latestActive.id !== active.id ||
     isAutoSwitchLocked(active.id) ||
-    !(modelCapacity ? capacityAllowed() && latestActive.enabled !== false : reauthorization ? needsReauthorization(latestActive) && (options.ignoreEnabled || latestActive.enabled !== false) && (options.ignoreEnabled || getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true)) : isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true)) ||
+    !(quotaRejected ? rejectionAllowed() && latestActive.id === options.quotaRejectedAccountId && latestActive.enabled !== false : modelCapacity ? capacityAllowed() && latestActive.enabled !== false : reauthorization ? needsReauthorization(latestActive) && (options.ignoreEnabled || latestActive.enabled !== false) && (options.ignoreEnabled || getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true)) : isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true)) ||
     !latestNext ||
     latestNext.isActive ||
     !(options.canUseAccount?.(latestNext.id) ?? true) ||
@@ -955,7 +963,7 @@ async function evaluateAutoSwitchForActiveQuota(
   }
   await repo.switchAccount(latestNext.id, { expectedActiveAccountId: active.id });
   console.info("[codexManager] auto switch completed", {
-    trigger: modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
+    trigger: quotaRejected ? 'quota_rejected' : modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -969,7 +977,7 @@ async function evaluateAutoSwitchForActiveQuota(
     fromEmail: active.email,
     toAccountId: latestNext.id,
     toEmail: latestNext.email,
-    trigger: modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
+    trigger: quotaRejected ? 'quota_rejected' : modelCapacity ? "model_capacity" : reauthorization ? "reauthorize" :
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
         : activeHourlyTriggered
@@ -984,7 +992,7 @@ async function evaluateAutoSwitchForActiveQuota(
   view.refresh();
 
   const decisionReason = getCodexManagerAccountAutoQueueEfficiency(latestNext, autoQueueScoringOptions()).reason;
-  const switchMessage = modelCapacity ? `Consecutive model-capacity failures; switched to ${latestNext.email}.` : reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
+  const switchMessage = quotaRejected ? `The backend rejected the previous account quota; switched to ${latestNext.email}.` : modelCapacity ? `Consecutive model-capacity failures; switched to ${latestNext.email}.` : reauthorization ? `The previous account needs reauthorization; switched to ${latestNext.email}.` : buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
   deferredForSessions = false; sessionWaitNotice = undefined;
 
   await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated, 'info', view.deferHostReload);
@@ -1280,6 +1288,7 @@ async function finishAutoSwitchReload(
   deferHostReload = false
 ): Promise<void> {
   recordAutoSwitchDashboardNotice(message, level, { accountId: account.id, switchResult: "switched" });
+  if (vscode.env.appHost === 'node') return;
   if (deferHostReload) return;
   void handleCodexAppRestartPreference({ allowManualPrompt: false });
   if (level === "info") void vscode.window.showInformationMessage(message);

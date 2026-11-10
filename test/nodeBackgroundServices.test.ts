@@ -3,7 +3,7 @@ const fixture = vi.hoisted(() => ({ registrations: [] as string[], recovery: und
   handlers: new Map<string, (...args: any[]) => unknown>(), refreshQuota: vi.fn().mockResolvedValue(undefined), refreshAll: vi.fn().mockResolvedValue(undefined) }));
 function disposable(name: string) { fixture.registrations.push(name); return { dispose: vi.fn() }; }
 vi.mock("vscode", () => ({ commands: { registerCommand: vi.fn((name, handler) => { fixture.handlers.set(name, handler); return { dispose: vi.fn() }; }) } }));
-vi.mock("../src/infrastructure/config/extensionSettings", () => ({ getCodexManagerConfiguration: () => ({ get: () => fixture.encrypted }), getAutoRefreshMinutes: () => 10, getAutoRefreshCurrentMinutes: () => 1 }));
+vi.mock("../src/infrastructure/config/extensionSettings", () => ({ getCodexManagerConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "encryptedSyncEnabled" ? fixture.encrypted : fallback }), normalizeAutoRefreshMinutes: (value: number) => value, getAutoRefreshMinutes: () => 10, getAutoRefreshCurrentMinutes: () => 1 }));
 vi.mock("../src/presentation/workbench/autoSwitchState", () => ({ initAutoSwitchRuntimeState: () => disposable("locks") }));
 vi.mock("../src/presentation/workbench/schedulerRegistration", () => ({
   registerAutoRefreshScheduler: (options: { canRefreshAccount: () => boolean }) => { fixture.canUse = options.canRefreshAccount; return disposable("quota"); },
@@ -23,18 +23,20 @@ vi.mock("../src/services/codexSessionAutoResume", () => ({
 }));
 vi.mock("../src/services/dashboardRealtime", () => ({ publishDashboardRealtime: fixture.publish }));
 vi.mock("../src/application/accounts/commandService", () => ({ AccountsCommandService: class { refreshQuota = fixture.refreshQuota; refreshAllQuotas = fixture.refreshAll; } }));
+vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: () => "/node-home" }));
 import { registerNodeBackgroundServices } from "../src/services/nodeBackgroundServices";
 afterEach(() => { fixture.registrations = []; fixture.encrypted = false; fixture.handlers.clear(); vi.clearAllMocks(); });
 it("registers the existing queue, recording, recovery, quota and token services", async () => {
-  const context = { subscriptions: [] };
-  registerNodeBackgroundServices(context as never, {} as never, { publishLocalStateChange: vi.fn() } as never);
+  const context = { subscriptions: [], workspaceState: { update: vi.fn().mockResolvedValue(undefined) } };
+  const listAccounts = vi.fn(async () => [{ id: "active", isActive: true, lastQuotaAt: Date.now(), quotaSummary: { hourlyPercentage: 50, hourlyWindowPresent: true, hourlyWindowMinutes: 300 } }]);
+  registerNodeBackgroundServices(context as never, { listAccounts } as never, { publishLocalStateChange: vi.fn() } as never);
   expect(fixture.registrations).toEqual(["locks", "terminals", "recording", "queue", 'completed-goals', 'capacity-retry', "tracking", "capacity", "quota-recovery", "quota", "tokens", "recovery"]);
   expect(context.subscriptions).toHaveLength(8);
   fixture.resume.mockResolvedValue({ failed: [] });
   await expect(fixture.recovery!()).resolves.toBe(false);
   fixture.resume.mockResolvedValue({ failed: ["unconfirmed"] });
   await expect(fixture.recovery!()).resolves.toBe(true);
-  expect(fixture.publish).toHaveBeenLastCalledWith({ type: "dashboard:notice", level: "warning", message: "Recovery checked." });
+  expect(fixture.publish).not.toHaveBeenCalled();
   expect(fixture.refreshAll).toHaveBeenCalledWith({ silent: true, forceRefresh: true, respectQuotaCheckGap: false });
   await fixture.handlers.get('codexManager.refreshQuota')!({ id: 'manual' });
   expect(fixture.refreshQuota).toHaveBeenCalledWith({ id: 'manual' });
@@ -50,4 +52,13 @@ it('retains shared claim checks instead of disabling all accounts in standalone'
   registerNodeBackgroundServices({ subscriptions: [] } as never, {} as never, { publishLocalStateChange: vi.fn() } as never, canUse);
   expect(fixture.canUse!('owned-here')).toBe(true);
   expect(fixture.canUse!('foreign')).toBe(false);
+});
+
+it.each(['none', 'empty', 'exhausted', 'failed-refresh', 'stale', 'disabled', 'foreign', 'resetting'])('silently retains startup recovery while account quota is unavailable: %s', async scenario => {
+  const account = { id: 'active', isActive: true, enabled: scenario !== 'disabled', lastQuotaAt: scenario === 'stale' ? 1 : Date.now(), quotaError: scenario === 'failed-refresh' ? { message: 'Offline' } : undefined, resetCreditAttempt: scenario === 'resetting' ? {} : undefined, quotaSummary: scenario === 'empty' ? undefined : { hourlyPercentage: scenario === 'exhausted' ? 0 : 50, hourlyWindowPresent: true, hourlyWindowMinutes: 300 } };
+  const update = vi.fn().mockResolvedValue(undefined);
+  registerNodeBackgroundServices({ subscriptions: [], workspaceState: { update } } as never, { listAccounts: async () => scenario === 'none' ? [] : [account] } as never, { publishLocalStateChange: vi.fn() } as never, () => scenario !== 'foreign');
+  expect(await fixture.recovery!()).toBe(true);
+  expect(update).toHaveBeenCalledWith('codexManager.quotaRecovery:/node-home', true);
+  expect(fixture.resume).not.toHaveBeenCalled(); expect(fixture.publish).not.toHaveBeenCalled();
 });

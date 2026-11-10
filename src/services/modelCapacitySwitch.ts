@@ -20,19 +20,22 @@ export function isCapacityTagExpired(taggedAt: number, now = Date.now()): boolea
   return Number.isFinite(taggedAt) && now - taggedAt >= CAPACITY_TAG_TTL_MS;
 }
 
-async function setCapacityTag(repo: AccountsRepository, view: RefreshView, accountId: string, add: boolean): Promise<void> {
+async function setCapacityTag(repo: AccountsRepository, view: RefreshView, accountId: string, add: boolean, canUseAccount: (id: string) => boolean): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const account = (await waitWithin(repo.listAccounts(), 5000, 'Accounts could not be read for the Capacity tag.')).find(item => item.id === accountId);
-    if (!account) return;
+    if (!account) return true;
+    if (!canUseAccount(accountId)) return false;
     const tags = (account.tags ?? []).filter(tag => tag.toLowerCase() !== 'capacity');
     const next = add ? [...tags, 'Capacity'] : tags;
-    if (next.length === (account.tags ?? []).length && next.every((tag, index) => tag === account.tags?.[index])) return;
-    try { await waitWithin(repo.setAccountTags(accountId, next, account.tags ?? []), 5000, 'The Capacity tag save was not confirmed.'); view.refresh(); return; }
+    if (next.length === (account.tags ?? []).length && next.every((tag, index) => tag === account.tags?.[index])) return true;
+    try { await waitWithin(repo.setAccountTags(accountId, next, account.tags ?? []), 5000, 'The Capacity tag save was not confirmed.'); view.refresh(); return true; }
     catch (error) { if (attempt || !/tags changed/i.test(String(error))) throw error; }
   }
+  return false;
 }
 
-async function expireCapacityTags(repo: AccountsRepository, view: RefreshView, home: string): Promise<void> {
+async function expireCapacityTags(repo: AccountsRepository, view: RefreshView, home: string, canUseAccount: (id: string) => boolean): Promise<void> {
+  return runCrossWindowExclusive(`model-capacity:${home}`, 'Expire Capacity tags', async () => {
   const store = getSqliteStateStore();
   if (!store) return;
   const key = JSON.stringify([home]);
@@ -41,13 +44,14 @@ async function expireCapacityTags(repo: AccountsRepository, view: RefreshView, h
   const accounts = await waitWithin(repo.listAccounts(), 5000, 'Accounts could not be read while expiring Capacity tags.');
   let changed = false;
   for (const [accountId, taggedAt] of Object.entries(ledger)) {
-    if (!isCapacityTagExpired(taggedAt)) continue;
+    if (!isCapacityTagExpired(taggedAt) || !canUseAccount(accountId)) continue;
     const account = accounts.find(item => item.id === accountId);
-    if (account?.tags?.some(tag => tag.toLowerCase() === 'capacity')) await setCapacityTag(repo, view, accountId, false);
+    if (account?.tags?.some(tag => tag.toLowerCase() === 'capacity') && !await setCapacityTag(repo, view, accountId, false, canUseAccount)) continue;
     delete ledger[accountId];
     changed = true;
   }
   if (changed) store.set('model-capacity-tags', key, ledger);
+  }, { background: true });
 }
 export function countModelCapacityOutcome(previous: CapacityFailures | undefined, accountId: string, eventId: string, capacity: boolean | undefined): CapacityFailures {
   const state = previous?.accountId === accountId && Number.isSafeInteger(previous.count) && previous.count >= 0 && Array.isArray(previous.seen) && previous.seen.every(id => typeof id === 'string') ? previous : { accountId, count: 0, seen: [] };
@@ -56,14 +60,18 @@ export function countModelCapacityOutcome(previous: CapacityFailures | undefined
 
 /** Count terminal attempts once across sessions and reloads, using the normal switch guards. */
 export function registerModelCapacitySwitch(repo: AccountsRepository, view: RefreshView, canUseAccount: (id: string) => boolean): vscode.Disposable {
+  const warn = (message: string) => {
+    if (vscode.env.appHost === 'node') console.warn('[codexManager] model capacity recovery:', message);
+    else publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message });
+  };
   const sources = new Map<string, { home: string; accountId: string }>();
   const startedAt = Date.now();
   const observed = new Set<string>();
   let disposed = false, revision = 0, queued = 0;
   let pending = Promise.resolve();
-  const expiryTimer = setInterval(() => { void expireCapacityTags(repo, view, resolveCodexHome()).catch(error => console.warn('[codexManager] Capacity tag expiry failed', error)); }, 5 * 60_000);
+  const expiryTimer = setInterval(() => { void expireCapacityTags(repo, view, resolveCodexHome(), canUseAccount).catch(error => console.warn('[codexManager] Capacity tag expiry failed', error)); }, 5 * 60_000);
   expiryTimer.unref?.();
-  void expireCapacityTags(repo, view, resolveCodexHome()).catch(error => console.warn('[codexManager] Capacity tag expiry failed', error));
+  void expireCapacityTags(repo, view, resolveCodexHome(), canUseAccount).catch(error => console.warn('[codexManager] Capacity tag expiry failed', error));
   const enabled = () => {
     const config = getCodexManagerConfiguration();
     return config.get<boolean>('autoSwitchEnabled', true) && config.get<boolean>('modelCapacityAutoSwitchEnabled', true);
@@ -87,11 +95,11 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
     observed.add(eventId); if (observed.size > 512) observed.delete(observed.values().next().value!);
     const anotherRunning = listCodexSessionLiveStates().some(other => other.sessionId !== state.sessionId && !other.deviceId && ['running', 'starting'].includes(other.status));
     const epoch = ++revision;
-    if (queued >= 128) { observed.delete(eventId); publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Model-capacity recovery is busy. This failure was not counted; no switch was requested.' }); return; }
+    if (queued >= 128) { observed.delete(eventId); warn('Model-capacity recovery is busy. This failure was not counted; no switch was requested.'); return; }
     queued++;
     pending = pending.then(() => runCrossWindowExclusive(`model-capacity:${home}`, 'Model capacity recovery', async () => {
       if (disposed || home !== resolveCodexHome() || captureSessionAccount() !== accountId) return;
-      try { await expireCapacityTags(repo, view, home); }
+      try { await expireCapacityTags(repo, view, home, canUseAccount); }
       catch (error) { console.warn('[codexManager] Capacity tag expiry deferred', error); }
       const store = getSqliteStateStore();
       if (!store) throw new Error('Model capacity recovery could not save its failure count. No account was switched.');
@@ -102,25 +110,26 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
         const running = anotherRunning || (await waitWithin(readRunningCodexSessionIds(home), 5000, 'Running sessions could not be verified. The model-capacity failure was not counted.')).some(id => id !== state.sessionId);
         if (running) outcome = undefined;
       }
+      if (disposed || home !== resolveCodexHome() || captureSessionAccount() !== accountId) return;
       const next = countModelCapacityOutcome(previous, accountId, eventId, outcome);
       if (next === previous) return;
       store.set('model-capacity', key, next);
       const threshold = normalizeModelCapacityFailures(getCodexManagerConfiguration().get<number>('modelCapacityFailureCount', 3));
       if (outcome !== true || disposed || !enabled() || next.count < threshold || !canUseAccount(accountId)) return;
       try {
-        await setCapacityTag(repo, view, accountId, true);
-        const tags = getSqliteStateStore()?.get<CapacityTagLedger>('model-capacity-tags', key) ?? {};
+        const tags = store.get<CapacityTagLedger>('model-capacity-tags', key) ?? {};
         tags[accountId] = Date.now();
-        getSqliteStateStore()?.set('model-capacity-tags', key, tags);
+        store.set('model-capacity-tags', key, tags);
+        await setCapacityTag(repo, view, accountId, true, id => home === resolveCodexHome() && captureSessionAccount() === accountId && canUseAccount(id));
       } catch (error) {
-        publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: `The Capacity tag could not be saved. Existing tags were kept. ${error instanceof Error ? error.message : ''}` });
+        warn(`The Capacity tag could not be saved. Existing tags were kept. ${error instanceof Error ? error.message : ''}`);
       }
       const switched = await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount, modelCapacityAccountId: accountId, capacityStillNeeded: () => !disposed && epoch === revision && enabled() && next.count >= normalizeModelCapacityFailures(getCodexManagerConfiguration().get<number>('modelCapacityFailureCount', 3)) && home === resolveCodexHome() && captureSessionAccount() === accountId });
-      if (!switched) publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Model capacity threshold reached. Automatic switching was deferred by account availability, ownership, lock or running-session rules. The account remains flagged for capacity.' });
-    })).catch(error => {
+      if (!switched) warn('Model capacity threshold reached. Automatic switching was deferred by account availability, ownership, lock or running-session rules. The capacity failure was saved for recovery.');
+    }, { background: true, waitMs: 5000 })).catch(error => {
       observed.delete(eventId);
       console.warn('[codexManager] model capacity recovery could not complete', error);
-      publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: error instanceof Error ? error.message : 'Model capacity recovery could not complete. Refresh before retrying.' });
+      warn(error instanceof Error ? error.message : 'Model capacity recovery could not complete. Refresh before retrying.');
     }).finally(() => { queued--; });
   });
   const changed = onDidChangeConfiguration(event => {

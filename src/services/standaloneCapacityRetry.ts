@@ -3,20 +3,22 @@ import type { AccountsRepository } from "../storage";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { isCodexCapacityInterruption } from "../domain/codexSessionState";
+import { isCodexCapacityInterruption, isCodexPermissionInterruption } from "../domain/codexSessionState";
 import { getCodexSessionLiveState } from "./codexSessionLive";
 import { readCodexCliSessionSummary, resolveCodexHome } from "./codexSessionResume";
 import { readCodexSessionPreferences } from "./codexSessionPreferences";
 import { resumeCodexSessionWork } from "./codexSessionRecovery";
-import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
+import { subscribeDashboardRealtime } from "./dashboardRealtime";
+import { recordPersistentEvent } from "../utils/persistentLog";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { waitWithin } from "../utils/concurrency";
+import { accountQuotaAvailability } from '../utils/quotaWindows';
 
 type Retry = { sessionId: string; streamId: string; attempts: number; due: number };
 const NAMESPACE = "standalone-capacity-retry";
 const DELAYS = [5000, 10000, 20000, 40000];
 
-/** Continue verified capacity interruptions without requiring an editor reload. */
+/** Continue verified capacity or sandbox interruptions without requiring a reload. */
 export function registerStandaloneCapacityRetry(
   context: vscode.ExtensionContext,
   repo: AccountsRepository,
@@ -29,14 +31,12 @@ export function registerStandaloneCapacityRetry(
   const controller = new AbortController();
   const enabled = () => {
     const config = getCodexManagerConfiguration();
-    return (
-      config.get<boolean>("cliIntegrationEnabled", true) &&
-      config.get<boolean>("modelCapacityAutoSwitchEnabled", true) &&
-      config.get<boolean>("autoSwitchEnabled", true)
-    );
+    return config.get<boolean>("cliIntegrationEnabled", true);
   };
+  const recoverable = (message: string) => isCodexPermissionInterruption(message) ||
+    isCodexCapacityInterruption(message) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true);
   const notice = (level: "info" | "warning", message: string) =>
-    publishDashboardRealtime({ type: "dashboard:notice", level, message });
+    recordPersistentEvent(level, 'standalone-recovery', message);
   const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id}`;
   const stop = subscribeDashboardRealtime((message) => {
     if (disposed || message.type !== "dashboard:codex-session-live" || message.state.deviceId) return;
@@ -58,15 +58,15 @@ export function registerStandaloneCapacityRetry(
         store.set(NAMESPACE, recordKey, undefined);
         return;
       }
-      if (!enabled() || state.status !== "failed" || !isCodexCapacityInterruption(state.error ?? "")) return;
+      if (!enabled() || state.status !== "failed" || !recoverable(state.error ?? "")) return;
       if (previous?.streamId === state.streamId) return;
       const attempts = previous?.attempts ?? 0;
       if (attempts >= DELAYS.length) {
-        notice("warning", "Model capacity retry limit reached. Change the model/account or resume manually.");
+        notice("warning", "Standalone recovery retry limit reached. Review the session before resuming manually.");
         return;
       }
       if (!previous && store.keys(NAMESPACE).length >= 128) {
-        notice("warning", "Capacity recovery queue is full. Resume this session manually.");
+        notice("warning", "Standalone recovery queue is full. Resume this session manually.");
         return;
       }
       store.set(NAMESPACE, recordKey, {
@@ -77,7 +77,7 @@ export function registerStandaloneCapacityRetry(
       });
       notice(
         "info",
-        `Model capacity interrupted the turn. Standalone will retry in ${DELAYS[attempts]! / 1000}s (${attempts + 1}/${DELAYS.length}).`
+        `Execution interrupted the turn. Standalone will retry in ${DELAYS[attempts]! / 1000}s (${attempts + 1}/${DELAYS.length}).`
       );
     } catch (error) {
       notice(
@@ -108,8 +108,8 @@ export function registerStandaloneCapacityRetry(
         )
           continue;
         await runCrossWindowExclusive(
-          `capacity-retry:${recordKey}`,
-          "Standalone capacity retry",
+          `model-capacity:${home}`,
+          "Standalone execution recovery",
           async () => {
             if (disposed || !enabled() || resolveCodexHome() !== home) return;
             const current = store.get<Retry>(NAMESPACE, recordKey);
@@ -121,7 +121,7 @@ export function registerStandaloneCapacityRetry(
               preference?.autoResume === false ||
               (!isAutoResumeEnabled() && preference?.autoResume !== true) ||
               (live &&
-                (!isCodexCapacityInterruption(live.error ?? "") ||
+                (!recoverable(live.error ?? "") ||
                   live.status !== "failed" ||
                   live.streamId !== retry.streamId))
             ) {
@@ -131,7 +131,7 @@ export function registerStandaloneCapacityRetry(
             const account = (
               await waitWithin(repo.listAccounts(), 5000, "Retry account inspection timed out.", controller.signal)
             ).find((item) => item.isActive);
-            if (!account || account.enabled === false || !canUseAccount(account.id)) return;
+            if (!account || account.enabled === false || !canUseAccount(account.id) || account.resetCreditAttempt || accountQuotaAvailability({ ...account, quotaError: undefined }) === 'exhausted') return;
             const session = await waitWithin(
               readCodexCliSessionSummary(retry.sessionId, home, false),
               5000,
@@ -153,6 +153,7 @@ export function registerStandaloneCapacityRetry(
               session.archived ||
               session.subAgent ||
               session.parentSessionId ||
+              (!session.goal && session.interrupted !== true) ||
               session.goal?.status === "complete" ||
               (session.goal?.status === "paused" && !session.interrupted)
             ) {
@@ -174,9 +175,13 @@ export function registerStandaloneCapacityRetry(
                 controller.signal
               );
               if (outcome === "idle") store.set(NAMESPACE, recordKey, undefined);
-              else notice("info", "Standalone capacity recovery started.");
+              else {
+                const latest = store.get<Retry>(NAMESPACE, recordKey);
+                if (latest?.streamId === retry.streamId) store.set(NAMESPACE, recordKey, { ...latest, due: Number.MAX_SAFE_INTEGER });
+                notice("info", "Standalone recovery started.");
+              }
             } catch (error) {
-              if (!isCodexCapacityInterruption(String(error))) {
+              if (!recoverable(String(error))) {
                 store.set(NAMESPACE, recordKey, undefined);
                 notice(
                   "warning",

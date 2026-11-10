@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import type { AccountsRepository } from "../storage";
 import { accountQuotaAvailability } from "../utils/quotaWindows";
 import { waitWithin } from "../utils/concurrency";
+import { recordPersistentEvent } from "../utils/persistentLog";
 import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from "../application/accounts/autoQueueOrder";
 import { isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
 import { needsWindowReloadForAccount } from "../presentation/workbench/windowRuntimeAccount";
@@ -132,9 +133,10 @@ export function registerQuotaRecoveryAutoResume(
         return;
       const result = await resumePersistedCodexSessions(context);
       const message = formatAutoResumeResult(result);
-      if (message) {
-        const level = result.failed.length ? "warning" : "info";
-        publishDashboardRealtime({ type: "dashboard:notice", level, message });
+      if (vscode.env.appHost === 'node') {
+        if (message) recordPersistentEvent(result.failed.length ? 'warning' : 'info', 'auto-resume', message);
+      } else if (message) {
+        publishDashboardRealtime({ type: 'dashboard:notice', level: result.failed.length ? 'warning' : 'info', message });
         if (result.failed.length) void vscode.window.showWarningMessage(message);
         else void vscode.window.showInformationMessage(message);
       }
@@ -171,7 +173,7 @@ export function registerQuotaRecoveryAutoResume(
     if (observedFailures.has(message.state.streamId)) return;
     observedFailures.add(message.state.streamId);
     if (observedFailures.size > 256) observedFailures.delete(observedFailures.values().next().value!);
-    if (interrupted.size >= 200) { publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Session recovery queue is full. Resume this conversation manually after quota is available.' }); return; }
+    if (interrupted.size >= 200) { recordPersistentEvent('warning', 'auto-resume', 'Session recovery queue is full; automatic recovery retained'); return; }
     interrupted.add(message.state.sessionId);
     retryAt = 0;
     lastFailureAt = Date.now();

@@ -242,8 +242,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="cli-account-footer-quota"');
     expect(source).toContain('aria-label="Open account center"');
     const dashboard = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    expect(dashboard).toContain('dashboard-view-${compact ? "cards" : uiPreferences.view}');
-    expect(dashboard).toContain('renderSavedAccount(account, !compact && uiPreferences.view === "list")');
+    expect(dashboard).toContain('const view = compact ? accountCenterView : uiPreferences.view;');
+    expect(dashboard).toContain('renderSavedAccount(account, view === "list")');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('class="cli-composer-location is-top"');
     expect(source).toContain("!props.projectLocked");
@@ -465,6 +465,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("props.renderAccounts?.()");
     expect(source).not.toContain('class="cli-account-submenu"');
     expect(css).toContain('.cli-account-center-header');
+    expect(css).toContain('.cli-account-center .cli-account-dashboard .saved-card-front');
+    expect(source).toContain('const modal = props.standalone || mobile;');
     expect(css).toContain('width: min(360px, calc(var(--dashboard-viewport-width, 100vw) - 16px));');
     expect(css).toContain('.cli-account-choice');
     expect(css).toContain('.cli-account-quota-track');
@@ -967,13 +969,13 @@ describe("sessions sidebar layout", () => {
   });
   it("keeps project navigation compact, populated, and collapsed with running counts", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    expect(source).toContain("}).filter(({ sessions }) => sessions.length > 0)");
+    expect(source).toContain("sessions.length > 0 || (pc.local && section === 'active')");
     expect(source).toContain("const projectCollapsed = collapsedGroups[groupId] ?? true;");
     expect(source).toContain('runningSessions ? "cli-project-running"');
     expect(source).toContain('class="cli-compact-session-list"');
     expect(source).toContain('sessionView: parsed.sessionView === "projects" ? "projects" : "compact"');
     expect(source).not.toContain("PCs · Projects");
-    expect(source).not.toContain("No sessions yet");
+    expect(source).toContain("No sessions yet. Start a new chat in this project.");
   });
 
   it("routes session discovery and its cache to the selected system", () => {
@@ -1017,4 +1019,12 @@ describe('session image gallery', () => {
     expect(collectSessionImages([])).toEqual([]);
     expect(collectSessionImages([{ id: 'other', role: 'assistant', text: '![Unsafe](javascript:alert(1))' }])).toEqual([]);
   });
+});
+
+it('retains empty active projects and keeps creation in the existing project picker', () => {
+  const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  expect(source).toContain("sessions.length > 0 || (pc.local && section === 'active')");
+  expect(source).not.toContain('class="cli-create-project"');
+  expect(source).toContain('<option value={CREATE_PROJECT_OPTION}>');
+  expect(source).not.toContain('New chat in ${project.label}');
 });

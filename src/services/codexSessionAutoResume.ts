@@ -653,7 +653,8 @@ export function resumePersistedCodexSessions(
       throw error;
     }
   },
-  closeSessions: (signal?: AbortSignal) => Promise<void> = () => Promise.resolve()
+  closeSessions: (signal?: AbortSignal) => Promise<void> = () => Promise.resolve(),
+  canResume?: () => Promise<boolean>
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
@@ -760,6 +761,7 @@ export function resumePersistedCodexSessions(
           );
         try {
           controller.signal.throwIfAborted();
+          if (canResume && !(await bounded(canResume, Math.min(5_000, deadline - Date.now()), 'Auto Resume could not verify account availability.', controller.signal))) break;
           if (!(await bounded(() => verify([id]), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
             "Auto Resume could not verify this saved session before its deadline.", controller.signal)).length) {
             recordPersistentEvent("info", "auto-resume", "Session skipped because recovery is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });

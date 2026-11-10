@@ -1,6 +1,25 @@
 # Changelog
 
-## 1.7.8-pre.1
+## 1.7.9
+
+- Defer standalone startup recovery quietly while the active account has missing, stale, exhausted or unavailable quota; retain saved work for recovery after quota returns. Preserve manual Play and VS Code recovery.
+- Show session errors and capacity messages directly, with optional debug details.
+- Prefer live paginated model discovery, refresh after credential/provider changes, and show a warning when only the saved catalog is available.
+- Keep projects visible before their first session and browse parent folders from the existing project pickers on the selected system.
+- Add compact Add and More account controls to Account Center.
+
+## 1.7.8
+
+- Redesign API access as one compact workspace: key creation beside token entry, header key-management button, three balanced endpoint/request/response panels, a copyable selected endpoint below Model ID, header Send control, and separate Details modal. Include proxy model discovery, all three AI formats, status/timing and cancellation.
+- Keep standalone starts and recovered sessions on confirmed Full access. Add a separate Auto approve toggle, enabled by default, with explicit On/Off choices saved for later turns.
+- Recover confirmed sandbox execution failures quietly with bounded retries and Stop protection.
+- Align sidebar Play with composer recovery eligibility, and coordinate standalone capacity retries with account selection. Persist automatic tag expiry before tagging and preserve foreign account ownership during expiry.
+- Keep normal API proxy calls free of quota checks; after a rejected request, check quota and retry through normal switching rules only when the active account actually changes.
+- Treat a confirmed backend 429 as an account rejection even when quota inspection is stale or unavailable; select a verified replacement while preserving enablement, locks, ownership and session guards.
+- Keep the main dashboard layout unchanged and refine only Account Center for small screens: smaller action icons, shorter cards, side-by-side quotas even in narrow panels, one search/icon toolbar row without the redundant Saved Accounts title, and a compact single-row footer.
+- Close Account Center after the selected system confirms a different active account; keep it open on switch failure or an unconfirmed result.
+- Verified standalone reload restores unfinished work automatically through the private app-server without a manual prompt.
+- Keep standalone automatic switch/recovery feedback in live account/session state and diagnostics, without toasts or editor reload prompts; retain manual-action errors.
 
 - Create projects from the Workspace and Tasks project dropdowns with a name, parent folder, and visible creation result.
 - Refresh standalone account state immediately and recover interrupted work after account switches and quota failures; allow explicit Play after a manual stop.

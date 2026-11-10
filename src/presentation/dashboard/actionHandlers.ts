@@ -1,5 +1,5 @@
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
-import { createWorkspaceProject } from '../../services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceProject } from '../../services/workspaceProjects';
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
@@ -1083,6 +1083,8 @@ async function runDashboardAction(
     }
     case "getWorkspaceEnvironment":
       return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
+    case 'browseWorkspaceFolders':
+      return { workspaceFolders: await browseWorkspaceFolders(payload?.parentFolder) };
     case "createWorkspaceProject": {
       const workspaceProject = await createWorkspaceProject(payload?.projectName, payload?.parentFolder);
       return { workspaceProject, notice: { level: 'info' as const, message: `Created ${workspaceProject.label}.` } };

@@ -1439,3 +1439,14 @@ it('uses private Auto Resume after native UI failure and clears recovery only af
   try { expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] }); expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal), 'automatic', 'private'); expect(state.read() ?? []).toEqual([]); }
   finally { resume.mockRestore(); open.mockRestore(); }
 });
+
+it('retains remaining sessions when standalone quota becomes unavailable between continuations', async () => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  const first = '01a04882-d037-7a42-ad24-9afb61901181', second = '01a04882-d037-7a42-ad24-9afb61901182';
+  const state = createContext([first, second]), open = vi.fn().mockResolvedValue('continued');
+  const ready = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+  expect(await resumePersistedCodexSessions(state.context, open, undefined, ready)).toMatchObject({ opened: 1, failed: [] });
+  expect(open).toHaveBeenCalledOnce(); expect(state.read()).toEqual([second]);
+  expect(await resumePersistedCodexSessions(state.context, open)).toMatchObject({ opened: 1, failed: [] });
+  expect(state.read()).toBeUndefined();
+});

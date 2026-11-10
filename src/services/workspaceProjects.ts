@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { homedir } from 'node:os';
 import type { DashboardCliProject } from "../domain/dashboard/types";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
@@ -7,6 +8,29 @@ import { runCrossWindowExclusive, sharedPathKey } from "../utils/crossWindowOper
 import { waitWithin } from "../utils/concurrency";
 
 const NAMESPACE = "workspace-projects";
+
+/** Authenticated dashboard users browse folders on the selected host, never browser-local paths. */
+export async function browseWorkspaceFolders(folder?: unknown) {
+  if (folder !== undefined && (typeof folder !== 'string' || folder.length > 4096 || folder.includes('\0') || folder.trim() && !path.isAbsolute(normalizeNativePath(folder.trim()))))
+    throw new Error('Choose an absolute folder path on the selected system.');
+  return waitWithin((async () => {
+    const current = await fs.realpath(typeof folder === 'string' && folder.trim() ? normalizeNativePath(folder.trim()) : homedir());
+    const directory = await fs.opendir(current);
+    const folders: Array<{ name: string; path: string }> = [];
+    let truncated = false;
+    for await (const entry of directory) {
+        if (!entry.isDirectory()) continue;
+        if (folders.length >= 200) { truncated = true; break; }
+        folders.push({ name: entry.name, path: path.join(current, entry.name) });
+    }
+    folders.sort((a, b) => a.name.localeCompare(b.name));
+    const roots = process.platform === 'win32' ? (await Promise.all(Array.from({ length: 26 }, async (_, i) => {
+      const drive = `${String.fromCharCode(65 + i)}:\\`;
+      return await waitWithin(fs.stat(drive), 300, 'Drive unavailable.').then(stat => stat.isDirectory() ? drive : undefined, () => undefined);
+    }))).filter((value): value is string => !!value) : ['/'];
+    return { path: current, parent: path.dirname(current), folders, roots, ...(truncated ? { warning: 'Showing the first 200 folders. Enter a path to open another folder.' } : {}) };
+  })(), 5000, 'Folder browsing timed out. Check the drive or reconnect before retrying.');
+}
 
 export function readWorkspaceProjects(): DashboardCliProject[] {
   const store = getSqliteStateStore();

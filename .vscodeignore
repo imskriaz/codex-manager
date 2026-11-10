@@ -9,6 +9,7 @@ PROJECT_LOG.md
 .git/**
 .github/**
 .vscode/**
+.codex/**
 .codegraph/**
 .claude/**
 .aitasks/**

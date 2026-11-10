@@ -1,5 +1,31 @@
 # Workspace completion goal
 
+## Current follow-up: 1.7.9
+
+The requested slice covers quiet standalone recovery deferral without usable quota, directly visible session/capacity errors, live model discovery, empty project visibility and folder browsing, and compact Account Center Add/More controls. Project creation stays in the existing project pickers. Preserve existing recovery behavior and the earlier unfinished 1.7.8 changes. The user explicitly requested version `1.7.9`. No publication is requested for this follow-up.
+
+- Full regression passed: 262 files and 3,449 tests, exit 0, 1,133.68 seconds (`output/fix-179-regression-release.log` and `.exit`). Earlier incomplete runs and the corrected text-scaling failure are superseded by this run.
+- Focused recovery, quota, capacity, model, project and UI checks passed. The final project subset passed 124 tests; the final typography/layout/error subset passed 91 tests. `npm run verify` passed with zero lint errors and existing warnings; the final production compile passed (`output/fix-179-verify-final.log`, `output/fix-179-build-picker-only.log`).
+- Read-only desktop/mobile picker and error checks passed at the required local dashboard, including zero sessions, folder navigation/selection, cancellation, directly visible capacity/errors and retained debug details. Account Center passed six viewport/container checks with light/dark screenshots and no console errors or horizontal overflow. Evidence: `output/fix-179-picker-*-ui.log`, `output/fix-179-session-errors-*.log`, `output/fix-179-account-release-ui.log`, `output/fix-179-ui/`.
+- The compiled standalone services discovered eight live models without a saved-catalog warning and browsed the actual project directory without creating a session or project (`output/fix-179-live-services.json`).
+- The final `codex-manager-1.7.9.vsix` passed runtime/dependency verification. Its manifest and 13 runtime/dashboard files match the workspace build. SHA-256: `d08c5187fb5a873b4d37458a0350e84c9b934fba0b7aa73ae0c66abb8ae7424c` (`output/fix-179-package-release.log`, `output/fix-179-vsix-integrity.json`).
+- VSIX installation succeeded, exit 0; VS Code reports `imskriaz.codex-manager@1.7.9`. Six installed runtime/dashboard hashes match the verified workspace build (`output/fix-179-install.log`, `output/fix-179-installed-version.log`, `output/fix-179-installed-integrity.json`). Existing standalone processes still need a restart to load the update. The delivery commit includes this evidence; the final response records commit/push confirmation.
+- A broader mobile message smoke check still fails on the existing hidden missing-agent warning; the focused requested error-display checks pass. The failing log remains `output/fix-179-errors-mobile-complete-final.log`. Live provider quota exhaustion, actual reboot and real storage exhaustion were not exercised.
+
+## Urgent follow-up — 2026-11-10
+
+- Release 1.7.8 is explicitly requested. Complete the final edge-case audit in standalone and VS Code, all verification, fresh packaging, local installation and reload, then commit/push main and publish the GitHub Release with the verified VSIX. Publication remains gated on those results.
+- Final added scope: one compact API workspace with no tab split, key creation beside token entry, key-management header button/modal, selected endpoint field below Model ID, three balanced panels, header Send icon and separate Details modal. Include permission-aware proxy testing/model discovery and a confirmed-429 trigger that selects a verified replacement even when quota inspection is stale or unavailable. Reuse existing endpoints and token/project restrictions; no new external service or session creation. Earlier VSIX builds are superseded until this UI, 429 behavior and serialized capacity expiry are verified and packaged again.
+
+- Reload the installed standalone host and verify automatic recovery using real runtime events.
+- Preserve the main dashboard as it was in 1.7.7. Match only Account Center to the supplied small-screen account-card layout, with readable typography and compact actions/quotas.
+- Reload of `1.7.8-pre.1` completed: standalone ready at 07:05:14 UTC; automatic continuation accepted at 07:05:18 UTC; recovery reported one attempted, one continued, zero failures. Evidence: `output/urgent-reload-first-success.json`.
+- Account Center corrections include the final requested 24px action controls, shorter cards, one search/icon toolbar row, no Saved Accounts title, a single-row footer, and automatic closing only after the selected system reports a different active account. The earlier full run was cancelled when this scope was added; fresh focused/browser checks and a final full run precede packaging, installation, reload, main commit/push and the authorized release.
+- Standalone starts and continuations must confirm and save Full access, overriding stale restricted session defaults. Auto approve defaults to On; a separate Message settings toggle persists explicit On/Off choices across later turns. Confirmed sandbox/approval execution failures use the existing bounded durable recovery queue, without toast prompts, duplicate replay, or overriding Stop/paused/completed work.
+- The local workspace `.codex/config.toml` now requests Full access and approvals never for future sessions. Current thread restrictions and managed host policy still take precedence; local configuration is not included in the public package.
+- Follow-up scope: align sidebar/composer Play; audit standalone Capacity tagging, retry/switch coordination, durable expiry and ownership. Keep API proxy calls session-free and normal calls free of quota checks; verify error-triggered checks and bounded retries after confirmed account changes.
+- Earlier full run completed with 3 Git workflow timeouts and one stale toggle assertion. The corrected toggle and unchanged Git assertions pass in isolation (116 checks) with a bounded 60-second test allowance; the longest Git workflow took 54.3 seconds. New Play/capacity/API changes require fresh focused/full verification and a rebuilt VSIX before installation.
+
 ## Current requested work — 2026-11-10
 
 Complete all eight items before delivery:

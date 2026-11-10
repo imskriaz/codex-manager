@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import {
   DashboardAccountViewModel,
   DashboardCopy,
@@ -153,6 +154,7 @@ export async function buildDashboardState(
   return {
     lang,
     panelTitle: copy.panelTitle,
+    apiBaseUrl: `http://127.0.0.1:${Number(process.env['CODEX_MANAGER_PORT'] ?? 39875)}`,
     brandSub: copy.brandSub,
     logoUri,
     settings,
@@ -221,7 +223,7 @@ export function resolveTerminalNotice(
   activeAccount: CodexManagerAccountRecord | undefined,
   copy: DashboardCopy
 ): DashboardState["terminalNotice"] {
-  if (!notice) {
+  if (!notice || vscode.env.appHost === 'node' && notice.level !== 'error') {
     return undefined;
   }
   if (notice.accountId && activeAccount && notice.accountId !== activeAccount.id) {

@@ -447,11 +447,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.getByRole('button',{name:'Open account center',exact:true}).click();
     await page.locator('.cli-account-center').getByRole('button',{name:'API',exact:true}).click();
   }
-    const api = page.locator('.dashboard-api-modal');
+    let api = page.getByRole('dialog',{name:'API access',exact:true});
+    await api.getByRole('button',{name:'Manage API keys',exact:true}).click();
+    api=page.getByRole('dialog',{name:'API keys',exact:true});
     await api.getByText('Project reader', { exact: true }).waitFor();
     assert.equal(await api.locator('tbody tr').count(), 2, 'Named tokens are displayed in a table');
     await api.getByRole('button', { name: '+ Create token', exact: true }).click();
-    const tokenForm = page.locator('.api-create-modal');
+    const tokenForm = page.getByRole('dialog',{name:'Create API token',exact:true});
     const identity=await tokenForm.locator('.api-token-identity').boundingBox(), permissionColumn=await tokenForm.locator('.api-token-permission-column').boundingBox();
     assert.ok(width>650 ? permissionColumn.x>=identity.x+identity.width && Math.abs(identity.y-permissionColumn.y)<=2 : permissionColumn.y>=identity.y+identity.height,'Token form uses aligned columns or a narrow-screen stack');
     assert.ok(await tokenForm.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Token form has no horizontal overflow');
@@ -473,10 +475,10 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await tokenForm.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__savedClipboard }));
     await tokenForm.getByRole('button', { name: 'Close token form', exact: true }).click();
-    await api.getByRole('tab', { name: 'Explorer', exact: true }).click();
-    await api.getByText('POST /api/message', { exact: true }).waitFor();
     await page.route('**/api/schema', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: ['getProjectBoard'], token: { name: 'Scoped automation', projectPaths: ['C:/host-project'] } }) }));
-    await api.getByRole('tab', { name: 'Test', exact: true }).click();
+    await api.getByRole('button',{name:'Close key management',exact:true}).click();
+    api=page.getByRole('dialog',{name:'API access',exact:true});
+    await api.getByLabel('Endpoint',{exact:true}).waitFor();
     const permissionCheck = api.locator('.api-access-check small');
     await Promise.race([permissionCheck.waitFor(), api.getByText(/^Token check failed:/).waitFor()]);
     if (!await permissionCheck.count()) await api.getByRole('button', { name: 'Recheck token', exact: true }).click();

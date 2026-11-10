@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { createWorkspaceProject, readWorkspaceProjects } from '../src/services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects } from '../src/services/workspaceProjects';
 import { removeTestDirectory } from './testFilesystem';
 
 let root: string, store: SqliteStateStore;
@@ -56,4 +56,25 @@ it('refuses missing storage and a full registry before creating a folder', async
   vi.spyOn(store, 'keys').mockReturnValue(Array.from({ length: 200 }, (_, index) => String(index)));
   await expect(createWorkspaceProject('new', root)).rejects.toThrow('list is full');
   await expect(fs.stat(path.join(root, 'new'))).rejects.toThrow();
+});
+
+it('browses only folders with a canonical parent and never creates or registers anything', async () => {
+  await fs.mkdir(path.join(root, 'child')); await fs.writeFile(path.join(root, 'file.txt'), 'keep');
+  const listing = await browseWorkspaceFolders(root);
+  expect(listing.path).toBe(await fs.realpath(root)); expect(listing.parent).toBe(path.dirname(await fs.realpath(root)));
+  expect(listing.folders).toEqual([{ name: 'child', path: path.join(await fs.realpath(root), 'child') }]);
+  expect(readWorkspaceProjects()).toEqual([]);
+});
+it.each(['relative', 12, null, 'bad\0path'])('rejects invalid browse paths: %s', async value => {
+  await expect(browseWorkspaceFolders(value)).rejects.toThrow('absolute folder');
+});
+it('preserves missing-folder and permission errors without falling back to another folder', async () => {
+  await expect(browseWorkspaceFolders(path.join(root, 'missing'))).rejects.toThrow();
+  vi.spyOn(fs, 'opendir').mockRejectedValueOnce(new Error('EACCES'));
+  await expect(browseWorkspaceFolders(root)).rejects.toThrow('EACCES');
+});
+it('bounds large folder listings and tells users when the list is partial', async () => {
+  await Promise.all(Array.from({ length: 201 }, (_, i) => fs.mkdir(path.join(root, `folder-${i}`))));
+  const listing = await browseWorkspaceFolders(root);
+  expect(listing.folders).toHaveLength(200); expect(listing.warning).toContain('200');
 });

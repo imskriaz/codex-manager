@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-export async function checkMessageTypesUi(page, { parentId, agentId, width, output }) {
+export async function checkMessageTypesUi(page, { parentId, agentId, width, output, errorsOnly = false }) {
+  const started = Date.now();
+  if (!errorsOnly) {
   const account = page.locator('.cli-turn-usage-strip button.cli-turn-account');
   await account.click();
   const center = page.getByRole('dialog', {name:'Account center',exact:true});
@@ -23,7 +25,7 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   assert.equal(await page.locator('.cli-composer-state').count(),0,'No status row below the composer');
   assert.deepEqual(await composer.boundingBox(),stableBounds,'Offline feedback never shifts the composer');
   const banner = await page.locator('.dashboard-connection-banner').boundingBox();
-  assert.ok(banner.x < 25 && banner.y > 100,'Offline banner is at bottom left');
+  assert.ok(banner.x >= 0 && banner.x + banner.width <= width + 1 && banner.x + banner.width >= width - 24 && banner.y > 100,'Offline banner remains visible at bottom right');
   await page.evaluate(() => { dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})); dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'live'}})); });
   await page.locator('.dashboard-connection-banner').waitFor({state:'hidden'});
   await page.getByRole('button',{name:'Session actions',exact:true}).click();
@@ -34,6 +36,7 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   await page.locator('.dashboard-notice-stack').filter({hasText:'Archive not confirmed'}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Restore session',exact:true}).count(),0,'Failed optimistic archive restores the session');
   await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+  }
   const raw = JSON.stringify({ command: 'x'.repeat(1200), nested: { exact: '90071992547409931234', list: [1, 2] } });
   const fixtures = [
     { id: 'user-types', kind: 'message', role: 'user', text: 'Check every presentation.' },
@@ -60,13 +63,20 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   await page.locator('.cli-capacity-notice').waitFor();
   await page.waitForFunction(() => { const tools = document.querySelectorAll('.cli-session-messages .cli-activity.is-tool-call'); return tools.length === 2 && tools[0].textContent.includes('Formatted output'); });
   const capacity = page.locator('.cli-capacity-notice');
-  assert.equal((await capacity.innerText()).trim(), 'Model at capacity', 'Capacity uses one short status line');
-  assert.ok(await capacity.evaluate(element => element.getBoundingClientRect().height <= Math.max(32, parseFloat(getComputedStyle(element).lineHeight) + 8)), 'Capacity does not reserve a multi-line block');
+  assert.ok((await capacity.innerText()).includes('Selected model is at capacity.'), 'Capacity error is visible without expansion');
   assert.equal(await capacity.locator('pre').isVisible(), false, 'Capacity diagnostics start collapsed');
   await capacity.locator('summary').click();
   assert.deepEqual(JSON.parse(await capacity.locator('pre').innerText()), { error: 'model_overloaded' }, 'Original diagnostics stay available');
   await capacity.locator('summary').click();
-  assert.equal((await capacity.innerText()).trim(), 'Model at capacity');
+  assert.ok((await capacity.innerText()).includes('Selected model is at capacity.'));
+  if (errorsOnly) {
+    const error = page.locator('.cli-error-notice').filter({ hasText: 'Request failed. Reconnect before retrying.' });
+    await error.scrollIntoViewIfNeeded(); assert.ok(await error.isVisible());
+    assert.equal(await error.locator(':scope > summary').count(), 0, 'Error text needs no expansion');
+    await page.screenshot({ path: path.join(output, `session-errors-${width}.png`) });
+    console.log(JSON.stringify({ width, durationMs: Date.now() - started, checks: 'Visible errors and capacity, retained debug details, no page overflow' }));
+    return;
+  }
   await page.evaluate(({ messages, sessionId }) => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '77777777-7777-4777-8777-777777777777', sequence: 2, status: 'running', updatedAt: Date.now(), messages: [...messages, { id: 'native-retry', kind: 'error', text: 'Reconnecting... 2/5', status: 'inProgress' }] } } })), { messages: fixtures, sessionId: parentId });
   const retry = page.getByRole('status').filter({ hasText: /^Reconnecting 2\/5$/ });
   await retry.waitFor();
@@ -78,10 +88,11 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   assert.equal(await completedAgents.first().evaluate(element=>element.closest('.cli-activity-group-details').open),false,'Completed agent work starts collapsed with the other tools');
   assert.equal(await page.locator('.cli-activity-group').filter({has:page.locator('.cli-activity.is-collaboration')}).count(),1,'Adjacent agent and send-input activity share one disclosure');
   for (const group of await page.locator('.cli-activity-group-details').all()) if (!await group.evaluate(element => element.open)) await group.locator(':scope > summary').click();
-  for (const kind of ['plan', 'command', 'tool-call', 'web-search', 'review', 'compaction', 'error', 'collaboration']) {
+  for (const kind of ['plan', 'command', 'tool-call', 'web-search', 'review', 'compaction', 'collaboration']) {
     const row = page.locator(`.cli-session-messages > .cli-activity.is-${kind}, .cli-activity-group-body > .cli-activity.is-${kind}`).first();
     if (!await row.evaluate(element => element.open)) { if (kind === 'collaboration') await row.locator('.cli-agent-detail-toggle').click(); else await row.locator(':scope > summary').click(); }
   }
+  assert.ok(await page.locator('.cli-error-notice').filter({ hasText: 'Request failed. Reconnect before retrying.' }).isVisible(), 'Errors remain visible without any disclosure');
   const tool = page.locator('.cli-activity.is-tool-call').first();
   const args = tool.locator('pre[aria-label="Arguments"]');
   await args.scrollIntoViewIfNeeded();
@@ -119,7 +130,9 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   await page.getByRole('button', { name: 'Close workspace tools', exact: true }).last().click();
   const missing = page.locator('.cli-activity.is-collaboration').filter({ hasText: 'Missing agent' });
   await missing.locator(':scope > summary').press('Enter');
-  await page.getByText('This agent is not in the saved session list. Refresh sessions and try again.', { exact: true }).first().waitFor();
+  if (width <= 760) await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  await page.getByText('This agent is not in the saved session list. Refresh sessions and try again.', { exact: true }).filter({ visible: true }).first().waitFor();
+  if (width <= 760) await page.getByRole('button', { name: 'Close message settings', exact: true }).click();
   const article = page.locator('.cli-session-message').first();
   await article.focus();
   assert.equal(await article.evaluate(element => getComputedStyle(element).outlineStyle),'none','Message cards have no blue focus border');
@@ -146,13 +159,13 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
   await page.goto(new URL('/', page.url()).href);
   await page.locator('.dashboard-action-scope').waitFor();
   await page.evaluate(() => { dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})); dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'offline'}})); });
-  const recovery = page.locator('.dashboard-offline-overlay');
+  const recovery = page.locator('.dashboard-connection-banner');
   await recovery.waitFor();
   assert.equal(await page.locator('.dashboard-action-scope').evaluate(element => element.disabled && element.inert),true,'Dashboard actions are disabled offline');
-  assert.equal(await recovery.getByRole('button',{name:'Try connecting again'}).isEnabled(),true);
-  const card = await recovery.locator('.dashboard-connection-recovery').boundingBox();
-  assert.ok(Math.abs(card.x + card.width / 2 - width / 2) < 2,'Dashboard offline panel is centered over the masked view');
-  assert.equal(await page.locator('.dashboard-connection-banner').count(),0,'Dashboard uses only its central offline panel');
+  assert.equal(await recovery.getByRole('button',{name:'Retry now'}).isEnabled(),true);
+  const card = await recovery.boundingBox();
+  assert.ok(card.x >= 0 && card.x + card.width <= width + 1, 'Dashboard recovery remains in view');
+  assert.equal(await page.locator('.dashboard-offline-overlay').count(), 0, 'Browser dashboard retains the shared workspace recovery banner');
   await page.screenshot({path:path.join(output,`dashboard-offline-${width}.png`)});
   await page.evaluate(() => { dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})); dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'live'}})); });
   await recovery.waitFor({state:'hidden'});
