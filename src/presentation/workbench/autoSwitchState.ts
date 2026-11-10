@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { CodexAutoSwitchReason } from "../../core/types";
 import { waitWithin } from "../../utils/concurrency";
 import { recordPersistentEvent } from "../../utils/persistentLog";
+import { publishDashboardRealtime } from '../../services/dashboardRealtime';
 import { accountQuotaAvailability } from "../../utils/quotaWindows";
 import type { CodexManagerAccountRecord } from "../../core/types";
 
@@ -163,6 +164,7 @@ export function recordAutoSwitchDashboardNotice(
     ...options
   };
   persist();
+  publishDashboardRealtime({ type: 'dashboard:notice', level, message });
 }
 
 export function consumeAutoSwitchNotice(): string | undefined {

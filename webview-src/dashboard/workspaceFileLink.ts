@@ -1,3 +1,5 @@
+import { normalizeNativePath } from '../../src/utils/nativePaths';
+
 /** Classify local file references without turning web links into filesystem reads. */
 export function workspaceFileFromLink(href: string): string | undefined {
   let value = href.trim();
@@ -15,4 +17,14 @@ export function workspaceFileFromLink(href: string): string | undefined {
   try { value = decodeURIComponent(value); } catch { /* Keep a malformed filename local so its read reports failure. */ }
   value = value.replace(/(?::\d+(?::\d+)?)$/, '').replace(/\\/g, '/');
   return value && !/[\0\r\n]/.test(value) ? value : undefined;
+}
+
+export function workspaceRelativePath(filePath: string, projectPath: string | undefined): string {
+  const native = normalizeNativePath(filePath);
+  const file = (workspaceFileFromLink(native) ?? native).replace(/\\/g, '/');
+  const root = normalizeNativePath(projectPath?.trim() ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const windows = /^(?:[a-z]:|\/\/)/i.test(root);
+  const comparableFile = windows ? file.toLowerCase() : file;
+  const comparableRoot = windows ? root.toLowerCase() : root;
+  return root && comparableFile.startsWith(`${comparableRoot}/`) ? file.slice(root.length + 1) : file;
 }

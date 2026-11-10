@@ -307,7 +307,7 @@ try {
     await clickAction("listWorkspaceFiles", () => page.getByRole("button", { name: "Refresh files", exact: true }).click());
     await clickAction("readWorkspaceFile", () => page.locator(".cli-file-tree").getByRole("button", { name: "editable.txt", exact: true }).click());
     await page.locator(".cm-content").fill("saved from real browser\n");
-    await clickAction("saveWorkspaceFile", () => page.locator(".cli-file-editor").getByRole("button", { name: "Save", exact: true }).click());
+    await clickAction("saveWorkspaceFile", () => page.locator(".cli-file-editor").getByRole("button", { name: "Save file", exact: true }).click());
     assert.equal(await readFile(path.join(project, "editable.txt"), "utf8"), "saved from real browser\n");
   });
   await record("file conflict preserves newer disk content", async () => {
@@ -340,7 +340,7 @@ try {
     await page.locator(".cli-file-editor").getByRole("heading", { name: "Disposable preview", exact: true }).waitFor();
     await page.locator(".cli-file-editor").getByRole("button", { name: "Edit", exact: true }).click();
     await page.locator(".cli-file-editor .cm-content").fill("# Edited Markdown\n");
-    await clickAction("saveWorkspaceFile", () => page.locator(".cli-file-editor").getByRole("button", { name: "Save", exact: true }).click());
+    await clickAction("saveWorkspaceFile", () => page.locator(".cli-file-editor").getByRole("button", { name: "Save file", exact: true }).click());
     assert.equal(await readFile(path.join(project, "README.md"), "utf8"), "# Edited Markdown\n");
     await page.locator(".cli-file-editor").getByRole("button", { name: "Preview", exact: true }).click();
     await page.locator(".cli-file-editor").getByRole("heading", { name: "Edited Markdown", exact: true }).waitFor();

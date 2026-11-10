@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { chromium } from 'playwright';
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
+import { checkAccountCenterUi } from './check-account-center-ui.mjs';
+
+const origin = 'http://127.0.0.1:39875', output = path.resolve('output/workspace-request-ui');
+await mkdir(output, { recursive: true });
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const results = [];
+try {
+  for (const width of process.argv.includes('--account-center-only') ? [] : [1440, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', hasTouch: width < 760 });
+    const page = await context.newPage(), errors = [];
+    await useWorkspaceDashboardAssets(page, origin);
+    page.on('pageerror', error => errors.push(error.message));
+    await page.addInitScript(() => {
+      window.__requestChecks = [];
+      window.addEventListener('message', event => { if (event.data?.type?.startsWith('dashboard:')) window.__requestChecks.push(event.data); });
+    });
+    const started = Date.now();
+    await page.goto(`${origin}/workspace`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.cli-workspace').waitFor({ timeout: 45000 });
+    if (width < 760) {
+      const sidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+      if (await sidebar.isVisible()) await sidebar.click();
+    }
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    const picker = page.getByRole('combobox', { name: 'Project', exact: true });
+    await picker.waitFor();
+    await picker.selectOption('__create_workspace_project__');
+    const modal = page.getByRole('dialog', { name: 'Create new project', exact: true });
+    await modal.waitFor();
+    await modal.getByRole('textbox', { name: 'Project name', exact: true }).fill('preview-project');
+    await modal.getByRole('textbox', { name: 'Parent folder', exact: true }).fill('D:\\Projects');
+    assert.match(await modal.locator('.create-project-destination').innerText(), /D:\\Projects\\preview-project/);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.screenshot({ path: path.join(output, `create-project-${width}.png`) });
+    await page.keyboard.press('Tab');
+    assert.ok(await modal.evaluate(element => element.contains(document.activeElement)), 'Modal contains keyboard focus');
+    await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await modal.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__requestChecks.filter(event => event.type === 'dashboard:action-result' && event.action === 'createWorkspaceProject').length), 0, 'Read-only smoke never creates a project');
+    await page.screenshot({ path: path.join(output, `workspace-${width}.png`) });
+    await page.waitForFunction(() => window.__requestChecks.some(event => event.type === 'dashboard:action-result' && event.action === 'listCodexCliSessions' && event.payload?.cliSessions?.some(session => !session.remote && !session.archived && !session.subAgent && /[\\/]codex-manager[\\/]*$/i.test(session.projectPath ?? ''))));
+    const localSession = await page.evaluate(() => window.__requestChecks.flatMap(event => event.type === 'dashboard:action-result' && event.action === 'listCodexCliSessions' ? event.payload?.cliSessions ?? [] : []).find(session => !session.remote && !session.archived && !session.subAgent && /[\\/]codex-manager[\\/]*$/i.test(session.projectPath ?? '')));
+    assert.ok(localSession, 'A local workspace session is available for read-only file inspection');
+    await page.goto(`${origin}/workspace/${localSession.id}`, { waitUntil: 'domcontentloaded' });
+    const showTools = page.getByRole('button', { name: 'Show workspace tools', exact: true });
+    await page.locator('.cli-workspace').waitFor();
+    await page.getByRole('button', { name: /^(Show|Hide) workspace tools$/ }).waitFor();
+    if (await showTools.isVisible()) await showTools.click();
+    await page.getByRole('button', { name: 'Add workspace tool', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Files', exact: true }).click();
+    await page.locator('.cli-file-tree').getByRole('button', { name: 'README.md', exact: true }).click();
+    const fileHeader = page.locator('.cli-file-editor > header');
+    await fileHeader.waitFor();
+    const save = fileHeader.getByRole('button', { name: 'Save file', exact: true });
+    assert.equal(await save.locator('svg').count(), 1, 'Save uses an icon');
+    assert.equal((await save.innerText()).trim(), '', 'Save is icon-only');
+    assert.equal(await save.getAttribute('title'), 'Save file');
+    assert.ok(await save.isDisabled(), 'Reading a file never makes it dirty');
+    assert.equal(await page.getByText('Choose a valid project file.', { exact: true }).count(), 0);
+    await page.screenshot({ path: path.join(output, `files-${width}.png`) });
+    const hideTools = page.getByRole('button', { name: 'Hide workspace tools', exact: true });
+    if (await hideTools.isVisible()) await hideTools.click();
+    const showSidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+    if (await showSidebar.isVisible()) await showSidebar.click();
+    await page.getByRole('button', { name: 'Project task board', exact: true }).click();
+    const hideSidebar = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
+    if (width < 760 && await hideSidebar.isVisible()) await hideSidebar.click();
+    await page.getByRole('combobox', { name: 'Task project', exact: true }).selectOption('__create_workspace_project__');
+    await modal.waitFor();
+    await page.screenshot({ path: path.join(output, `task-create-project-${width}.png`) });
+    await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.deepEqual(errors, []);
+    results.push({ width, workflowMs: Date.now() - started, errors });
+    await context.close();
+  }
+  const accountContext = await browser.newContext({ viewport: { width: 390, height: 850 }, serviceWorkers: 'block' });
+  const accountPage = await accountContext.newPage(), accountErrors = [];
+  accountPage.on('pageerror', error => accountErrors.push(error.message));
+  await useWorkspaceDashboardAssets(accountPage, origin);
+  await checkAccountCenterUi(accountPage, { origin, output });
+  assert.deepEqual(accountErrors, []);
+  await accountContext.close();
+  results.push({ accountCenter: 'Six viewport/container widths passed', errors: accountErrors });
+  await writeFile(path.join(output, 'results.json'), JSON.stringify(results, null, 2));
+  console.log(JSON.stringify(results));
+} finally { await browser.close(); }

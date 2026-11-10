@@ -47,15 +47,19 @@ export function WorkspaceGitHub(props: {
     setBusy(true);
     setNotice("Loading GitHub…");
     try {
-      const result = await request("workspaceGitHub", {
-        githubRequest: { section, operation: "read", state: stateFilter, ...query }
-      }, saved => {
-        if (token === revision.current && saved.workspaceGitHub) {
-          setState(current => current ?? saved.workspaceGitHub);
-          if (query.operation === 'detail') setDetail(saved.workspaceGitHub.detail);
-          setNotice('Saved view · refreshing GitHub…');
+      const result = await request(
+        "workspaceGitHub",
+        {
+          githubRequest: { section, operation: "read", state: stateFilter, ...query }
+        },
+        (saved) => {
+          if (token === revision.current && saved.workspaceGitHub) {
+            setState((current) => current ?? saved.workspaceGitHub);
+            if (query.operation === "detail") setDetail(saved.workspaceGitHub.detail);
+            setNotice("Saved view · refreshing GitHub…");
+          }
         }
-      });
+      );
       if (token !== revision.current) {
         return;
       }
@@ -216,9 +220,14 @@ export function WorkspaceGitHub(props: {
     canWrite = state?.canWrite === true;
   const itemActions = (item: WorkspaceGitHubItem) => (
     <div class="workspace-github-actions">
-      <button type="button" onClick={() => open(item.url)}>
+      <button
+        type="button"
+        onClick={() => open(item.url)}
+        class="workspace-icon-action"
+        title="Open on GitHub"
+        aria-label="Open on GitHub"
+      >
         <ToolIcon kind="external" />
-        Open on GitHub
       </button>
       {section === "pulls" || section === "issues" ? (
         <>
@@ -233,8 +242,11 @@ export function WorkspaceGitHub(props: {
                 fields: [{ key: "body", label: "Comment", multiline: true, required: true }]
               })
             }
+            class="workspace-icon-action"
+            title="Add comment"
+            aria-label="Add comment"
           >
-            Comment
+            <ToolIcon kind="comment" />
           </button>
           {item.state !== "merged" ? (
             <button
@@ -247,8 +259,11 @@ export function WorkspaceGitHub(props: {
                   request: { section, operation: item.state === "closed" ? "reopen" : "close", number: item.number }
                 })
               }
+              class="workspace-icon-action"
+              title={item.state === "closed" ? "Reopen item" : "Close item"}
+              aria-label={item.state === "closed" ? "Reopen item" : "Close item"}
             >
-              {item.state === "closed" ? "Reopen" : "Close"}
+              <ToolIcon kind={item.state === "closed" ? "refresh" : "close"} />
             </button>
           ) : null}
           {section === "pulls" && ["open", "draft"].includes(item.state) ? (
@@ -270,8 +285,11 @@ export function WorkspaceGitHub(props: {
                     { review: "COMMENT" }
                   )
                 }
+                class="workspace-icon-action"
+                title="Review pull request"
+                aria-label="Review pull request"
               >
-                Review
+                <ToolIcon kind="eye" />
               </button>
               <button
                 type="button"
@@ -287,8 +305,11 @@ export function WorkspaceGitHub(props: {
                     { method: "squash" }
                   )
                 }
+                class="workspace-icon-action"
+                title="Merge pull request"
+                aria-label="Merge pull request"
               >
-                Merge
+                <ToolIcon kind="branch" />
               </button>
             </>
           ) : null}
@@ -309,8 +330,11 @@ export function WorkspaceGitHub(props: {
                 request: { section, operation: "cancelRun", number: item.id }
               })
             }
+            class="workspace-icon-action"
+            title="Cancel workflow run"
+            aria-label="Cancel workflow run"
           >
-            Cancel run
+            <ToolIcon kind="close" />
           </button>
           <button
             type="button"
@@ -324,8 +348,11 @@ export function WorkspaceGitHub(props: {
                 request: { section, operation: "rerun", number: item.id }
               })
             }
+            class="workspace-icon-action"
+            title="Rerun workflow"
+            aria-label="Rerun workflow"
           >
-            Rerun
+            <ToolIcon kind="refresh" />
           </button>
         </>
       ) : (
@@ -341,8 +368,11 @@ export function WorkspaceGitHub(props: {
                   request: { section, operation: "publishRelease", number: item.id, expectedUpdatedAt: item.updatedAt }
                 })
               }
+              class="workspace-icon-action"
+              title="Publish release"
+              aria-label="Publish release"
             >
-              Publish
+              <ToolIcon kind="external" />
             </button>
           ) : null}
           <button
@@ -355,8 +385,11 @@ export function WorkspaceGitHub(props: {
                 request: { section, operation: "deleteRelease", number: item.id, expectedUpdatedAt: item.updatedAt }
               })
             }
+            class="workspace-icon-action"
+            title="Delete release"
+            aria-label="Delete release"
           >
-            Delete release
+            <ToolIcon kind="clear" />
           </button>
         </>
       )}
@@ -384,8 +417,15 @@ export function WorkspaceGitHub(props: {
           <ToolIcon kind="refresh" />
         </button>
         {!authenticated ? (
-          <button type="button" disabled={busy || !props.connected} onClick={() => void load({ operation: "connect" })}>
-            Connect
+          <button
+            type="button"
+            disabled={busy || !props.connected}
+            onClick={() => void load({ operation: "connect" })}
+            class="workspace-icon-action"
+            title="Connect GitHub"
+            aria-label="Connect GitHub"
+          >
+            <ToolIcon kind="github" />
           </button>
         ) : null}
       </header>
@@ -428,9 +468,11 @@ export function WorkspaceGitHub(props: {
             type="button"
             disabled={disabled || !authenticated || (section === "releases" && !canWrite)}
             onClick={create}
+            class="workspace-icon-action"
+            title="New"
+            aria-label="New"
           >
             <ToolIcon kind="plus" />
-            New
           </button>
         ) : (
           <button
@@ -460,9 +502,11 @@ export function WorkspaceGitHub(props: {
                 }
               )
             }
+            class="workspace-icon-action"
+            title="Run workflow"
+            aria-label="Run workflow"
           >
-            <ToolIcon kind="plus" />
-            Run
+            <ToolIcon kind="play" />
           </button>
         )}
       </div>
@@ -509,8 +553,11 @@ export function WorkspaceGitHub(props: {
               type="button"
               disabled={busy || !props.connected}
               onClick={() => void load({ page: state.page - 1 })}
+              class="workspace-icon-action"
+              title="Newer page"
+              aria-label="Newer page"
             >
-              Newer
+              <ToolIcon kind="left" />
             </button>
           ) : null}
           {state?.hasMore ? (
@@ -518,8 +565,11 @@ export function WorkspaceGitHub(props: {
               type="button"
               disabled={busy || !props.connected}
               onClick={() => void load({ page: state.page + 1 })}
+              class="workspace-icon-action"
+              title="Older page"
+              aria-label="Older page"
             >
-              Older
+              <ToolIcon kind="right" />
             </button>
           ) : null}
         </footer>

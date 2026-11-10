@@ -7,6 +7,7 @@ import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { clearCodexSessionManualStop, readCodexSessionPreferences } from "./codexSessionPreferences";
 
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
+const manualRecovery = new WeakMap<Promise<"running" | "continued" | "goal" | "idle">, () => boolean>();
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
 export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic", connection: "native" | "private" = vscode.env.appHost === "node" ? "private" : "native"): Promise<"running" | "continued" | "goal" | "idle"> {
@@ -15,6 +16,10 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };
   const pending = recovering.get(key);
   if (pending) {
+    if (origin === 'user' && manualRecovery.get(pending)?.()) {
+      // Restart only cancelled read-only verification; an uncertain launch is never replayed.
+      return pending.then(() => resumeCodexSessionWork(sessionId, signal, 'user', connection), () => resumeCodexSessionWork(sessionId, signal, 'user', connection));
+    }
     recordPersistentEvent("debug", "session-resume", "Joining pending recovery", identity);
     return pending;
   }
@@ -50,9 +55,10 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     }
     if (privateFallback && session.locked) throw new Error('Another Codex writer still owns this session. Private recovery was not started.');
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
+    const stopped = origin === 'automatic' ? await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal) : [];
     if (origin === "user") clearCodexSessionManualStop(home, sessionId);
     else if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop ||
-      (origin === "automatic" && (await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal)).length)) {
+      stopped.length) {
       recordPersistentEvent("info", "session-resume", "Recovery skipped", { ...identity, origin, reason: "manual-stop", goalStatus });
       return "idle" as const;
     }
@@ -111,5 +117,6 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     if (recovering.get(key) === work) recovering.delete(key);
   });
   recovering.set(key, work);
+  manualRecovery.set(work, () => { origin = 'user'; return controller.signal.aborted && phase === 'state-verification'; });
   return work;
 }

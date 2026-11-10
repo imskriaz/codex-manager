@@ -521,6 +521,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "createWorkspaceProject"
   | "addAccount"
   | "setPrivacyMode"
   | "setCrossPcSyncEnabled"
@@ -713,6 +714,8 @@ export interface DashboardActionPayload {
   autoApprove?: boolean;
   projectPath?: string;
   filePath?: string;
+  projectName?: string;
+  parentFolder?: string;
   includeBranchDiff?: boolean;
   gitHistory?: DashboardWorkspaceGitRequest;
   terminalRequest?: WorkspaceTerminalRequest;
@@ -1102,6 +1105,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;
   workspaceGit?: WorkspaceGitState;
   workspaceGitHub?: WorkspaceGitHubState;

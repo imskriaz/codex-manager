@@ -1,4 +1,5 @@
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "./dashboard/types";
+import { coalesceSessionQuestionMessages } from './sessionQuestions';
 import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_TEXT_ATTACHMENT_BYTES } from './chatAttachments';
 
 export const MAX_CODEX_LIVE_STATE_BYTES = 1024 * 1024;
@@ -214,6 +215,8 @@ export class CodexSessionLiveReducer {
     return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
   }
 
+  refreshPresentation(): void { this.changed(); }
+
   private setError(value: unknown, retrying: boolean): boolean {
     const error = record(value);
     const message = string(error?.["message"]);
@@ -262,13 +265,16 @@ function bounded(value: unknown, depth = 0, onTruncated: () => void = () => unde
 
 /** Replace the current turn suffix instead of accumulating duplicate streamed/transcript items. */
 export function combineCliLiveMessages(history: DashboardCliSessionMessage[], live: DashboardCodexSessionLiveState | undefined): DashboardCliSessionMessage[] {
-  if (!live) return history;
+  if (!live) return coalesceSessionQuestionMessages(history);
   // A merged task snapshot must not retain a transient retry after recovery.
   history = history.filter(item => !(item.kind === "error" && item.status === "inProgress" && item.id.startsWith("retry-") && UUID.test(item.id.slice(6))) || live.messages.some(current => current.id === item.id));
-  if (!live.messages.length) return history;
+  if (!live.messages.length) return coalesceSessionQuestionMessages(history);
   const saved = new Map(history.map(item => [item.id, item]));
   const messages = live.messages.map(item => {
     const previous = saved.get(item.id);
+    if (previous?.images?.length && item.images?.length && previous.kind === item.kind && previous.turnId === item.turnId &&
+        previous.images.length === item.images.length && item.images.some(image => !/^(?:https?:\/\/|data:image\/)/i.test(image.src)) &&
+        previous.images.every(image => /^(?:https?:\/\/|data:image\/)/i.test(image.src))) return { ...item, images: previous.images };
     return previous && (previous.text === item.text || previous.role === 'user' && previous.images?.length && previous.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim() === item.text.replace(/^[ \t]*\[Image unavailable\][ \t]*$/gm, '').trim()) && previous.role === item.role && (!previous.turnId || !item.turnId || previous.turnId === item.turnId)
       && ((!item.textAttachments?.length && previous.textAttachments?.length) || (!item.images?.length && previous.images?.length)) ? { ...item,
       text: previous.role === 'user' && previous.images?.length ? previous.text : item.text,
@@ -286,7 +292,7 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
     const echo = history.slice(start, end).find(candidate => candidate.kind === item.kind && candidate.turnId === live.turnId &&
       !matchedActivities.has(candidate.id) && !messages.some(other => other.id === candidate.id) &&
       (item.kind === 'compaction' ? /^(?:context-compacted|compacted|compaction-pair)-/.test(candidate.id) :
-        /^\d+-/.test(candidate.id) && !!item.images?.length && JSON.stringify(candidate.images?.map(image => image.src)) === JSON.stringify(item.images.map(image => image.src))));
+        /^\d+-/.test(candidate.id) && !!item.images?.length && (JSON.stringify(candidate.images?.map(image => image.src)) === JSON.stringify(item.images.map(image => image.src)) || candidate.text === item.text && candidate.title === item.title)));
     if (echo) { matchedActivities.add(echo.id); messages[index] = { ...echo, ...item, id: echo.id }; }
   }
   // Native transcripts can assign a different ID to the accepted steering echo.
@@ -330,7 +336,7 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
       }
       nextId = item.id;
     }
-    return combined;
+    return coalesceSessionQuestionMessages(combined);
   }
   let boundary = exactTurn >= 0 ? exactTurn : exactItem;
   if (boundary < 0) {
@@ -346,5 +352,5 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
       }
     }
   }
-  return [...(boundary >= 0 ? history.slice(0, boundary) : history), ...messages];
+  return coalesceSessionQuestionMessages([...(boundary >= 0 ? history.slice(0, boundary) : history), ...messages]);
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.8-pre.1
+
+- Create projects from the Workspace and Tasks project dropdowns with a name, parent folder, and visible creation result.
+- Refresh standalone account state immediately and recover interrupted work after account switches and quota failures; allow explicit Play after a manual stop.
+- Hydrate live image previews and retain readable unavailable-image feedback.
+- Merge mirrored questions and answers once across live and saved history.
+- Fix standalone account reauthorization by providing the missing OAuth cancellation adapter.
+- Polish workspace tabs with accessible icon action buttons.
+- Match Account Center to compact dashboard cards with aligned actions and side-by-side quota bars.
+- Open absolute project file links while retaining project and symlink boundary checks.
+
 ## 1.7.7
 
 - Retry verified standalone capacity interruptions with bounded backoff and SQLite recovery state; resume goals without requiring the official VS Code webview.

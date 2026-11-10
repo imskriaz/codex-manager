@@ -1,3 +1,26 @@
+.create-project-form { display: grid; gap: 20px; padding-top: 4px; }
+.create-project-form > label { display: grid; gap: 8px; font-weight: 600; }
+.create-project-form input { width: 100%; box-sizing: border-box; min-height: 42px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text); background: var(--bg-base); font: inherit; }
+.create-project-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.create-project-form small, .create-project-form .workspace-dialog-description { color: var(--text-muted); font-weight: 400; line-height: 1.5; }
+.create-project-destination { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); }
+.create-project-destination small { font-size: calc(10px * var(--dashboard-text-scale, 1)); letter-spacing: .08em; }
+.create-project-destination code { overflow-wrap: anywhere; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.create-project-form .workspace-dialog-footer { margin-top: 0; }
+.create-project-form button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--border-default); border-radius: 7px; color: var(--text); background: var(--bg-elevated); cursor: pointer; }
+.create-project-form button.primary { background: var(--accent); color: var(--bg-base); font-weight: 600; }
+.create-project-form button:disabled { opacity: .5; cursor: default; }
+.cli-image-unavailable { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-muted); }
+.workspace-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 32px; min-width: 32px; padding: 6px !important; border: 1px solid transparent; border-radius: 6px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.workspace-icon-action:hover:not(:disabled) { color: var(--text); background: var(--bg-elevated); border-color: var(--border-default); }
+.workspace-icon-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.workspace-icon-action:disabled { opacity: .4; cursor: default; }
+.workspace-icon-action svg { display: block; width: 16px; height: 16px; flex: none; }
+.cli-file-editor > header { gap: 12px; }
+.cli-file-editor > header > span:first-child { min-width: 0; }
+.cli-file-editor > header strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-file-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+@media (pointer: coarse) { .workspace-icon-action { width: 44px; height: 44px; min-width: 44px; } }
 .workspace-terminal, .workspace-git, .workspace-github {
   display:flex; flex-direction:column; flex:1; min-width:0; min-height:0;
   color:var(--text); background:var(--bg-base); font-size:calc(12px * var(--dashboard-text-scale, 1));
@@ -17007,16 +17030,16 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-account-dashboard .accounts-grid { display: grid; grid-template-columns: 1fr; gap: 5px; }
 .cli-account-dashboard :is(.saved-card-container, .saved-card-inner, .saved-card) { --saved-card-min-height: 0px; min-height: 0; }
 .cli-account-dashboard .saved-card-inner:not(.flipped) .saved-card-back { position: absolute; inset: 0; overflow: hidden; }
-.cli-account-dashboard .saved-card-front { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "identity primary" "meta secondary" "quota quota"; align-items: center; column-gap: 6px; row-gap: 2px; padding: 6px; }
+.cli-account-dashboard .saved-card-front { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "identity primary secondary" "meta primary secondary" "quota quota quota"; align-items: center; column-gap: 4px; row-gap: 3px; padding: 6px; }
 .cli-account-dashboard :is(.saved-head, .saved-card-footer) { display: contents; }
 .cli-account-dashboard .saved-title { grid-area: identity; min-width: 0; }
-.cli-account-dashboard .saved-title h3 { margin: 0; gap: 3px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .saved-title h3 { margin: 0; gap: 3px; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
 .cli-account-dashboard .saved-top-actions { grid-area: primary; position: static; gap: 2px; }
 .cli-account-dashboard .saved-actions { grid-area: secondary; gap: 2px; }
 .cli-account-dashboard .saved-credit-summary { grid-area: meta; min-width: 0; flex-wrap: wrap; gap: 3px; padding-left: 22px; }
 .cli-account-dashboard .saved-progress { grid-area: quota; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 3px 0 0; }
-.cli-account-dashboard .saved-progress .row { gap: 2px; min-width: 0; }
-.cli-account-dashboard .saved-progress .row-head { gap: 3px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.cli-account-dashboard .saved-progress .row { grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; }
+.cli-account-dashboard .saved-progress .row-head { min-width: 0; gap: 3px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
 .cli-account-dashboard .saved-progress .label-wrap { flex: 0 0 auto; min-width: 0; max-width: 35%; overflow: hidden; }
 .cli-account-dashboard .saved-progress .metric-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cli-account-dashboard .saved-progress .metric-row-summary { flex: 1 1 0; min-width: 0; gap: 4px; }
@@ -17074,7 +17097,7 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-account-center .cli-account-dashboard .dashboard-select-control { flex: 1 1 78px; width: auto; min-width: 0; max-width: 130px; min-height: 30px; }
 .cli-account-center .cli-account-dashboard .dashboard-select-control select { width: 100%; min-width: 0; min-height: 30px; padding-inline: 5px 18px; }
 .cli-account-center .cli-account-dashboard .saved-card-front { padding: 5px 6px; }
-.cli-account-center .cli-account-dashboard :is(.saved-card-container, .saved-card-inner, .saved-card, .saved-card-front) { border-radius: 4px; background: transparent; box-shadow: none; min-width: 0; }
+.cli-account-center .cli-account-dashboard :is(.saved-card-container, .saved-card-inner, .saved-card, .saved-card-front) { border-radius: 8px; min-width: 0; }
 .cli-account-center .cli-account-dashboard .saved-card-container { padding: 0; container: account-card / inline-size; }
 .cli-account-center .cli-account-dashboard .accounts-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 5px; }
 .cli-account-center .cli-account-navigation { flex-wrap: wrap; }
@@ -17085,7 +17108,9 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .cli-account-dashboard .account-search-control { flex-basis: 100%; }
   .cli-account-dashboard .dashboard-select-control { max-width: none; }
 }
-@container account-card (max-width: 440px) {
+@container account-card (max-width: 320px) {
+  .cli-account-dashboard .saved-card-front { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "identity identity" "meta primary" "secondary secondary" "quota quota"; }
+  .cli-account-dashboard .saved-actions { justify-content: flex-end; }
   .cli-account-dashboard .saved-progress { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .cli-account-dashboard .saved-credit-summary { padding-left: 0; }
 }

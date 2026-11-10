@@ -19,6 +19,25 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("post-load session recovery", () => {
+  it('starts manual Play after startup verification is cancelled without replaying a launch', async () => {
+    mocks.summary.mockImplementationOnce(() => new Promise(() => undefined));
+    const controller = new AbortController();
+    const automatic = resumeCodexSessionWork('session', controller.signal, 'automatic', 'private');
+    const failed = expect(automatic).rejects.toThrow();
+    controller.abort();
+    const manual = resumeCodexSessionWork('session', undefined, 'user', 'private');
+    await failed; expect(await manual).toBe('continued'); expect(mocks.send).toHaveBeenCalledOnce();
+  });
+  it('promotes pending automatic verification when the user clicks Play, without starting a duplicate turn', async () => {
+    let verify!: (ids: string[]) => void;
+    mocks.stopped.mockReturnValue(new Promise<string[]>(resolve => { verify = resolve; }));
+    const automatic = resumeCodexSessionWork('session', undefined, 'automatic', 'private');
+    await vi.waitFor(() => expect(mocks.stopped).toHaveBeenCalled());
+    expect(resumeCodexSessionWork('session', undefined, 'user', 'private')).toBe(automatic);
+    verify(['session']);
+    expect(await automatic).toBe('continued'); expect(mocks.send).toHaveBeenCalledOnce();
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ clearManualStop: true }));
+  });
   it("uses the private writer in Node without depending on a VS Code tab", async () => {
     Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
     try {

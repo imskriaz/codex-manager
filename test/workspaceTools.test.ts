@@ -29,6 +29,24 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import { removeTestDirectory } from "./testFilesystem";
 
 describe("workspace tools", () => {
+  it('reads and saves an absolute file link inside the project while refusing outside files and junction escapes', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'codex-linked-file-')), project = join(parent, 'project');
+    await mkdir(project); await mkdir(join(project, 'docs'));
+    const file = join(project, 'docs', 'design draft.md'), outside = join(parent, 'private.md');
+    await writeFile(file, 'original'); await writeFile(outside, 'private');
+    const restore = exposeWorkspaceRoot(project);
+    try {
+      const result = await readWorkspaceFile(project, file);
+      expect(result).toMatchObject({ path: 'docs/design draft.md', content: 'original' });
+      await saveWorkspaceFile(project, file, 'updated', result.revision);
+      expect(await readFile(file, 'utf8')).toBe('updated');
+      await expect(readWorkspaceFile(project, outside)).rejects.toThrow('outside the project');
+      await expect(readWorkspaceFile(project, `${project}\\..\\private.md`)).rejects.toThrow('outside the project');
+      await expect(readWorkspaceFile(project, 'bad\0path')).rejects.toThrow('valid project file');
+      await fs.symlink(parent, join(project, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+      await expect(readWorkspaceFile(project, join(project, 'linked', 'private.md'))).rejects.toThrow('resolves outside');
+    } finally { restore(); await removeTestDirectory(parent); }
+  });
   it('pages project history from a stable reference and reads bounded commit diffs without outside-project changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-git-history-')), project = join(root, 'project');
     const restore = exposeWorkspaceRoot(root);

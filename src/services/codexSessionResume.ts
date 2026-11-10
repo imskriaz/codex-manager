@@ -1,4 +1,6 @@
+import { hydrateSessionImages } from './codexSessionImages';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
+import { readWorkspaceProjects } from './workspaceProjects';
 import { syncCodexSessionAccess } from './codexSessionAccessSync';
 import { deleteCodexSessionFromStorage } from './codexSessionStorageDelete';
 import { readSavedCodexSessionAccess, saveCodexSessionAccess } from './codexSessionAccessState';
@@ -61,7 +63,7 @@ const MAX_VISIBLE_SESSION_MESSAGES = 250;
 const MAX_TRANSCRIPT_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_MESSAGE_CHARS = 12_000;
 const MAX_SESSION_IMAGE_BYTES = MAX_CHAT_ATTACHMENT_BYTES;
-const MAX_SESSION_IMAGE_TOTAL_BYTES = MAX_CHAT_ATTACHMENT_BYTES;
+
 const MAX_SESSION_SCAN_ENTRIES = 10_000;
 const MAX_MODELS_CACHE_BYTES = 5 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -121,7 +123,7 @@ export function shouldFallbackToLocalCodexCli(error: unknown, preferred: AppServ
 }
 
 async function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open>[0], cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
-  const preferred = appServerTransport.getStore() ?? "stdio";
+  const preferred = appServerTransport.getStore() ?? (vscode.env.appHost === 'node' ? browserCodexAppServerTransport() : "stdio");
   try {
     return await CodexAppServerRpc.open(executable, cwd, signal, preferred);
   } catch (error) {
@@ -958,6 +960,9 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
   const configuredModel = readTomlString(configRaw, "model");
   const configuredEffort = readTomlString(configRaw, "model_reasoning_effort");
   const projects = (vscode.workspace.workspaceFolders ?? []).map(folder => ({ id: folder.uri.fsPath, label: folder.name, path: folder.uri.fsPath }));
+  for (const project of readWorkspaceProjects()) {
+    if (!projects.some(item => (process.platform === 'win32' ? item.path.toLowerCase() === project.path.toLowerCase() : item.path === project.path))) projects.push(project);
+  }
   for (const root of await readKnownProjectRoots(codexHome)) {
     const same = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
     if (!projects.some(project => same(project.path) === same(root))) projects.push({ id: root, label: path.basename(root), path: root });
@@ -1225,6 +1230,7 @@ async function sendAppServerSessionMessage(options: {
   interruptedOnly?: boolean;
   preferPrivate?: boolean;
   goalContinuation?: boolean;
+  clearManualStop?: boolean;
 }, cwd: string, onAttempt?: (attempted: boolean) => void): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
@@ -1257,7 +1263,7 @@ async function sendAppServerSessionMessage(options: {
     if (resolveCodexHome() !== home) throw new Error("The active account home changed. No continuation was sent.");
     if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
       throw new Error("This session was explicitly stopped while starting. It was left stopped.");
-    if (state === "stopped") return false;
+    if (state === "stopped") return options.clearManualStop === true;
     if (state === "unknown") throw new Error("Interrupted work could not be verified. No continuation was sent.");
     return state !== "terminal" || cliTranscriptTurnStateCache.get(transcript!)?.cancelled === true;
   };
@@ -2560,7 +2566,7 @@ function readImageSources(item: Record<string, unknown>): string[] {
 function mediaDisplayLabel(source: string): string {
   try {
     const parsed = source.startsWith("file:")
-      ? localPathFromSource(source)
+      ? decodeURIComponent(new URL(source).pathname)
       : source.startsWith("http")
         ? new URL(source).pathname
         : source;
@@ -2568,76 +2574,6 @@ function mediaDisplayLabel(source: string): string {
   } catch {
     return "Image";
   }
-}
-
-async function hydrateSessionImages(messages: DashboardCliSessionMessage[]): Promise<DashboardCliSessionMessage[]> {
-  let totalBytes = 0;
-  const hydrated: DashboardCliSessionMessage[] = [];
-  // Keep in-flight local image buffers bounded while applying the page budget.
-  for (const message of messages) {
-    if (!message.images?.length) { hydrated.push(message); continue; }
-    const images: Array<{ src: string; alt?: string }> = [];
-    for (const image of message.images) {
-      if (/^(?:https?:\/\/|data:image\/)/i.test(image.src)) {
-        images.push(image);
-        continue;
-      }
-      if (totalBytes >= MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-      let localPath: string;
-      try {
-        localPath = image.src.startsWith("file:") ? localPathFromSource(image.src) : image.src;
-      } catch {
-        continue;
-      }
-      try {
-        const snapshot = await readSafeFileSnapshot(localPath, {
-          maxBytes: Math.min(MAX_SESSION_IMAGE_BYTES, MAX_SESSION_IMAGE_TOTAL_BYTES - totalBytes),
-          rejectIfLarger: true
-        });
-        totalBytes += snapshot.size;
-        if (totalBytes > MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-        const buffer = snapshot.buffer;
-        const mimeType = sniffImageMime(buffer);
-        if (!mimeType) continue;
-        images.push({
-          src: `data:${mimeType};base64,${buffer.toString("base64")}`,
-          alt: image.alt ?? mediaDisplayLabel(image.src)
-        });
-      } catch {
-        /* A deleted temp image is a normal unavailable preview. */
-      }
-    }
-    hydrated.push(images.length ? { ...message, images } : message);
-  }
-  return hydrated;
-}
-
-function localPathFromSource(source: string): string {
-  const url = new URL(source);
-  let pathname = decodeURIComponent(url.pathname);
-  if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1);
-  return pathname.replace(/\//g, path.sep);
-}
-
-function sniffImageMime(buffer: Buffer): string | undefined {
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
-    return "image/png";
-  if (buffer.length >= 3 && buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return "image/jpeg";
-  if (
-    buffer.length >= 6 &&
-    (buffer.subarray(0, 6).toString("ascii") === "GIF87a" || buffer.subarray(0, 6).toString("ascii") === "GIF89a")
-  )
-    return "image/gif";
-  if (
-    buffer.length >= 12 &&
-    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
-    buffer.subarray(8, 12).toString("ascii") === "WEBP"
-  )
-    return "image/webp";
-  if (buffer.length >= 2 && buffer.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
-  if (buffer.length >= 4 && buffer[0] === 0 && buffer[1] === 0 && buffer[2] === 1 && buffer[3] === 0)
-    return "image/x-icon";
-  return undefined;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -2801,7 +2737,7 @@ function resolveCliProjectPath(projectPath: string | undefined): string {
   if (!projectPath) return fallback;
   const requested = path.resolve(normalizeNativePath(projectPath));
   const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(normalizeNativePath(folder.uri.fsPath)));
-  const allowed = [...workspaceRoots, ...(knownProjectRoots.get(path.resolve(resolveCodexHome()))?.roots ?? [])];
+  const allowed = [...workspaceRoots, ...readWorkspaceProjects().map(project => project.path), ...(knownProjectRoots.get(path.resolve(resolveCodexHome()))?.roots ?? [])];
   if (
     workspaceRoots.length === 0 ||
     allowed.some((root) => {

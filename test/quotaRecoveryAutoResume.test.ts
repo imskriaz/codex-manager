@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "vscode";
 import type { AccountsRepository } from "../src/storage";
 import type { CodexManagerAccountRecord } from "../src/core/types";
+import * as vscode from 'vscode';
 
 const mocks = vi.hoisted(() => ({
   enabled: vi.fn(),
@@ -11,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   needsReload: vi.fn(),
   notice: vi.fn(),
   subscribe: vi.fn(),
-  stopStorage: vi.fn()
+  stopStorage: vi.fn(), liveListener: undefined as undefined | ((message: any) => void)
 }));
 vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ subscribe: mocks.subscribe }) }));
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isAutoResumeEnabled: mocks.enabled }));
@@ -25,7 +26,7 @@ vi.mock("../src/services/codexSessionAutoResume", () => ({
 vi.mock("../src/presentation/workbench/windowRuntimeAccount", () => ({
   needsWindowReloadForAccount: mocks.needsReload
 }));
-vi.mock("../src/services/dashboardRealtime", () => ({ publishDashboardRealtime: mocks.notice }));
+vi.mock("../src/services/dashboardRealtime", () => ({ publishDashboardRealtime: mocks.notice, subscribeDashboardRealtime: (listener: typeof mocks.liveListener) => { mocks.liveListener = listener; return () => { mocks.liveListener = undefined; }; } }));
 vi.mock("../src/application/accounts/autoQueueOrder", async () => {
   const { createAutoQueuePolicy } = await import("../src/domain/autoQueuePolicy");
   return {
@@ -71,7 +72,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-31T00:00:00Z"));
   saved = new Map();
-  for (const mock of Object.values(mocks)) mock.mockReset();
+  for (const mock of Object.values(mocks)) if (vi.isMockFunction(mock)) mock.mockReset();
   mocks.enabled.mockReturnValue(true);
   mocks.home.mockReturnValue("test-home");
   mocks.needsReload.mockReturnValue(false);
@@ -103,7 +104,31 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const service of services.splice(0)) service.dispose();
+  Reflect.deleteProperty(vscode.env, 'appHost');
   vi.useRealTimers();
+});
+
+it('recovers immediately after a standalone account change above the exhaustion threshold', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  recover(); account.quotaSummary!.hourlyPercentage = 4;
+  start(); await tick(); expect(mocks.resume).not.toHaveBeenCalled();
+  account.id = 'replacement'; account.quotaSummary!.hourlyPercentage = 80;
+  await tick(); expect(mocks.resume).toHaveBeenCalledOnce();
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
+});
+
+it('captures a quota-failed private turn once and refreshes quota without waiting for a manual prompt', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  recover(); start(); await tick();
+  account.lastQuotaAt = Date.now();
+  const message = { type: 'dashboard:codex-session-live', state: { sessionId: 'failed-session', streamId: 'failed-stream', status: 'failed', error: 'usage limit reached' } };
+  mocks.liveListener!(message); mocks.liveListener!(message);
+  await tick();
+  expect(mocks.capture).toHaveBeenCalledWith(context, expect.any(Function));
+  const capture = mocks.capture.mock.calls.find(call => call[1])?.[1];
+  expect(await capture()).toEqual(['failed-session']);
+  expect(vscode.commands.executeCommand).toHaveBeenCalledWith('codexManager.refreshQuota', account);
+  expect(mocks.resume).toHaveBeenCalledOnce();
 });
 
 it("recovers the current account after exhaustion, retains the marker across reboot and does not repeat success", async () => {

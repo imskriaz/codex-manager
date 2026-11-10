@@ -11,6 +11,7 @@ vi.mock("child_process", async (original) => ({ ...await original<typeof import(
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { setCodexSessionAccess, observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
+import { resumeCodexSessionWork } from '../src/services/codexSessionRecovery';
 import { updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
@@ -52,6 +53,28 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it('keeps a standalone Play continuation alive after acceptance and uses the standalone transport', async () => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Recoverable' }) + '\n');
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), [
+      { type: 'session_meta', payload: { id, cwd: root, source: 'cli' } },
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'old-turn' } },
+      { type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 'old-turn', reason: 'user cancelled' } }
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    let finish!: () => void;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    const rpc = { request: vi.fn(async () => ({})), onNotification: () => () => undefined, onServerRequest: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('play-turn'); await completed; }) };
+    mocks.open.mockResolvedValue(rpc);
+    try {
+      expect(await resumeCodexSessionWork(id, undefined, 'automatic', 'private')).toBe('idle');
+      expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+      expect(await resumeCodexSessionWork(id, undefined, 'user', 'private')).toBe('continued');
+      expect(mocks.open).toHaveBeenCalledWith(expect.anything(), root, expect.any(AbortSignal), process.platform === 'win32' ? 'websocket' : 'proxy');
+      expect(rpc.close).not.toHaveBeenCalled();
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+    } finally { finish(); await vi.waitFor(() => expect(rpc.close).toHaveBeenCalled()); Reflect.deleteProperty(vscode.env, 'appHost'); }
+  });
   it.each([undefined, 'danger-full-access'] as const)('starts Full sessions (%s) with a durable profile on the first and later turns', async sandboxMode => {
     let finish!: () => void;
     const completed = new Promise<void>(resolve => { finish = resolve; });

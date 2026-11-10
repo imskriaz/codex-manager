@@ -1,4 +1,5 @@
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
+import { createWorkspaceProject } from '../../services/workspaceProjects';
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
@@ -279,7 +280,7 @@ async function executeDashboardActionMessageInTransport(
     { hostKind: ctx.hostKind ?? "webview" },
     (result) => ({ status: result.status, errorMessage: result.errorMessage })
   );
-  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "respondCodexServerRequest", "setCodexSessionAccess"].includes(message.action)) return execute();
+  if (!["createWorkspaceProject", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "respondCodexServerRequest", "setCodexSessionAccess"].includes(message.action)) return execute();
   if (typeof message.requestId !== "string" || !message.requestId.trim() || message.requestId.length > 256)
     return { status: "failed", errorMessage: "The session request identifier is invalid. Refresh the session and try again." };
   let sessionActionRequests = sessionActionRequestsByContext.get(ctx.context);
@@ -1082,6 +1083,10 @@ async function runDashboardAction(
     }
     case "getWorkspaceEnvironment":
       return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
+    case "createWorkspaceProject": {
+      const workspaceProject = await createWorkspaceProject(payload?.projectName, payload?.parentFolder);
+      return { workspaceProject, notice: { level: 'info' as const, message: `Created ${workspaceProject.label}.` } };
+    }
     case 'workspaceTerminal':
       return { ...await workspaceTerminal(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.terminalId, payload?.terminalRequest, payload?.terminalProfile, payload?.terminalName), workspaceTerminals: listWorkspaceTerminals() };
     case 'workspaceGit':
@@ -2148,8 +2153,10 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
     } finally { controller.abort(); }
   }
   const standalone = vscode.env.appHost === "node";
-  return { notice: { level: failures.length ? "warning" as const : "info" as const,
-    message: `${opened} conversation${opened === 1 ? "" : "s"} ${standalone ? "recovered in the background" : "opened in VS Code"}.${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not recover; recovery was kept. ${failures[0]}` : ""}` } };
+    const cliSessionLive = sessionId ? getCodexSessionLiveState(sessionId) : undefined;
+    const cliSession = sessionId ? await waitWithin(readCodexCliSessionSummary(sessionId), 500, 'Session details are still refreshing.').catch(() => undefined) : undefined;
+    return { cliSession, cliSessionLive, notice: { level: failures.length ? "warning" as const : "info" as const,
+      message: `${!opened && !failures.length ? 'No unfinished work was found. No continuation was sent.' : `${opened} conversation${opened === 1 ? "" : "s"} ${standalone ? "recovered in the background" : "opened in VS Code"}.`}${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not recover; recovery was kept. ${failures[0]}` : ""}` } };
 }
 
 async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload) {

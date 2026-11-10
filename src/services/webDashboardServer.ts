@@ -1472,9 +1472,11 @@ export class WebDashboardServer implements vscode.Disposable {
   publishLocalStateChange(): void {
     this.publishLocalPeerState();
     void this.publishPeerVault();
-    void this.closeInvalidRemoteBrowserSockets()
-      .catch((error) => console.warn("[codexManager] browser session validation failed", error))
-      .finally(() => this.publishRealtimeState());
+    void waitWithin(this.closeInvalidRemoteBrowserSockets(), 500, 'Browser session validation is still pending.')
+      .catch((error) => {
+        this.closeRemoteBrowserSockets();
+        console.warn("[codexManager] browser session validation failed", error);
+      }).finally(() => this.publishRealtimeState());
   }
 
   private startWebSocketHeartbeat(): void {

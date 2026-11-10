@@ -58,6 +58,8 @@ Eight views in two rows. Click an image for the full-size screenshot. All identi
 3. Open the dashboard in your browser and choose a PC in the sidebar. Its sessions, projects, and enabled accounts load in that system's context.
 4. Use the workspace tabs for **Env, Files, Git, Reviews, Agents, and Terminal**. Chat file links open in the Files panel, keeping the conversation visible.
 
+Choose **Create new project…** from the Workspace or Tasks project dropdown to create a named folder on the selected system. Enter its name and existing parent folder, review the destination, then create it. Workspace tab actions use compact icon buttons with tooltips and accessible labels.
+
 Selecting an exhausted or unverified account manually applies a **15-minute Auto Switch lock**. Use **More → Unlock** to resume sooner; expiry and unlocking recheck selection within five seconds, even with periodic quota refresh disabled. Selecting an account with available quota removes the lock. Auto Switch must remain enabled, and all quota, enablement, session-wait, and ownership checks still apply.
 
 Click an account's **Locked** badge to open its **Unlock Auto Switch** action. Browser/PWA push also receives important events from connected PCs through the authenticated relay, retaining each event's system name. Recent notices replay once after reconnect within a five-minute window; the dashboard host must be running to deliver push to its registered browsers.

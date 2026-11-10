@@ -12,7 +12,9 @@ import {
   persistRunningCodexSessions,
   resumePersistedCodexSessions
 } from "./codexSessionAutoResume";
-import { publishDashboardRealtime } from "./dashboardRealtime";
+import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
+import { isCodexQuotaInterruption } from '../domain/codexSessionState';
+import { getQuotaIssueKind } from '../utils/quotaIssue';
 import { onDidRecordAccountQuotaCheck } from "./quotaCheckCoordination";
 import type { CodexManagerAccountRecord } from "../core/types";
 import { getSqliteStateStore } from "../storage/sqliteState";
@@ -29,6 +31,10 @@ export function registerQuotaRecoveryAutoResume(
     dirty = false,
     retryAt = 0;
   let exhaustionHome: string | undefined;
+  let observedAccountId: string | undefined;
+  const interrupted = new Set<string>();
+  const observedFailures = new Set<string>();
+  let quotaRefreshPending = false, lastFailureAt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleRetry = () => {
     retryAt = Date.now() + 60_000;
@@ -48,6 +54,7 @@ export function registerQuotaRecoveryAutoResume(
       let pending = context.workspaceState.get<boolean>(key) === true;
       if (!isAutoResumeAvailable()) {
         exhaustionHome = undefined;
+        interrupted.clear();
         if (pending)
           await waitWithin(
             Promise.resolve(context.workspaceState.update(key, undefined)),
@@ -65,10 +72,23 @@ export function registerQuotaRecoveryAutoResume(
         exhaustionHome = undefined;
         pending = true;
       }
+      if (interrupted.size) {
+        const captured = [...interrupted];
+        await persistRunningCodexSessions(context, () => Promise.resolve(captured));
+        for (const id of captured) interrupted.delete(id);
+        await waitWithin(Promise.resolve(context.workspaceState.update(key, true)), 5_000, 'Session recovery could not be saved.');
+        pending = true;
+      }
       const accounts = await waitWithin(repo.listAccounts(), 5_000, "Quota recovery could not read accounts.");
       if (disposed || home !== resolveCodexHome() || !isAutoResumeAvailable()) return;
       const active = accounts.find((account) => account.isActive);
-      if (!active || !canUseAccount(active.id)) return;
+      if (!active || active.enabled === false || !canUseAccount(active.id)) return;
+      const switched = vscode.env.appHost === 'node' && observedAccountId !== undefined && observedAccountId !== active.id;
+      observedAccountId = active.id;
+      if (switched) {
+        await waitWithin(Promise.resolve(context.workspaceState.update(key, true)), 5_000, 'Account switch recovery could not be saved.');
+        pending = true;
+      }
       const availability = accountQuotaAvailability(active);
       // A failed refresh does not erase previously confirmed exhaustion.
       if (availability === "exhausted" || accountQuotaAvailability({ ...active, quotaError: undefined }) === "exhausted") {
@@ -82,6 +102,8 @@ export function registerQuotaRecoveryAutoResume(
       }
       if (
         !pending ||
+        quotaRefreshPending ||
+        (lastFailureAt > 0 && (active.lastQuotaAt ?? 0) < lastFailureAt) ||
         availability !== "available" ||
         active.resetCreditAttempt ||
         needsWindowReloadForAccount(active.id) ||
@@ -98,6 +120,9 @@ export function registerQuotaRecoveryAutoResume(
         home !== resolveCodexHome() ||
         !isAutoResumeAvailable() ||
         latest?.id !== active.id ||
+        latest.enabled === false ||
+        quotaRefreshPending ||
+        (lastFailureAt > 0 && (latest.lastQuotaAt ?? 0) < lastFailureAt) ||
         !canUseAccount(active.id) ||
         latest.resetCreditAttempt ||
         needsWindowReloadForAccount(latest.id) ||
@@ -121,6 +146,7 @@ export function registerQuotaRecoveryAutoResume(
         );
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = undefined;
+        retryAt = 0;
       }
     } catch (error) {
       scheduleRetry();
@@ -137,6 +163,29 @@ export function registerQuotaRecoveryAutoResume(
     void check();
   });
   const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
+  const stopLive = subscribeDashboardRealtime(message => {
+    if (vscode.env.appHost !== 'node' || message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
+        !['failed', 'disconnected'].includes(message.state.status) || !isAutoResumeAvailable()) return;
+    const detail = message.state.error ?? '';
+    if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;
+    if (observedFailures.has(message.state.streamId)) return;
+    observedFailures.add(message.state.streamId);
+    if (observedFailures.size > 256) observedFailures.delete(observedFailures.values().next().value!);
+    if (interrupted.size >= 200) { publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Session recovery queue is full. Resume this conversation manually after quota is available.' }); return; }
+    interrupted.add(message.state.sessionId);
+    retryAt = 0;
+    lastFailureAt = Date.now();
+    if (!quotaRefreshPending) {
+      quotaRefreshPending = true;
+      void waitWithin((async () => {
+        const active = (await repo.listAccounts()).find(account => account.isActive);
+        if (active && active.enabled !== false && canUseAccount(active.id)) await vscode.commands.executeCommand('codexManager.refreshQuota', active);
+      })(), 30_000, 'Quota refresh is still pending. Saved recovery will retry.')
+        .catch(error => console.warn('[codexManager] quota failure refresh deferred', error))
+        .finally(() => { quotaRefreshPending = false; void check(); });
+    }
+    void check();
+  });
   const stopConfiguration = onDidChangeConfiguration(event => {
     if (event.affectsConfiguration('codexManager.autoResumeEnabled') || event.affectsConfiguration('codexManager.codexHome')) void check();
   });
@@ -149,6 +198,7 @@ export function registerQuotaRecoveryAutoResume(
     dispose() {
       disposed = true;
       stopQuotaChecks();
+      stopLive();
       stopStorage?.();
       stopConfiguration.dispose();
       clearInterval(timer);

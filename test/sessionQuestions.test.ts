@@ -1,9 +1,33 @@
 import { notificationTargetUrl } from '../src/domain/notificationTarget';
+import { coalesceSessionQuestionMessages, sessionQuestionText } from '../src/domain/sessionQuestions';
 import { expect, it } from 'vitest';
 import { activeSessionQuestion, answeredSessionQuestionIds, readSessionQuestions, sessionQuestionReply, unansweredSessionQuestions } from '../src/domain/sessionQuestions';
 import { parseCodexTokenUsage, validMessage } from '../src/domain/codexSessionLive';
 import { parseCodexAppServerThreadItems } from '../src/services/codexSessionResume';
 import { cliContextUsage, resolveCliComposerSettings } from '../webview-src/dashboard/cliSessionComposerState';
+
+it('shows a question once and coalesces exact answer mirrors even across command activity and turns', () => {
+  const question = { id: 'ask', turnId: 'one', role: 'assistant' as const, text: 'Open which view?\n- Details\n- Table', questions: [{ title: 'Open which view?', options: ['Details', 'Table'] }] };
+  const reply = { id: 'reply', turnId: 'two', role: 'user' as const, text: sessionQuestionReply(question, { 0: 'Details' }) };
+  const command = { id: 'command', kind: 'command' as const, text: 'build' };
+  const values = [question, { ...question, id: 'ask-mirror' }, reply, command, { ...reply, id: 'reply-mirror', turnId: 'three' }];
+  expect(coalesceSessionQuestionMessages(values)).toEqual([question, reply, command]);
+  expect(sessionQuestionText(question)).toBe('');
+  expect(sessionQuestionText({ ...question, text: 'Context for the question.' })).toBe('Context for the question.');
+  expect(coalesceSessionQuestionMessages([reply, { ...reply, id: 'correction', text: sessionQuestionReply(question, { 0: 'Table' }) }])).toHaveLength(2);
+  expect(coalesceSessionQuestionMessages([question, { ...question, turnId: 'another', id: 'ask-again' }])).toHaveLength(2);
+  const proseQuestion = { ...question, questions: undefined };
+  expect(coalesceSessionQuestionMessages([proseQuestion, command, { ...proseQuestion, id: 'native-mirror' }])).toEqual([proseQuestion, command]);
+});
+it('keeps malformed replies and ordinary repeated prose and normalizes native question IDs', () => {
+  const malformed = { id: 'bad', role: 'user' as const, text: '<send_user_message_question_reply>{partial}</send_user_message_question_reply>' };
+  const reply = (questionItemId: string) => `<send_user_message_question_reply>${JSON.stringify({ questionItemId, question: 'Choose?', answer: 'Yes' })}</send_user_message_question_reply>`;
+  const first = { id: 'one', role: 'user' as const, text: reply('["request_user_input_async", "ask", 0]') };
+  const second = { ...first, id: 'two', text: reply('["request_user_input_async","ask",0]') };
+  expect(coalesceSessionQuestionMessages([malformed, first, second])).toHaveLength(2);
+  const prose = { id: 'prose', role: 'assistant' as const, text: 'Working on this.' };
+  expect(coalesceSessionQuestionMessages([prose, { ...prose, id: 'later' }])).toHaveLength(2);
+});
 
 it('detects native answers with formatted IDs and surrounding follow-up text without hiding unrelated questions', () => {
   const question = { id: 'ask', role: 'assistant' as const, text: '', questions: [{ title: 'First?' }, { title: 'Second?' }] };

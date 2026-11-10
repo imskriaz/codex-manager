@@ -939,10 +939,10 @@ async function resolveReadableWorkspaceFile(
   filePath: string | undefined
 ): Promise<{ relative: string; absolute: string }> {
   const root = await resolveWorkspaceProjectPathAsync(projectPath);
-  const requested = filePath?.trim().replace(/\\/g, "/") ?? "";
-  if (!requested || path.isAbsolute(requested)) throw new Error("Choose a valid project file.");
+  const requested = normalizeNativePath(filePath?.trim() ?? '').replace(/\\/g, "/");
+  if (!requested || /[\0\r\n]/.test(requested)) throw new Error("Choose a valid project file.");
   const absolute = path.resolve(root, requested);
-  if (absolute === root || !absolute.startsWith(`${root}${path.sep}`)) throw new Error("The selected file is outside the project.");
+  if (!isPathInside(root, absolute)) throw new Error("The selected file is outside the project.");
   const relative = path.relative(root, absolute).replace(/\\/g, "/");
   const deadline = Date.now() + WORKSPACE_READ_TIMEOUT_MS;
   const [realRoot, realFile] = await Promise.all([

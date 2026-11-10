@@ -7,6 +7,7 @@ import { captureSessionAccount, recordSessionLive } from "./sessionRecording";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { listStoredSessionLive, readStoredSessionLive, isConfirmedSessionDeleted } from "../storage/sqliteSessions";
 import { getCodexHome } from "../codex/authFile";
+import { hydrateSessionImages } from './codexSessionImages';
 
 const MAX_STREAMS = 30;
 const TERMINAL_TTL_MS = 5 * 60_000;
@@ -57,6 +58,8 @@ export function reserveCodexSessionLive() {
   let off: (() => void) | undefined;
   let offDisconnect: (() => void) | undefined;
   let disposed = false;
+  const imageSources = new Map<string, string>();
+  const imageReads = new Set<string>();
   const flush = () => {
     if (!entry) return;
     if (entry.timer) clearTimeout(entry.timer);
@@ -64,6 +67,21 @@ export function reserveCodexSessionLive() {
     const state = entry.reducer.snapshot();
     recordSessionLive(state,accountId);
     publishDashboardRealtime({ type: "dashboard:codex-session-live", state });
+    const localImages = state.messages.flatMap(message => message.images ?? []).filter(image => !/^(?:https?:\/\/|data:image\/)/i.test(image.src) && !imageReads.has(image.src));
+    if (localImages.length) {
+      for (const image of localImages) imageReads.add(image.src);
+      const owner = entry;
+      void hydrateSessionImages(localImages.map((image, index) => ({ id: String(index), text: '', images: [image] }))).then(messages => {
+        if (streams.get(state.sessionId) !== owner) return;
+        // shortcut: live previews share 512 KB per stream; persisted history carries larger images.
+        let bytes = [...imageSources.values()].reduce((sum, source) => sum + source.length, 0);
+        for (const [index, message] of messages.entries()) {
+          const source = message.images?.[0]?.src;
+          if (source && bytes + source.length < 512 * 1024) { imageSources.set(localImages[index]!.src, source); bytes += source.length; }
+        }
+        if (imageSources.size) { owner.reducer.refreshPresentation(); flush(); }
+      }).catch(error => console.warn('[codexManager] live image preview unavailable', error));
+    }
   };
   return {
     attach(id: string, rpc: CodexAppServerRpc, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancelled = () => false) {
@@ -76,7 +94,7 @@ export function reserveCodexSessionLive() {
         streams.delete(oldestTerminal[0]);
       }
       const previousAt = streams.get(sessionId)?.reducer.snapshot().updatedAt ?? 0;
-      entry = { reducer: new CodexSessionLiveReducer(sessionId, streamId, parseItems, previousAt) };
+      entry = { reducer: new CodexSessionLiveReducer(sessionId, streamId, value => parseItems(value).map(message => message.images?.length ? { ...message, images: message.images.map(image => imageSources.has(image.src) ? { ...image, src: imageSources.get(image.src)! } : image) } : message), previousAt) };
       streams.set(sessionId, entry);
       off = rpc.onNotification((method, params) => {
         if (!entry?.reducer.accept(method, params)) return;

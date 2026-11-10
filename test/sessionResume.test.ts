@@ -18,3 +18,8 @@ it('uses confirmed live failure and completion ahead of a stale running row',()=
     expect(canResumeCodexSession(result)).toBe(status==='failed');
   }
 });
+
+it('offers Play for an unfinished active goal after a completed turn while keeping paused goals paused', () => {
+  for (const status of ['active', 'usage_limited']) expect(canResumeCodexSession({ ...session, interrupted: false, goal: { objective: 'Finish', status } })).toBe(true);
+  expect(canResumeCodexSession({ ...session, interrupted: false, goal: { objective: 'Finish', status: 'paused' } })).toBe(false);
+});

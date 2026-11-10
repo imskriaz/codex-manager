@@ -14,6 +14,37 @@ class EventEmitter {
   dispose() { this.listeners.clear(); }
 }
 
+class CancellationTokenSource {
+  constructor() {
+    this.cancelled = false;
+    this.disposed = false;
+    this.emitter = new EventEmitter();
+    const source = this;
+    this.token = {
+      get isCancellationRequested() { return source.cancelled; },
+      onCancellationRequested(listener, thisArgs, disposables) {
+        let subscription;
+        if (source.cancelled) {
+          const timer = setTimeout(() => listener.call(thisArgs), 0);
+          subscription = new Disposable(() => clearTimeout(timer));
+        } else subscription = source.disposed ? new Disposable() : source.emitter.event(() => listener.call(thisArgs));
+        disposables?.push(subscription);
+        return subscription;
+      }
+    };
+  }
+  cancel() {
+    if (this.cancelled || this.disposed) return;
+    this.cancelled = true;
+    this.emitter.fire(undefined);
+  }
+  dispose(cancel = false) {
+    if (cancel) this.cancel();
+    this.emitter.dispose();
+    this.disposed = true;
+  }
+}
+
 class Uri {
   constructor(fsPath) { this.fsPath = path.resolve(fsPath); }
   toString() { return `file://${this.fsPath.replaceAll("\\", "/")}`; }
@@ -88,7 +119,7 @@ const commandApi = {
 };
 
 module.exports = {
-  Disposable, EventEmitter, Uri, workspace, window, commands: commandApi,
+  Disposable, EventEmitter, CancellationTokenSource, Uri, workspace, window, commands: commandApi,
   env: { appHost: "node", language: process.env.LANG ?? "en", sessionId: `node-${process.pid}`, appRoot: process.cwd(), shell: process.env.SHELL, openExternal: async () => false, clipboard: { writeText: async () => undefined } },
   extensions: { getExtension: () => undefined },
   authentication: { getSession: async () => undefined },

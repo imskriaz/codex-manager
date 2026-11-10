@@ -400,6 +400,7 @@ export function ToolIcon(props: {
     | "github"
     | "check"
     | "minus"
+    | "save" | "edit" | "eye" | "left" | "right" | "up" | "down" | "comment" | "play" | "archive"
     | "external";
 }) {
   const paths = {
@@ -419,6 +420,12 @@ export function ToolIcon(props: {
       "M9 19c-4 1-4-2-6-2M15 22v-4c0-1 .1-1.5-.5-2 4-.5 7-2 7-6a5 5 0 0 0-1.5-3.5c.3-1 .3-2-.2-3-2 0-3 1-3.8 1.5a13 13 0 0 0-7 0C8 4 7 3 5 3c-.5 1-.5 2-.2 3A5 5 0 0 0 3.5 10c0 4 3 5.5 7 6-.5.5-.5 1-.5 2v4",
     check: "M4 12l5 5L20 6",
     minus: "M5 12h14",
+    save: "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2M7 3v6h10V3M7 21v-8h10v8",
+    edit: "m16 3 5 5M4 20l4-1L21 6l-5-5L3 14l-1 8z",
+    eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+    left: "m14 5-7 7 7 7", right: "m10 5 7 7-7 7", up: "m5 14 7-7 7 7", down: "m5 10 7 7 7-7",
+    comment: "M21 15a3 3 0 0 1-3 3H8l-5 4V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3zM7 8h10M7 12h7",
+    play: "m8 4 12 8-12 8z", archive: "M3 3h18v5H3zM5 8v13h14V8M9 12h6",
     external: "M14 3h7v7M10 14L21 3M10 3H3v18h18v-7"
   };
   return (

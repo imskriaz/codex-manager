@@ -548,3 +548,20 @@ it('bounds required startup identity lookup and reports an explicit browser-open
     expect(internal.server).toBeUndefined();
   } finally { internal.encryptedSync = undefined; await server.stop(); server.dispose(); vi.useRealTimers(); }
 });
+
+it('refreshes local account changes after a bounded session check and closes unverified remote sockets first', async () => {
+  vi.useFakeTimers();
+  const { server } = createServer(), internal = server as any;
+  vi.spyOn(internal, 'publishLocalPeerState').mockImplementation(() => undefined);
+  vi.spyOn(internal, 'publishPeerVault').mockResolvedValue(undefined);
+  vi.spyOn(internal, 'closeInvalidRemoteBrowserSockets').mockImplementation(() => new Promise(() => undefined));
+  const close = vi.spyOn(internal, 'closeRemoteBrowserSockets').mockImplementation(() => undefined);
+  const publish = vi.spyOn(server, 'publishRealtimeState').mockImplementation(() => undefined);
+  try {
+    server.publishLocalStateChange();
+    expect(publish).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(close).toHaveBeenCalledOnce(); expect(publish).toHaveBeenCalledOnce();
+    expect(close.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder[0]!);
+  } finally { await server.stop(); server.dispose(); vi.useRealTimers(); }
+});

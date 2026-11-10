@@ -57,8 +57,11 @@ export function WorkspaceGit(props: {
     setBusy(true);
     setStale(true);
     try {
-      const result = await request("workspaceGit", { gitRequest: { operation: "read" } }, saved => {
-        if (token === generation.current && saved.workspaceGit) { setState(current => current ?? saved.workspaceGit); setNotice('Saved view · refreshing Git…'); }
+      const result = await request("workspaceGit", { gitRequest: { operation: "read" } }, (saved) => {
+        if (token === generation.current && saved.workspaceGit) {
+          setState((current) => current ?? saved.workspaceGit);
+          setNotice("Saved view · refreshing Git…");
+        }
       });
       if (token !== generation.current) {
         return;
@@ -160,11 +163,16 @@ export function WorkspaceGit(props: {
     const token = generation.current;
     setBusy(true);
     try {
-      const result = await request("getWorkspaceEnvironment", {
-        gitHistory: commit ? { commit } : { offset, ...(offset ? { ref: history?.ref } : {}) }
-      }, saved => {
-        if (token === generation.current && !commit && saved.workspaceEnvironment?.gitHistory) setHistory(saved.workspaceEnvironment.gitHistory);
-      });
+      const result = await request(
+        "getWorkspaceEnvironment",
+        {
+          gitHistory: commit ? { commit } : { offset, ...(offset ? { ref: history?.ref } : {}) }
+        },
+        (saved) => {
+          if (token === generation.current && !commit && saved.workspaceEnvironment?.gitHistory)
+            setHistory(saved.workspaceEnvironment.gitHistory);
+        }
+      );
       if (token !== generation.current) {
         return;
       }
@@ -318,9 +326,14 @@ export function WorkspaceGit(props: {
                     onInput={(event) => props.onDraft(event.currentTarget.value)}
                   />
                 </label>
-                <button type="submit" disabled={disabled || !draft.trim() || !staged.length}>
+                <button
+                  type="submit"
+                  disabled={disabled || !draft.trim() || !staged.length}
+                  class="workspace-icon-action"
+                  title="Commit staged changes"
+                  aria-label="Commit staged changes"
+                >
                   <ToolIcon kind="check" />
-                  Commit staged <small>{staged.length}</small>
                 </button>
               </form>
               {(
@@ -422,8 +435,15 @@ export function WorkspaceGit(props: {
             <section class="workspace-history">
               <header>
                 <strong>Project history</strong>
-                <button type="button" disabled={busy || !props.connected} onClick={() => void loadHistory()}>
-                  Refresh
+                <button
+                  type="button"
+                  disabled={busy || !props.connected}
+                  onClick={() => void loadHistory()}
+                  class="workspace-icon-action"
+                  title="Refresh"
+                  aria-label="Refresh"
+                >
+                  <ToolIcon kind="refresh" />
                 </button>
               </header>
               {history?.commits.map((commit) => (
@@ -453,8 +473,11 @@ export function WorkspaceGit(props: {
                     type="button"
                     disabled={busy || !props.connected}
                     onClick={() => void loadHistory(Math.max(0, history.offset - 50))}
+                    class="workspace-icon-action"
+                    title="Newer page"
+                    aria-label="Newer page"
                   >
-                    Newer
+                    <ToolIcon kind="left" />
                   </button>
                 ) : null}
                 {history?.hasMore ? (
@@ -462,8 +485,11 @@ export function WorkspaceGit(props: {
                     type="button"
                     disabled={busy || !props.connected}
                     onClick={() => void loadHistory(history.offset + 50)}
+                    class="workspace-icon-action"
+                    title="Older page"
+                    aria-label="Older page"
                   >
-                    Older
+                    <ToolIcon kind="right" />
                   </button>
                 ) : null}
               </footer>
@@ -489,9 +515,11 @@ export function WorkspaceGit(props: {
                       placeholder: "feature/branch-name"
                     })
                   }
+                  class="workspace-icon-action"
+                  title="New"
+                  aria-label="New"
                 >
                   <ToolIcon kind="plus" />
-                  New
                 </button>
               </div>
               {(state?.branches ?? [])
@@ -606,9 +634,11 @@ export function WorkspaceGit(props: {
                       placeholder: "Describe this work"
                     })
                   }
+                  class="workspace-icon-action"
+                  title="Create stash"
+                  aria-label="Create stash"
                 >
-                  <ToolIcon kind="plus" />
-                  Stash
+                  <ToolIcon kind="archive" />
                 </button>
               </div>
               {(state?.stashes ?? []).map((stash) => (

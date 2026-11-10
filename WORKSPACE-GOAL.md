@@ -1,5 +1,33 @@
 # Workspace completion goal
 
+## Current requested work — 2026-11-10
+
+Complete all eight items before delivery:
+
+1. Add “Create new project” to the Workspace and Tasks project dropdowns, with a name and parent-folder modal.
+2. Fix standalone account-switch feedback and refresh, automatic recovery, and manual Play.
+3. Fix missing image previews in live and saved conversations.
+4. Render mirrored questions and answers once.
+5. Fix standalone reauthentication failing because CancellationTokenSource is unavailable.
+6. Polish workspace tabs and use accessible icon action buttons, including Save.
+7. Open valid linked project files on Windows while preserving project and symlink boundaries.
+8. Match Account Center to the compact dashboard cards, with aligned actions, card state backgrounds, side-by-side quota bars, and a narrow-container fallback.
+
+Delivery gates: focused tests, the full regression suite, build and read-only responsive browser checks at the local dashboard, verified VSIX installation, commit and push on main. No publication is authorized. All eight items are implemented, verified, and installed locally. This evidence is included in the delivery commit on main; the final response reports commit/push confirmation.
+
+Current evidence for `1.7.8-pre.1`:
+
+- Focused corrections passed: 40 question/modal/path tests, 66 recovery/dashboard tests, and 34 live-history/question/mobile tests. The new project storage, image hydration, Node OAuth adapter, and private Play cases are also included in the full suite.
+- Final production compilation passed (`output/request-package-clean.log`). Packaging including the Account Center addition and VSIX dependency verification passed (`output/request-package-eight-items.log`).
+- Read-only desktop (1440px) and mobile (390px) browser checks passed with no console errors or page overflow (`output/request-ui-clean.log`). Both project dropdown modals, keyboard focus, cancellation, project-file reading, and the icon Save control were checked. Screenshots and timings are in `output/workspace-request-ui/`.
+- Account Center passed 88 focused layout tests (`output/request-account-center-focused.log`) and six viewport/container checks with light/dark screenshots and no console errors (`output/request-account-center-final.log`). Narrow layouts retain identity space and visible percentages; normal widths keep actions aligned and quotas side by side.
+- `npm run verify` passed with zero lint errors and both TypeScript checks (`output/request-verify-final.log`). Existing lint warnings remain.
+- VSIX installation succeeded (`output/request-install.log`, exit 0), and VS Code reports `imskriaz.codex-manager@1.7.8-pre.1`. Installed CSS, authentication adapter, project service and question-domain hashes match the verified workspace build.
+- Final full regression passed: 261 files, 3,371 tests, exit 0, 749.58 seconds (`output/request-full-eight-items.log` and `.exit`). Earlier incomplete runs and corrected failures are superseded by this run.
+- Real reboot and live provider OAuth authorization are not exercised by these checks. Running standalone processes need a restart to load the installed build. No release or deployment was requested or published.
+
+## Historical workspace goals and evidence
+
 Objective: end to end fix all gaps and support in workspace, including UI/UX parity, compact layout, performance, resource use, and verification. A passing subset does not complete this goal.
 
 ## Tasks and verification gates

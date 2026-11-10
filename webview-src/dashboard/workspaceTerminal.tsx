@@ -272,12 +272,26 @@ export default function WorkspaceTerminal(props: {
                 ? "VS Code’s public API cannot attach an existing terminal’s screen. Create a shared terminal to use the same interactive shell here and in VS Code."
                 : "Start a shell with prompts, colours, keyboard input and command history."}
             </p>
-            <button type="button" disabled={busy || !props.connected || uncertain} onClick={() => void create()}>
-              New shared terminal
+            <button
+              type="button"
+              disabled={busy || !props.connected || uncertain}
+              onClick={() => void create()}
+              class="workspace-icon-action"
+              title="New shared terminal"
+              aria-label="New shared terminal"
+            >
+              <ToolIcon kind="plus" />
             </button>
             {current ? (
-              <button type="button" disabled={!props.connected} onClick={() => props.onFocus(current.id)}>
-                Open native terminal
+              <button
+                type="button"
+                disabled={!props.connected}
+                onClick={() => props.onFocus(current.id)}
+                class="workspace-icon-action"
+                title="Open native terminal"
+                aria-label="Open native terminal"
+              >
+                <ToolIcon kind="external" />
               </button>
             ) : null}
           </div>
@@ -855,8 +869,14 @@ function TerminalScreen(props: {
         <div class="workspace-terminal-status" role="status">
           <span>{notice}</span>
           {!writable && canClaim && props.connected ? (
-            <button type="button" onClick={() => setClaim(true)}>
-              Take control
+            <button
+              type="button"
+              onClick={() => setClaim(true)}
+              class="workspace-icon-action"
+              title="Take terminal control"
+              aria-label="Take terminal control"
+            >
+              <ToolIcon kind="terminal" />
             </button>
           ) : null}
         </div>

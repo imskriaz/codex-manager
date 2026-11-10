@@ -35,7 +35,7 @@ export function isCodexSessionRunning(
 }
 
 export function canResumeCodexSession(session: DashboardCliSessionSummary | undefined): boolean {
-  return Boolean(session && session.status === 'idle' && !session.locked && !session.archived && session.interrupted &&
+  return Boolean(session && session.status === 'idle' && !session.locked && !session.archived && (session.interrupted || session.goal && ['active','usage_limited'].includes(session.goal.status)) &&
     !session.subAgent && !session.parentSessionId && (!session.goal || ['active','paused','usage_limited'].includes(session.goal.status)));
 }
 

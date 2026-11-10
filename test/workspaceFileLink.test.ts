@@ -1,7 +1,17 @@
 import {describe,expect,it} from 'vitest';
-import {workspaceFileFromLink} from '../webview-src/dashboard/workspaceFileLink';
+import {workspaceFileFromLink, workspaceRelativePath} from '../webview-src/dashboard/workspaceFileLink';
 
 describe('chat file references',()=>{
+  it.each([
+    ['C:\\Project\\docs\\design.md', 'c:\\project', 'docs/design.md'],
+    ['file:///C:/Project/docs/design%20draft.md:12', 'C:\\Project', 'docs/design draft.md'],
+    ['\\\\?\\C:\\Project\\docs\\design.md', 'C:\\Project', 'docs/design.md'],
+    ['/repo/docs/design.md', '/repo', 'docs/design.md'],
+    ['/repo-other/secret.md', '/repo', '/repo-other/secret.md'],
+    ['docs/design.md', '/repo', 'docs/design.md']
+  ])('normalizes file tab %s relative to its project without accepting sibling folders', (file, project, expected) => {
+    expect(workspaceRelativePath(file, project)).toBe(expected);
+  });
   it.each([
     ['src/main.ts','src/main.ts'],['./README.md#usage','./README.md'],
     ['D:\\Project\\My File.ts:12:3','D:/Project/My File.ts'],
