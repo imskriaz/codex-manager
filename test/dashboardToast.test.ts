@@ -35,7 +35,7 @@ describe("dashboard toast", () => {
     controller.show({ level: 'error', message: 'Failed' });
     expect(changed).toHaveBeenCalledOnce();
     controller.show({ level: 'info', message: 'Approval needed', actions: ['Review'] });
-    expect(changed).toHaveBeenCalledTimes(2);
+    expect(changed).toHaveBeenCalledOnce();
     controller.dispose();
   });
   it('dismisses recovered offline warnings without erasing unconfirmed writes or another system’s outage', () => {
@@ -60,6 +60,7 @@ describe("dashboard toast", () => {
   it("keeps informational outcomes quiet without hiding attention or failures", () => {
     vi.useFakeTimers(); const changed=vi.fn(); const controller=createDashboardToastController(changed);
     controller.show({level:'info',message:'Account token refreshed.'});
+    controller.show({level:'info',message:'Approval needed',actions:['Review']});
     vi.advanceTimersByTime(DASHBOARD_INFO_TOAST_DURATION_MS-1);
     expect(changed).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);

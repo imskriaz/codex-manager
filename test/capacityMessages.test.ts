@@ -13,7 +13,8 @@ it('compacts every session usage counter while keeping exact totals on hover', (
 });
 
 function activity(message: DashboardCliSessionMessage): VNode<any> {
-  const node = SessionMessage({ message });
+  const wrapped = SessionMessage({ message });
+  const node = wrapped.props.children ?? wrapped;
   return (node.type as (props: unknown) => VNode<any>)(node.props);
 }
 
@@ -105,10 +106,10 @@ it('lets the resized Account Center use columns without reserving a blank footer
   expect(css).toContain('.cli-account-resize-footer small { display: none; }');
 });
 
-it('hides routine mobile notices while retaining explicit action failures', () => {
+it('keeps warning and error toasts visible on mobile while info stays silent', () => {
   const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
-  expect(css).toContain('.dashboard-notice-stack { display: none !important; }');
-  expect(css).toContain('.dashboard-notice-stack:has(.dashboard-notice.is-error) { display: block !important; }');
+  expect(css).not.toContain('.dashboard-notice-stack { display: none !important; }');
+  expect(css).toContain('.dashboard-notice-stack { display: grid; top:');
 });
 
 it.each(["You have hit your usage limit. Retry tomorrow.", "Authentication failed", "Unexpected provider error"])('shows the full error without expanding: %s', text => {

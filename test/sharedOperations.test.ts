@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, readFile, writeFile, access } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, access, readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,7 +30,7 @@ afterEach(async () => {
   await removeTestDirectory(root);
 });
 
-async function children(kinds: string[], body: string): Promise<string[]> {
+async function children(kinds: string[], body: string, control?: () => Promise<void>): Promise<string[]> {
   const modulePath = path.resolve(__dirname, "../out/utils/crossWindowOperations.js");
   const script = `
     const fs = require('node:fs/promises'), path = require('node:path');
@@ -64,6 +64,8 @@ async function children(kinds: string[], body: string): Promise<string[]> {
   } finally {
     await writeFile(path.join(root, "start"), "start");
   }
+  try { if (!barrierError) await control?.(); }
+  catch (error) { barrierError = error; }
   const results = await Promise.allSettled(pending);
   if (barrierError) throw barrierError;
   return results.map((result) => {
@@ -90,35 +92,59 @@ describe("shared operations across extension hosts", () => {
   });
 
   it("shares the two provider slots and reserves foreground capacity across processes", async () => {
+    // Record admissions inside their transaction; task callbacks may be descheduled after admission.
+    store.database.exec(`
+      CREATE TABLE test_provider_admissions (
+        sequence INTEGER PRIMARY KEY, admittedAt INTEGER NOT NULL, nextAt INTEGER NOT NULL,
+        slots INTEGER NOT NULL, bulkSlots INTEGER NOT NULL
+      );
+      CREATE TRIGGER test_provider_insert AFTER INSERT ON state
+      WHEN NEW.namespace = 'provider-budget' AND NEW.key = 'timing'
+      BEGIN
+        INSERT INTO test_provider_admissions (admittedAt, nextAt, slots, bulkSlots)
+        SELECT json_extract(NEW.value, '$.observedAt'), json_extract(NEW.value, '$.nextAt'),
+          count(*), coalesce(sum(json_extract(value, '$.background') = 1), 0)
+        FROM state WHERE namespace = 'provider-budget' AND key IN ('0', '1');
+      END;
+      CREATE TRIGGER test_provider_update AFTER UPDATE ON state
+      WHEN NEW.namespace = 'provider-budget' AND NEW.key = 'timing'
+      BEGIN
+        INSERT INTO test_provider_admissions (admittedAt, nextAt, slots, bulkSlots)
+        SELECT json_extract(NEW.value, '$.observedAt'), json_extract(NEW.value, '$.nextAt'),
+          count(*), coalesce(sum(json_extract(value, '$.background') = 1), 0)
+        FROM state WHERE namespace = 'provider-budget' AND key IN ('0', '1');
+      END;
+    `);
     await children(
       ["bulk", "bulk", "foreground"],
       `
-      const record = phase => fs.appendFile(path.join(root, 'requests'), JSON.stringify({ phase, id, bulk: kind === 'bulk', at: Date.now() }) + '\\n');
       await coordinator.providerRequest(AbortSignal.timeout(10000), kind === 'bulk', async () => {
-        await record('start'); await delay(800); await record('end');
+        await fs.writeFile(path.join(root, 'request-start-' + id), kind);
+        while (!(await fs.access(path.join(root, 'release-requests')).then(() => true, () => false))) await delay(10);
       });
       console.log('done');
-    `
+    `,
+      async () => {
+        try {
+          await vi.waitFor(async () => {
+            const started = (await readdir(root)).filter(name => name.startsWith('request-start-'));
+            expect(started).toHaveLength(2);
+          }, { timeout: 5_000 });
+          const started = (await readdir(root)).filter(name => name.startsWith('request-start-'));
+          expect((await Promise.all(started.map(name => readFile(path.join(root, name), 'utf8')))).sort())
+            .toEqual(['bulk', 'foreground']);
+          expect(store.prepare('SELECT count(*) AS n FROM test_provider_admissions').get()?.['n']).toBe(2);
+        } finally {
+          await writeFile(path.join(root, 'release-requests'), 'release');
+        }
+      }
     );
-    const events = (await readFile(path.join(root, "requests"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { phase: string; id: string; bulk: boolean; at: number });
-    const active = new Map<string, boolean>();
-    let maximum = 0,
-      bulkMaximum = 0;
-    const starts: number[] = [];
-    for (const event of events) {
-      if (event.phase === "start") {
-        active.set(event.id, event.bulk);
-        starts.push(event.at);
-      } else active.delete(event.id);
-      maximum = Math.max(maximum, active.size);
-      bulkMaximum = Math.max(bulkMaximum, [...active.values()].filter(Boolean).length);
-    }
-    expect(maximum).toBe(2);
-    expect(bulkMaximum).toBe(1);
-    expect(starts.every((at, index) => index === 0 || at - starts[index - 1]! >= 200)).toBe(true);
+    const admissions = store.prepare('SELECT admittedAt, nextAt, slots, bulkSlots FROM test_provider_admissions ORDER BY sequence').all() as Array<{ admittedAt: number; nextAt: number; slots: number; bulkSlots: number }>;
+    expect(admissions).toHaveLength(3);
+    expect(Math.max(...admissions.map(row => row.slots))).toBe(2);
+    expect(Math.max(...admissions.map(row => row.bulkSlots))).toBe(1);
+    expect(admissions.every((row, index) => row.nextAt - row.admittedAt === 250 &&
+      (index === 0 || row.admittedAt >= admissions[index - 1]!.nextAt))).toBe(true);
     expect(store.get("provider-budget", "0")).toBeUndefined();
     expect(store.get("provider-budget", "1")).toBeUndefined();
   });

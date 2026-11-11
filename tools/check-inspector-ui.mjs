@@ -61,9 +61,24 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   });
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('textbox', exact('Message Codex')).waitFor();
+  const sidebarToggle = page.locator('.cli-rail-toggle');
+  await sidebarToggle.waitFor({ state: 'visible' });
+  if (await sidebarToggle.getAttribute('aria-expanded') === 'false') await sidebarToggle.click();
+  const sidebarView = page.locator('.cli-session-view-toggle');
+  await sidebarView.waitFor({ state: 'visible' });
+  if (await sidebarView.getAttribute('aria-label') === 'Show projects and sessions') await sidebarView.click();
+  await page.locator('.cli-project-select strong').first().waitFor({ state: 'attached' });
+  if (!await page.locator('.cli-session-row-main strong').count()) {
+    const expand = page.getByRole('button', exact('Expand demo'));
+    if (await expand.isVisible()) await expand.click();
+  }
+  await page.locator('.cli-session-row-main strong').first().waitFor({ state: 'attached' });
   const sidebarFonts=await page.evaluate(()=>({session:getComputedStyle(document.querySelector('.cli-session-row-main strong')).fontSize,project:getComputedStyle(document.querySelector('.cli-project-select strong')).fontSize}));
   assert.equal(sidebarFonts.session,sidebarFonts.project,'Project and conversation titles use the same sidebar text size');
+  const closeSidebar = page.getByRole('button', exact('Hide sessions sidebar'));
+  if (await closeSidebar.isVisible()) await closeSidebar.click();
   await page.evaluate(() => { window.__inspectorMode = true; });
+  if (process.argv.includes('--agent-inspector')) { await checkAgentInspector(page, { width, output, tool, hide, show }); return; }
   await show();
   await page.getByRole('tab', exact('Env')).click();
   await page.getByRole('button', exact('Open Git')).waitFor();
@@ -82,7 +97,8 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   const add = page.getByRole('button', exact('Add workspace tool'));
   const envTabBounds = await page.getByRole('tab', exact('Env')).boundingBox();
   const addBounds = await add.boundingBox();
-  assert.ok(addBounds.x >= envTabBounds.x + envTabBounds.width && addBounds.x - envTabBounds.x - envTabBounds.width < 18, 'Plus follows the open tabs without an empty gap');
+  assert.ok(addBounds.x >= envTabBounds.x + envTabBounds.width && addBounds.x + addBounds.width <= panel.x + panel.width + 1, 'Plus remains after the tabs and inside the tool panel');
+  if (width > 760) assert.ok(addBounds.x - envTabBounds.x - envTabBounds.width < 18, 'Plus follows the open tabs without an empty gap');
   await add.click();
   const menu = page.getByRole('menu', exact('Workspace tools menu'));
   assert.ok(await menu.evaluate(element => element.matches(':popover-open')), 'Tool flyout uses the top layer');
@@ -104,9 +120,9 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.keyboard.press('Escape');
   await page.getByRole('tab', exact('History')).click();
   await page.waitForFunction(() => document.querySelectorAll('.workspace-history-row').length === 50);
-  await page.getByRole('button', exact('Older')).click();
+  await page.getByRole('button', exact('Older page')).click();
   await page.waitForFunction(() => document.querySelectorAll('.workspace-history-row').length === 13);
-  await page.getByRole('button', exact('Newer')).click();
+  await page.getByRole('button', exact('Newer page')).click();
   await page.waitForFunction(() => document.querySelectorAll('.workspace-history-row').length === 50);
   await page.locator('.workspace-history-row').first().click();
   await page.getByText('verified history', { exact: false }).waitFor();
@@ -137,7 +153,7 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.evaluate(() => { window.__failCommit = true; });
   await page.getByRole('button', exact('Stage all')).click();
   await page.getByRole('button', { name: /^Commit staged/ }).click();
-  await page.locator('.workspace-tool-notice').filter({hasText:'Simulated commit failure'}).waitFor();
+  await page.locator('.dashboard-notice-stack').filter({hasText:'Simulated commit failure'}).waitFor();
   await page.getByRole('button', exact('Refresh Git')).click();
   assert.equal(await commit.inputValue(), 'Keep this commit draft');
   await page.evaluate(() => { window.__failCommit = false; window.__holdNextCommit = true; });
@@ -150,7 +166,7 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   assert.equal(await page.getByRole('tab', exact('Env')).getAttribute('aria-selected'), 'true');
   await tool('Git');
   assert.equal(await commit.inputValue(), 'Newer commit draft', 'Reopening Git retains its draft');
-  await page.getByText('Git operation in progress…', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('.workspace-commit button[type=submit]')?.disabled);
   const alternate = '01a04882-d037-7a42-ad24-9afb61901234';
   await page.evaluate(id => {
     window.__uiSessions.push({ id, title: 'Inspector alternate project', projectPath: 'D:/other', status: 'idle' });
@@ -160,7 +176,7 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await tool('Git'); assert.equal(await commit.inputValue(), '', 'Commit draft is scoped to project');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldCommitResult })));
   await page.getByRole('tab', exact('Env')).click();
-  await page.waitForFunction(() => document.querySelector('.cli-inspector-heading strong')?.textContent === 'other');
+  await page.locator('.cli-inspector-body dt').filter({ hasText: /^Folder$/ }).locator('..').getByText('D:/other', { exact: true }).waitFor();
   await selectSession('Evaluate stack beyond expectations', 'demo');
   await tool('Git'); assert.equal(await commit.inputValue(), 'Newer commit draft', 'Late commit acknowledgement retains newer edits in original context');
   await page.getByRole('tab', exact('Branches')).click();
@@ -180,12 +196,13 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   const issueDialog = page.getByRole('dialog');
   await issueDialog.getByLabel('Title', { exact: true }).fill('Fixture issue draft');
   await issueDialog.getByRole('button', exact('Confirm')).click();
-  await page.getByText('Create issue completed.', { exact: true }).waitFor();
+  await issueDialog.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.dashboard-notice-stack.is-info, .dashboard-notice-stack .is-info').count(), 0, 'Confirmed GitHub changes stay quiet');
   await page.evaluate(() => { window.__failGithubAfterWrite=true; });
   await page.locator('.workspace-github .workspace-list-heading').getByRole('button', exact('New')).click();
   await page.getByRole('dialog').getByLabel('Title', {exact:true}).fill('Preserve loaded list after confirmed write');
   await page.getByRole('dialog').getByRole('button', exact('Confirm')).click();
-  await page.locator('.workspace-github .workspace-tool-notice').filter({hasText:'updated list could not be read'}).waitFor();
+  await page.locator('.dashboard-notice-stack').filter({hasText:'updated list could not be read'}).waitFor();
   assert.equal(await page.locator('.workspace-github-row').count(),1,'An acknowledged write with a failed refresh preserves the previous visible list');
   await page.evaluate(() => { window.__failGithubAfterWrite=false; });
   await page.getByRole('button',exact('Refresh GitHub')).click();
@@ -204,16 +221,16 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldGitHubRead) })));
 
   await page.getByRole('tab', exact('Env')).click();
-  await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh Environment"]')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.cli-inspector-view[aria-label="Environment"]')?.getAttribute('aria-busy') === 'false');
   await page.evaluate(() => { window.__holdNextEnvironment = true; });
-  await page.getByRole('button', exact('Refresh Environment')).click();
+  await page.getByRole('tab', exact('Env')).click();
   await page.waitForFunction(() => !!window.__heldEnvironmentResult);
   await selectSession('Inspector alternate project', 'other');
   await page.getByRole('tab', exact('Env')).click();
-  await page.getByRole('button', exact('Refresh Environment')).waitFor();
-  await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh Environment"]')?.disabled);
-  await page.evaluate(() => { window.__heldEnvironmentResult.payload.workspaceEnvironment.projectName = 'Stale other-system response'; window.dispatchEvent(new MessageEvent('message', { data: window.__heldEnvironmentResult })); });
-  assert.notEqual(await page.locator('.cli-inspector-heading strong').textContent(), 'Stale other-system response');
+  await page.locator('.cli-inspector-view[aria-label="Environment"]').waitFor();
+  await page.waitForFunction(() => document.querySelector('.cli-inspector-view[aria-label="Environment"]')?.getAttribute('aria-busy') === 'false');
+  await page.evaluate(() => { window.__heldEnvironmentResult.payload.workspaceEnvironment.branch = 'Stale other-system response'; window.dispatchEvent(new MessageEvent('message', { data: window.__heldEnvironmentResult })); });
+  assert.notEqual(await page.locator('.cli-inspector-body dt').filter({ hasText: /^Branch$/ }).locator('..').locator('dd').textContent(), 'Stale other-system response');
   await selectSession('Evaluate stack beyond expectations', 'demo');
   await tool('Files'); await page.locator('.cli-file-tree button').filter({ hasText: 'app.ts' }).click();
   await page.getByRole('button', exact('Retry editor')).waitFor();
@@ -239,10 +256,10 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await tool('Files');
   await page.evaluate(() => { window.__failNextWorkspaceFileRead = true; });
   await page.locator('.cli-file-tree button').filter({ hasText: 'other.ts' }).click();
-  await page.locator('.cli-inspector-notice').filter({ hasText: 'Simulated file read failure.' }).waitFor();
-  await page.locator('.cli-file-editor').getByRole('button', exact('Retry')).waitFor();
+  await page.getByText('Simulated file read failure.', { exact: true }).first().waitFor();
+  await page.locator('.cli-file-editor').getByRole('button', exact('Retry loading file')).waitFor();
   assert.equal(await page.locator('.cli-file-editor').getByText('Opening file…', { exact: true }).count(), 0, 'An unrelated slow read cannot hide this file’s failure');
-  await page.locator('.cli-file-editor').getByRole('button', exact('Retry')).click();
+  await page.locator('.cli-file-editor').getByRole('button', exact('Retry loading file')).click();
   await page.locator('.cli-file-editor .cm-content').waitFor();
   await page.evaluate(() => { window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldWorkspaceFileResult) })); });
   await page.getByRole('tab', exact('app.ts')).click();
@@ -250,20 +267,20 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
 
   await edit('const edited = 1;');
   await page.evaluate(() => { window.__holdNextSave = true; });
-  await page.getByRole('button', exact('Save')).click();
+  await page.getByRole('button', exact('Save file')).click();
   await page.waitForFunction(() => !!window.__heldSaveResult);
   await edit('const edited = 2;');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSaveResult })));
-  await page.waitForFunction(() => ![...document.querySelectorAll('.cli-file-editor button')].find(button => button.textContent === 'Save')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.cli-file-editor button[aria-label="Save file"]')?.disabled === false);
   assert.match(await page.locator('.cli-file-editor .cm-content').textContent(), /edited = 2/);
-  await page.getByRole('button', exact('Save')).click();
+  await page.getByRole('button', exact('Save file')).click();
   await page.waitForFunction(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').length === 2);
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').at(-1).payload.fileRevision), 'saved-revision', 'Acknowledged save advances the base revision without dropping newer edits');
   await edit('const localDraft = true;');
   await page.evaluate(() => { window.__fileRevision = 'external-revision'; window.__failFileSave = true; });
   await page.getByRole('tab', exact('app.ts')).click();
-  await page.getByRole('button', exact('Save')).click();
-  await page.locator('.cli-inspector-notice').filter({ hasText: 'Simulated revision conflict' }).waitFor();
+  await page.getByRole('button', exact('Save file')).click();
+  await page.locator('.dashboard-notice-stack').filter({ hasText: 'Simulated revision conflict' }).waitFor();
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').at(-1).payload.fileRevision), 'saved-revision', 'External refresh cannot overwrite the edited base revision');
   await tool('Terminal'); await page.getByRole('tab', exact('app.ts')).click();
   assert.match(await page.locator('.cli-file-editor .cm-content').textContent(), /localDraft/);
@@ -332,23 +349,7 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
     await page.evaluate(previous => { document.documentElement.dataset.theme = previous; }, previousTheme);
   }
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Inspector fits viewport');
-  await tool('Agents');
-  const workspaceTabCount=await page.locator('.cli-context-tabs-v3 [role=tab]').count();
-  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).click();
-  await page.getByText('Agent reviewer message',{exact:true}).waitFor();
-  const stickyNavigation = await page.locator('.cli-agent-workspace').evaluate(async element => {
-    const spacer=document.createElement('div');spacer.style.cssText='height:1200px;flex:none';element.append(spacer);
-    element.scrollTop=element.scrollHeight;
-    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const nav=element.querySelector('.cli-agent-tabs').getBoundingClientRect(),panel=element.getBoundingClientRect();
-    const result={scroll:element.scrollTop,top:nav.top-panel.top,bottom:nav.bottom-panel.top};
-    spacer.remove();element.scrollTop=0;return result;
-  });
-  assert.ok(stickyNavigation.scroll>100 && stickyNavigation.top>=-1 && stickyNavigation.top<=2 && stickyNavigation.bottom>5,'Agent navigation stays pinned while its conversation scrolls');
-  assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab]').count(),workspaceTabCount,'Selecting an agent stays in the shared Agents panel');
-  await page.screenshot({path:path.join(output,`workspace-agents-${width}.png`)});
-  await page.getByRole('tab',{name:/All agents/}).click();
-  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).waitFor();
+  await checkAgentInspector(page, { width, output, tool, hide, show });
 
   if (width === 1440 || width === 390) {
     await hide();
@@ -388,4 +389,51 @@ async function checkFileTreePolish(page, { width, output }) {
   await refresh.click();
   await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh files"]')?.disabled);
   assert.equal(await page.locator('.cli-inspector-notice.is-warning').count(),0,'A complete refresh clears the partial-list warning');
+}
+
+async function checkAgentInspector(page, { width, output, tool, hide, show }) {
+  await page.evaluate(() => {
+    const agent = window.__uiSessions.find(session => session.agentName === 'Reviewer');
+    if (agent) { agent.model = 'gpt-6.1-Sol'; agent.reasoningEffort = 'high'; }
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-agent-tab-label', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  });
+  await tool('Agents');
+  const workspaceTabCount=await page.locator('.cli-context-tabs-v3 [role=tab]').count();
+  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).click();
+  await page.getByText('Agent reviewer message',{exact:true}).waitFor();
+  assert.equal(await page.locator('.cli-agent-workspace > header').count(),0,'Agent metadata belongs in its tab, with no separate refresh row');
+  await page.getByRole('tab', {name:'Reviewer (6.1-Sol · high)',exact:true}).waitFor();
+  await page.evaluate(() => { window.__holdNextAgentRead = true; window.__heldAgentResult = undefined; });
+  await hide(); await show();
+  await page.waitForFunction(() => !!window.__heldAgentResult);
+  assert.ok(await page.getByText('Agent reviewer message',{exact:true}).isVisible(),'A pending background refresh keeps saved messages visible');
+  assert.equal(await page.getByText('Refreshing agent messages…',{exact:true}).count(),0,'Background refresh has no inline status row');
+  await page.evaluate(() => {
+    const result = structuredClone(window.__heldAgentResult);
+    result.payload.cliSubAgentMessages.push({id:'workspace-agent-incoming',kind:'message',role:'assistant',text:'Incoming workspace agent message'});
+    window.__agentHistory = result.payload.cliSubAgentMessages;
+    dispatchEvent(new MessageEvent('message',{data:result}));
+  });
+  await page.getByText('Incoming workspace agent message',{exact:true}).waitFor();
+  await page.getByRole('tab',{name:'Reviewer (6.1-Sol · high)',exact:true}).waitFor();
+  await page.getByText('Agent reviewer message',{exact:true}).waitFor();
+  await tool('Env'); await tool('Agents');
+  await page.getByRole('tab',{name:'Reviewer (6.1-Sol · high)',exact:true}).waitFor();
+  await page.getByText('Incoming workspace agent message',{exact:true}).waitFor();
+  assert.equal(await page.locator('.cli-agent-workspace .cli-agent-tabs [role=tab]').count(),2,'Hiding tools and switching tools keeps opened agent tabs');
+  const stickyNavigation = await page.locator('.cli-agent-workspace').evaluate(async element => {
+    const spacer=document.createElement('div');spacer.style.cssText='height:1200px;flex:none';element.append(spacer);
+    element.scrollTop=element.scrollHeight;
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const nav=element.querySelector('.cli-agent-tabs').getBoundingClientRect(),panel=element.getBoundingClientRect();
+    const result={scroll:element.scrollTop,top:nav.top-panel.top,bottom:nav.bottom-panel.top,paddingTop:parseFloat(getComputedStyle(element).paddingTop),height:element.clientHeight,scrollHeight:element.scrollHeight,overflow:getComputedStyle(element).overflow,position:getComputedStyle(element.querySelector('.cli-agent-tabs')).position,parent:{height:element.parentElement.clientHeight,overflow:getComputedStyle(element.parentElement).overflow,display:getComputedStyle(element.parentElement).display}};
+    spacer.remove();element.scrollTop=0;return result;
+  });
+  console.log('Agent navigation geometry', stickyNavigation);
+  assert.ok(stickyNavigation.scroll>100 && stickyNavigation.top>=stickyNavigation.paddingTop-1 && stickyNavigation.top<=stickyNavigation.paddingTop+2 && stickyNavigation.bottom>5,'Agent navigation stays pinned while its conversation scrolls: '+JSON.stringify(stickyNavigation));
+  assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab]').count(),workspaceTabCount,'Selecting an agent stays in the shared Agents panel');
+  await page.screenshot({path:path.join(output,`workspace-agents-${width}.png`)});
+  await page.getByRole('tab',{name:/All agents/}).click();
+  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).waitFor();
+
 }

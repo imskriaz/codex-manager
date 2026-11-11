@@ -24,4 +24,8 @@ for (const [key, module] of Object.entries(manifest)) {
 }
 assert.ok(Object.values(manifest).some(module => module.file.includes('workspaceCodeEditor-')), 'Missing lazy editor');
 assert.ok(Object.values(manifest).some(module => module.file.includes('workspaceTerminal-')), 'Missing lazy terminal');
+const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+const bundle = [...core].map(key => readFileSync(path.join(root, manifest[key].file), 'utf8')).join('\n');
+assert.ok(bundle.includes(JSON.stringify(version)), `Dashboard bundle does not contain package version ${version}; rebuild before packaging`);
+console.log(`Dashboard version verified: ${version}`);
 console.log(`Dashboard modules verified: ${core.size} core, ${Object.keys(manifest).length - core.size} deferred; no duplicate bootstrap imports.`);

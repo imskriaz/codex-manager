@@ -26,7 +26,7 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
   return {
     show(notice: DashboardNotice): void {
       if (!notice.actions?.length && !notice.actionPrompt && (notice.message === "Stop requested. Waiting for Codex to end the turn." || /^The connection (?:closed|failed) before this action was confirmed\./.test(notice.message))) return;
-      if (disposed || isCodexSessionInspectionNotice(notice.message) || notice.level === "info" && !notice.actions?.length && !notice.actionPrompt) {
+      if (disposed || isCodexSessionInspectionNotice(notice.message) || notice.level === "info") {
         return;
       }
       if (current?.level === notice.level && current.message === notice.message && current.notificationId === notice.notificationId && current.systemName === notice.systemName) return;
@@ -41,7 +41,7 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
         cancelDismiss = undefined;
         current = undefined;
         onChange(undefined);
-      }, notice.level === 'info' ? DASHBOARD_INFO_TOAST_DURATION_MS : DASHBOARD_TOAST_DURATION_MS);
+      }, DASHBOARD_TOAST_DURATION_MS);
     },
     dismiss(id: number): void {
       if (disposed || current?.id !== id) {

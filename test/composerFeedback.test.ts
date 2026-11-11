@@ -7,11 +7,12 @@ function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return no
 
 it('keeps the composer stable without status rows or connection placeholders', () => {
   const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
-    onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
+    onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
   for (const level of ['info', 'warning', 'error'] as const) {
     const tree = nodes(Composer({ ...config, feedback: { level, message: 'Current action feedback' } }));
     expect(tree.find(node => node.type === 'textarea')?.props.placeholder).toBe('Message Codex…');
     expect(tree.some(node => node.props.class?.includes('cli-composer-state'))).toBe(false);
+    expect(tree.some(node => node.props.role === 'alert')).toBe(false);
   }
   expect(nodes(Composer({ ...config, unavailableReason: 'Reconnecting…' })).find(node => node.type === 'textarea')?.props.placeholder).toBe('Message Codex…');
 });
@@ -43,4 +44,37 @@ it('keeps the mobile account name from being squeezed out by quota metadata', ()
   expect(css).toContain('@media (max-width: 420px)');
   expect(css).toContain('max-width: min(54vw, 220px);');
   expect(css).toContain('.cli-turn-usage-strip .cli-turn-quota { gap: 5px; }');
+});
+
+it('routes transient project and file results through feedback without inline notices', () => {
+  const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  const tasks = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
+  expect(source).not.toContain('projectNotice');
+  expect(source).toContain('onFeedback={props.onFeedback} onCreated=');
+  expect(source).toContain("if (props.notice && props.notice.level !== 'info') feedback.current(props.notice)");
+  expect(source).not.toContain('{props.notice.message}</div>');
+  expect(source).not.toContain('>{props.feedback.message}');
+  expect(source).toContain('onClick={props.onRetryFeedback}>Retry</button>');
+  expect(tasks).not.toContain('task-inline-feedback');
+  expect(tasks).toContain("status && statusLevel !== 'info' && (props.shared || !props.onActionFeedback) ? createPortal");
+  expect(tasks).not.toContain('{status}</p>');
+});
+
+it('keeps task agent views mounted and cached messages available through refresh', () => {
+  const source = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
+  expect(source).toContain(`hidden={tab !== 'agents'} class="task-detail-scroll cli-workspace cli-message-surface cli-agent-panel"`);
+  expect(source).toContain("<TaskAgents active={tab === 'agents'}");
+  expect(source).toContain('<AgentWorkspace active={active}');
+  expect(source).toContain('messages: data[mainKey]?.messages ?? messages');
+  expect(source).toContain("if (!next) throw new Error('Agent messages were not returned. Retry refresh.')");
+  expect(source).not.toContain('Agent messages updated.');
+});
+
+it('keeps account center resize success and cancellation silent while reporting storage failure', () => {
+  const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+  expect(source.match(/<SessionAccountFooter onFeedback={props.onActionFeedback}/g)).toHaveLength(2);
+  expect(source).not.toContain('sizeNotice');
+  expect(source).not.toContain('Size saved');
+  expect(source).not.toContain('Resize cancelled');
+  expect(source).toContain("props.onFeedback({ level: 'warning', message: 'Size changed for this tab. Browser storage could not remember it.' })");
 });

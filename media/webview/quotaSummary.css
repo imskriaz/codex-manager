@@ -5209,7 +5209,6 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 @media (max-width: 760px) {
   /* Mobile workspace keeps action feedback in its initiating control; fixed toasts cover the composer and transcript. */
-  .dashboard-notice-stack { display: none !important; }
   .cli-workspace .cli-workspace-grid,
   .cli-workspace .cli-workspace-grid.has-context,
   .cli-workspace.is-rail-collapsed .cli-workspace-grid,
@@ -17359,16 +17358,90 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 /* Compact account and project controls share the existing dashboard colors. */
 .cli-account-center .dashboard-view-controls { display: flex; gap: 4px; width: auto; min-width: 0; margin-left: 0; }
 .cli-account-center .account-center-actions { display: flex; align-items: center; gap: 4px; flex: none; }
-.cli-account-center .account-center-add { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: auto; min-width: 44px; height: 28px; padding: 0 7px; font-size: calc(12px * var(--dashboard-text-scale, 1)); border: 1px solid var(--border-default); border-radius: 6px; background: var(--accent); color: var(--button-primary-foreground); }
 .cli-account-center .account-center-actions .workspace-tool-menu > button { width: 28px; height: 28px; font-size: calc(20px * var(--dashboard-text-scale, 1)); }
 .cli-error-notice { padding: 8px 10px; }
 .cli-error-message { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cli-capacity-notice { flex-wrap: wrap; }
 .cli-capacity-notice .cli-error-message { flex-basis: 100%; }
-.project-folder-browser { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--border-default); border-radius: 6px; }
-.project-folder-browser nav { display: flex; flex-wrap: wrap; gap: 4px; }
-.project-folder-browser code { overflow-wrap: anywhere; }
-.project-folder-list { display: grid; gap: 3px; max-height: 180px; overflow: auto; }
-.project-folder-list button { text-align: left; overflow-wrap: anywhere; }
 
-@media (max-width: 760px) { .dashboard-notice-stack:has(.dashboard-notice.is-error) { display: block !important; } }
+
+.cli-account-center .account-center-options { display: grid; gap: 8px; padding-top: 8px; margin-top: 6px; border-top: 1px solid var(--border-default); }
+.cli-account-center .account-center-options .dashboard-select-control { position: static; display: grid; gap: 4px; width: auto; max-width: none; height: auto; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text-primary); }
+.cli-account-center .account-center-options .dashboard-select-control > svg { display: none; }
+.cli-account-center .account-center-options .dashboard-select-control select { position: static; opacity: 1; width: 100%; height: auto; min-height: 32px; padding: 4px 8px; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: 5px; }
+.cli-account-center .account-center-options .dashboard-view-toggle { display: flex; gap: 8px; width: 100%; height: auto; min-height: 32px; }
+
+/* Folder selection is a separate dialog so project details keep their place. */
+.create-project-location-field { display: flex; gap: 8px; min-width: 0; }
+.create-project-location-field input { flex: 1; min-width: 0; }
+.create-project-location-field button { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.create-project-location-field svg, .project-folder-picker svg { width: 18px; height: 18px; flex: none; }
+.project-folder-picker.dashboard-modal-compact.settings-modal.dashboard-modal { width: min(720px, calc(var(--dashboard-viewport-width, 100vw) - 28px)); }
+.project-folder-picker .settings-modal-body { display: grid; gap: 12px; min-width: 0; }
+.folder-picker-description { margin: 0; color: var(--text-secondary); font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.folder-picker-toolbar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.folder-picker-icon-button, .folder-picker-path button { display: grid; place-items: center; flex: none; width: 36px; min-width: 36px; height: 36px; padding: 0; }
+.folder-picker-path { display: flex; align-items: center; flex: 1; min-width: 0; padding-left: 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-base); }
+.folder-picker-path > svg { color: var(--text-secondary); }
+.folder-picker-path input { width: 100%; min-width: 0; height: 36px; padding: 6px 8px; border: 0; background: transparent; color: var(--text-primary); font-family: inherit; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.folder-picker-path:focus-within { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
+.folder-picker-path input:focus { outline: none; }
+.folder-picker-path button { border: 0; background: transparent; }
+.folder-picker-layout { display: grid; grid-template-columns: 140px minmax(0, 1fr); min-height: 260px; border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; }
+.folder-picker-locations { padding: 12px 8px; border-right: 1px solid var(--border-default); background: var(--bg-surface); }
+.folder-picker-locations > small, .folder-picker-selection > small { display: block; color: var(--text-secondary); font-size: calc(10px * var(--dashboard-text-scale, 1)); letter-spacing: .06em; }
+.folder-picker-locations > small { padding: 0 8px 8px; }
+.folder-picker-locations nav { display: grid; gap: 4px; }
+.folder-picker-locations button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent; text-align: left; color: var(--text-secondary); }
+.folder-picker-locations button.is-active { color: var(--text-primary); background: color-mix(in srgb, var(--accent-blue) 12%, transparent); }
+.folder-picker-locations button:hover, .folder-picker-list button:hover { background: var(--bg-hover); }
+.folder-picker-content { min-width: 0; background: var(--bg-base); }
+.folder-picker-columns { display: grid; grid-template-columns: minmax(0, 1fr) 76px; padding: 8px 36px 8px 14px; border-bottom: 1px solid var(--border-default); color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.folder-picker-list { list-style: none; max-height: min(320px, 40dvh); overflow: auto; padding: 4px; margin: 0; }
+.folder-picker-list button { display: grid; grid-template-columns: 18px minmax(0, 1fr) 56px 16px; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-primary); text-align: left; }
+.folder-picker-list button > svg:first-child { color: var(--accent-blue); }
+.folder-picker-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--dashboard-text-scale, 1)); font-weight: 500; }
+.folder-picker-list small, .folder-picker-chevron { color: var(--text-secondary); }
+.folder-picker-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 220px; padding: 20px; color: var(--text-secondary); text-align: center; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.folder-picker-empty > svg { width: 30px; height: 30px; color: var(--text-secondary); }
+.folder-picker-empty strong { color: var(--text-primary); font-weight: 500; }
+.folder-picker-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.folder-picker-selection { display: grid; gap: 4px; min-width: 0; }
+.folder-picker-selection code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.folder-picker-actions { display: flex; gap: 8px; flex: none; }
+.folder-picker-actions button { min-height: 36px; }
+.dashboard-notice-stack { display: grid; top: max(16px, env(safe-area-inset-top)); bottom: auto; }
+@media (max-width: 600px) {
+  .project-folder-picker .settings-modal-body { gap: 10px; }
+  .folder-picker-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-height: 280px; }
+  .folder-picker-locations { padding: 8px; border-right: 0; border-bottom: 1px solid var(--border-default); }
+  .folder-picker-locations > small { display: none; }
+  .folder-picker-locations nav { display: flex; gap: 6px; overflow-x: auto; }
+  .folder-picker-locations button { width: auto; flex: none; min-height: 44px; }
+  .folder-picker-list button { min-height: 44px; }
+  .folder-picker-footer { align-items: stretch; flex-direction: column; }
+  .folder-picker-actions { justify-content: flex-end; }
+  .folder-picker-actions button, .folder-picker-icon-button, .folder-picker-path button { min-height: 44px; }
+  .folder-picker-empty { min-height: 160px; }
+  .dashboard-notice-stack { top: max(12px, env(safe-area-inset-top)); bottom: auto; }
+}
+
+.cli-agent-tab { display: inline-flex; flex: none; align-items: stretch; border-bottom: 2px solid transparent; }
+.cli-agent-tab.is-active { border-bottom-color: var(--accent-blue); }
+.cli-agent-tabs .cli-agent-tab > button { min-width: 0; padding: 8px 10px; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); white-space: nowrap; }
+.cli-agent-tabs .cli-agent-tab.is-active > button[role="tab"] { color: var(--accent-blue); }
+.cli-agent-tabs .cli-agent-tab > button:last-child { padding-inline: 6px; font-size: calc(16px * var(--dashboard-text-scale, 1)); }
+.cli-agent-tab > button:hover { color: var(--text-primary); background: var(--bg-hover); }
+.cli-agent-tabs { overflow-x: auto; flex-wrap: nowrap; }
+.cli-agent-panel[hidden], .task-work-panel [hidden] { display: none !important; }
+
+.workspace-tool-output { margin: 0; padding: 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+
+.cli-context-body > .cli-agent-panel:not([hidden]), .task-detail-scroll > .cli-agent-panel:not([hidden]) { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.cli-agent-panel > .cli-agent-workspace { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.task-detail-scroll:has(.task-session-conversation) > .cli-agent-panel:not([hidden]) { height: 100%; overflow: hidden; }
+.task-detail-scroll:has(.task-session-conversation) > .cli-agent-panel > .cli-agent-workspace { height: 100%; gap: 0; overflow: hidden; }
+
+.cli-context-panel-v3[hidden] { display: none !important; }
+
+.cli-workspace .is-dense-tree .cli-project-select strong { font-size: calc(13px * var(--dashboard-text-scale, 1)); }

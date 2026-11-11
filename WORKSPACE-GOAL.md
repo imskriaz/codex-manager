@@ -1,8 +1,23 @@
 # Workspace completion goal
 
-## Current follow-up: 1.7.9
+## Account Center/version follow-up — 2026-11-11
 
-The requested slice covers quiet standalone recovery deferral without usable quota, directly visible session/capacity errors, live model discovery, empty project visibility and folder browsing, and compact Account Center Add/More controls. Project creation stays in the existing project pickers. Preserve existing recovery behavior and the earlier unfinished 1.7.8 changes. The user explicitly requested version `1.7.9`. No publication is requested for this follow-up.
+Keep version `1.7.9` as explicitly requested. The earlier dashboard was compiled before the final manifest version changed and still embedded `1.7.9-pre.1`. Rebuild and verify the actual displayed version, and add a packaging assertion against stale bundled versions. Keep Account Center to Search and More, remove Add, and move existing display options into More. Verify, install, restart the existing standalone host with recovery capture, then commit and push main. The user explicitly requested end-to-end verification and GitHub Release `1.7.9` with the verified VSIX. The final scope also includes a separate folder picker, silent informational changes, warning/error toasts instead of action banners, persistent opened subagent tabs within each workspace/task and message-preserving refreshes.
+
+## Final 1.7.9 release verification
+
+- Full regression passed: 267 files, 3,486 tests, exit 0, 812.38 seconds (`output/release-179-regression-complete.log` and `.exit`). Earlier interrupted runs and stale fixture assertions are superseded.
+- Final production compile and verification passed (`output/release-179-build-complete.log`, `output/release-179-verify-complete.log`); lint has zero errors and existing warnings.
+- Mobile and desktop Account Center checks passed, including Search/More, account actions, offline and duplicate guards, child-menu and Settings Escape, and desktop resize persistence/storage-warning toast. Six viewport/container layout checks and dark/light screenshots passed. Workspace inspector, task agent tabs, incoming message retention, folder picker, and direct transcript errors passed responsive browser checks.
+- The account-switch recovery scheduler no longer applies the previous account’s retry delay or pending quota refresh to a freshly verified replacement. Missing, disabled, unauthorized, stale and exhausted accounts still defer; interrupted work is durably retained.
+- VSIX packaging, dependency/layout checks and 17 runtime/dashboard file comparisons passed. SHA-256: `34f0ae21d60ec7e0d0696bd696b38c66fde2b6bdac1adb4aa2148a392eff9b1b`. Local installation passed and the installed files match the verified archive (`output/release-179-installed-integrity.json`).
+- The running standalone host serves the installed build. A real browser check displays `v1.7.9` with zero console errors in 2.05 seconds. Live discovery returned eight distinct models with reasoning options and no fallback warning (`output/release-179-version-live.log`, `output/release-179-live-discovery.json`). A duplicate launcher attempt was safely rejected because the current host already owned the port; the verified existing host remained available.
+- Real standalone end-to-end project creation passed: browse/select a disposable parent, duplicate-name failure shown as a mobile toast, silent success, selected project, persistence after reload, and no Codex turn started. Only the exact disposable project registry row and temporary folders were cleaned (`output/release-179-e2e-live.log`).
+- Live quota exhaustion, actual storage exhaustion and a real account-switch recovery timing experiment were not induced. Failure and recovery branches have regression coverage. Commit/push and GitHub release confirmation are recorded in the final response.
+
+## Earlier 1.7.9 verification (superseded by final release build)
+
+The requested slice covers quiet standalone recovery deferral without usable quota, directly visible session/capacity errors, live model discovery, empty project visibility and folder browsing, and compact Account Center Add/More controls. Project creation stays in the existing project pickers. Preserve existing recovery behavior and the earlier unfinished 1.7.8 changes. The user explicitly requested version `1.7.9`. The later explicit release request and final verification above take precedence over this earlier pass.
 
 - Full regression passed: 262 files and 3,449 tests, exit 0, 1,133.68 seconds (`output/fix-179-regression-release.log` and `.exit`). Earlier incomplete runs and the corrected text-scaling failure are superseded by this run.
 - Focused recovery, quota, capacity, model, project and UI checks passed. The final project subset passed 124 tests; the final typography/layout/error subset passed 91 tests. `npm run verify` passed with zero lint errors and existing warnings; the final production compile passed (`output/fix-179-verify-final.log`, `output/fix-179-build-picker-only.log`).

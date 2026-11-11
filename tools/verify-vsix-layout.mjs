@@ -1,3 +1,4 @@
+import './verify-dashboard-modules.mjs';
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import process from "node:process";

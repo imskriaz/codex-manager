@@ -35,7 +35,8 @@ export function registerQuotaRecoveryAutoResume(
   let observedAccountId: string | undefined;
   const interrupted = new Set<string>();
   const observedFailures = new Set<string>();
-  let quotaRefreshPending = false, lastFailureAt = 0;
+  let quotaRefresh: { accountId?: string } | undefined, lastFailureAt = 0;
+  let lastFailureAccountId: string | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleRetry = () => {
     retryAt = Date.now() + 60_000;
@@ -45,7 +46,7 @@ export function registerQuotaRecoveryAutoResume(
     retryTimer.unref?.();
   };
   const check = async () => {
-    if (disposed || Date.now() < retryAt) return;
+    if (disposed) return;
     if (running) { dirty = true; return; }
     running = true;
     dirty = false;
@@ -86,6 +87,13 @@ export function registerQuotaRecoveryAutoResume(
       if (!active || active.enabled === false || !canUseAccount(active.id)) return;
       const switched = vscode.env.appHost === 'node' && observedAccountId !== undefined && observedAccountId !== active.id;
       observedAccountId = active.id;
+      // A replacement account must not inherit the failed account's retry delay.
+      if (Date.now() < retryAt && !switched) return;
+      if (switched) {
+        retryAt = 0;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
       if (switched) {
         await waitWithin(Promise.resolve(context.workspaceState.update(key, true)), 5_000, 'Account switch recovery could not be saved.');
         pending = true;
@@ -103,8 +111,8 @@ export function registerQuotaRecoveryAutoResume(
       }
       if (
         !pending ||
-        quotaRefreshPending ||
-        (lastFailureAt > 0 && (active.lastQuotaAt ?? 0) < lastFailureAt) ||
+        (quotaRefresh && (!quotaRefresh.accountId || quotaRefresh.accountId === active.id)) ||
+        (lastFailureAt > 0 && (!lastFailureAccountId || lastFailureAccountId === active.id) && (active.lastQuotaAt ?? 0) < lastFailureAt) ||
         availability !== "available" ||
         active.resetCreditAttempt ||
         needsWindowReloadForAccount(active.id) ||
@@ -122,8 +130,8 @@ export function registerQuotaRecoveryAutoResume(
         !isAutoResumeAvailable() ||
         latest?.id !== active.id ||
         latest.enabled === false ||
-        quotaRefreshPending ||
-        (lastFailureAt > 0 && (latest.lastQuotaAt ?? 0) < lastFailureAt) ||
+        (quotaRefresh && (!quotaRefresh.accountId || quotaRefresh.accountId === latest?.id)) ||
+        (lastFailureAt > 0 && (!lastFailureAccountId || lastFailureAccountId === latest.id) && (latest.lastQuotaAt ?? 0) < lastFailureAt) ||
         !canUseAccount(active.id) ||
         latest.resetCreditAttempt ||
         needsWindowReloadForAccount(latest.id) ||
@@ -151,8 +159,10 @@ export function registerQuotaRecoveryAutoResume(
         retryAt = 0;
       }
     } catch (error) {
-      scheduleRetry();
-      console.warn("[codexManager] quota recovery deferred; saved work retained", error);
+      if (Date.now() >= retryAt) {
+        scheduleRetry();
+        console.warn("[codexManager] quota recovery deferred; saved work retained", error);
+      }
     } finally {
       running = false;
       if (dirty && !disposed) queueMicrotask(() => { void check(); });
@@ -177,14 +187,19 @@ export function registerQuotaRecoveryAutoResume(
     interrupted.add(message.state.sessionId);
     retryAt = 0;
     lastFailureAt = Date.now();
-    if (!quotaRefreshPending) {
-      quotaRefreshPending = true;
+    lastFailureAccountId = observedAccountId;
+    if (!quotaRefresh || quotaRefresh.accountId !== observedAccountId) {
+      const refresh = { accountId: observedAccountId };
+      quotaRefresh = refresh;
       void waitWithin((async () => {
         const active = (await repo.listAccounts()).find(account => account.isActive);
-        if (active && active.enabled !== false && canUseAccount(active.id)) await vscode.commands.executeCommand('codexManager.refreshQuota', active);
+        if (active && active.enabled !== false && canUseAccount(active.id) && (!refresh.accountId || refresh.accountId === active.id)) {
+          refresh.accountId = active.id;
+          await vscode.commands.executeCommand('codexManager.refreshQuota', active);
+        }
       })(), 30_000, 'Quota refresh is still pending. Saved recovery will retry.')
         .catch(error => console.warn('[codexManager] quota failure refresh deferred', error))
-        .finally(() => { quotaRefreshPending = false; void check(); });
+        .finally(() => { if (quotaRefresh === refresh) quotaRefresh = undefined; void check(); });
     }
     void check();
   });

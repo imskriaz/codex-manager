@@ -2,6 +2,7 @@ import { WorkspaceMenu } from "./workspaceMenu";
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
+  DashboardNotice,
   DashboardWorkspaceGitHistory,
   WorkspaceGitRequest,
   WorkspaceGitState
@@ -20,6 +21,7 @@ export function WorkspaceGit(props: {
   onDraft: (value: string) => void;
   pending?: boolean;
   notice?: string;
+  onFeedback: (notice: DashboardNotice) => void;
   onPending: (pending: boolean, message?: string, committedDraft?: string) => void;
   onOpenFile: (path: string) => void;
   renderDiff: (diff: string) => ComponentChildren;
@@ -60,7 +62,7 @@ export function WorkspaceGit(props: {
       const result = await request("workspaceGit", { gitRequest: { operation: "read" } }, (saved) => {
         if (token === generation.current && saved.workspaceGit) {
           setState((current) => current ?? saved.workspaceGit);
-          setNotice("Saved view · refreshing Git…");
+          setNotice("");
         }
       });
       if (token !== generation.current) {
@@ -71,10 +73,11 @@ export function WorkspaceGit(props: {
       }
       setState(result.workspaceGit);
       setStale(false);
-      setNotice(result.workspaceGit.warning ?? "Repository refreshed.");
+      setNotice("");
+      if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
     } catch (error) {
       if (token === generation.current) {
-        setNotice((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
         setStale(true);
       }
     } finally {
@@ -101,7 +104,7 @@ export function WorkspaceGit(props: {
     }
     const token = generation.current;
     setBusy(true);
-    setNotice("Working…");
+    setNotice("");
     const submittedDraft = draft;
     ownsPending.current = true;
     props.onPending(true);
@@ -123,12 +126,13 @@ export function WorkspaceGit(props: {
       }
       setState(result.workspaceGit);
       setStale(Boolean(result.workspaceGit.warning));
-      setNotice(result.workspaceGit.warning || result.workspaceGit.output || "Git operation completed.");
+      setNotice(result.workspaceGit.output ?? "");
+      if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
       setDialog(undefined);
     } catch (error) {
       props.onPending(false, (error as Error).message);
       if (token === generation.current) {
-        setNotice((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
         setStale(true);
       }
     } finally {
@@ -142,7 +146,8 @@ export function WorkspaceGit(props: {
     const token = generation.current;
     try {
       const result = await request("workspaceGit", { gitRequest: { operation: "diff", path, staged } });
-      if (token === generation.current && result.workspaceGit) {
+      if (!result.workspaceGit) throw new Error("Git diff was not returned. Refresh to retry.");
+      if (token === generation.current) {
         setDiff({
           title: path ?? (staged ? "Staged changes" : "Working tree changes"),
           content: result.workspaceGit.diff ?? "",
@@ -151,7 +156,7 @@ export function WorkspaceGit(props: {
       }
     } catch (error) {
       if (token === generation.current) {
-        setNotice((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
       }
     } finally {
       if (token === generation.current) {
@@ -190,7 +195,7 @@ export function WorkspaceGit(props: {
       }
     } catch (error) {
       if (token === generation.current) {
-        setNotice((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
       }
     } finally {
       if (token === generation.current) {
@@ -291,11 +296,7 @@ export function WorkspaceGit(props: {
           </button>
         ))}
       </nav>
-      {view !== "github" && (notice || props.notice || props.pending) ? (
-        <p class={`workspace-tool-notice ${stale ? "is-warning" : ""}`} role={stale ? "alert" : "status"}>
-          {props.pending ? "Git operation in progress…" : props.notice || notice}
-        </p>
-      ) : null}
+      {view !== "github" && notice ? <pre class="workspace-tool-output" aria-label="Git output">{notice}</pre> : null}
       {view === "github" ? (
         <WorkspaceGitHub {...props} />
       ) : (
@@ -726,7 +727,7 @@ export function WorkspaceGit(props: {
           ) : (
             <p>Project: {environment?.projectName}</p>
           )}
-          {stale ? <p role="alert">{props.pending ? "Git operation in progress…" : props.notice || notice}</p> : null}
+          {stale ? <p>Refresh the repository before retrying.</p> : null}
         </WorkspaceDialog>
       ) : null}
       {diff ? (

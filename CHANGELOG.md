@@ -2,11 +2,15 @@
 
 ## 1.7.9
 
+- Rebuild the dashboard with the release version and reject stale dashboard bundles during packaging.
 - Defer standalone startup recovery quietly while the active account has missing, stale, exhausted or unavailable quota; retain saved work for recovery after quota returns. Preserve manual Play and VS Code recovery.
 - Show session errors and capacity messages directly, with optional debug details.
 - Prefer live paginated model discovery, refresh after credential/provider changes, and show a warning when only the saved catalog is available.
-- Keep projects visible before their first session and browse parent folders from the existing project pickers on the selected system.
-- Add compact Add and More account controls to Account Center.
+- Keep projects visible before their first session and select parent folders in a separate folder browser from the existing project pickers.
+- Reflect successful changes in the UI silently; use toasts for action warnings and errors instead of inline banners.
+- Retain opened subagent tabs until closed, show model details in each tab and preserve messages during refresh.
+- Resume after a verified standalone account switch without inheriting the previous account’s retry delay or pending quota refresh.
+- Keep the Account Center search row to Search and More, with sorting, filters and view selection inside More.
 
 ## 1.7.8
 

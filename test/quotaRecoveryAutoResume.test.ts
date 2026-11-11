@@ -292,3 +292,69 @@ it("does not resume when Auto Resume is disabled or the service is disposed duri
   await tick();
   expect(mocks.resume).not.toHaveBeenCalled();
 });
+
+
+it('does not make a replacement account wait for the previous account recovery cooldown', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  start(); await flush(); recover();
+  mocks.resume.mockResolvedValueOnce({ attempted: 1, opened: 0, failed: [{ sessionId: 'pending' }] });
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  changed(); await flush(); expect(mocks.resume).toHaveBeenCalledOnce();
+  account = { ...account, id: 'replacement' };
+  changed(); changed(); await flush();
+  expect(mocks.resume).toHaveBeenCalledTimes(2);
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(mocks.resume).toHaveBeenCalledTimes(2);
+});
+
+it('does not let an old account quota refresh or failure timestamp block a freshly verified replacement', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  recover(); start(); await flush();
+  const verifiedAt = account.lastQuotaAt;
+  await vi.advanceTimersByTimeAsync(1_000);
+  let finish!: () => void;
+  vi.mocked(vscode.commands.executeCommand).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'failed-session', streamId: 'old-account-failure', status: 'failed', error: 'usage limit reached' } });
+  await flush(); expect(mocks.resume).not.toHaveBeenCalled();
+  account = { ...account, id: 'replacement', lastQuotaAt: verifiedAt };
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  finish(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+});
+
+it.each(['exhausted', 'stale', 'disabled', 'ownership'])('keeps replacement %s safety checks while bypassing old retry cooldown', async reason => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  start(); await flush(); recover();
+  mocks.resume.mockResolvedValueOnce({ attempted: 1, opened: 0, failed: [{ sessionId: 'pending' }] });
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed(); await flush(); expect(mocks.resume).toHaveBeenCalledOnce();
+  account = { ...account, id: 'replacement', quotaSummary: { ...account.quotaSummary! } };
+  if (reason === 'exhausted') account.quotaSummary!.hourlyPercentage = 0;
+  if (reason === 'stale') account.lastQuotaAt = Date.now() - 3_600_000;
+  if (reason === 'disabled') account.enabled = false;
+  if (reason === 'ownership') allowed.mockReturnValue(false);
+  changed(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+});
+
+
+it.each(['missing', 'disabled', 'ownership'])('durably captures interruption before deferring for a %s active account', async reason => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  recover(); start(); await flush();
+  if (reason === 'missing') read.mockResolvedValue([]);
+  if (reason === 'disabled') account.enabled = false;
+  if (reason === 'ownership') allowed.mockReturnValue(false);
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'retained-session', streamId: 'retained-stream', status: 'failed', error: 'usage limit reached' } });
+  await flush();
+  expect(mocks.capture).toHaveBeenCalledWith(context, expect.any(Function));
+  const capture = mocks.capture.mock.calls.find(call => call[1])?.[1];
+  expect(await capture()).toEqual(['retained-session']);
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+  expect(mocks.resume).not.toHaveBeenCalled();
+});

@@ -67,7 +67,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toContain('connectionStatus={null}');
     expect(source).toContain('hasBrowserWorkspaceShell(browserPath) && connectionBannerStage');
     expect(source).not.toContain('function BrowserConnectionBanner');
-    expect(source).toContain('notice && !dashboardUnavailable');
+    expect(source).toContain("notice && notice.level !== 'info'");
     expect(source).not.toContain('dashboard-peer-offline');
     expect(source).toContain('hasPendingActions || state.settingsOpen || workspaceHasDrafts');
     expect(source).toContain('onWorkspaceDraftsChange={setWorkspaceHasDrafts}');

@@ -53,3 +53,11 @@ describe("mobile dashboard header", () => {
     expect(source).not.toContain('<button type="button" onClick={() => startNewChat()}><PlusIcon /><span>New chat</span></button>');
   });
 });
+
+it('keeps Account Center to search and More with display options inside the menu', () => {
+  const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+  expect(source).not.toContain('class="account-center-add"');
+  expect(source).toContain('{!compact ? displayFilters : null}');
+  expect(source).toContain('aria-label="Account display options">{displayFilters}{viewToggle}');
+  expect(source).toContain('{!compact ? viewToggle : null}');
+});

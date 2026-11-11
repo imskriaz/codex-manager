@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
+  DashboardNotice,
   WorkspaceGitHubItem,
   WorkspaceGitHubRequest,
   WorkspaceGitHubState
@@ -21,6 +22,7 @@ export function WorkspaceGitHub(props: {
   targetDeviceId?: string;
   connected: boolean;
   pending?: boolean;
+  onFeedback: (notice: DashboardNotice) => void;
   onPending?: (pending: boolean, message?: string) => void;
 }) {
   const request = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected);
@@ -28,7 +30,6 @@ export function WorkspaceGitHub(props: {
     [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">("open");
   const [state, setState] = useState<WorkspaceGitHubState>(),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState(""),
     [failed, setFailed] = useState(false);
   const [detail, setDetail] = useState<WorkspaceGitHubItem>(),
     [detailTab, setDetailTab] = useState<"activity" | "files" | "checks">("activity");
@@ -45,7 +46,6 @@ export function WorkspaceGitHub(props: {
   const load = async (query: Partial<WorkspaceGitHubRequest> = {}) => {
     const token = ++revision.current;
     setBusy(true);
-    setNotice("Loading GitHub…");
     try {
       const result = await request(
         "workspaceGitHub",
@@ -56,7 +56,6 @@ export function WorkspaceGitHub(props: {
           if (token === revision.current && saved.workspaceGitHub) {
             setState((current) => current ?? saved.workspaceGitHub);
             if (query.operation === "detail") setDetail(saved.workspaceGitHub.detail);
-            setNotice("Saved view · refreshing GitHub…");
           }
         }
       );
@@ -67,10 +66,7 @@ export function WorkspaceGitHub(props: {
         throw new Error("GitHub data was not returned. Update the selected system and retry.");
       }
       setState(result.workspaceGitHub);
-      setNotice(
-        result.workspaceGitHub.warning ??
-          (query.operation === "connect" ? "GitHub connected on the selected system." : "")
-      );
+      if (result.workspaceGitHub.warning) props.onFeedback({ level: "warning", message: result.workspaceGitHub.warning });
       setFailed(false);
       setFormError("");
       if (query.operation === "detail") {
@@ -79,7 +75,8 @@ export function WorkspaceGitHub(props: {
       }
     } catch (error) {
       if (token === revision.current) {
-        setNotice((error as Error).message);
+        setFormError((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
         setFailed(true);
       }
     } finally {
@@ -116,7 +113,7 @@ export function WorkspaceGitHub(props: {
     }
     for (const field of form.fields ?? []) {
       if (field.required && !values[field.key]?.trim()) {
-        setFormError(`Enter ${field.label.toLowerCase()}.`);
+        props.onFeedback({ level: "warning", message: `Enter ${field.label.toLowerCase()}.` });
         return;
       }
     }
@@ -134,13 +131,12 @@ export function WorkspaceGitHub(props: {
         }
         inputs = value as Record<string, string>;
       } catch {
-        setFormError("Workflow inputs must be a JSON object with text values.");
+        props.onFeedback({ level: "warning", message: "Workflow inputs must be a JSON object with text values." });
         return;
       }
     }
     const token = ++revision.current;
     setBusy(true);
-    setFormError("");
     props.onPending?.(true);
     const data = {
       state: stateFilter,
@@ -170,7 +166,7 @@ export function WorkspaceGitHub(props: {
       }
       const updated = result.workspaceGitHub;
       setState((current) => (updated.refreshFailed && current ? { ...current, warning: updated.warning } : updated));
-      setNotice(updated.warning ? `${form.title} completed. ${updated.warning}` : `${form.title} completed.`);
+      if (updated.warning) props.onFeedback({ level: "warning", message: updated.warning });
       setFailed(updated.refreshFailed === true);
       setForm(undefined);
       setDetail(undefined);
@@ -178,7 +174,7 @@ export function WorkspaceGitHub(props: {
       props.onPending?.(false, (error as Error).message);
       if (token === revision.current) {
         setFormError((error as Error).message);
-        setNotice((error as Error).message);
+        props.onFeedback({ level: "error", message: (error as Error).message });
         setFailed(true);
       }
     } finally {
@@ -443,11 +439,7 @@ export function WorkspaceGitHub(props: {
           </button>
         ))}
       </nav>
-      {notice ? (
-        <p role={failed ? "alert" : "status"} class={`workspace-tool-notice ${failed ? "is-warning" : ""}`}>
-          {notice}
-        </p>
-      ) : null}
+
       <div class="workspace-list-heading">
         {section === "pulls" || section === "issues" ? (
           <select
@@ -611,7 +603,6 @@ export function WorkspaceGitHub(props: {
               </button>
             ))}
           </nav>
-          {state?.warning ? <p role="status">{state.warning}</p> : null}
           {detailTab === "activity" ? (
             <div class="workspace-github-timeline">
               <p class="workspace-github-body">{detail.body || "No description."}</p>
@@ -663,7 +654,6 @@ export function WorkspaceGitHub(props: {
           onClose={() => {
             if (!busy) {
               setForm(undefined);
-              setNotice("GitHub action cancelled.");
             }
           }}
           footer={
@@ -687,7 +677,6 @@ export function WorkspaceGitHub(props: {
                 disabled={busy}
                 onClick={() => {
                   setForm(undefined);
-                  setNotice("GitHub action cancelled.");
                 }}
               >
                 Cancel
@@ -740,11 +729,6 @@ export function WorkspaceGitHub(props: {
             </label>
           ))}
           {!form.fields?.length ? <p>Repository: {state?.repository}</p> : null}
-          {formError ? (
-            <p role="alert" class="workspace-tool-notice is-warning">
-              {formError}
-            </p>
-          ) : null}
         </WorkspaceDialog>
       ) : null}
     </section>

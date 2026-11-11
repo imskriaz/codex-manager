@@ -52,6 +52,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
   }, [open]);
 
   const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && Array.from(document.querySelectorAll<HTMLElement>('[role="menu"]')).some(menu => menu.getClientRects().length > 0)) return;
     event.stopPropagation();
     if (event.key === "Escape") {
       event.preventDefault();
@@ -93,6 +94,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     const route = (event: KeyboardEvent) => {
       const modal = modalRef.current;
       if (!modal || modal.contains(event.target as Node)) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"][aria-modal="true"]')) return;
       const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')).filter(dialog => dialog.getClientRects().length > 0);
       if (dialogs.at(-1) === modal) onKeyDown(event);
     };

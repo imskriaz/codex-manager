@@ -467,7 +467,7 @@ function App() {
   const showNotice = useCallback(
     (next: DashboardNotice) => {
       if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
-      if (isCodexSessionInspectionNotice(next.message) || next.level === "info" && (isCliSessionsPath(noticeRoute.current) || !next.actions?.length && !next.actionPrompt)) return;
+      if (isCodexSessionInspectionNotice(next.message) || next.level === "info") return;
       noticeControllerRef.current?.show(next);
       if (!offlineNoticeMode.current) pushBrowserNotification(next);
     },
@@ -1151,9 +1151,9 @@ function App() {
         }
         if (id) {
           agentRequests.current.delete(message.requestId);
-          setAgentMessages((current) => ({ ...current, [id]: message.status === "completed"
-            ? { messages: message.payload?.cliSubAgentMessages ?? [] }
-            : { ...current[id], loading: false, error: message.error ?? "Agent messages could not be loaded. Try Refresh." } }));
+          setAgentMessages((current) => ({ ...current, [id]: message.status === "completed" && Array.isArray(message.payload?.cliSubAgentMessages)
+            ? { messages: message.payload.cliSubAgentMessages }
+            : { ...current[id], loading: false, error: message.error ?? "Agent messages were not returned. Reopen the agent when connected to retry." } }));
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "getCodexCliSessionMessages") {
@@ -2545,6 +2545,77 @@ function App() {
 
   const renderAccountSection = (compact = false) => {
     const view = compact ? accountCenterView : uiPreferences.view;
+    const displayFilters = (
+      <>
+        <label class="dashboard-select-control" title={compact ? `${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}` : undefined}>
+          {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h11M4 12h8M4 18h5m8-13v14m-3-3 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg> : null}
+          {compact ? <span>{resolveSortAriaLabel(snapshot.lang)}</span> : null}
+          <select
+            value={accountSort}
+            onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
+            aria-label={resolveSortAriaLabel(snapshot.lang)}
+          >
+            {(
+              [
+                "auto-queue",
+                "quota",
+                "time-left",
+                "login-date",
+                "last-refresh",
+                "subscription-expiry",
+                "account-type",
+                "email",
+                "status"
+              ] as AccountSort[]
+            ).map((sort) => (
+              <option key={sort} value={sort}>
+                {resolveSortOptionLabel(sort, snapshot.lang)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={compact ? `Filter by tag: ${uiPreferences.accountTag || 'All tags'}` : undefined}>{compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="7" cy="7" r="1.5" fill="currentColor" /></svg> : null}{compact ? <span>Filter by tag</span> : null}<select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
+        <label class="dashboard-select-control metric-priority-control" title={compact ? `${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}` : undefined}>
+          {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m8 10V4m8 15v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg> : null}
+          {compact ? <span>{resolveUiText("metric", snapshot.lang)}</span> : null}
+          <select
+            value={uiPreferences.metricPriority}
+            aria-label={resolveUiText("metric", snapshot.lang)}
+            onChange={(event) =>
+              setUiPreferences((current) => ({
+                ...current,
+                metricPriority: event.currentTarget.value as MetricPriority
+              }))
+            }
+          >
+            {availableMetrics.map((metric) => (
+              <option key={metric.key} value={metric.key}>
+                {metric.label} ·{" "}
+                {metricAveragePercent(metric.key) == null ? "—" : `${metricAveragePercent(metric.key)}%`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </>
+    );
+    const viewToggle = (
+      <button
+        type="button"
+        role={compact ? "menuitem" : undefined}
+        class="dashboard-view-toggle active"
+        title={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+        aria-label={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
+        onClick={() => {
+          if (compact) setAccountCenterView(current => current === 'cards' ? 'list' : 'cards');
+          else setUiPreferences((current) => ({
+            ...current,
+            view: current.view === "cards" ? "list" : "cards"
+          }));
+        }}
+      >
+        {view === "cards" ? <GridViewIcon /> : <TableViewIcon />}{compact ? <span>{resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}</span> : null}
+      </button>
+    );
     return (
           <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${view}`}>
             <div class="header accounts-section-header">
@@ -2687,78 +2758,18 @@ function App() {
                   </button>
                 ) : null}
               </label>
-              <label class="dashboard-select-control" title={compact ? `${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}` : undefined}>
-                {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h11M4 12h8M4 18h5m8-13v14m-3-3 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg> : null}
-                <select
-                  value={accountSort}
-                  onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
-                  aria-label={resolveSortAriaLabel(snapshot.lang)}
-                >
-                  {(
-                    [
-                      "auto-queue",
-                      "quota",
-                      "time-left",
-                      "login-date",
-                      "last-refresh",
-                      "subscription-expiry",
-                      "account-type",
-                      "email",
-                      "status"
-                    ] as AccountSort[]
-                  ).map((sort) => (
-                    <option key={sort} value={sort}>
-                      {resolveSortOptionLabel(sort, snapshot.lang)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={compact ? `Filter by tag: ${uiPreferences.accountTag || 'All tags'}` : undefined}>{compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="7" cy="7" r="1.5" fill="currentColor" /></svg> : null}<select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
-              <label class="dashboard-select-control metric-priority-control" title={compact ? `${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}` : undefined}>
-                {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m8 10V4m8 15v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg> : null}
-                <select
-                  value={uiPreferences.metricPriority}
-                  aria-label={resolveUiText("metric", snapshot.lang)}
-                  onChange={(event) =>
-                    setUiPreferences((current) => ({
-                      ...current,
-                      metricPriority: event.currentTarget.value as MetricPriority
-                    }))
-                  }
-                >
-                  {availableMetrics.map((metric) => (
-                    <option key={metric.key} value={metric.key}>
-                      {metric.label} ·{" "}
-                      {metricAveragePercent(metric.key) == null ? "—" : `${metricAveragePercent(metric.key)}%`}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {!compact ? displayFilters : null}
               <div class="dashboard-view-controls">
                 {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
-                  <button type="button" class="account-center-add" aria-label="Add account" title="Add account" disabled={prepareOAuthPending || snapshot.indexHealth.status === 'corrupted_unrecoverable'} onClick={modals.openAddAccountModal}><span aria-hidden="true">+</span><span>Add</span></button>
                   <WorkspaceMenu label="More account actions" icon={<span aria-hidden="true">⋯</span>}>
                     <button type="button" role="menuitem" disabled={isActionPending('refreshAll')} onClick={() => sendAction('refreshAll')}>{renderRefreshIcon()} Refresh all quotas</button>
                     <button type="button" role="menuitem" disabled={syncPending} onClick={handleSyncNow}>Sync now</button>
                     <button type="button" role="menuitem" onClick={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}>Manage tags</button>
                     <button type="button" role="menuitem" onClick={modals.openImportModal}>Import accounts</button>
+                    <div class="account-center-options" role="group" aria-label="Account display options">{displayFilters}{viewToggle}</div>
                   </WorkspaceMenu>
                 </div> : null}
-                <button
-                  type="button"
-                  class="dashboard-view-toggle active"
-                  title={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  aria-label={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
-                  onClick={() => {
-                    if (compact) setAccountCenterView(current => current === 'cards' ? 'list' : 'cards');
-                    else setUiPreferences((current) => ({
-                      ...current,
-                      view: current.view === "cards" ? "list" : "cards"
-                    }));
-                  }}
-                >
-                  {view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
-                </button>
+                {!compact ? viewToggle : null}
               </div>
             </div>
             <div class="accounts-grid">
@@ -2781,7 +2792,7 @@ function App() {
       {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage
         ? createPortal(<WorkspaceConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />, document.body)
         : null}
-      {notice && !dashboardUnavailable && (!isCliSessionsPath(browserPath) || notice.level !== 'info')
+      {notice && notice.level !== 'info'
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
               <div

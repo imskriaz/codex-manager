@@ -324,7 +324,7 @@ const mockHost = `(() => {
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:(message.payload.sessionId === '01a04882-d037-7a42-ad24-9afb61901198' ? window.__newSessionMessages : undefined) ?? window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
         } else if(message.action === 'getCodexSubAgentMessages' && window.__failAgentRead) error='Agent transcript unavailable. Saved messages were kept.';
-        else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
+        else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:window.__agentHistory ?? [{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
         else if(message.action === 'commitWorkspaceChanges' || message.action === 'pushWorkspaceBranch') {if(window.__failCommit)error='Simulated commit failure';else payload={workspaceEnvironment:environmentFor(message.payload.projectPath),notice:{level:'info',message:message.action==='commitWorkspaceChanges'?'Project committed.':'Branch pushed.'}};}
         else if(message.action === 'runWorkspaceTerminalCommand' && window.__inspectorMode) payload={terminalResult:{id:'fixture-command',terminalId:'fixture-terminal',command:message.payload.command,cwd:message.payload.projectPath,output:'',durationMs:0,status:'running',finishedAt:new Date().toISOString()}};
@@ -520,15 +520,18 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
   await center.locator('.accounts-empty-filter').waitFor();
   await center.locator('.account-search-control button').click();
   assert.equal(await cards.count(), 9);
+  const centerMore = center.locator('.account-center-actions').getByRole('button', { name: 'More account actions', exact: true });
+  await centerMore.click();
   const sort = center.getByRole('combobox', { name: 'Sort accounts', exact: true });
   await sort.selectOption('email'); await sort.selectOption('auto-queue');
+  await page.keyboard.press('Escape');
   await card('rea***com').locator('.saved-select-toggle').click();
   await center.locator('.batch-menu-trigger').click();
   assert.ok(await page.locator('.batch-menu-popover').isVisible(), 'Dashboard batch actions are available');
   await page.keyboard.press('Escape');
   assert.equal(await center.isVisible(), true, 'Escape closes a child menu before account center');
   await card('rea***com').locator('.saved-select-toggle').click();
-  assert.equal(await center.locator('.dashboard-view-toggle').count(), 0, 'Account Center keeps the compact card view');
+  assert.equal(await center.locator('.dashboard-account-toolbar > .dashboard-view-controls > .dashboard-view-toggle').count(), 0, 'The view toggle stays in More');
   const ready = () => card('rea***com');
   await ready().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).click();
   await ready().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
@@ -552,11 +555,19 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
   assert.equal(await page.evaluate(() => window.__heldSwitch.payload?.targetDeviceId ?? 'local'), 'local');
   await page.evaluate(() => { const r = window.__heldSwitch; window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: r.action, requestId: r.requestId, accountId: r.accountId, status: 'failed', error: 'Switch was not confirmed. No account changed.' } })); });
   await ready().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).waitFor({ state: 'visible' });
+  await page.evaluate(() => {
+    window.__uiSnapshot.connectedPeers.find(peer => peer.local).connected = false;
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } }));
+  });
+  await center.getByText('Saved accounts. Reconnect this system to switch.', { exact: true }).waitFor();
+  assert.equal(await system.inputValue(), 'fixture-local', 'The local offline snapshot is applied before selecting another offline system');
   await selectSystem('account-offline');
   await center.getByText('Saved accounts. Reconnect this system to switch.', { exact: true }).waitFor();
-  assert.equal(await cards.first().getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).isDisabled(), true);
+  await page.waitForFunction(() => document.querySelectorAll('.cli-account-center .saved-card-container, .cli-account-center .saved-table-row').length === 1);
+  assert.equal(await center.getByRole('button', { name: snapshot.copy.switchBtn, exact: true }).evaluateAll(buttons => buttons.some(button => !button.disabled)), false, 'Offline accounts expose no enabled Switch action');
   await selectSystem('account-empty');
   await center.locator('.accounts-empty-filter').waitFor();
+  await page.evaluate(() => { window.__uiSnapshot.connectedPeers.find(peer => peer.local).connected = true; });
   await selectSystem('fixture-local');
   await center.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('.overlay.open').waitFor();
@@ -565,23 +576,32 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
   await page.locator('.overlay.open').waitFor({ state: 'detached' });
   assert.equal(await center.isVisible(), true, 'Escape closes the upper dialog only');
   const resizer = center.getByRole('separator', { name: 'Resize account center', exact: true });
-  const originalSize = await center.boundingBox();
-  await resizer.focus(); await resizer.press('ArrowLeft'); await resizer.press('ArrowUp');
-  const remembered = await center.boundingBox();
-  assert.ok(remembered.width < originalSize.width && remembered.height < originalSize.height, 'Keyboard resizes both dimensions');
-  await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
-  await showRail(); await trigger.click();
-  const restored = await center.boundingBox();
-  assert.ok(Math.abs(restored.width - remembered.width) < 2 && Math.abs(restored.height - remembered.height) < 2, 'Closing and reopening remembers the size');
-  const corner = await resizer.boundingBox();
-  const delta = restored.width <= 282 ? 8 : -20;
-  await page.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2); await page.mouse.down();
-  await page.mouse.move(corner.x + corner.width / 2 + delta, corner.y - 20, { steps: 3 }); await page.mouse.up();
-  assert.ok(Math.abs((await center.boundingBox()).width - restored.width) > 1, 'Pointer dragging resizes the panel within viewport limits');
-  await page.evaluate(() => { const original = Storage.prototype.setItem; window.__restoreSizeStorage = () => { Storage.prototype.setItem = original; }; Storage.prototype.setItem = function(key, value) { if (key === 'codexManager.accountCenterSize.v1') throw new Error('Full storage'); return original.call(this, key, value); }; });
-  await resizer.press('ArrowRight');
-  await center.getByText('Size changed for this tab. Browser storage could not remember it.', { exact: true }).waitFor();
-  await page.evaluate(() => window.__restoreSizeStorage());
+  if (width > 760) {
+    const originalSize = await center.boundingBox();
+    await resizer.focus(); await resizer.press('ArrowLeft'); await resizer.press('ArrowUp');
+    const remembered = await center.boundingBox();
+    assert.ok(remembered.width < originalSize.width && remembered.height < originalSize.height, 'Keyboard resizes both dimensions');
+    await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
+    await showRail(); await trigger.click();
+    const restored = await center.boundingBox();
+    assert.ok(Math.abs(restored.width - remembered.width) < 2 && Math.abs(restored.height - remembered.height) < 2, 'Closing and reopening remembers the size');
+    const corner = await resizer.boundingBox();
+    const delta = restored.width <= 282 ? 8 : -20;
+    await page.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2); await page.mouse.down();
+    await page.mouse.move(corner.x + corner.width / 2 + delta, corner.y - 20, { steps: 3 }); await page.mouse.up();
+    assert.ok(Math.abs((await center.boundingBox()).width - restored.width) > 1, 'Pointer dragging resizes the panel within viewport limits');
+    await page.evaluate(() => { const original = Storage.prototype.setItem; window.__restoreSizeStorage = () => { Storage.prototype.setItem = original; }; Storage.prototype.setItem = function(key, value) { if (key === 'codexManager.accountCenterSize.v1') throw new Error('Full storage'); return original.call(this, key, value); }; });
+    await resizer.press('ArrowRight');
+    await page.locator('.dashboard-notice.is-warning').filter({ hasText: 'Size changed for this tab. Browser storage could not remember it.' }).waitFor();
+    await page.evaluate(() => window.__restoreSizeStorage());
+  } else {
+    assert.equal(await resizer.isVisible(), false, 'Mobile keeps account center at the responsive size without a resize handle');
+    const mobileBounds = await center.boundingBox();
+    assert.ok(mobileBounds.width >= width - 32 && mobileBounds.x >= 0 && mobileBounds.x + mobileBounds.width <= width + 1, 'Mobile account center uses the available width');
+    await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
+    await showRail(); await trigger.click();
+    assert.deepEqual(await center.boundingBox(), mobileBounds, 'Mobile close and reopen keeps its responsive size');
+  }
   await page.screenshot({ path: path.join(output, `account-center-${width}x${height}.png`) });
   await center.getByRole('button', { name: 'Close account menu', exact: true }).click();
   await page.evaluate(() => { Object.assign(window.__uiSnapshot, window.__accountCenterSaved); window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } })); });
