@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0
+
+- Rename the Workspace and Tasks project dialog to Add Project and remove the project name field; use the selected folder directly with its folder name as the label.
+- Allow existing project folders, preserve their files, and reuse saved projects when retrying or selecting the same folder again.
+- Preserve folder and storage errors, including recovery after a folder was created but could not be saved.
+
 ## 1.7.9
 
 - Rebuild the dashboard with the release version and reject stale dashboard bundles during packaging.

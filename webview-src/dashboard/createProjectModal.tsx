@@ -18,7 +18,7 @@ export function CreateProjectModal(props: {
   onCreated: (project: DashboardCliProject) => void;
   onFeedback: (notice: DashboardNotice) => void;
 }) {
-  const [name, setName] = useState(''), [folder, setFolder] = useState(props.initialFolder ?? '');
+  const [folder, setFolder] = useState(props.initialFolder ?? '');
   const [pending, setPending] = useState(false), [browserOpen, setBrowserOpen] = useState(false);
   const [browsing, setBrowsing] = useState(false), [location, setLocation] = useState('');
   const [listing, setListing] = useState<DashboardActionResultPayload['workspaceFolders']>();
@@ -49,7 +49,7 @@ export function CreateProjectModal(props: {
         current.current.onCreated(message.payload.workspaceProject);
         if (message.payload.notice && message.payload.notice.level !== 'info') current.current.onFeedback(message.payload.notice);
         current.current.onClose();
-      } else current.current.onFeedback({ level: message.status === 'cancelled' ? 'warning' : 'error', message: message.error || 'Project creation was not confirmed. Check the folder before retrying.' });
+      } else current.current.onFeedback({ level: message.status === 'cancelled' ? 'warning' : 'error', message: message.error || 'Adding the project was not confirmed. Check the project list before retrying.' });
     };
     window.addEventListener('message', receive);
     return () => {
@@ -58,7 +58,7 @@ export function CreateProjectModal(props: {
       browseRequest.current = undefined;
       if (request.current) {
         clearTimeout(request.current.timer); request.current = undefined;
-        current.current.onFeedback({ level: 'warning', message: 'The selected workspace changed before creation was confirmed. Check the original system’s folder before retrying.' });
+        current.current.onFeedback({ level: 'warning', message: 'The selected workspace changed before the project was confirmed. Check the original system’s project list before retrying.' });
       }
     };
   }, [props.deviceId]);
@@ -79,33 +79,30 @@ export function CreateProjectModal(props: {
       props.onFeedback({ level: 'error', message: failure instanceof Error ? failure.message : 'Folder browsing could not be sent.' });
     }
   };
-  const separator = folder.includes('\\') ? '\\' : '/';
-  const destination = folder.trim() && name.trim() ? `${folder.trim().replace(/[\\/]+$/, '')}${separator}${name.trim()}` : 'Your new folder will appear here';
   const blocked = browsing || props.disabled;
   return <>
-    <ModalShell open title="Create new project" closeLabel="Close create project" className="create-project-modal dashboard-modal-compact" closeDisabled={pending || browserOpen} closeOnBackdrop={false} onClose={() => { props.onClose(); }}>
+    <ModalShell open title="Add Project" closeLabel="Close add project" className="create-project-modal dashboard-modal-compact" closeDisabled={pending || browserOpen} closeOnBackdrop={false} onClose={() => { props.onClose(); }}>
       <form class="workspace-dialog-fields create-project-form" onSubmit={event => {
         event.preventDefault();
-        if (request.current || browserOpen || props.disabled || !name.trim() || !folder.trim()) return;
-        if (!navigator.onLine) { props.onFeedback({ level: 'warning', message: 'Reconnect before creating a project. Nothing was sent or queued.' }); return; }
+        if (request.current || browserOpen || props.disabled || !folder.trim()) return;
+        if (!navigator.onLine) { props.onFeedback({ level: 'warning', message: 'Reconnect before adding a project. Nothing was sent or queued.' }); return; }
         const id = createActionRequestId(true); setPending(true);
         const timer = setTimeout(() => {
           if (request.current?.id !== id) return;
           request.current = undefined; setPending(false);
-          current.current.onFeedback({ level: 'warning', message: 'Creation was not confirmed. Check the destination folder before retrying; this request was not replayed.' });
+          current.current.onFeedback({ level: 'warning', message: 'Adding the project was not confirmed. Check the project list before retrying; this request was not replayed.' });
         }, 25_000);
         request.current = { id, timer };
-        try { postMessageToHost({ type: 'dashboard:action', requestId: id, action: 'createWorkspaceProject', payload: { projectName: name.trim(), parentFolder: folder.trim(), targetDeviceId: props.deviceId, automatic: true } }); }
+        try { postMessageToHost({ type: 'dashboard:action', requestId: id, action: 'createWorkspaceProject', payload: { parentFolder: folder.trim(), targetDeviceId: props.deviceId, automatic: true } }); }
         catch (failure) { clearTimeout(timer); request.current = undefined; setPending(false); props.onFeedback({ level: 'error', message: failure instanceof Error ? failure.message : 'The request could not be sent.' }); }
       }}>
-        <p class="workspace-dialog-description">Give your project a name and choose where it lives on the selected system.</p>
-        <label>Project name<input autoFocus required maxLength={120} value={name} disabled={pending} placeholder="my-project" autoComplete="off" onInput={event => setName(event.currentTarget.value)} /></label>
-        <label>Parent folder<div class="create-project-location-field"><input aria-label="Parent folder" aria-describedby="create-project-parent-help" required value={folder} maxLength={4096} disabled={pending} placeholder="Choose a folder" spellcheck={false} autoComplete="off" onInput={event => setFolder(event.currentTarget.value)} /><button type="button" aria-label="Browse folders…" disabled={pending || props.disabled} onClick={() => { if (browserOpen) return; setBrowserOpen(true); setListing(undefined); browse(folder.trim() || undefined); }}><FolderIcon /><span>Browse…</span></button></div><small id="create-project-parent-help">A new folder named after your project will be created here.</small></label>
-        <div class="create-project-destination"><small>PROJECT FOLDER</small><code>{destination}</code></div>
-        <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={() => { props.onClose(); }}>Cancel</button><button type="submit" class="primary" disabled={pending || props.disabled || !name.trim() || !folder.trim()}>{pending ? 'Creating…' : 'Create project'}</button></footer>
+        <p class="workspace-dialog-description">Choose an existing folder on the selected system to add it as a project.</p>
+        <label>Project folder<div class="create-project-location-field"><input autoFocus aria-label="Project folder" aria-describedby="create-project-folder-help" required value={folder} maxLength={4096} disabled={pending} placeholder="Choose a folder" spellcheck={false} autoComplete="off" onInput={event => setFolder(event.currentTarget.value)} /><button type="button" aria-label="Browse folders…" disabled={pending || props.disabled} onClick={() => { if (browserOpen) return; setBrowserOpen(true); setListing(undefined); browse(folder.trim() || undefined); }}><FolderIcon /><span>Browse…</span></button></div><small id="create-project-folder-help">The folder name becomes the project name. Existing files are kept.</small></label>
+        <div class="create-project-destination"><small>PROJECT FOLDER</small><code>{folder.trim() || 'Choose a project folder'}</code></div>
+        <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={() => { props.onClose(); }}>Cancel</button><button type="submit" class="primary" disabled={pending || props.disabled || !folder.trim()}>{pending ? 'Adding…' : 'Add project'}</button></footer>
       </form>
     </ModalShell>
-    {browserOpen ? <ModalShell open title="Select parent folder" closeLabel="Close folder picker" className="project-folder-picker dashboard-modal-compact" closeOnBackdrop={false} onClose={closeBrowser}>
+    {browserOpen ? <ModalShell open title="Select project folder" closeLabel="Close folder picker" className="project-folder-picker dashboard-modal-compact" closeOnBackdrop={false} onClose={closeBrowser}>
       <p class="folder-picker-description">Choose an existing folder on the selected system.</p>
       <div class="folder-picker-toolbar">
         <button type="button" class="folder-picker-icon-button" aria-label="Up one level" title="Up one level" disabled={blocked || !listing || listing.path === listing.parent} onClick={() => browse(listing!.parent)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>

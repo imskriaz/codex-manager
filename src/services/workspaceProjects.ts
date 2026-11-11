@@ -47,11 +47,11 @@ export function readWorkspaceProjects(): DashboardCliProject[] {
     : [];
 }
 
-/** Create one new directory; an existing folder is never adopted or overwritten. */
+/** Register the selected folder, creating a named child only when needed. */
 export async function createWorkspaceProject(name: unknown, folder: unknown): Promise<DashboardCliProject> {
+  if (name === undefined) name = "";
   if (
     typeof name !== "string" ||
-    !name.trim() ||
     name !== name.trim() ||
     name.length > 120 ||
     /[<>:"/\\|?*]/.test(name) ||
@@ -77,25 +77,36 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
   );
   if (!(await waitWithin(fs.stat(parent), 5_000, "The parent folder did not respond.")).isDirectory())
     throw new Error("The parent path must be an existing folder.");
-  const target = path.join(parent, name);
+  const destination = path.join(parent, name);
+  const target = await waitWithin(fs.realpath(destination), 5_000, "The project folder did not respond.").catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return destination;
+    throw error;
+  });
   return runCrossWindowExclusive(sharedPathKey("create-project", target), "Create workspace project", async () => {
     const store = getSqliteStateStore();
     if (!store) throw new Error("Project storage is unavailable. No folder was created.");
-    if (store.keys(NAMESPACE).length >= 200)
+    const key = process.platform === "win32" ? target.toLowerCase() : target;
+    const saved = store.get<DashboardCliProject>(NAMESPACE, key);
+    if (!saved && store.keys(NAMESPACE).length >= 200)
       throw new Error("The saved project list is full (200 projects). No folder was created.");
+    let created = false;
     try {
-      await waitWithin(fs.mkdir(target), 5_000, `Project creation was not confirmed. Check ${target} before retrying.`);
+      if (name) {
+        await waitWithin(fs.mkdir(target), 5_000, `Project creation was not confirmed. Check ${target} before retrying.`);
+        created = true;
+      }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
-        throw new Error("A file or folder with this project name already exists. Choose another name.");
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    const project = { id: target, label: name, path: target };
+    if (!(await waitWithin(fs.stat(target), 5_000, "The project folder did not respond.")).isDirectory())
+      throw new Error("A file already exists at the project path. Choose a folder or another name.");
+    if (saved) return saved;
+    const project = { id: target, label: name || path.basename(target) || target, path: target };
     try {
-      store.set(NAMESPACE, process.platform === "win32" ? target.toLowerCase() : target, project);
+      store.set(NAMESPACE, key, project);
     } catch (error) {
       throw new Error(
-        `The folder was created at ${target}, but the project list could not be saved. Add this existing folder after storage recovers. ${error instanceof Error ? error.message : String(error)}`
+        `The ${created ? 'folder was created at' : 'existing folder is unchanged at'} ${target}, but the project list could not be saved. Add this existing folder after storage recovers. ${error instanceof Error ? error.message : String(error)}`
       );
     }
     return project;

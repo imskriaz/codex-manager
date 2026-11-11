@@ -58,7 +58,7 @@ Eight views in two rows. Click an image for the full-size screenshot. All identi
 3. Open the dashboard in your browser and choose a PC in the sidebar. Its sessions, projects, and enabled accounts load in that system's context.
 4. Use the workspace tabs for **Env, Files, Git, Reviews, Agents, and Terminal**. Chat file links open in the Files panel, keeping the conversation visible.
 
-Choose **Create new project…** from the Workspace or Tasks project dropdown to create a named folder on the selected system. Enter its name and existing parent folder, review the destination, then create it. Workspace tab actions use compact icon buttons with tooltips and accessible labels.
+Choose **Add Project…** from the Workspace or Tasks project dropdown, then select an existing folder on the selected system. Its folder name becomes the project name, and existing files are preserved. Workspace tab actions use compact icon buttons with tooltips and accessible labels.
 
 Selecting an exhausted or unverified account manually applies a **15-minute Auto Switch lock**. Use **More → Unlock** to resume sooner; expiry and unlocking recheck selection within five seconds, even with periodic quota refresh disabled. Selecting an account with available quota removes the lock. Auto Switch must remain enabled, and all quota, enablement, session-wait, and ownership checks still apply.
 

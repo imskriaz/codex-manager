@@ -1087,7 +1087,7 @@ async function runDashboardAction(
       return { workspaceFolders: await browseWorkspaceFolders(payload?.parentFolder) };
     case "createWorkspaceProject": {
       const workspaceProject = await createWorkspaceProject(payload?.projectName, payload?.parentFolder);
-      return { workspaceProject, notice: { level: 'info' as const, message: `Created ${workspaceProject.label}.` } };
+      return { workspaceProject, notice: { level: 'info' as const, message: `Project ready: ${workspaceProject.label}.` } };
     }
     case 'workspaceTerminal':
       return { ...await workspaceTerminal(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.terminalId, payload?.terminalRequest, payload?.terminalProfile, payload?.terminalName), workspaceTerminals: listWorkspaceTerminals() };

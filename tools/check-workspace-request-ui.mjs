@@ -30,11 +30,11 @@ try {
     const picker = page.getByRole('combobox', { name: 'Project', exact: true });
     await picker.waitFor();
     await picker.selectOption('__create_workspace_project__');
-    const modal = page.getByRole('dialog', { name: 'Create new project', exact: true });
+    const modal = page.getByRole('dialog', { name: 'Add Project', exact: true });
     await modal.waitFor();
-    await modal.getByRole('textbox', { name: 'Project name', exact: true }).fill('preview-project');
-    await modal.getByRole('textbox', { name: 'Parent folder', exact: true }).fill('D:\\Projects');
-    assert.match(await modal.locator('.create-project-destination').innerText(), /D:\\Projects\\preview-project/);
+    assert.equal(await modal.getByRole('textbox').count(), 1, 'Only the project folder field is shown');
+    await modal.getByRole('textbox', { name: 'Project folder', exact: true }).fill('D:\\Projects');
+    assert.equal(await modal.locator('.create-project-destination code').innerText(), 'D:\\Projects');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(output, `create-project-${width}.png`) });
     await page.keyboard.press('Tab');

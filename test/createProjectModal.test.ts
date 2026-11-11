@@ -18,11 +18,10 @@ beforeEach(() => {
   vi.stubGlobal('navigator', { onLine: true });
   vi.stubGlobal('window', { addEventListener: (_name: string, listener: typeof fixture.receive) => { fixture.receive = listener; }, removeEventListener: () => { fixture.receive = undefined; } });
   props = { deviceId: 'selected-pc', initialFolder: 'D:\\Projects', onClose: vi.fn(), onCreated: vi.fn(), onFeedback: vi.fn() };
-  render(); const input = find('input')[0]!;
-  (input.props.onInput ?? input.props.oninput)({ currentTarget: { value: 'new-project' } });
+  render();
 });
 afterEach(() => { fixture.slots.forEach(slot => slot?.cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
-const modal = (title = 'Create new project') => nodes(render()).find(node => node.props.title === title)!;
+const modal = (title = 'Add Project') => nodes(render()).find(node => node.props.title === title)!;
 function text(node: unknown): string { if (Array.isArray(node)) return node.map(text).join(''); if (typeof node === 'string') return node; return node && typeof node === 'object' && 'props' in node ? text((node as VNode<any>).props.children) : ''; }
 const button = (label: string, title?: string) => nodes(title ? modal(title) : render()).find(node => node.type === 'button' && (node.props['aria-label'] === label || text(node.props.children) === label))!;
 const input = (label: string) => find('input').find(node => node.props['aria-label'] === label)!;
@@ -31,18 +30,49 @@ const listing = (path = 'D:\\Selected') => ({ workspaceFolders: { path, parent: 
 
 it('sends once and silently selects only the confirmed created folder', () => {
   submit(); submit(); expect(fixture.send).toHaveBeenCalledOnce();
-  expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'createWorkspaceProject', payload: expect.objectContaining({ projectName: 'new-project', parentFolder: 'D:\\Projects', targetDeviceId: 'selected-pc' }) }));
+  expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'createWorkspaceProject', payload: { parentFolder: 'D:\\Projects', targetDeviceId: 'selected-pc', automatic: true } }));
   expect(modal().props.closeDisabled).toBe(true);
   const project = { id: 'new', label: 'new-project', path: 'D:\\Projects\\new-project' };
   reply('create-id', { workspaceProject: project, notice: { level: 'info', message: 'Created new-project.' } });
   expect(props.onCreated).toHaveBeenCalledWith(project); expect(props.onClose).toHaveBeenCalledOnce();
   expect(props.onFeedback).not.toHaveBeenCalled();
 });
+it('shows only the project folder field and submits it without a project name', () => {
+  expect(find('input')).toHaveLength(1);
+  expect(input('Project folder').props.required).toBe(true);
+  expect(button('Add project').props.disabled).toBeFalsy();
+  expect(find('code')[0]!.props.children).toBe('D:\\Projects');
+  submit(); submit();
+  expect(fixture.send).toHaveBeenCalledOnce();
+  expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ payload: { parentFolder: 'D:\\Projects', targetDeviceId: 'selected-pc', automatic: true } }));
+  const project = { id: 'D:\\Projects', label: 'Projects', path: 'D:\\Projects' };
+  reply('create-id', { workspaceProject: project });
+  expect(props.onCreated).toHaveBeenCalledWith(project); expect(props.onClose).toHaveBeenCalledOnce();
+});
+it('requires a project folder', () => {
+  (input('Project folder').props.onInput ?? input('Project folder').props.oninput)({ currentTarget: { value: '  ' } });
+  expect(button('Add project').props.disabled).toBe(true);
+  submit(); expect(fixture.send).not.toHaveBeenCalled();
+});
+it('retains a nameless draft offline and lets the user retry after reconnecting', () => {
+  vi.stubGlobal('navigator', { onLine: false }); submit();
+  expect(fixture.send).not.toHaveBeenCalled();
+  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
+  vi.stubGlobal('navigator', { onLine: true }); submit();
+  expect(fixture.send).toHaveBeenCalledOnce();
+});
+it('ignores a late nameless result after timeout and accepts only the explicit retry', () => {
+  submit(); vi.advanceTimersByTime(25_000); submit();
+  const project = { id: 'D:\\Projects', label: 'Projects', path: 'D:\\Projects' };
+  reply('create-id', { workspaceProject: project }); expect(props.onCreated).not.toHaveBeenCalled();
+  reply('request-2', { workspaceProject: project }); expect(props.onCreated).toHaveBeenCalledWith(project);
+  expect(fixture.send).toHaveBeenCalledTimes(2);
+});
 it('preserves input and sends the host error to action feedback for retry', () => {
   submit(); reply('create-id', undefined, 'failed', 'Storage full');
   expect(props.onFeedback).toHaveBeenCalledWith({ level: 'error', message: 'Storage full' });
   expect(find('p').some(node => node.props.role === 'alert')).toBe(false);
-  expect(find('input')[0]?.props.value).toBe('new-project'); expect(props.onClose).not.toHaveBeenCalled();
+  expect(find('input')[0]?.props.value).toBe('D:\\Projects'); expect(props.onClose).not.toHaveBeenCalled();
   expect(modal().props.closeDisabled).toBe(false);
 });
 it('reports an unconfirmed timeout and ignores late replies without replaying creation', () => {
@@ -54,7 +84,7 @@ it('reports an unconfirmed timeout and ignores late replies without replaying cr
 it('blocks offline submission without discarding the draft', () => {
   vi.stubGlobal('navigator', { onLine: false }); submit(); expect(fixture.send).not.toHaveBeenCalled();
   expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Reconnect') }));
-  expect(find('input')[0]?.props.value).toBe('new-project');
+  expect(find('input')[0]?.props.value).toBe('D:\\Projects');
   modal().props.onClose(); expect(props.onClose).toHaveBeenCalledOnce();
 });
 it('ignores unrelated action replies without request ids', () => {
@@ -68,33 +98,33 @@ it('preserves warning details when project creation succeeds partially', () => {
 });
 it('browses in a separate dialog and selects a parent without creating a project', () => {
   button('Browse folders…').props.onClick(); button('Browse folders…').props.onClick();
-  expect(fixture.send).toHaveBeenCalledOnce(); expect(modal('Select parent folder')).toBeDefined();
+  expect(fixture.send).toHaveBeenCalledOnce(); expect(modal('Select project folder')).toBeDefined();
   expect(modal().props.closeDisabled).toBe(true);
   expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'browseWorkspaceFolders', payload: expect.objectContaining({ targetDeviceId: 'selected-pc' }) }));
   submit(); expect(fixture.send).toHaveBeenCalledOnce();
   reply('create-id', listing()); button('Select folder').props.onClick();
-  expect(input('Parent folder').props.value).toBe('D:\\Selected');
-  expect(modal('Select parent folder')).toBeUndefined(); expect(modal().props.closeDisabled).toBe(false);
+  expect(input('Project folder').props.value).toBe('D:\\Selected');
+  expect(modal('Select project folder')).toBeUndefined(); expect(modal().props.closeDisabled).toBe(false);
   expect(props.onCreated).not.toHaveBeenCalled(); expect(props.onFeedback).not.toHaveBeenCalled();
 });
 it('cancels only the folder picker, preserves the draft and ignores a late reply after reopening', () => {
-  button('Browse folders…').props.onClick(); button('Cancel', 'Select parent folder').props.onClick();
-  expect(find('input')[0]?.props.value).toBe('new-project'); expect(input('Parent folder').props.value).toBe('D:\\Projects');
+  button('Browse folders…').props.onClick(); button('Cancel', 'Select project folder').props.onClick();
+  expect(find('input')[0]?.props.value).toBe('D:\\Projects'); expect(input('Project folder').props.value).toBe('D:\\Projects');
   expect(props.onClose).not.toHaveBeenCalled(); expect(props.onFeedback).not.toHaveBeenCalled();
   button('Browse folders…').props.onClick(); expect(fixture.send).toHaveBeenCalledTimes(2);
   reply('create-id', listing('D:\\Late')); expect(button('Select folder').props.disabled).toBe(true);
   reply('request-2', listing('D:\\Current')); button('Select folder').props.onClick();
-  expect(input('Parent folder').props.value).toBe('D:\\Current');
+  expect(input('Project folder').props.value).toBe('D:\\Current');
   vi.advanceTimersByTime(12000); expect(props.onFeedback).not.toHaveBeenCalled();
 });
 it('reports browse timeout and offline failure with input preserved', () => {
   button('Browse folders…').props.onClick(); vi.advanceTimersByTime(12000);
   expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('timed out') }));
   expect(button('Select folder').props.disabled).toBe(true);
-  button('Cancel', 'Select parent folder').props.onClick();
+  button('Cancel', 'Select project folder').props.onClick();
   vi.stubGlobal('navigator', { onLine: false }); button('Browse folders…').props.onClick();
   expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Reconnect') }));
-  expect(fixture.send).toHaveBeenCalledOnce(); expect(find('input')[0]?.props.value).toBe('new-project');
+  expect(fixture.send).toHaveBeenCalledOnce(); expect(find('input')[0]?.props.value).toBe('D:\\Projects');
 });
 it('does not select a stale listing after typed navigation fails and retains refresh for recovery', () => {
   button('Browse folders…').props.onClick(); reply('create-id', listing());
