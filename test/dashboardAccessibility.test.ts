@@ -2,6 +2,11 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("dashboard accessibility and interaction flow", () => {
+  it("does not render implementation comments as dashboard text", () => {
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).not.toContain("// Workspace routes use the single portal recovery banner.");
+  });
+
   it("keeps modal focus contained and supports Escape dismissal", () => {
     const primitives = readFileSync("webview-src/dashboard/primitives.tsx", "utf8");
     expect(primitives).toContain("useLayoutEffect(() => {");

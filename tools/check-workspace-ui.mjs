@@ -1,7 +1,71 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+export async function checkAccountShortcutsUi(page) {
+  await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+  const shortcutCheck = await page.evaluate(() => {
+    const before = window.__uiActions.filter(action => action.action === 'refreshAll').length;
+    const originalPath = location.pathname + location.search;
+    const handled = [];
+    document.activeElement?.blur();
+    for (const route of ['/workspace', location.pathname, '/tasks']) {
+      history.pushState(null, '', route);
+      for (const key of ['a', 'r', 'v', '/']) {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(event);
+        handled.push(event.defaultPrevented);
+      }
+    }
+    history.replaceState(null, '', originalPath);
+    return { handled, refreshes: window.__uiActions.filter(action => action.action === 'refreshAll').length - before };
+  });
+  assert.ok(shortcutCheck.handled.every(handled => !handled), 'Workspace and Tasks never consume account keyboard shortcuts, even during route changes');
+  assert.equal(shortcutCheck.refreshes, 0, 'Workspace keys never refresh accounts');
+  assert.equal(await page.locator('.add-account-modal:visible, [role="dialog"][aria-modal="true"]:visible').count(), 0, 'Workspace keys never open dashboard dialogs');
+  assert.equal(await page.getByTitle('Open workspace', { exact: true }).count(), 0, 'The redundant Open workspace icon is absent');
+  assert.ok(!(await page.locator('body').innerText()).includes('// Workspace routes use the single portal recovery banner.'), 'Implementation comments are never shown as text');
+}
+
+export async function checkInlineCopyUi(page, sessionId) {
+  await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+  await page.evaluate(sessionId => {
+    window.__inlineCopies = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => {
+      if (window.__denyInlineCopy) throw new Error('Clipboard blocked');
+      window.__inlineCopies.push(text);
+    } } });
+    document.execCommand = () => false;
+    window.__questionHistory = [{ id: 'inline-copy', kind: 'message', role: 'assistant', text: 'Use `admin@example.test`, then `a < b & "quoted"`. Keep [`linked`](https://example.test) as a link.\n\n```text\nblock text\n```' }];
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: {
+      sessionId, streamId: '88888888-8888-4888-8888-888888888888', sequence: 1, status: 'completed', updatedAt: Date.now(),
+      messages: window.__questionHistory
+    } } }));
+  }, sessionId);
+  const email = page.getByRole('button', { name: 'Copy admin@example.test', exact: true });
+  await email.click();
+  await page.waitForFunction(() => window.__inlineCopies.length === 1);
+  assert.equal(await email.getAttribute('title'), 'Copied', 'Inline copy confirms success without changing its contents');
+  assert.equal(await email.innerText(), 'admin@example.test');
+  const symbols = page.getByRole('button', { name: 'Copy a < b & "quoted"', exact: true });
+  await symbols.focus(); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__inlineCopies.length === 2);
+  await symbols.focus(); await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.__inlineCopies.length === 3);
+  assert.deepEqual(await page.evaluate(() => window.__inlineCopies), ['admin@example.test', 'a < b & "quoted"', 'a < b & "quoted"']);
+  assert.equal(await page.locator('a[href="https://example.test"]').getByRole('button').count(), 0, 'Linked code keeps normal link behavior');
+  const block = page.getByRole('button', { name: 'Copy code', exact: true });
+  await block.focus(); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__inlineCopies.length === 4);
+  assert.equal(await page.evaluate(() => window.__inlineCopies[3]), 'block text\n', 'Existing block-copy behavior is preserved');
+  await page.evaluate(() => { window.__denyInlineCopy = true; });
+  await email.click();
+  await page.locator('.dashboard-notice').filter({ hasText: 'Code could not be copied' }).waitFor();
+  assert.equal(await email.innerText(), 'admin@example.test', 'Copy failure keeps the original text');
+  assert.equal(await email.isEnabled(), true, 'Copy failure allows retry');
+}
+
 export async function checkWorkspaceUi(page, width, height, output) {
+  await checkAccountShortcutsUi(page);
   const settings = page.getByRole('button', { name: 'Message settings', exact: true });
   const draft = page.getByRole('textbox', { name: 'Message Codex', exact: true });
   const send = page.getByRole('button', { name: 'Send message', exact: true });

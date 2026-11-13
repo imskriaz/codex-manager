@@ -10,7 +10,7 @@ export type CliComposerDraft = {
   autoApprove?: boolean;
   followUpMode?: 'queue' | 'steer';
 };
-export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string; session?: { id: string; deviceId?: string } };
+export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string; messages?: DashboardCliSessionMessage[]; session?: { id: string; deviceId?: string } };
 
 /** An existing running marker alone does not acknowledge a follow-up. */
 export function isCliSubmissionEcho(message: DashboardCliSessionMessage, submitted: CliComposerDraft, seenIds: Set<string>, turnId?: string): boolean {

@@ -59,10 +59,11 @@ describe("overview actions", () => {
     expect(main).toContain('"resumeCodexSessions", session, { openInVsCode: true }');
     expect(main).toContain("session.deviceName || peer?.name");
     expect(main).toContain('projectDisplayName(session.projectPath?.trim() || "Workspace")');
-    expect(main).toContain("const belongsToActivePeer = selectedPeer?.local");
-    expect(main).toContain("!session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)");
-    expect(main).toContain("if (!belongsToActivePeer)");
-    expect(main).toContain('if (!initialMessages.length) requestCliSessionMessages(session.id, session.deviceId, true);');
+    const workspace = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(workspace).toContain("activeNewRequestRef.current === result.requestId");
+    expect(workspace).toContain("(JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local')");
+    expect(main).toContain("setCliSessionMessages(initialMessages ?? [])");
+    expect(main).toContain("requestCliSessionMessages(session.id, session.deviceId, false, false)");
     expect(main).toContain('codexModelLabel(session.model) || "Model unavailable"');
     expect(main).toContain(': "Session dashboard"');
     expect(main).toMatch(/setCliSessionsMenuOpen\(false\);\r?\n\s+openCliSessions\(\);/);

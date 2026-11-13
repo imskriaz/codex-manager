@@ -124,6 +124,34 @@ describe("manual Codex navigation and recovery", () => {
   });
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
   const enableSessions = () => vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+  it.each(['browser', 'webview'] as const)('acknowledges concurrent %s starts without waiting for optional discovery and deduplicates retries', async hostKind => {
+    enableSessions();
+    const summaries = new Map<string, { id: string; title: string; status: 'running'; projectPath: string }>();
+    let release!: (value: string) => void;
+    const first = new Promise<string>(resolve => { release = resolve; });
+    const start = vi.spyOn(sessionEditors, 'startCodexCliSession').mockImplementation(async options => {
+      const createdId = options.text === 'First' ? await first : 'second-created';
+      summaries.set(createdId, { id: createdId, title: options.text, status: 'running', projectPath: 'D:/project' });
+      return createdId;
+    });
+    vi.spyOn(sessionEditors, 'readNewCodexCliSessionSummary').mockImplementation(id => summaries.get(id));
+    readCodexCliSessionMessagesMock.mockReset().mockImplementation(() => new Promise(() => undefined));
+    readCodexCliSessionsMock.mockReset().mockImplementation(() => new Promise(() => undefined));
+    const ctx = { ...createContext(), hostKind };
+    const request = { type: 'dashboard:action' as const, action: 'startCodexCliSession' as const, requestId: 'first-start', payload: { text: 'First', projectPath: 'D:/project' } };
+    const pending = executeDashboardActionMessage(ctx, request);
+    const duplicate = executeDashboardActionMessage(ctx, request);
+    try {
+      const result = await executeDashboardActionMessage(ctx, { ...request, requestId: 'second-start', payload: { ...request.payload, text: 'Second' } });
+      expect(result).toMatchObject({ status: 'completed', payload: { cliSession: { id: 'second-created' }, cliSessionMessages: [{ role: 'user', text: 'Second' }] } });
+      expect(start).toHaveBeenCalledTimes(2);
+      expect(readCodexCliSessionMessagesMock).not.toHaveBeenCalled();
+      expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
+    } finally { release('first-created'); }
+    expect((await pending).status).toBe('completed');
+    expect((await duplicate).status).toBe('completed');
+    expect(start).toHaveBeenCalledTimes(2);
+  });
   it("opens the official Codex panel from the More action", async () => {
     enableSessions();
     const open = vi.spyOn(sessionEditors, "openNewCodexWebview").mockResolvedValue(undefined);

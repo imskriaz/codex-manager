@@ -54,6 +54,24 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it('starts an independent native session while another startup is waiting and another turn is running', async () => {
+    const ids = [id, '01a04882-d037-7a42-ad24-9afb61901200', '01a04882-d037-7a42-ad24-9afb61901201'];
+    let acceptFirst!: () => void, finish!: () => void;
+    const acceptance = new Promise<void>(resolve => { acceptFirst = resolve; });
+    const completion = new Promise<void>(resolve => { finish = resolve; });
+    const connections = ids.map((sessionId, index) => ({ request: vi.fn(async () => ({ thread: { id: sessionId }, sandbox: { type: 'readOnly' } })), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(),
+      startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { if (index === 0) await acceptance; started(`turn-${index}`); await completion; }) }));
+    for (const rpc of connections) mocks.open.mockResolvedValueOnce(rpc);
+    const first = startCodexCliSession({ text: 'First', projectPath: root, sandboxMode: 'read-only' });
+    try {
+      await vi.waitFor(() => expect(connections[0]!.startAndWaitForTurn).toHaveBeenCalled());
+      await expect(startCodexCliSession({ text: 'Second', projectPath: root, sandboxMode: 'read-only' })).resolves.toBe(ids[1]);
+      await expect(startCodexCliSession({ text: 'Third', projectPath: root, sandboxMode: 'read-only' })).resolves.toBe(ids[2]);
+      expect(readNewCodexCliSessionSummary(ids[1]!)?.status).toBe('running');
+      expect(readNewCodexCliSessionSummary(ids[2]!)?.status).toBe('running');
+      expect(connections.every(rpc => !rpc.close.mock.calls.length)).toBe(true);
+    } finally { acceptFirst(); finish(); await first; await vi.waitFor(() => expect(connections.every(rpc => rpc.close.mock.calls.length === 1)).toBe(true)); }
+  });
   it('reports a conflicting standalone access change instead of silently accepting a restricted mode', async () => {
     Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
     await expect(setCodexSessionAccess(id, 'workspace-write', false)).rejects.toThrow('Standalone sessions use Full access');

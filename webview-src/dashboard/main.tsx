@@ -1,5 +1,6 @@
 import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { WorkspaceMenu } from './workspaceMenu';
+import { getAccountShortcut } from './accountShortcuts';
 import { dashboardPageTitle } from './pageTitle';
 import { codexModelLabel } from "./helpers";
 import { isCodexSessionAccess } from '../../src/domain/codexSessionAccess';
@@ -305,8 +306,8 @@ function App() {
   const cliLiveStatesRef = useRef<Record<string, DashboardCodexSessionLiveState>>({});
   const liveAuthority = useRef(new Set<string>());
   const [submissionResults, setSubmissionResults] = useState<CliSubmissionResult[]>([]);
-  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"], message?: string, fileRevision?: string, session?: CliSubmissionResult["session"]) =>
-    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision, session }].slice(-128));
+  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"], message?: string, fileRevision?: string, session?: CliSubmissionResult["session"], messages?: DashboardCliSessionMessage[]) =>
+    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision, session, messages }].slice(-128));
   const workspaceScopeRef = useRef<string>();
   const workspaceGeneration = useRef(0);
   const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; action: DashboardActionName; fileContent?: string }>());
@@ -1275,28 +1276,12 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "startCodexCliSession") {
-        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status, message.error, undefined, message.payload?.cliSession);
+        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status, message.error, undefined, message.payload?.cliSession, message.payload?.cliSessionMessages);
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         if (message.status === "completed" && message.payload?.cliSession) {
           const session = message.payload.cliSession;
-          const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions, message.payload.cliSessionsDeviceId);
-          setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
+          setCliSessions(current => reconcileCliSessionStatuses(mergeCachedCliSessions([session, ...current.filter(candidate => !sameCliSessionTarget(candidate, session))], current, message.payload?.cliSessionsDeviceId), cliLiveStatesRef.current));
           if ((session.deviceId ?? "local") === (selectedPeer?.local ? "local" : selectedPeer?.id)) setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
-          const belongsToActivePeer = selectedPeer?.local
-            ? !session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)
-            : (session.deviceId ?? "local") === (selectedPeer?.id ?? "local");
-          if (!belongsToActivePeer) {
-            showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
-            return;
-          }
-          messageViewRevision.current++;
-          selectedCliSessionRef.current = session;
-          setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(session, selectedCliSession), cliLiveStatesRef.current));
-          const initialMessages = message.payload.cliSessionMessages ?? [];
-          setCliSessionMessages(initialMessages);
-          setCliSessionMessagesError(undefined);
-          if (!initialMessages.length) requestCliSessionMessages(session.id, session.deviceId, true);
-          navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
           showCliSessionFeedback({
             key: Date.now(),
             level: "info",
@@ -1843,34 +1828,27 @@ function App() {
 
   useEffect(() => {
     const handleKeyboardShortcut = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
-      const typing =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "SELECT" ||
-        target?.isContentEditable;
-      if (event.key === "/" && !typing) {
+      if (!snapshot || state.settingsOpen || document.querySelector('[role="dialog"][aria-modal="true"], :popover-open, .dashboard-action-scope:disabled')) return;
+      const shortcut = getAccountShortcut(event, isBrowserDashboard ? window.location.pathname : "/");
+      if (shortcut === "search") {
         event.preventDefault();
         searchInputRef.current?.focus();
         return;
       }
-      if (typing || event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-      if (event.key.toLowerCase() === "r" && snapshot && !isActionPending("refreshAll")) {
+      if (shortcut === "refresh" && !isActionPending("refreshAll")) {
         event.preventDefault();
         sendAction("refreshAll");
-      } else if (event.key.toLowerCase() === "a" && snapshot) {
+      } else if (shortcut === "add") {
         event.preventDefault();
         modals.openAddAccountModal();
-      } else if (event.key.toLowerCase() === "v") {
+      } else if (shortcut === "view") {
         event.preventDefault();
         setUiPreferences((current) => ({ ...current, view: current.view === "cards" ? "list" : "cards" }));
       }
     };
     window.addEventListener("keydown", handleKeyboardShortcut);
     return () => window.removeEventListener("keydown", handleKeyboardShortcut);
-  }, [snapshot, isActionPending, sendAction, modals]);
+  }, [snapshot, state.settingsOpen, isBrowserDashboard, isActionPending, sendAction, modals]);
 
   const usageAccounts = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local)
     ? snapshot?.accounts : snapshot?.peerAccounts?.[selectedPeerId];
@@ -1969,7 +1947,7 @@ function App() {
     setCliSessionMessagesError(undefined);
     requestCliSessions();
   };
-  const selectCliSession = (session: DashboardCliSessionSummary): void => {
+  const selectCliSession = (session: DashboardCliSessionSummary, initialMessages?: DashboardCliSessionMessage[]): void => {
     if (session.archived) {
       showCliSessionFeedback({
         key: Date.now(),
@@ -1982,11 +1960,11 @@ function App() {
     navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     selectedCliSessionRef.current = session;
     setSelectedCliSession(reconcileCliSessionStatus(session, cliLiveStatesRef.current));
-    setCliSessionMessages([]);
+    setCliSessionMessages(initialMessages ?? []);
     setCliSessionMessagesError(undefined);
     const revision = ++messageViewRevision.current;
     void readCliSessionMessagesCache(session.id, session.deviceId).then((cached) => {
-      if (cached && revision === messageViewRevision.current && sameCliSessionTarget(session, currentSessionTarget())) setCliSessionMessages(cached);
+      if (!initialMessages?.length && cached && revision === messageViewRevision.current && sameCliSessionTarget(session, currentSessionTarget())) setCliSessionMessages(cached);
     });
     requestCliSessionMessages(session.id, session.deviceId, false, false);
   };
@@ -3207,7 +3185,6 @@ function App() {
         />
       }
 
-      // Workspace routes use the single portal recovery banner.
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
@@ -3232,7 +3209,6 @@ function App() {
               steering={Boolean(selectedCliSession && [...steerRequests.current].some(requestId => sameCliSessionTarget(turnRequests.current.get(requestId), selectedCliSession)))}
               composerConfig={cliComposerConfig}
               loading={cliListLoading}
-              starting={isActionPending("startCodexCliSession")}
               messagesLoading={isActionPending("getCodexCliSessionMessages")}
               sending={isActionPending("sendCodexCliSessionMessage") && [...turnRequests.current.values()].some((target) => sameCliSessionTarget(target, selectedCliSession))}
               stopping={isActionPending("cancelCodexCliSessionTurn")}

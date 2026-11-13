@@ -14415,6 +14415,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-message-markdown pre { position: relative; overflow: auto; margin: 8px 0; padding: 10px; border-radius: 7px; background: var(--bg-muted); }
 .cli-workspace .cli-message-markdown code { font-family: var(--vscode-editor-font-family, Consolas, monospace); }
 .cli-workspace .cli-message-markdown :not(pre) > code { padding: 1px 4px; border-radius: 4px; background: var(--bg-muted); }
+.cli-workspace .cli-inline-code-copy { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; text-align: inherit; cursor: copy; }
+.cli-workspace .cli-inline-code-copy:hover code, .cli-workspace .cli-inline-code-copy.is-copied code { background: var(--bg-elevated); }
+.cli-workspace .cli-inline-code-copy.is-copied::after { content: ' Copied'; color: var(--text-muted); font-size: .85em; }
 .cli-workspace .cli-message-markdown table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; margin: 8px 0; }
 .cli-workspace .cli-message-markdown th, .cli-workspace .cli-message-markdown td { padding: 5px 8px; border: 1px solid var(--border-default); text-align: left; vertical-align: top; }
 .cli-workspace .cli-message-markdown th { background: color-mix(in srgb, var(--bg-muted) 72%, transparent); font-weight: 700; }
@@ -17445,3 +17448,6 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-context-panel-v3[hidden] { display: none !important; }
 
 .cli-workspace .is-dense-tree .cli-project-select strong { font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+
+.cli-new-session-status { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin: 0 16px 12px; font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
+.cli-new-session-status[role="alert"] { color: var(--danger); }

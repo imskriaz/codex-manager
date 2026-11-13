@@ -1,4 +1,5 @@
 import { workspaceRelativePath } from './workspaceFileLink';
+import { readCliSessionStarts, writeCliSessionStarts } from './cliSessionStarts';
 import { ACCOUNT_CENTER_SIZE_KEY, loadAccountCenterSize, type AccountCenterSize } from './preferences';
 import { CreateProjectModal, CREATE_PROJECT_OPTION } from './createProjectModal';
 import { sessionQuestionText } from '../../src/domain/sessionQuestions';
@@ -135,6 +136,17 @@ markdownRenderer.renderer.rules["table_close"] = (tokens, index, options, _env, 
 const renderMarkdownFence = markdownRenderer.renderer.rules["fence"]!;
 markdownRenderer.renderer.rules["fence"] = (tokens, index, options, env, renderer) =>
   `<div class="cli-markdown-code-block"><button type="button" class="cli-code-copy" aria-label="Copy code">Copy code</button>${renderMarkdownFence(tokens, index, options, env, renderer)}</div>`;
+const renderInlineCode = markdownRenderer.renderer.rules["code_inline"]!;
+markdownRenderer.renderer.rules["code_inline"] = (tokens, index, options, env, renderer) => {
+  const code = renderInlineCode(tokens, index, options, env, renderer);
+  let inLink = false;
+  for (const token of tokens.slice(0, index)) {
+    if (token.type === 'link_open') inLink = true;
+    else if (token.type === 'link_close') inLink = false;
+  }
+  if (inLink) return code;
+  return `<button type="button" class="cli-inline-code-copy" title="Copy text" aria-label="Copy ${markdownRenderer.utils.escapeHtml(tokens[index]!.content)}">${code}</button>`;
+};
 markdownRenderer.renderer.rules["link_open"] = (tokens, index, options, _env, renderer) => {
   const token = tokens[index]!, file = workspaceFileFromLink(String(token.attrGet('href') ?? ''));
   if (file) { token.attrSet('href', '#'); token.attrSet('data-workspace-file', file); }
@@ -185,7 +197,6 @@ export type CliSessionsPageProps = {
   onReadAgent?: (agent: DashboardCliSessionSummary) => void;
   composerConfig?: DashboardCliComposerConfig;
   loading: boolean;
-  starting: boolean;
   messagesLoading: boolean;
   sending: boolean;
   stopping: boolean;
@@ -227,7 +238,7 @@ export type CliSessionsPageProps = {
   onPeerChange?: (peerId: string) => void;
   onRefresh: () => void;
   onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string }) => string | undefined;
-  onSelect: (session: DashboardCliSessionSummary) => void;
+  onSelect: (session: DashboardCliSessionSummary, initialMessages?: DashboardCliSessionMessage[]) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
   onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean, gitHistory?: DashboardWorkspaceGitRequest) => void;
@@ -366,8 +377,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   const [attachmentReading, setAttachmentReading] = useState(false);
   const [pendingMessages, setPendingMessages] = useState<Array<{ requestId: string; key: string; message: DashboardCliSessionMessage; session?: CliSubmissionResult["session"]; error?: string; sent?: boolean; failed?: boolean }>>([]);
+  const [activeNewRequest, setActiveNewRequest] = useState<string>();
+  const activeNewRequestRef = useRef(activeNewRequest);
+  const selectNewRequest = (id?: string) => { activeNewRequestRef.current = id; setActiveNewRequest(id); };
+  useEffect(() => {
+    if (props.selectedSession || props.dashboardMode || props.taskBoardActive) selectNewRequest();
+  }, [props.selectedSession?.id, props.selectedSession?.deviceId, props.dashboardMode, props.taskBoardActive]);
+
   const submittedDrafts = useRef(new Map<string, ComposerDraft & { projectPath?: string; key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; session?: CliSubmissionResult["session"]; seenIds: Set<string>; turnId?: string }>());
-  const submittingDrafts = useRef(new Map<string, string>());
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
@@ -429,7 +446,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [sidebarToggleTarget, setSidebarToggleTarget] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
     setSidebarToggleTarget(railCollapsed ? document.getElementById(props.dashboardMode ? props.taskBoardActive ? 'task-sidebar-toggle-slot' : 'dashboard-sidebar-toggle-slot' : 'session-sidebar-toggle-slot') : null);
-  }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id]);
+  }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, activeNewRequest]);
 
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
   const toolsCollapsed = contextCollapsed || !props.selectedSession || props.dashboardMode === true;
@@ -448,6 +465,33 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<DashboardCliSessionSummary>();
   const [composerFeedback, setComposerFeedback] = useState<DashboardNotice>();
+  const [startsStorageReady, setStartsStorageReady] = useState(false);
+  const startsStorageValid = useRef(true);
+  useEffect(() => {
+    try {
+      const saved = readCliSessionStarts(sessionStorage);
+      for (const item of saved) {
+        const clearedDraft = acknowledgeCliComposerDraft(item.draft, item.draft);
+        submittedDrafts.current.set(item.requestId, { ...item.draft, key: item.key, projectPath: item.projectPath, clearedDraft, failedDraft: clearedDraft, seenIds: new Set() });
+      }
+      setPendingMessages(current => [...saved.filter(item => !current.some(candidate => candidate.requestId === item.requestId)).map(item => ({ requestId: item.requestId, key: item.key, failed: true, error: 'This tab reopened before creation was confirmed. Check sessions before resending; the prompt may already have been accepted.', message: { id: `pending-${item.requestId}`, role: 'user' as const, kind: 'message' as const, text: item.draft.text, images: item.draft.attachments.filter(file => file.kind === 'image').map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(item.draft.attachments) } })), ...current]);
+    } catch (error) {
+      startsStorageValid.current = false;
+      props.onActionFeedback({ level: 'warning', message: `Session start recovery is unavailable: ${(error as Error).message}` });
+    }
+    setStartsStorageReady(true);
+  }, []);
+  useEffect(() => {
+    if (!startsStorageReady || !startsStorageValid.current) return;
+    try {
+      writeCliSessionStarts(sessionStorage, pendingMessages.filter(item => !item.sent).flatMap(item => {
+        const draft = submittedDrafts.current.get(item.requestId);
+        return draft ? [{ requestId: item.requestId, key: item.key, draft, projectPath: draft.projectPath }] : [];
+      }));
+    } catch {
+      props.onActionFeedback({ level: 'warning', message: 'Browser storage could not save session starts. Prompts are kept in this tab; copy them before closing or reloading.' });
+    }
+  }, [pendingMessages, startsStorageReady]);
   useEffect(() => { if (props.connected !== false) setComposerFeedback(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
   const reportLocalFeedback = (notice: DashboardNotice, sourceKey = draftKey): void => { if (currentDraftKey.current === sourceKey) setComposerFeedback(notice); props.onActionFeedback(notice); };
   useEffect(() => setComposerFeedback(undefined), [props.selectedSession?.id, props.selectedSession?.deviceId]);
@@ -532,7 +576,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       if (result.session) submitted.session = result.session;
-      if (submittingDrafts.current.get(submitted.key) === result.requestId) submittingDrafts.current.delete(submitted.key);
+      if (result.status === 'completed' && result.session && activeNewRequestRef.current === result.requestId && (JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local') && !props.selectedSession && !props.dashboardMode && !props.taskBoardActive) {
+        const session = props.sessions.find(candidate => sameCliSessionTarget(candidate, result.session));
+        if (session) { selectNewRequest(); props.onSelect(session, result.messages); }
+      }
       // Retain unconfirmed sends for late success without discarding newer edits.
       if (result.status !== "completed" && submitted.failedDraft) continue;
       setComposerDrafts((current) => {
@@ -545,14 +592,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         return { ...current, [submitted.key]: next };
       });
     }
-  }, [props.submissionResults]);
+  }, [props.submissionResults, props.sessions, selectedDevice]);
 
   useEffect(() => {
     for (const [requestId, submitted] of submittedDrafts.current) {
-      if ((submitted.key !== draftKey && !sameCliSessionTarget(submitted.session, props.selectedSession)) || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId))) continue;
+      if (!sameCliSessionTarget(submitted.session, props.selectedSession) || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId))) continue;
       submittedDrafts.current.delete(requestId);
       setPendingMessages(current => current.filter(item => item.requestId !== requestId));
-      if (submittingDrafts.current.get(submitted.key) === requestId) submittingDrafts.current.delete(submitted.key);
       setComposerDrafts(current => {
         const draft = current[submitted.key];
         if (!draft) return current;
@@ -704,6 +750,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   useEffect(() => {
     if (composerSystem.current === composerSystemKey) return;
     composerSystem.current = composerSystemKey;
+    selectNewRequest();
     setNewChatProject(undefined);
     setProjectPath(undefined);
   }, [composerSystemKey]);
@@ -815,6 +862,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       gitNotice: requestId ? undefined : { level: 'error', message: 'Git action was not sent. Your draft was kept.' } } }));
   };
   const startNewChat = (nextProject?: string): void => {
+    selectNewRequest();
+    setComposerFeedback(undefined);
     if (mobileLayout) setRailCollapsed(true);
     if (props.selectedSession) props.onPeerChange?.(props.selectedSession.deviceId ?? localPeerId ?? "local");
     props.onBackToList();
@@ -904,7 +953,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const canResume = canResumeCodexSession(session);
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
-      <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
+      <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); selectNewRequest(); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
       <span class="cli-session-row-status" title={running ? (session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running") : undefined} aria-label={running ? (session.status === "unknown" ? "Running state unavailable" : "Running") : undefined}>
@@ -914,8 +963,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </div>;
     })()
   );
-  const renderStartingSession = (): preact.ComponentChildren => props.starting ? <div role="listitem" class="cli-session-row is-starting" aria-live="polite"><span class="cli-session-row-main has-project"><strong>Starting new session…</strong><small class="cli-session-row-meta">Waiting for Codex to accept the first turn</small></span><span class="cli-session-row-status"><span class="cli-session-spinner" aria-hidden="true" /></span></div> : null;
+  const renderStartingSession = (): preact.ComponentChildren => pendingMessages.filter(item => !item.sent && (JSON.parse(item.key) as unknown[])[0] === (selectedDevice ?? 'local')).map(item => <div key={item.requestId} role="listitem" class="cli-session-row is-starting" aria-live="polite">
+    <button type="button" class="cli-session-row-select" onClick={() => { props.onBackToList(); selectNewRequest(item.requestId); setNewChatProject(submittedDrafts.current.get(item.requestId)?.projectPath ?? ''); if (mobileLayout) setRailCollapsed(true); }}>
+      <span class="cli-session-row-main has-project"><strong>{item.message.text || 'New session'}</strong><small class="cli-session-row-meta">{item.failed ? 'Session creation unconfirmed' : 'Starting new session…'}</small></span>
+    </button><span class="cli-session-row-status">{item.failed ? 'Review' : <span class="cli-session-spinner" aria-hidden="true" />}</span></div>);
   const returnToSessionList = (): void => {
+    selectNewRequest();
     setNewChatProject(undefined);
     props.onBackToList();
   };
@@ -959,7 +1012,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       }
       return id;
     }
-    if (submittingDrafts.current.has(draftKey) || (currentTurnRunning && !canSteer) || props.stopping || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
+    if (activeNewRequestRef.current || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
+    if (pendingMessages.filter(item => !item.sent).length >= 20) { reportLocalFeedback({ level: 'warning', message: 'Too many session starts are awaiting confirmation. Review them in the session list before starting another. Your draft is kept.' }); return; }
     const existingDraft = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
     const current = existingDraft;
     const text = current.text.trim(), uploads = current.attachments;
@@ -971,7 +1025,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     catch (error) { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
     const clearedDraft = acknowledgeCliComposerDraft(existingDraft, current);
     const submitted = { ...current, model, reasoningEffort, sandboxMode, autoApprove, projectPath: newChatProject ?? projectPath, key: draftKey, clearedDraft, seenIds: new Set(props.messages.map(message => message.id)), turnId: canSteer ? steeringTurnId : undefined };
-    submittingDrafts.current.set(draftKey, "sending");
     markDraftFields(['text', 'attachments']);
     composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: clearedDraft };
     setComposerDrafts(composerDraftsRef.current);
@@ -979,50 +1032,60 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     try {
     requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, autoApprove, projectPath: newChatProject ?? projectPath });
     } catch (error) {
-      submittingDrafts.current.delete(draftKey);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
       reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); return;
     }
     if (!requestId) {
-      submittingDrafts.current.delete(draftKey);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
       reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return;
     }
-    setPendingMessages(previous => [...previous.filter(item => !item.failed || item.key !== draftKey), { requestId, key: draftKey, message: { id: `pending-${requestId}`, kind: "message" as const, role: "user" as const, text, turnId: submitted.turnId, timestamp: new Date().toISOString(), images: uploads.filter(file => file.kind === "image").map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(uploads) } }].slice(-128));
+    setPendingMessages(previous => [...previous.filter(item => !item.sent), ...previous.filter(item => item.sent).slice(-30), { requestId, key: draftKey, message: { id: `pending-${requestId}`, kind: "message" as const, role: "user" as const, text, turnId: submitted.turnId, timestamp: new Date().toISOString(), images: uploads.filter(file => file.kind === "image").map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(uploads) } }]);
     submittedDrafts.current.set(requestId, submitted);
-    submittingDrafts.current.set(draftKey, requestId);
-    for (const [id, previous] of submittedDrafts.current) {
+    selectNewRequest(requestId);
+    const unconfirmed = new Set(pendingMessages.filter(item => !item.sent).map(item => item.requestId));
+    for (const [id] of submittedDrafts.current) {
       if (submittedDrafts.current.size <= 128) break;
-      if (previous.failedDraft) submittedDrafts.current.delete(id);
+      if (id !== requestId && !unconfirmed.has(id)) submittedDrafts.current.delete(id);
     }
     return requestId;
   };
   const resendNewMessage = (requestId: string): void => {
     const saved = submittedDrafts.current.get(requestId);
-    if (!saved || !saved.failedDraft || submittingDrafts.current.has(saved.key) || props.starting || props.connected === false) return;
+    if (!saved || !saved.failedDraft || props.connected === false) return;
     try {
       const nextId = props.onStart({ text: saved.text, attachments: saved.attachments, model: saved.model, reasoningEffort: saved.reasoningEffort, sandboxMode: saved.sandboxMode ?? sandboxMode, autoApprove: saved.autoApprove, projectPath: saved.projectPath });
       if (!nextId) { reportLocalFeedback({ level: 'warning', message: 'Resend was not sent. The message is kept here.' }); return; }
       submittedDrafts.current.delete(requestId);
       submittedDrafts.current.set(nextId, { ...saved, failedDraft: undefined });
-      submittingDrafts.current.set(saved.key, nextId);
+      selectNewRequest(nextId);
       setPendingMessages(previous => previous.map(item => item.requestId === requestId ? { ...item, requestId: nextId, sent: false, failed: false } : item));
     } catch (error) { reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); }
   };
-  const visiblePendingMessages = pendingMessages.filter(item => props.selectedSession ? sameCliSessionTarget(item.session, props.selectedSession) : item.key === draftKey && newChatProject !== undefined);
+  const editNewMessage = (requestId: string): void => {
+    const saved = submittedDrafts.current.get(requestId);
+    if (!saved?.failedDraft) return;
+    const current = composerDraftsRef.current[saved.key] ?? { text: '', attachments: [] };
+    if (!canRestoreCliComposerDraft(current, saved)) { reportLocalFeedback({ level: 'warning', message: 'Your newer draft was kept. Send or clear it before editing this prompt.' }); return; }
+    composerDraftsRef.current = { ...composerDraftsRef.current, [saved.key]: restoreFailedCliComposerDraft(current, saved) };
+    setComposerDrafts(composerDraftsRef.current);
+    submittedDrafts.current.delete(requestId);
+    setPendingMessages(items => items.filter(item => item.requestId !== requestId));
+    selectNewRequest();
+    reportLocalFeedback({ level: 'warning', message: 'Prompt moved to the composer. Check sessions before sending again; creation may already have succeeded.' });
+  };
+  const visiblePendingMessages = pendingMessages.filter(item => {
+    if (!props.selectedSession) return item.requestId === activeNewRequest;
+    if (!sameCliSessionTarget(item.session, props.selectedSession)) return false;
+    const submitted = submittedDrafts.current.get(item.requestId);
+    return !submitted || !props.messages.some(message => isCliSubmissionEcho(message, submitted, submitted.seenIds, submitted.turnId));
+  });
   const pendingNewChat = !props.selectedSession && visiblePendingMessages.length > 0;
-  const renderPendingMessages = () => visiblePendingMessages.length ? <div class="cli-local-queue" aria-label="Local message queue">
-    <button type="button" class="cli-queue-summary" popovertarget="new-session-queue" aria-haspopup="dialog"><QueueIcon /><span>Queued · {visiblePendingMessages.length}</span><ChevronIcon /></button>
-    <div id="new-session-queue" popover="auto" class="cli-queue-list-popover" role="dialog" aria-label="Queued messages">
-      <header><strong>Queued messages</strong><button type="button" class="cli-icon-button" popovertarget="new-session-queue" popovertargetaction="hide" aria-label="Close queued messages"><CloseIcon /></button></header>
-      {visiblePendingMessages.map(item => <article key={item.requestId} class={`cli-queue-list-item is-${item.failed ? 'failed' : item.sent ? 'sent' : 'queued'}`}>
-        <div class="cli-queue-list-copy"><strong>{item.failed ? 'Unconfirmed' : item.sent ? 'Sent' : 'Queued'}</strong><p>{item.message.text || 'Attachment'}</p>{item.error || item.failed ? <small role="alert">{item.error ?? 'Session creation was not confirmed. Check sessions before resending; the prompt may have been accepted.'}</small> : null}</div>
-        {item.failed ? <button type="button" class="cli-icon-button" title="Resend" aria-label="Resend queued message" disabled={props.connected === false || props.starting} onClick={() => resendNewMessage(item.requestId)}><RefreshIcon /></button> : null}
-      </article>)}
-    </div>
-  </div> : null;
+  const renderPendingMessages = () => visiblePendingMessages.map(item => <div key={item.requestId} class="cli-new-session-message">
+    <SessionTranscript messages={[item.message]} onActionFeedback={reportLocalFeedback} logoUri={props.logoUri} />
+    <div class="cli-new-session-status" role={item.failed ? 'alert' : 'status'}><span>{item.failed ? 'Unconfirmed' : 'Sent'}</span>{item.failed ? <><small>{item.error ?? 'Session creation was not confirmed. Check sessions before resending; the prompt may have been accepted.'}</small><button type="button" disabled={props.connected === false} onClick={() => resendNewMessage(item.requestId)}>Resend message</button><button type="button" onClick={() => editNewMessage(item.requestId)}>Edit message</button></> : null}</div>
+  </div>);
   const addAttachments = async (files: File[]): Promise<void> => {
-    if (attachmentReadRef.current || props.starting) return;
+    if (attachmentReadRef.current) return;
     if (!files.length) return;
     attachmentReadRef.current = true;
     setAttachmentReading(true);
@@ -1134,14 +1197,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       <div class={`cli-workspace-grid ${props.selectedSession ? "has-context" : ""}`}>
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label="Codex sessions">
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
-            <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>
+            <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>
             {props.browser ? <label class="cli-rail-system" title="Switch system"><span aria-hidden="true"><Icon><rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 16v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></Icon></span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
-                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
-                <button type="button" class="cli-dashboard-nav cli-workspace-nav" aria-current={props.selectedSession ? "page" : undefined} onClick={() => { if (mobileLayout) setRailCollapsed(true); returnToSessionList(); }} title="Open workspace"><SidebarIcon /><span>Workspace</span></button>
-                <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => props.onTasks?.()} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>
+                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
+                <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => { selectNewRequest(); props.onTasks?.(); }} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav>
@@ -1288,7 +1350,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : !props.selectedSession ? (
-                <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the queued prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
+                <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the sent prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
                ) : <>
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
                  <Composer
@@ -1347,7 +1409,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
+              <Composer onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>
@@ -1826,6 +1888,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
   const feedback = onFeedback ?? inheritedFeedback;
   const html = useMemo(() => markdownRenderer.render(text), [text]);
   const [preview, setPreview] = useState<{ src: string; alt?: string }>();
+  const [copyNotice, setCopyNotice] = useState('');
   const markdownRoot = useRef<HTMLDivElement>(null);
   const gallery = () => Array.from(markdownRoot.current?.querySelectorAll('img') ?? []).map(image => ({ src: image.getAttribute('src') || image.src, alt: image.alt }));
   const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
@@ -1841,22 +1904,34 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
       setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt });
       return;
     }
-    const button = (event.target as Element).closest<HTMLButtonElement>(".cli-code-copy");
+    const inlineButton = (event.target as Element).closest<HTMLButtonElement>(".cli-inline-code-copy");
+    const button = inlineButton ?? (event.target as Element).closest<HTMLButtonElement>(".cli-code-copy");
     if (!button || button.disabled) return;
-    const code = button.parentElement?.querySelector("pre code");
+    const code = inlineButton ? button.querySelector('code') : button.parentElement?.querySelector("pre code");
     if (!code) return;
     button.disabled = true;
+    if (inlineButton) { button.classList.remove('is-copied'); button.title = 'Copy text'; }
+    setCopyNotice('');
     try {
       await copyWorkspaceText(code.textContent ?? "");
-      button.textContent = "Copied";
-      window.setTimeout(() => { if (button.isConnected) button.textContent = "Copy code"; }, 1500);
+      if (inlineButton) {
+        button.classList.add('is-copied');
+        button.title = 'Copied';
+        setCopyNotice('Copied text.');
+      } else button.textContent = "Copied";
+      window.setTimeout(() => {
+        if (!button.isConnected) return;
+        if (inlineButton) { button.classList.remove('is-copied'); button.title = 'Copy text'; }
+        else button.textContent = "Copy code";
+      }, 1500);
     } catch {
+      setCopyNotice('Code could not be copied. Select the code and copy it manually.');
       feedback?.({ level: 'error', message: "Code could not be copied. Select the code and copy it manually." });
     } finally {
       button.disabled = false;
     }
   };
-  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
+  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} /><span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
 }
 
 export function splitMessageParagraphs(text: string): string[] {

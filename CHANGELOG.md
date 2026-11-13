@@ -2,6 +2,13 @@
 
 ## 2.0.1
 
+- Keep account keyboard shortcuts out of Workspace, Tasks, editors, menus, and dialogs so they cannot open account modals or steal focus while working.
+- Remove an implementation comment that appeared as visible text below the VS Code dashboard.
+- Remove the redundant Open workspace icon from the Codex sidebar toolbar.
+- Copy inline code text with a click or keyboard activation, with visible copy confirmation and clipboard failure feedback.
+- Start independent Codex sessions concurrently, keep background completions from changing the selected chat, and show sent prompts directly in the conversation.
+- Preserve unconfirmed session starts across tab reloads with explicit recovery and storage failure feedback.
+- Return accepted session creation without waiting for transcript discovery.
 - Remove model-discovery warnings and session-list error blocks from the sessions sidebar; keep manual-action failure notifications.
 
 ## 2.0.0

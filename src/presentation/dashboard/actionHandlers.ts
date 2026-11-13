@@ -1,4 +1,5 @@
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
+import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
 import { browseWorkspaceFolders, createWorkspaceProject } from '../../services/workspaceProjects';
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
@@ -1965,9 +1966,10 @@ async function handleStartCodexCliSession(
   payload: DashboardActionPayload | undefined
 ) {
   ensureCliIntegrationEnabled();
+  const input = prepareChatInput(payload?.text ?? '', payload?.attachments);
   const sessionId = await startCodexCliSession({
-    text: payload?.text ?? "",
-    attachments: payload?.attachments,
+    text: payload?.text ?? '',
+    attachments: input.attachments,
     model: payload?.model,
     reasoningEffort: payload?.reasoningEffort,
     sandboxMode: payload?.sandboxMode,
@@ -1989,10 +1991,9 @@ async function handleStartCodexCliSession(
   };
   return {
     cliSession: visibleSession,
-    cliSessionMessages: payload?.text?.trim() ? await readCodexCliSessionMessages(sessionId).catch((error: unknown) => [
-      { id: `initial-${sessionId}`, kind: "message" as const, role: "user" as const, text: payload.text! },
-      { id: `initial-error-${sessionId}`, kind: "error" as const, status: "failed" as const, text: error instanceof Error ? error.message : String(error) }
-    ]) : [],
+    cliSessionMessages: [{ id: `initial-${sessionId}`, kind: 'message' as const, role: 'user' as const, text: payload?.text?.trim() || 'Please review the attached files.',
+      images: input.attachments?.filter(file => file.kind === 'image').map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(input.attachments ?? []) }],
+    cliSessionLive: getCodexSessionLiveState(sessionId),
     notice: { level: "info" as const, message: "New Codex chat is ready." }
   };
 }

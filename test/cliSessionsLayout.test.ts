@@ -408,7 +408,8 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('class="cli-session-project"');
     expect(source).toContain('class="cli-conversation-project"');
     expect(source).not.toContain('"Current workspace"');
-    expect(source).toContain('"Open workspace"');
+    expect(source).not.toContain('title="Open workspace"');
+    expect(source).not.toContain('cli-workspace-nav');
     expect(css).toContain(".cli-session-spinner");
     expect(css).toContain(".cli-project-row:hover .cli-project-new");
     expect(css).toContain(".cli-project-collapse");
@@ -990,8 +991,10 @@ describe("sessions sidebar layout", () => {
 
   it("treats an unresolved selected peer as the local workspace", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    expect(main).toContain("const belongsToActivePeer = selectedPeer?.local");
-    expect(main).toContain("!session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)");
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("(JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local')");
+    expect(source).toContain("activeNewRequestRef.current === result.requestId");
+    expect(main).toContain("setCliSessionMessages(initialMessages ?? [])");
   });
 
 });

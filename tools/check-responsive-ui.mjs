@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { Script } from "node:vm";
-import { checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
+import { checkAccountShortcutsUi, checkInlineCopyUi, checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
 import { checkInspectorUi, checkReviewsUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
@@ -309,9 +309,9 @@ const mockHost = `(() => {
           if(!window.__holdNextRename && !error) for(const item of sessions.filter(item=>item.id===session.id)) item.title=payload.cliSession.title;
         }
         else if(message.action === 'startCodexCliSession') {
-          const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
+          const session = {id:window.__newSessionMessages ? crypto.randomUUID() : '01a04882-d037-7a42-ad24-9afb61901198',title:message.payload.text.slice(0,80),status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
-          payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}}; window.__newSessionMessages = payload.cliSessionMessages;
+          payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}}; window.__newSessionMessages = payload.cliSessionMessages; (window.__newSessionHistories ??= {})[session.id] = payload.cliSessionMessages;
         }
         else if(message.action === 'setCodexSessionGoalStatus') {
           if(window.__failNextGoal) {window.__failNextGoal=false;error='Goal storage unavailable.';}
@@ -322,7 +322,7 @@ const mockHost = `(() => {
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
-          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:(message.payload.sessionId === '01a04882-d037-7a42-ad24-9afb61901198' ? window.__newSessionMessages : undefined) ?? window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
+          payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:window.__newSessionHistories?.[message.payload.sessionId] ?? window.__questionHistory ?? (messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages)};
         } else if(message.action === 'getCodexSubAgentMessages' && window.__failAgentRead) error='Agent transcript unavailable. Saved messages were kept.';
         else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:window.__agentHistory ?? [{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
@@ -701,6 +701,22 @@ try {
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
     }
+    if (process.argv.includes('--inline-copy')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await checkInlineCopyUi(page, parentId);
+      assert.deepEqual(errors, [], 'Inline copy has no browser runtime errors');
+      await page.screenshot({ path: path.join(output, `inline-copy-${width}.png`) });
+      results.push({ width, height, checks: 'Inline text copies exactly on click, Enter and Space; links and block copy remain usable; clipboard failure preserves text and permits retry' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--account-shortcuts')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await checkAccountShortcutsUi(page);
+      assert.deepEqual(errors, [], 'Workspace shortcuts have no browser runtime errors');
+      await page.screenshot({ path: path.join(output, `workspace-shortcuts-${width}.png`) });
+      results.push({ width, height, checks: 'Account shortcuts stay out of Workspace and Tasks; workspace icon and implementation text are absent' });
+      await context.close(); continue;
+    }
     if (process.argv.includes('--project-creation')) {
       await checkProjectCreationUi(page, { origin, width, output });
       assert.deepEqual(errors, []); results.push({ width, height, checks: 'Folder browser and projects without sessions' });
@@ -722,33 +738,62 @@ try {
     if (process.argv.includes('--new-session-queue')) {
       await page.goto(origin + '/workspace');
       await page.locator('.cli-workspace').waitFor();
-      const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
-      if (await rail.isVisible()) await rail.click();
-      await page.getByRole('button', { name: 'New chat', exact: true }).click();
+      const newChat = async () => {
+        const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+        if (await rail.isVisible()) await rail.click();
+        await page.getByRole('button', { name: 'New chat', exact: true }).click();
+      };
       const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
-      await composer.fill('Start my queued session');
-      await page.evaluate(() => { window.__holdNextStart = true; });
+      const launch = async text => {
+        await newChat(); await composer.fill(text);
+        await page.evaluate(() => { window.__heldStartResult = undefined; window.__holdNextStart = true; });
+        await page.getByRole('button', { name: 'Send message', exact: true }).click();
+        await page.waitForFunction(() => !!window.__heldStartResult);
+        await page.locator('.cli-session-message.is-user').filter({ hasText: text }).waitFor();
+        assert.equal(await page.locator('.cli-new-session-status').innerText(), 'Sent');
+        assert.equal(await page.getByRole('button', { name: 'Queued · 1', exact: true }).count(), 0);
+        return page.evaluate(() => window.__heldStartResult);
+      };
+      const first = await launch('First concurrent session');
+      const second = await launch('Second concurrent session');
+      assert.notEqual(first.payload.cliSession.id, second.payload.cliSession.id);
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(r => r.action === 'startCodexCliSession').length), 2);
+      await page.evaluate(result => window.dispatchEvent(new MessageEvent('message', { data: result })), first);
+      await page.waitForFunction(() => !document.querySelector('.cli-session-row.is-starting strong')?.textContent?.includes('First concurrent'));
+      assert.ok((await page.locator('.cli-conversation-header').innerText()).includes('Second concurrent session'), 'Background acceptance keeps the current launch selected');
+      assert.equal(new URL(page.url()).pathname, '/workspace');
+      await page.evaluate(result => window.dispatchEvent(new MessageEvent('message', { data: { ...result, status: 'failed', payload: undefined, error: 'Creation confirmation timed out. Check sessions before resending.' } })), second);
+      await page.locator('.cli-new-session-status[role="alert"]').waitFor();
+      await page.getByRole('button', { name: 'Resend message', exact: true }).waitFor();
+      await page.screenshot({ path: path.join(output, `new-session-unconfirmed-${width}.png`) });
+      await newChat(); await composer.fill('Keep this newer draft');
+      await page.evaluate(async result => { window.dispatchEvent(new MessageEvent('message', { data: result })); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }, first);
+      assert.equal(await composer.inputValue(), 'Keep this newer draft', 'Late success keeps the newer composer');
+      assert.equal(new URL(page.url()).pathname, '/workspace');
+      await composer.fill('Third recovered session');
+      await page.evaluate(() => { window.__heldStartResult = undefined; window.__holdNextStart = true; });
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await page.waitForFunction(() => !!window.__heldStartResult);
-      await page.locator('.cli-conversation.has-session').waitFor();
-      assert.equal(await page.locator('.cli-new-chat-copy').count(), 0, 'Send opens the conversation immediately');
-      assert.equal(await page.locator('.cli-session-message.is-user').count(), 0, 'Pending prompts appear only in the queue');
-      const queued = page.getByRole('button', { name: 'Queued · 1', exact: true });
-      await queued.click();
-      const list = page.getByRole('dialog', { name: 'Queued messages', exact: true });
-      await list.getByText('Start my queued session', { exact: true }).waitFor();
-      await list.getByRole('button', { name: 'Close queued messages', exact: true }).click();
-      await page.evaluate(() => { const r = window.__heldStartResult; window.dispatchEvent(new MessageEvent('message', { data: { ...r, status: 'failed', payload: undefined, error: 'Creation confirmation timed out. Check sessions before resending.' } })); });
-      await queued.click(); await list.getByRole('alert').waitFor();
-      await list.getByRole('button', { name: 'Close queued messages', exact: true }).click();
-      await page.screenshot({ path: path.join(output, `new-session-queue-${width}.png`) });
-      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldStartResult })));
-      await page.locator('.cli-session-message.is-user').filter({ hasText: 'Start my queued session' }).waitFor();
-      await queued.waitFor({ state: 'detached' });
-      assert.equal(await page.locator('.cli-session-message.is-user').filter({ hasText: 'Start my queued session' }).count(), 1, 'Late acceptance renders one prompt');
-      assert.equal(await page.evaluate(() => window.__uiActions.filter(r => r.action === 'startCodexCliSession').length), 1, 'A failure and late success never submit twice');
+      const third = await page.evaluate(() => window.__heldStartResult);
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('codexManager.sessionStarts.v1') ?? '[]').length === 2);
+      assert.equal(await page.locator('.cli-session-row.is-starting').count(), 2, 'A new launch preserves the earlier failed prompt');
+      await page.evaluate(result => window.dispatchEvent(new MessageEvent('message', { data: result })), second);
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('codexManager.sessionStarts.v1') ?? '[]').length === 1);
+      assert.ok((await page.locator('.cli-conversation-header').innerText()).includes('Third recovered session'), 'Late success leaves the newer launch selected');
+      await page.reload(); await page.locator('.cli-workspace').waitFor();
+      const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+      if (await rail.isVisible()) await rail.click();
+      await page.locator('.cli-session-row.is-starting button').filter({ hasText: 'Third recovered session' }).click();
+      await page.locator('.cli-new-session-status[role="alert"]').waitFor();
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(r => r.action === 'startCodexCliSession').length), 0, 'Reload never replays an unconfirmed launch');
+      await page.evaluate(result => { window.__uiSessions.push(result.payload.cliSession); window.__newSessionHistories = { [result.payload.cliSession.id]: result.payload.cliSessionMessages }; window.dispatchEvent(new MessageEvent('message', { data: result })); }, third);
+      await page.waitForURL('**/workspace/' + third.payload.cliSession.id);
+      await page.locator('.cli-session-message.is-user').filter({ hasText: 'Third recovered session' }).waitFor();
+      assert.equal(await page.locator('.cli-session-message.is-user').filter({ hasText: 'Third recovered session' }).count(), 1, 'Late success renders the prompt once');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+      await page.screenshot({ path: path.join(output, `new-session-completed-${width}.png`) });
       assert.deepEqual(errors, []);
-      results.push({ width, height, checks: 'Immediate session queue, one dispatch, unconfirmed failure, late success, one transcript prompt' });
+      results.push({ width, height, checks: 'Concurrent native chat UI, sent prompts, focus isolation, timeout feedback, reload recovery, late acceptance, no duplicate sends' });
       await context.close(); continue;
     }
     if (process.argv.includes('--account-center')) {

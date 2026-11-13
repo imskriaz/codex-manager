@@ -11,8 +11,8 @@ vi.mock('preact/hooks', () => ({
 }));
 import { SessionMessage } from '../webview-src/dashboard/cliSessionsModal';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
-function markdown(onFeedback?: typeof fixture.feedback) {
-  const message = SessionMessage({ message: { id: 'm', role: 'assistant', text: '```ts\nhello\n```' }, onActionFeedback: onFeedback });
+function markdown(onFeedback?: typeof fixture.feedback, text = '```ts\nhello\n```') {
+  const message = SessionMessage({ message: { id: 'm', role: 'assistant', text }, onActionFeedback: onFeedback });
   const component = nodes(message).find(node => typeof node.type === 'function' && node.type.name === 'MarkdownMessage')!;
   return nodes((component.type as (props: any) => VNode<any>)(component.props)).find(node => node.props.class === 'cli-message-markdown')!;
 }
@@ -49,4 +49,43 @@ it('shows successful copy on the existing button without an informational toast'
   await Promise.resolve(); await Promise.resolve();
   expect(button.textContent).toBe('Copied'); expect(button.disabled).toBe(false); expect(fixture.feedback).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1500); expect(button.textContent).toBe('Copy code');
+});
+it('renders safe keyboard-operable inline copy controls while preserving linked code and fenced blocks', () => {
+  const html = markdown(undefined, 'Copy `admin@example.test`, `a < b & "quoted"`, and [`linked`](https://example.test).\n\n```ts\nblock\n```').props.dangerouslySetInnerHTML.__html;
+  expect(html).toContain('type="button" class="cli-inline-code-copy"');
+  expect(html).toContain('aria-label="Copy admin@example.test"');
+  expect(html).toContain('a &lt; b &amp; &quot;quoted&quot;');
+  expect(html.match(/class="cli-inline-code-copy"/g)).toHaveLength(2);
+  expect(html).toContain('<code>linked</code></a>');
+  expect(html).toContain('class="cli-code-copy"');
+});
+it('copies exact inline text once while pending and keeps the original content after feedback resets', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('HTMLImageElement', class {});
+  vi.stubGlobal('window', { setTimeout });
+  let resolveCopy!: () => void;
+  const writeText = vi.fn(() => new Promise<void>(resolve => { resolveCopy = resolve; }));
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  const button = { disabled: false, title: 'Copy text', isConnected: true, classList: { add: vi.fn(), remove: vi.fn() }, querySelector: () => ({ textContent: 'admin@example.test' }) };
+  const control = markdown();
+  const event = { target: { closest: (selector: string) => selector === '.cli-inline-code-copy' ? button : null } };
+  control.props.onClick(event); control.props.onClick(event);
+  expect(writeText).toHaveBeenCalledExactlyOnceWith('admin@example.test');
+  resolveCopy(); await Promise.resolve(); await Promise.resolve();
+  expect(button.title).toBe('Copied'); expect(button.disabled).toBe(false);
+  expect(button.classList.add).toHaveBeenCalledWith('is-copied');
+  vi.advanceTimersByTime(1500);
+  expect(button.title).toBe('Copy text'); expect(button.querySelector().textContent).toBe('admin@example.test');
+  expect(fixture.feedback).not.toHaveBeenCalled();
+});
+it('reports inline clipboard failure and leaves its text available for manual copying', async () => {
+  vi.stubGlobal('HTMLImageElement', class {});
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+  vi.stubGlobal('document', { createElement: () => ({ style: {}, setAttribute() {}, select() {}, remove() {} }), body: { appendChild() {} }, execCommand: () => false });
+  const button = { disabled: false, classList: { remove: vi.fn() }, querySelector: () => ({ textContent: '<admin@example.test>' }) };
+  markdown().props.onClick({ target: { closest: (selector: string) => selector === '.cli-inline-code-copy' ? button : null } });
+  await vi.waitFor(() => expect(fixture.feedback).toHaveBeenCalledWith({ level: 'error', message: 'Code could not be copied. Select the code and copy it manually.' }));
+  expect(button.disabled).toBe(false);
+  expect(button.classList.remove).toHaveBeenCalledWith('is-copied');
+  expect(button.querySelector().textContent).toBe('<admin@example.test>');
 });
