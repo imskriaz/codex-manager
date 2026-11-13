@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.1-pre.1
+## 2.0.1
 
 - Remove model-discovery warnings and session-list error blocks from the sessions sidebar; keep manual-action failure notifications.
 
