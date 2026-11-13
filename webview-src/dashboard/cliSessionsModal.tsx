@@ -1195,8 +1195,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             })}
           </div>}
           {props.loading && props.sessions.length === 0 ? <SessionRailSkeleton /> : null}
-          {props.composerConfig?.modelDiscoveryWarning ? <p class="cli-inspector-notice is-warning" role="status">{props.composerConfig.modelDiscoveryWarning}</p> : null}
-          {props.error ? <InlineError text={props.error} retry={props.onRefresh} /> : null}
           {!props.loading && !props.error && visibleSessions.length === 0 ? <EmptySessions search={Boolean(search)} section={section} /> : null}
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
 

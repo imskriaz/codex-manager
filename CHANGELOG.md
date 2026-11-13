@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1-pre.1
+
+- Remove model-discovery warnings and session-list error blocks from the sessions sidebar; keep manual-action failure notifications.
+
 ## 2.0.0
 
 - Rename the Workspace and Tasks project dialog to Add Project and remove the project name field; use the selected folder directly with its folder name as the label.
