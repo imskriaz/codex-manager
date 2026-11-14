@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.2-pre.1
+
+- Keep offline dashboard navigation, cached views and local drafts usable while blocking server execution; preserve disconnected account snapshots.
+- Compact task details with newest activity first, grouped file edits, direct actions, clearer offline states, and saved agent and scroll preferences.
+
 ## 2.0.2
 
 - Keep live conversations updating when tool output or hydrated images exceed live snapshot limits; preserve full saved history.

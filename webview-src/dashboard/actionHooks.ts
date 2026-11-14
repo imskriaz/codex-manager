@@ -128,11 +128,11 @@ export function useDashboardActions(
     const localSystemId = snapshot.current?.connectedPeers?.find(item => item.local)?.id;
     const cacheKey = OFFLINE_CACHE_READS.has(action) && (localSystemId || peer?.id)
       ? offlineReadCacheKey(action, accountId, routedPayload, localSystemId) : undefined;
-    if (!connection.current || peer?.connected === false) {
+    if (!connection.current || peer?.connected === false || routedPayload.targetDeviceId && routedPayload.targetDeviceId !== 'local' && !peer) {
       const key = cacheKey;
       void (key ? readBrowserCache<DashboardActionResultPayload>(key) : Promise.resolve(undefined)).then(cached => {
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action, accountId, requestId,
-          status: cached ? 'completed' : 'failed', ...(cached ? { payload: { ...cached, notice: { level: 'warning', message: 'Offline saved view. Reconnect to verify the latest state.' } } } : { error: 'The host is offline. This operation was not sent or queued. Reconnect and retry.' }) } }));
+          status: cached ? 'completed' : 'failed', ...(cached ? { payload: { ...cached, notice: { level: 'warning', message: 'Offline · Saved snapshot' } } } : { error: 'The host is offline. This operation was not sent or queued. Reconnect and retry.' }) } }));
       });
       return requestId;
     }
@@ -167,13 +167,13 @@ export function useDashboardActions(
   }, [dispatch, targetDeviceId]);
 
   const sendSetting = useCallback((key: DashboardSettingKey, value: string | number | boolean): void => {
-    if (!connection.current) { actionFeedbackRef.current.onNotice({ level: 'warning', message: 'Reconnect before changing host settings. This setting was not queued.' }); return; }
+    if (!connection.current || targetDeviceId && targetDeviceId !== 'local' && snapshot.current?.connectedPeers?.some(peer => peer.id === targetDeviceId && !peer.local && !peer.connected)) { actionFeedbackRef.current.onNotice({ level: 'warning', message: 'Reconnect before changing host settings. This setting was not queued.' }); return; }
     postMessageToHost({
       type: "dashboard:setting",
       key,
       value
     });
-  }, []);
+  }, [targetDeviceId]);
 
   const isActionPending = (action: DashboardActionName, accountId?: string): boolean =>
     state.pendingActions.some((request) => request.action === action && request.accountId === accountId);

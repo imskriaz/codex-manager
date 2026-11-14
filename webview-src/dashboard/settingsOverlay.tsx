@@ -178,6 +178,23 @@ export function SettingsOverlay(props: {
         </div>
         <div class="settings-modal-body">
           {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
+              <div class="settings-block settings-block-wide" data-setting="webview-zoom">
+                <div class="settings-block-head">
+                  <div class="settings-block-title">Dashboard zoom</div>
+                  <div class="settings-block-sub">Scale the entire dashboard, workspace, task board, and dialogs on this device.</div>
+                </div>
+                <SettingsDiscreteSlider
+                  value={Math.round(props.webviewZoom * 100)}
+                  values={WEBVIEW_ZOOM_VALUES}
+                  accent="sky"
+                  valueLabel={(value) => `${value}%`}
+                  description={(value) => `Dashboard zoom ${value}%`}
+                  scaleValues={[80, 100, 120, 140]}
+                  onPreview={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
+                  onCommit={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
+                />
+                <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
+              </div>
           <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
           <div
             class="settings-tab-panel"
@@ -204,23 +221,6 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
-              <div class="settings-block settings-block-wide" data-setting="webview-zoom">
-                <div class="settings-block-head">
-                  <div class="settings-block-title">Dashboard zoom</div>
-                  <div class="settings-block-sub">Scale the entire dashboard, workspace, task board, and dialogs on this device.</div>
-                </div>
-                <SettingsDiscreteSlider
-                  value={Math.round(props.webviewZoom * 100)}
-                  values={WEBVIEW_ZOOM_VALUES}
-                  accent="sky"
-                  valueLabel={(value) => `${value}%`}
-                  description={(value) => `Dashboard zoom ${value}%`}
-                  scaleValues={[80, 100, 120, 140]}
-                  onPreview={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
-                  onCommit={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
-                />
-                <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
-              </div>
               <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{passwordCopy.title}</div>
@@ -806,11 +806,12 @@ export function SettingsOverlay(props: {
 
             </div>
           </div>
+          </fieldset>
           <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools"}>
             <SettingsPanelIntro tab={tabs[3]!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
-        </fieldset></div>
+        </div>
       </div>
     </div>
     <ModalShell open={props.open && clearQuotaOpen} title="Clear quota graph history?" closeLabel="Cancel clearing quota history" className="action-confirmation-modal" onClose={()=>setClearQuotaOpen(false)}><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></ModalShell>

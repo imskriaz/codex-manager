@@ -46,7 +46,7 @@ it('keeps the mobile account name from being squeezed out by quota metadata', ()
   expect(css).toContain('.cli-turn-usage-strip .cli-turn-quota { gap: 5px; }');
 });
 
-it('routes transient project and file results through feedback without inline notices', () => {
+it('keeps routine results quiet while showing task form failures inline', () => {
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
   const tasks = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
   expect(source).not.toContain('projectNotice');
@@ -57,7 +57,7 @@ it('routes transient project and file results through feedback without inline no
   expect(source).toContain('onClick={props.onRetryFeedback}>Retry</button>');
   expect(tasks).not.toContain('task-inline-feedback');
   expect(tasks).toContain("status && statusLevel !== 'info' && (props.shared || !props.onActionFeedback) ? createPortal");
-  expect(tasks).not.toContain('{status}</p>');
+  expect(tasks).toContain("status && statusLevel !== 'info' ? <p class=\"settings-note\" role=\"alert\">{status}</p>");
 });
 
 it('keeps task agent views mounted and cached messages available through refresh', () => {

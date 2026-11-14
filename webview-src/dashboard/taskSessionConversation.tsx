@@ -1,3 +1,4 @@
+import { useTaskViewPosition } from './taskViewPosition';
 import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { isCodexSessionRunning } from '../../src/domain/codexSessionState';
 import { useSessionResume } from './sessionResume';
@@ -24,6 +25,7 @@ export function TaskSessionConversation(props: {
   peers?: Array<{ id: string; connected: boolean; local?: boolean }>;
   onRefresh: () => void; onFeedback: (notice: DashboardNotice) => void; onChanges?: () => void; onOpenFile?: (path: string) => void;
 }) {
+  const draftEdited = useRef(false);
   const scope = cliComposerDraftKey(props.deviceId ?? props.session.deviceId, props.session.id, undefined, window.self !== window.top);
   const [draft, setDraft] = useState<CliComposerDraft>({ text: '', attachments: [] }), [ready, setReady] = useState(false), [reading, setReading] = useState(false);
   const [results, setResults] = useState<CliSubmissionResult[]>([]), [stopping, setStopping] = useState<string>();
@@ -61,7 +63,7 @@ export function TaskSessionConversation(props: {
   const prompts = useCodexSessionPrompts({ target: props.session, browser: true, connected: props.connected, peers: props.peers, sendAction: props.sendAction, onNotice: report });
   useEffect(() => {
     mounted.current = true;
-    void readCliComposerDraft(scope).then(saved => { if (mounted.current) { if (saved) setDraft(saved); setReady(true); } });
+    void readCliComposerDraft(scope).then(saved => { if (mounted.current) { if (saved && !draftEdited.current) setDraft(saved); setReady(true); } });
     return () => { mounted.current = false; resizeCleanup.current?.(); };
   }, [scope]);
   const [storageError, setStorageError] = useState<{ scope: string; notice: DashboardNotice }>();
@@ -118,12 +120,14 @@ export function TaskSessionConversation(props: {
     finally { if (mounted.current) setReading(false); }
   };
   const files = summarizeChangedFiles(messages);
-  const patch = (value: Partial<CliComposerDraft>) => setDraft(previous => ({ ...previous, ...value }));
+  const patch = (value: Partial<CliComposerDraft>) => { draftEdited.current = true; setDraft(previous => ({ ...previous, ...value })); };
+  const transcriptPosition = useTaskViewPosition(`task-scroll:${scope}`);
   return <section class="task-session-conversation cli-workspace cli-message-surface" aria-label="Session conversation">
-    <div class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
+    <div ref={transcriptPosition} class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
        {props.liveState?.plan ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
     </div>
     <div class="task-session-compose">
+      {prompts.active ? <p class="task-attention" role="status">Needs your input</p> : null}
       <QueuedMessages queue={queue} onRefresh={props.onRefresh} />
       {prompts.active ? <CodexSessionRequest entry={prompts.active} inline queuedCount={prompts.entries.length - 1} connected={prompts.connectedTo(prompts.active)} checking={prompts.checking} onCheck={() => prompts.active && prompts.check(codexPromptKey(prompts.active.request))} onAnswer={prompts.answer} onRespond={prompts.respond} /> : null}
       <TurnUsageStrip privacyMode contextLabel={props.session.title.trim() || props.session.projectPath?.split(/[\\/]/).filter(Boolean).pop() || "Task conversation"} changedFiles={files.length} additions={files.reduce((sum, file) => sum + file.additions, 0)} deletions={files.reduce((sum, file) => sum + file.deletions, 0)} onOpenChanges={() => props.onChanges?.()} />

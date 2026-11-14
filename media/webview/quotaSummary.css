@@ -17455,3 +17455,19 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 
 .cli-new-session-status { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin: 0 16px 12px; font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
 .cli-new-session-status[role="alert"] { color: var(--danger); }
+
+.task-detail-panel .task-detail-scroll[hidden] { display: none !important; }
+.task-detail-panel-body:has(.task-session-conversation):not(:has(.cli-agent-panel:not([hidden]))) { overflow: auto; }
+.task-detail-loading { color: var(--text-muted); font-size: calc(13px * var(--dashboard-text-scale, 1)); padding: 8px 0; }
+
+.task-quick-actions { display: flex; gap: 8px; margin: 4px 0 8px; }
+.task-quick-actions button { min-height: 36px; padding: 4px 12px; }
+.task-attention { margin: 4px 0 8px; color: var(--text-muted); }
+.task-recorded-changes > details { border-bottom: 1px solid var(--border-muted); }
+.task-recorded-changes summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.task-recorded-changes summary span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.task-recorded-changes summary small { flex: none; color: var(--text-muted); }
+.task-project-changes { margin-top: 12px; }
+.task-detail-panel .task-detail-tabs { flex-shrink: 0; }
+.task-detail-loading { display: flex; align-items: center; gap: 8px; }
+@media (pointer: coarse) { .task-quick-actions button { min-height: 44px; } }

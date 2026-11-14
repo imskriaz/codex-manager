@@ -2,9 +2,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { VNode } from 'preact';
 import type { DashboardCliSessionSummary } from '../src/domain/dashboard/types';
 const fixture = vi.hoisted(() => ({ slots: [] as any[], cursor: 0, effects: [] as Array<() => void> }));
+const cache = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('../webview-src/dashboard/cliSessionCache', async importOriginal => ({
+  ...await importOriginal<typeof import('../webview-src/dashboard/cliSessionCache')>(),
+  readBrowserCache: cache.read, writeBrowserCache: cache.write
+}));
 vi.mock('preact/hooks', async importOriginal => ({
   ...await importOriginal<typeof import('preact/hooks')>(),
   useContext: () => undefined,
+  useRef(initial: unknown) { const index = fixture.cursor++; fixture.slots[index] ??= { current: initial }; return fixture.slots[index]; },
   useState(initial: unknown) { const index = fixture.cursor++; fixture.slots[index] ??= { value: typeof initial === 'function' ? initial() : initial }; return [fixture.slots[index].value, (next: unknown) => { fixture.slots[index].value = typeof next === 'function' ? next(fixture.slots[index].value) : next; }]; },
   useEffect(setup: () => void | (() => void), deps: unknown[]) { const index = fixture.cursor++, previous = fixture.slots[index]; if (previous && deps.every((value, i) => Object.is(value, previous.deps[i]))) return; fixture.slots[index] = { deps }; fixture.effects.push(() => { previous?.cleanup?.(); fixture.slots[index].cleanup = setup(); }); }
 }));
@@ -19,7 +25,7 @@ function text(node: unknown): string { if (Array.isArray(node)) return node.map(
 const button = (label: string) => nodes(render()).find(node => node.type === 'button' && (node.props['aria-label'] === label || node.props.title === label || text(node.props.children) === label))!;
 const tabs = () => nodes(render()).filter(node => node.props.role === 'tab');
 const transcript = () => nodes(render()).find(node => node.type === SessionTranscript)!;
-beforeEach(() => { fixture.slots = []; fixture.cursor = 0; fixture.effects = []; vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { visibilityState: 'visible' }); props = { sessions: [alpha, beta], data: {}, onRefresh: vi.fn(), onFeedback: vi.fn() }; render(); });
+beforeEach(() => { cache.read.mockReset().mockResolvedValue(undefined); cache.write.mockReset().mockResolvedValue(true); fixture.slots = []; fixture.cursor = 0; fixture.effects = []; vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { visibilityState: 'visible' }); props = { sessions: [alpha, beta], data: {}, onRefresh: vi.fn(), onFeedback: vi.fn() }; render(); });
 afterEach(() => vi.unstubAllGlobals());
 it('retains every opened agent tab until its close button is used', () => {
   button('Alpha work').props.onClick(); button('All agents 2').props.onClick(); button('Beta work').props.onClick();
@@ -65,4 +71,28 @@ it('shows model and effort in the tab without a separate refresh or model row', 
   expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Alpha (6.1-Sol · high)');
   expect(nodes(render()).some(node => node.type === 'header')).toBe(false);
   expect(nodes(render()).some(node => node.props['aria-label'] === 'Refresh')).toBe(false);
+});
+
+it('restores a saved existing agent without persisting a new choice', async () => {
+  cache.read.mockResolvedValue('beta');
+  render({ persistenceKey: 'task-agent:pc:task' });
+  await Promise.resolve();
+  expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Beta');
+  expect(cache.write).not.toHaveBeenCalled();
+});
+it('does not overwrite a user selection with a late saved agent', async () => {
+  let finish!: (value: string) => void;
+  cache.read.mockReturnValue(new Promise<string>(resolve => { finish = resolve; }));
+  render({ persistenceKey: 'task-agent:pc:task' });
+  button('Beta work').props.onClick();
+  finish('alpha'); await Promise.resolve();
+  expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Beta');
+  expect(cache.write).toHaveBeenCalledWith('task-agent:pc:task', 'beta');
+});
+it('keeps the selected agent when storing the preference fails', async () => {
+  cache.write.mockResolvedValue(false);
+  render({ persistenceKey: 'task-agent:pc:task' });
+  button('Beta work').props.onClick(); await Promise.resolve();
+  expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Beta');
+  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
 });

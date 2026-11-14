@@ -72,7 +72,7 @@ export function WorkspaceGit(props: {
         throw new Error("Git state was not returned. Update the selected system and retry.");
       }
       setState(result.workspaceGit);
-      setStale(false);
+      setStale(!props.connected);
       setNotice("");
       if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
     } catch (error) {

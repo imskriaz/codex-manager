@@ -1476,8 +1476,7 @@ try {
       const missingRail=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
       if(await missingRail.isVisible()) await missingRail.click();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.targetDeviceId==='missing-system'));
-      await page.waitForFunction(()=>document.querySelector('.cli-rail-system select')?.value==='fixture-local',null,{timeout:10000});
-      assert.ok(!new URL(page.url()).searchParams.has('device'),'An unavailable system falls back to the connected local host');
+      assert.equal(new URL(page.url()).searchParams.get('device'), 'missing-system', 'An unavailable system stays selected for cached viewing');
       await page.goto(`${origin}/`);
       await page.locator('#dashboard-main').waitFor();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.viewing===true));
@@ -1592,13 +1591,12 @@ try {
       assert.ok(await page.evaluate(()=>window.__reconnectViewport===document.querySelector('.cli-message-viewport')),'Connection recovery updates the existing view in place');
       await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:structuredClone(window.__uiSnapshot)}}));});
       const dispatched=await page.evaluate(()=>window.__uiActions.filter(action=>/sendCodex|startCodex|saveWorkspace|deleteWorkspace/.test(action.action||'')).length);
-      await page.waitForFunction(()=>document.querySelector('.cli-rail-system select')?.value==='fixture-local',null,{timeout:10000});
+      await page.waitForFunction(()=>document.querySelector('.cli-rail-system select')?.value==='fixture-system');
       await rail();
-      assert.equal(await picker.isEnabled(),true,'Local fallback leaves the system picker usable');
-      await page.waitForFunction(()=>location.pathname==='/workspace'&&!new URL(location.href).searchParams.has('device'));
-      await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
-      assert.equal(await page.getByText('Remote system conversation',{exact:true}).count(),0,'Offline remote context gives way to the local workspace');
-      assert.equal(await page.evaluate(()=>window.__uiActions.filter(action=>/sendCodex|startCodex|saveWorkspace|deleteWorkspace/.test(action.action||'')).length),dispatched,'Failover never replays a remote mutation on local files or sessions');
+      assert.equal(await picker.isEnabled(),true,'Offline selection leaves the system picker usable');
+      assert.equal(new URL(page.url()).searchParams.get('device'), 'fixture-system', 'Offline viewing keeps the selected remote system');
+      assert.equal(await page.getByText('Remote system conversation',{exact:true}).count(),1,'Offline remote context retains its saved conversation');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(action=>/sendCodex|startCodex|saveWorkspace|deleteWorkspace/.test(action.action||'')).length),dispatched,'Offline viewing never replays a remote mutation on local files or sessions');
 
       if(width<=760) {const hide=page.getByRole('button',{name:'Hide sessions sidebar',exact:true});if(await hide.isVisible())await hide.click();}
       await page.screenshot({path:path.join(output,`cached-reconnect-${width}x${height}.png`),animations:'disabled'});
@@ -2689,8 +2687,8 @@ try {
     if(await showSystems.isVisible()) await showSystems.click();
     assert.equal(await page.locator('.cli-system-count').textContent(),'2','Multiple PCs have a compact count badge');
     await selectSidebarSystem(page, width, 'fixture-remote');
-    await page.waitForFunction(() => document.querySelector('.cli-rail-system select')?.value === 'fixture-local');
-    assert.equal(new URL(page.url()).searchParams.has('device'), false, 'A confirmed offline remote falls back to the connected local system');
+    await page.waitForFunction(() => document.querySelector('.cli-rail-system select')?.value === 'fixture-remote');
+    assert.equal(new URL(page.url()).searchParams.get('device'), 'fixture-remote', 'Offline remote selection stays available for cached viewing');
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='fixture-remote').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
     await selectSidebarSystem(page, width, 'fixture-local');
     await page.evaluate(() => {

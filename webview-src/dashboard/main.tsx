@@ -1,3 +1,4 @@
+import { retainOfflineAccounts } from './offlinePolicy';
 import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { WorkspaceMenu } from './workspaceMenu';
 import { getAccountShortcut } from './accountShortcuts';
@@ -88,7 +89,7 @@ import { useSessionQuestionNotifications } from './sessionQuestionNotifications'
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { DonationDetails } from "./donationDetails";
-import { ModalShell, useModalAccessibility } from "./primitives";
+import { ModalShell } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedback";
@@ -563,7 +564,7 @@ function App() {
     showNotice,
     selectedPeerId,
     handleActionTimeout,
-    !isBrowserDashboard || realtimeConnected,
+    !isBrowserDashboard || realtimeConnected && !connectionUnavailable,
     isBrowserDashboard ? (action, payload, requestId) => {
       const scope = workspaceRequests.current.get(requestId);
       if (scope && scope.scope === workspaceScopeRef.current && scope.generation === workspaceGeneration.current && latestWorkspaceRequests.current.get(scope.family) === requestId) {
@@ -642,9 +643,6 @@ function App() {
       active = false;
     };
   }, [isBrowserDashboard]);
-  useEffect(() => {
-    if (isBrowserDashboard && state.snapshot) void writeDashboardStateCache(state.snapshot);
-  }, [isBrowserDashboard, state.snapshot]);
   const refreshLogConsole = useCallback(() => {
     if (logConsoleRequestRef.current) return;
     logConsoleRequestRef.current = sendAction("viewLogs", undefined, { automatic: true });
@@ -799,9 +797,10 @@ function App() {
           setBrowserLastSyncAt(Date.now());
           for (const id of Object.keys(message.state.peerAccounts ?? {}))
             peerAccountsRevision.current.set(id, (peerAccountsRevision.current.get(id) ?? 0) + 1);
-          const scoped = scopeDashboardAccounts(message.state, cliListViewTarget.current);
+          const scoped = scopeDashboardAccounts(retainOfflineAccounts(message.state, snapshot), cliListViewTarget.current);
           if (cliListViewTarget.current && !Object.hasOwn(message.state.peerAccounts ?? {}, cliListViewTarget.current) && snapshot?.peerAccounts?.[cliListViewTarget.current])
             scoped.peerAccounts = { [cliListViewTarget.current]: snapshot.peerAccounts[cliListViewTarget.current]! };
+          void writeDashboardStateCache(scoped);
           message = { ...message, state: scoped };
         }
       }
@@ -1693,26 +1692,6 @@ function App() {
     replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
   }, [isBrowserDashboard, browserPath, selectedPeerId, selectedPeer?.local]);
 
-  const localFallbackPeer = snapshot?.connectedPeers?.find(peer => peer.local && peer.connected);
-  const selectedRemoteOffline = selectedPeerId !== 'local' && !selectedPeer?.local && selectedPeer?.connected === false;
-  useEffect(() => {
-    if (!isBrowserDashboard || !realtimeConnected || !localFallbackPeer || !selectedRemoteOffline) return;
-    // Allow discovery time for unknown links; a confirmed offline peer falls back immediately.
-    const timer = window.setTimeout(() => {
-      setSelectedPeerId('local');
-      messageViewRevision.current++;
-      selectedCliSessionRef.current = undefined;
-      setSelectedCliSession(undefined);
-      setCliSessionMessages([]);
-      setCliSessionMessagesError(undefined);
-      const url = new URL(window.location.href);
-      url.searchParams.delete('device');
-      if (isCliSessionsPath(url.pathname)) url.pathname = '/workspace';
-      replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
-      showNotice({ level: 'info', message: `${selectedPeer?.name ?? 'Remote PC'} is offline. Switched to ${localFallbackPeer.name}. Pending remote actions were not replayed locally.` });
-    }, snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && !peer.local && !peer.connected) ? 0 : 5000);
-    return () => window.clearTimeout(timer);
-  }, [isBrowserDashboard, realtimeConnected, localFallbackPeer?.id, selectedPeerId, selectedRemoteOffline, showNotice]);
 
   useLayoutEffect(() => {
     if (!snapshot?.settings.cliIntegrationEnabled) return;
@@ -1889,7 +1868,6 @@ function App() {
     status={browserHostStatus} lastSyncAt={browserLastSyncAt}
     onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })}
     onDismiss={hostReload && !reloadInProgress ? dismissReload : undefined} /> : null;
-  const offlineAccessibility = useModalAccessibility(Boolean(snapshot) && dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath), () => undefined);
   useEffect(() => { if (dashboardUnavailable) document.querySelectorAll<HTMLElement>(':popover-open').forEach(element => element.hidePopover?.()); }, [dashboardUnavailable]);
   useEffect(() => { if (selectedPeer?.connected) noticeControllerRef.current?.connectionRestored(true); }, [selectedPeer?.id, selectedPeer?.connected]);
   const hasPendingActions = state.pendingActions.length > 0;
@@ -2055,7 +2033,7 @@ function App() {
   const handlePrivacyToggle = (): void => {
     const privacyMode = !state.privacyMode;
     dispatch({ type: "toggle-privacy" });
-    sendAction("setPrivacyMode", undefined, { privacyMode, targetDeviceId: undefined });
+    if (!isBrowserDashboard || realtimeConnected && !connectionUnavailable) sendAction("setPrivacyMode", undefined, { privacyMode, targetDeviceId: undefined });
   };
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
@@ -2804,9 +2782,8 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? createPortal(<div ref={offlineAccessibility.modalRef} class="dashboard-offline-overlay" role="dialog" aria-modal="true" aria-label="Connection unavailable" tabIndex={-1} onKeyDown={offlineAccessibility.onKeyDown}>{recovery ?? <ConnectionRecovery stage={browserHostStage} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />}</div>, document.body) : null}
-        {!dashboardUnavailable && !hasBrowserWorkspaceShell(browserPath) ? recovery : null}
-        <fieldset class="dashboard-action-scope" disabled={dashboardUnavailable} inert={dashboardUnavailable || undefined} aria-label="Dashboard actions">
+        {!hasBrowserWorkspaceShell(browserPath) ? recovery : null}
+        <fieldset class="dashboard-action-scope" aria-label="Dashboard actions">
         <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
@@ -3724,7 +3701,7 @@ function CliSessionsMenu(props: {
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
                   return <article class={`cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}`} role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
-                    <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || actionPending || session.status === 'unknown' || offline} aria-label={`${props.browser || running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : props.browser || running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
+                    <button type="button" class="cli-sessions-running-title" disabled={!props.browser && ((!running && !props.connected) || actionPending || session.status === 'unknown' || offline)} aria-label={`${props.browser || running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : props.browser || running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{codexModelLabel(session.model) || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">

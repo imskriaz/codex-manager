@@ -256,7 +256,8 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'getProjectTaskDetails' && message.payload.taskView === 'activities').length), readsBeforeEvents + 1, 'Burst during a pending activity read produces one final refresh');
   await page.evaluate(() => { window.__partialTaskDetails = false; });
   await task.getByRole('tab', { name: 'Changes', exact: true }).click();
-  await task.getByText(/Current project:/).waitFor();
+  await task.locator('.task-project-changes summary').waitFor();
+  assert.equal(await task.locator('.task-detail-scroll[hidden]').evaluateAll(items => items.every(item => getComputedStyle(item).display === 'none')), true);
   await page.screenshot({ path: path.join(output, `task-changes-${width}x${height}.png`) });
   await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   const idea = page.locator('.task-board-card').filter({ hasText: 'Idea collection' });
@@ -375,11 +376,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
   await page.locator('.dashboard-connection-banner').waitFor();
   assert.equal(await page.locator('.dashboard-offline-overlay').count(), 0, 'Task boards use only the bottom connection banner');
-  assert.equal(await page.getByRole('button',{name:'Board actions',exact:true}).isDisabled(),true,'All board actions disable offline');
+  assert.equal(await page.getByRole('button',{name:'Board actions',exact:true}).isDisabled(),false,'Local board actions remain available offline');
   assert.equal(await create.getByLabel('Title',{exact:true}).inputValue(),'Offline task draft','The offline view preserves the open draft');
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length),sentBefore,'No task write starts offline');
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
-  await page.locator('.dashboard-connection-banner').waitFor({state:'hidden'});
   await page.waitForFunction(()=>!document.querySelector('.task-create-modal button[type=submit]')?.disabled);
   await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
   if (width === 320) await page.evaluate(() => {
@@ -401,11 +400,15 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
     assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Saved offline.'}).count(),0,'The visible offline card confirms saving without an information toast');
   }
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Saving offline sends no server action');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+  await page.locator('.dashboard-connection-banner').waitFor({state:'hidden'});
+  if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
   assert.equal(await page.locator('.task-board-status').count(),0,'Action feedback never inserts a board row');
   assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'Routine task outcomes stay quiet');
   while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).first().click();
   await page.locator('.dashboard-notice-stack').waitFor({state:'hidden'});
-  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore + (width === 320 ? 0 : 1), 'Only the explicit save after reconnect sends a request');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore + (width === 320 ? 0 : 1), 'The saved offline task syncs once after reconnect');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
   if (width === 390) {

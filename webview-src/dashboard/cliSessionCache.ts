@@ -440,7 +440,7 @@ async function writeRecord(record: CacheRecord): Promise<void> {
       if (row) {
         const value = row.value as CacheRecord | undefined;
         if (typeof value?.key !== 'string') { row.continue(); return; }
-        if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && !value.key.startsWith('browser:message-queue:') && value.key !== record.key) {
+        if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && !value.key.startsWith('browser:message-queue:') && !value.key.startsWith('browser:workspace-drafts:') && value.key !== record.key) {
           if (!Number.isFinite(value.updatedAt) || value.updatedAt > Date.now() || Date.now() - value.updatedAt > MAX_CACHE_AGE_MS) row.delete();
           else prior.push({ key: value.key, at: value.updatedAt, bytes: value.sizeBytes ?? JSON.stringify(value).length * 2 });
         }
@@ -511,7 +511,7 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
   const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
   try { record.sizeBytes = JSON.stringify(record).length * 2; } catch { return false; }
   if (record.sizeBytes > (key.startsWith('message-queue:') || key.startsWith('outbox:') ? MAX_DRAFT_BYTES : 2 * 1024 * 1024)) return false;
-  const durable = record.key.startsWith('browser:outbox:') || record.key.startsWith('browser:message-queue:');
+  const durable = record.key.startsWith('browser:outbox:') || record.key.startsWith('browser:message-queue:') || record.key.startsWith('browser:workspace-drafts:');
   const tx = await openCacheTransaction('readwrite'); if (!tx) return false;
   return new Promise<boolean>(resolve => {
     const store = tx.objectStore(STORE_NAME);
@@ -527,7 +527,7 @@ async function persistBrowserCache(key: string, value: unknown): Promise<boolean
         if (prior.key.startsWith('browser:message-queue:') && Array.isArray(prior.value) && prior.value.length === 0) { row.delete(); row.continue(); return; }
         if (prior.key !== record.key) {
           const bytes = prior.sizeBytes ?? JSON.stringify(prior).length * 2;
-          if (prior.key.startsWith('browser:outbox:') || prior.key.startsWith('browser:message-queue:')) { draftCount++; draftBytes += bytes; }
+          if (prior.key.startsWith('browser:outbox:') || prior.key.startsWith('browser:message-queue:') || prior.key.startsWith('browser:workspace-drafts:')) { draftCount++; draftBytes += bytes; }
           else if (!prior.key.startsWith('composer:')) {
             if (!Number.isFinite(prior.updatedAt) || prior.updatedAt > Date.now() || Date.now() - prior.updatedAt > MAX_CACHE_AGE_MS) row.delete();
             else cached.push({ key: prior.key, bytes, at: prior.updatedAt });
