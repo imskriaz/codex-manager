@@ -17,6 +17,7 @@ export type DashboardSettingKey =
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
   | "apiAccessEnabled"
+  | "workspaceTextFileLimitMb"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -64,6 +65,7 @@ export interface DashboardSettings {
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
   apiAccessEnabled?: boolean;
+  workspaceTextFileLimitMb?: number;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */
   codexSessionTransport?: DashboardCodexSessionTransport;
@@ -1253,7 +1255,7 @@ export type DashboardHostMessage =
   | { type: "dashboard:codex-requests"; requests: DashboardCodexServerRequest[] }
   | { type: "dashboard:codex-session-access"; sessionId: string; deviceId?: string; access: import("../codexSessionAccess").CodexSessionAccess }
   | { type: "dashboard:codex-session-live"; state: DashboardCodexSessionLiveState }
-  | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string; automatic?: boolean }
+  | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string; automatic?: boolean; answered?: boolean }
   | {
       type: "dashboard:oauth-authorized";
       oauthSessionId: string;

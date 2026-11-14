@@ -34,7 +34,7 @@ export async function checkInlineCopyUi(page, sessionId) {
       if (window.__denyInlineCopy) throw new Error('Clipboard blocked');
       window.__inlineCopies.push(text);
     } } });
-    document.execCommand = () => false;
+    document.execCommand = () => { window.__inlineFallbacks = (window.__inlineFallbacks || 0) + 1; return false; };
     window.__questionHistory = [{ id: 'inline-copy', kind: 'message', role: 'assistant', text: 'Use `admin@example.test`, then `a < b & "quoted"`. Keep [`linked`](https://example.test) as a link.\n\n```text\nblock text\n```' }];
     dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: {
       sessionId, streamId: '88888888-8888-4888-8888-888888888888', sequence: 1, status: 'completed', updatedAt: Date.now(),
@@ -44,7 +44,8 @@ export async function checkInlineCopyUi(page, sessionId) {
   const email = page.getByRole('button', { name: 'Copy admin@example.test', exact: true });
   await email.click();
   await page.waitForFunction(() => window.__inlineCopies.length === 1);
-  assert.equal(await email.getAttribute('title'), 'Copied', 'Inline copy confirms success without changing its contents');
+  assert.equal(await email.getAttribute('title'), 'Copy text', 'Inline copy stays silent without changing its title');
+  assert.equal(await email.evaluate(button => getComputedStyle(button, '::after').content), 'none', 'Inline copy adds no success label');
   assert.equal(await email.innerText(), 'admin@example.test');
   const symbols = page.getByRole('button', { name: 'Copy a < b & "quoted"', exact: true });
   await symbols.focus(); await page.keyboard.press('Enter');
@@ -54,14 +55,22 @@ export async function checkInlineCopyUi(page, sessionId) {
   assert.deepEqual(await page.evaluate(() => window.__inlineCopies), ['admin@example.test', 'a < b & "quoted"', 'a < b & "quoted"']);
   assert.equal(await page.locator('a[href="https://example.test"]').getByRole('button').count(), 0, 'Linked code keeps normal link behavior');
   const block = page.getByRole('button', { name: 'Copy code', exact: true });
+  const blockBounds = await block.locator('..').boundingBox(), copyBounds = await block.boundingBox();
+  assert.ok(copyBounds.x >= blockBounds.x && copyBounds.x + copyBounds.width <= blockBounds.x + blockBounds.width && copyBounds.y >= blockBounds.y && copyBounds.y + copyBounds.height <= blockBounds.y + blockBounds.height, 'Code copy icon sits inside the code block');
+  assert.equal(await block.locator('svg').count(), 1, 'Code copy uses an icon');
+  assert.equal((await block.innerText()).trim(), '', 'Code copy has no visible text label');
   await block.focus(); await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__inlineCopies.length === 4);
   assert.equal(await page.evaluate(() => window.__inlineCopies[3]), 'block text\n', 'Existing block-copy behavior is preserved');
   await page.evaluate(() => { window.__denyInlineCopy = true; });
   await email.click();
-  await page.locator('.dashboard-notice').filter({ hasText: 'Code could not be copied' }).waitFor();
+  await page.waitForFunction(() => window.__inlineFallbacks === 1 && !document.querySelector('.cli-inline-code-copy').disabled);
+  assert.equal(await page.locator('.dashboard-notice').filter({ hasText: 'Code could not be copied' }).count(), 0, 'Inline copy failure stays silent');
   assert.equal(await email.innerText(), 'admin@example.test', 'Copy failure keeps the original text');
   assert.equal(await email.isEnabled(), true, 'Copy failure allows retry');
+  await page.evaluate(() => { window.__denyInlineCopy = false; });
+  await email.click();
+  await page.waitForFunction(() => window.__inlineCopies.length === 5);
 }
 
 export async function checkWorkspaceUi(page, width, height, output) {

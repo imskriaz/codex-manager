@@ -3,6 +3,15 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it('persists the bounded workspace file limit and rejects nonnumeric or nonfinite values', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    for (const [value, expected] of [[0, 1], [10, 10], [100, 16], [2.5, 3]]) {
+      expect(await handleDashboardSettingUpdate('workspaceTextFileLimitMb', value)).toBe(true);
+      expect(update).toHaveBeenLastCalledWith('workspaceTextFileLimitMb', expected, vscode.ConfigurationTarget.Global);
+    }
+    for (const value of [NaN, Infinity, '10']) expect(await handleDashboardSettingUpdate('workspaceTextFileLimitMb', value)).toBe(false);
+  });
   it('stores model-capacity settings globally and validates the failure threshold', async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);

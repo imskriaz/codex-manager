@@ -13,6 +13,7 @@ import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
 import { waitWithin } from "../../utils/concurrency";
 import { registerQuotaRecoveryAutoResume } from "../../services/quotaRecoveryAutoResume";
+import { registerStandaloneCapacityRetry } from '../../services/standaloneCapacityRetry';
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../../infrastructure/config/extensionSettings";
 import {
   closeQuotaSummaryTabsForExtensionHostRestart,
@@ -226,6 +227,7 @@ export class AccountsWorkbench {
     await measureStep("registerAutoRefreshScheduler", () => {
       this.context.subscriptions.push(registerModelCapacitySwitch(this.repo, refreshers, id => this.encryptedSync.canAutomateAccount(id)));
       this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id)));
+      registerStandaloneCapacityRetry(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id));
       this.context.subscriptions.push(
         registerAutoRefreshScheduler({
           context: this.context,

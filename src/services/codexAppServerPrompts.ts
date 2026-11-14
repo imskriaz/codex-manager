@@ -188,20 +188,20 @@ export function respondCodexAppServerPrompt(
     }
   }
   if (pending.respondNative) {
-    pending.responding = pending.respondNative(response).then(() => { finishPrompt(requestId, pending); }, error => {
+    pending.responding = pending.respondNative(response).then(() => { finishPrompt(requestId, pending, true); }, error => {
       if (error instanceof CodexPromptNotSentError) pending.responding = undefined;
       throw error;
     });
     return pending.responding;
   }
   pending.rpc?.answerServerRequest(pending.serverId, response);
-  finishPrompt(requestId, pending);
+  finishPrompt(requestId, pending, true);
 }
 
-function finishPrompt(requestId: string, pending: PendingPrompt): void {
+function finishPrompt(requestId: string, pending: PendingPrompt, answered = false): void {
   clearTimeout(pending.timer);
   pendingPrompts.delete(requestId);
-  publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId, ...(pending.autoAttempted ? { automatic: true } : {}) });
+  publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId, ...(pending.autoAttempted ? { automatic: true } : {}), ...(answered ? { answered: true } : {}) });
 }
 
 function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: string): DashboardCodexServerRequest | undefined {

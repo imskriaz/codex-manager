@@ -90,7 +90,7 @@ describe("app-server initialization recovery", () => {
       expect(processChild.kill).toHaveBeenCalledOnce();
     } finally { Object.defineProperty(process, "platform", platform); }
   });
-  it.each([false, true])("accepts a child exit racing Windows taskkill (exit notification late: %s)", async late => {
+  it.each([false, true])("does not mistake a wrapper exit for successful Windows tree cleanup (exit notification late: %s)", async late => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", { value: "win32" });
     const processChild = Object.assign(child(), { pid: 12345 });
@@ -103,7 +103,7 @@ describe("app-server initialization recovery", () => {
       if (!late) processChild.emit("exit", 0);
       killer.emit("exit", 128);
       if (late) processChild.emit("exit", 0);
-      await expect(closing).resolves.toBeUndefined();
+      await expect(closing).rejects.toThrow('could not stop its private app-server process tree');
       expect(processChild.kill).not.toHaveBeenCalled();
     } finally { Object.defineProperty(process, "platform", platform); }
   });

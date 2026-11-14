@@ -398,11 +398,11 @@ export class CodexAppServerRpc {
       // A Node or shell shim can own a Codex grandchild holding the writer handle.
       if (!treeStopped) {
         const failed = () => {
-          // Taskkill can report a vanished PID before Node delivers its exit event.
+          // A wrapper exit alone cannot confirm that its descendants released the writer.
           setTimeout(() => {
             treeStopped = true;
+            failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
             if (!this.childExited) {
-              failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
               kill();
             }
             finish();

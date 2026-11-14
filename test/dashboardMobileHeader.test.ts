@@ -54,10 +54,12 @@ describe("mobile dashboard header", () => {
   });
 });
 
-it('keeps Account Center to search and More with display options inside the menu', () => {
+it('keeps Account Center selectors beside search and More beside the account counts', () => {
   const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
   expect(source).not.toContain('class="account-center-add"');
-  expect(source).toContain('{!compact ? displayFilters : null}');
-  expect(source).toContain('aria-label="Account display options">{displayFilters}{viewToggle}');
-  expect(source).toContain('{!compact ? viewToggle : null}');
+  const header = source.slice(source.indexOf('<div class="header accounts-section-header">'), source.indexOf('<div class="dashboard-account-toolbar">'));
+  expect(header.includes('<WorkspaceMenu label="More account actions"')).toBe(true);
+  const toolbar = source.slice(source.indexOf('<div class="dashboard-account-toolbar">'), source.indexOf('<div class="accounts-grid">', source.indexOf('<div class="dashboard-account-toolbar">')));
+  expect(toolbar.includes('{displayFilters}')).toBe(true);
+  expect(toolbar.includes('{viewToggle}')).toBe(true);
 });

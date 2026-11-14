@@ -39,16 +39,16 @@ it('uses scoped transcript feedback for unsupported links without adding an inli
   expect(source).toContain('<SessionFeedbackContext.Provider value={feedback}><ActivityMessage');
   expect(source).toContain('<MarkdownPreview content={draft} onFeedback={props.onFeedback} />');
 });
-it('shows successful copy on the existing button without an informational toast', async () => {
+it('keeps the code copy icon intact and confirms success through its title without a toast', async () => {
   vi.useFakeTimers();
   vi.stubGlobal('HTMLImageElement', class {});
   vi.stubGlobal('window', { setTimeout });
   vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
-  const button = { disabled: false, textContent: 'Copy code', isConnected: true, parentElement: { querySelector: () => ({ textContent: 'hello' }) } };
+  const button = { disabled: false, textContent: '', title: 'Copy code', isConnected: true, parentElement: { querySelector: () => ({ textContent: 'hello' }) } };
   markdown().props.onClick({ target: { closest: (selector: string) => selector === '.cli-code-copy' ? button : null } });
   await Promise.resolve(); await Promise.resolve();
-  expect(button.textContent).toBe('Copied'); expect(button.disabled).toBe(false); expect(fixture.feedback).not.toHaveBeenCalled();
-  vi.advanceTimersByTime(1500); expect(button.textContent).toBe('Copy code');
+  expect(button.title).toBe('Copied'); expect(button.textContent).toBe(''); expect(button.disabled).toBe(false); expect(fixture.feedback).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1500); expect(button.title).toBe('Copy code');
 });
 it('renders safe keyboard-operable inline copy controls while preserving linked code and fenced blocks', () => {
   const html = markdown(undefined, 'Copy `admin@example.test`, `a < b & "quoted"`, and [`linked`](https://example.test).\n\n```ts\nblock\n```').props.dangerouslySetInnerHTML.__html;
@@ -57,9 +57,10 @@ it('renders safe keyboard-operable inline copy controls while preserving linked 
   expect(html).toContain('a &lt; b &amp; &quot;quoted&quot;');
   expect(html.match(/class="cli-inline-code-copy"/g)).toHaveLength(2);
   expect(html).toContain('<code>linked</code></a>');
-  expect(html).toContain('class="cli-code-copy"');
+  expect(html).toContain('class="cli-code-copy cli-code-copy-float"');
+  expect(html).toContain('title="Copy code"><svg');
 });
-it('copies exact inline text once while pending and keeps the original content after feedback resets', async () => {
+it('copies exact inline text silently, blocks pending duplicates, and allows another copy', async () => {
   vi.useFakeTimers();
   vi.stubGlobal('HTMLImageElement', class {});
   vi.stubGlobal('window', { setTimeout });
@@ -72,20 +73,30 @@ it('copies exact inline text once while pending and keeps the original content a
   control.props.onClick(event); control.props.onClick(event);
   expect(writeText).toHaveBeenCalledExactlyOnceWith('admin@example.test');
   resolveCopy(); await Promise.resolve(); await Promise.resolve();
-  expect(button.title).toBe('Copied'); expect(button.disabled).toBe(false);
-  expect(button.classList.add).toHaveBeenCalledWith('is-copied');
-  vi.advanceTimersByTime(1500);
   expect(button.title).toBe('Copy text'); expect(button.querySelector().textContent).toBe('admin@example.test');
+  expect(button.disabled).toBe(false);
+  expect(button.classList.add).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  control.props.onClick(event);
+  expect(writeText).toHaveBeenCalledTimes(2);
+  resolveCopy(); await Promise.resolve(); await Promise.resolve();
   expect(fixture.feedback).not.toHaveBeenCalled();
 });
-it('reports inline clipboard failure and leaves its text available for manual copying', async () => {
+it('silently handles inline clipboard failure and allows retry', async () => {
   vi.stubGlobal('HTMLImageElement', class {});
-  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+  const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
   vi.stubGlobal('document', { createElement: () => ({ style: {}, setAttribute() {}, select() {}, remove() {} }), body: { appendChild() {} }, execCommand: () => false });
   const button = { disabled: false, classList: { remove: vi.fn() }, querySelector: () => ({ textContent: '<admin@example.test>' }) };
-  markdown().props.onClick({ target: { closest: (selector: string) => selector === '.cli-inline-code-copy' ? button : null } });
-  await vi.waitFor(() => expect(fixture.feedback).toHaveBeenCalledWith({ level: 'error', message: 'Code could not be copied. Select the code and copy it manually.' }));
-  expect(button.disabled).toBe(false);
-  expect(button.classList.remove).toHaveBeenCalledWith('is-copied');
+  const control = markdown();
+  const event = { target: { closest: (selector: string) => selector === '.cli-inline-code-copy' ? button : null } };
+  control.props.onClick(event);
+  await vi.waitFor(() => expect(button.disabled).toBe(false));
+  expect(fixture.feedback).not.toHaveBeenCalled();
   expect(button.querySelector().textContent).toBe('<admin@example.test>');
+  writeText.mockResolvedValue(undefined);
+  control.props.onClick(event);
+  await vi.waitFor(() => expect(button.disabled).toBe(false));
+  expect(writeText).toHaveBeenCalledTimes(2);
+  expect(fixture.feedback).not.toHaveBeenCalled();
 });

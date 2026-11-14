@@ -3097,8 +3097,21 @@ async function runCodexAppServerRequest<T = unknown>(
   const rpc = await openCodexAppServer(executable, cwd, signal);
   const abort = () => { void rpc.close(); };
   signal?.addEventListener("abort", abort, { once: true });
-  try { signal?.throwIfAborted(); if (resolveCodexHome() !== requestHome) throw new Error('Codex home changed. The request was not sent.'); return await rpc.request<T>(method, params, timeoutMs); }
-  finally { signal?.removeEventListener("abort", abort); await rpc.close(); }
+  let confirmed = false;
+  try {
+    signal?.throwIfAborted();
+    if (resolveCodexHome() !== requestHome) throw new Error('Codex home changed. The request was not sent.');
+    const result = await rpc.request<T>(method, params, timeoutMs);
+    confirmed = true;
+    return result;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    try { await rpc.close(); }
+    catch (error) {
+      if (confirmed) throw new Error(`Codex confirmed the action, but process cleanup could not be confirmed. Check its result before repeating it. ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      recordPersistentEvent('warning', 'session-maintenance', 'Request failed and process cleanup was also unconfirmed', { method }, error);
+    }
+  }
 }
 
 function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {

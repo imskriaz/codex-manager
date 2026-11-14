@@ -12,7 +12,7 @@ import { getCodexHomeStateKey } from "../codex/authFile";
 const pending = new Map<string,{ home:string; state:DashboardCodexSessionLiveState; accountId?:string; bytes:number }>();
 let pendingBytes = 0;
 let timer: NodeJS.Timeout | undefined;
-let warned = false;
+const warned = new Set<string>();
 const pendingStatus = new Map<string,{home:string;id:string;status:"running"|"idle"|"unknown";at:number}>();
 type Revision = Pick<DashboardCodexSessionLiveState,"sessionId"|"deviceId"|"streamId"|"sequence"|"updatedAt"|"status">;
 const observed = new Map<string,Revision>();
@@ -34,9 +34,11 @@ function evictOldestStatus(): void {
 }
 
 function warn(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (warned.has(message)) return;
+  if (warned.size >= 16) warned.clear();
+  warned.add(message);
   console.warn("[codexManager] session recording delayed",error);
-  if (warned) return;
-  warned = true;
 }
 
 export function captureSessionAccount(): string | undefined {
@@ -96,7 +98,7 @@ export function flushSessionRecording(limit = 8): boolean {
     } catch (error) { warn(error); failed = true; }
   }
   const empty = pending.size === 0 && pendingStatus.size === 0;
-  if (!failed && empty) warned = false;
+  if (!failed && empty) warned.clear();
   if (!empty && !timer) schedule(failed ? 1_000 : 0);
   return empty;
 }
@@ -109,7 +111,7 @@ export function disposeSessionRecording(): void {
   timer = undefined;
   pending.clear();
   pendingBytes = 0;
-  warned = false;
+  warned.clear();
   pendingStatus.clear();
   observed.clear();
 }

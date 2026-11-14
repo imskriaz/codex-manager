@@ -52,7 +52,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
   }, [open]);
 
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === "Escape" && Array.from(document.querySelectorAll<HTMLElement>('[role="menu"]')).some(menu => menu.getClientRects().length > 0)) return;
+    if (event.key === "Escape" && Array.from(document.querySelectorAll<HTMLElement>('[role="menu"]')).some(menu => menu.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: true }))) return;
     event.stopPropagation();
     if (event.key === "Escape") {
       event.preventDefault();

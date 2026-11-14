@@ -2523,11 +2523,10 @@ function App() {
 
   const renderAccountSection = (compact = false) => {
     const view = compact ? accountCenterView : uiPreferences.view;
+    const tagFilter = availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null;
     const displayFilters = (
       <>
         <label class="dashboard-select-control" title={compact ? `${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}` : undefined}>
-          {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h11M4 12h8M4 18h5m8-13v14m-3-3 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg> : null}
-          {compact ? <span>{resolveSortAriaLabel(snapshot.lang)}</span> : null}
           <select
             value={accountSort}
             onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
@@ -2552,10 +2551,8 @@ function App() {
             ))}
           </select>
         </label>
-        {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={compact ? `Filter by tag: ${uiPreferences.accountTag || 'All tags'}` : undefined}>{compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="7" cy="7" r="1.5" fill="currentColor" /></svg> : null}{compact ? <span>Filter by tag</span> : null}<select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
+        {!compact ? tagFilter : null}
         <label class="dashboard-select-control metric-priority-control" title={compact ? `${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}` : undefined}>
-          {compact ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m8 10V4m8 15v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg> : null}
-          {compact ? <span>{resolveUiText("metric", snapshot.lang)}</span> : null}
           <select
             value={uiPreferences.metricPriority}
             aria-label={resolveUiText("metric", snapshot.lang)}
@@ -2579,7 +2576,6 @@ function App() {
     const viewToggle = (
       <button
         type="button"
-        role={compact ? "menuitem" : undefined}
         class="dashboard-view-toggle active"
         title={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
         aria-label={resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}
@@ -2591,7 +2587,7 @@ function App() {
           }));
         }}
       >
-        {view === "cards" ? <GridViewIcon /> : <TableViewIcon />}{compact ? <span>{resolveUiText(view === "cards" ? "tableView" : "gridView", snapshot.lang)}</span> : null}
+        {view === "cards" ? <GridViewIcon /> : <TableViewIcon />}
       </button>
     );
     return (
@@ -2682,6 +2678,15 @@ function App() {
                   </span>
                 </h2>
               </div>
+              {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
+                <WorkspaceMenu label="More account actions" icon={<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor" /><circle cx="12" cy="12" r="1.8" fill="currentColor" /><circle cx="19" cy="12" r="1.8" fill="currentColor" /></svg>}>
+                  <button type="button" role="menuitem" disabled={isActionPending('refreshAll')} onClick={() => sendAction('refreshAll')}>{renderRefreshIcon()} Refresh all quotas</button>
+                  <button type="button" role="menuitem" disabled={syncPending} onClick={handleSyncNow}>Sync now</button>
+                  <button type="button" role="menuitem" onClick={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}>Manage tags</button>
+                  <button type="button" role="menuitem" onClick={modals.openImportModal}>Import accounts</button>
+                  {tagFilter ? <div class="account-center-options" role="group" aria-label="Account display options">{tagFilter}</div> : null}
+                </WorkspaceMenu>
+              </div> : null}
               {selectedCount > 0 ? (
                 <BatchSelectionBar
                   copy={snapshot.copy}
@@ -2736,18 +2741,9 @@ function App() {
                   </button>
                 ) : null}
               </label>
-              {!compact ? displayFilters : null}
+              {displayFilters}
               <div class="dashboard-view-controls">
-                {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
-                  <WorkspaceMenu label="More account actions" icon={<span aria-hidden="true">⋯</span>}>
-                    <button type="button" role="menuitem" disabled={isActionPending('refreshAll')} onClick={() => sendAction('refreshAll')}>{renderRefreshIcon()} Refresh all quotas</button>
-                    <button type="button" role="menuitem" disabled={syncPending} onClick={handleSyncNow}>Sync now</button>
-                    <button type="button" role="menuitem" onClick={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}>Manage tags</button>
-                    <button type="button" role="menuitem" onClick={modals.openImportModal}>Import accounts</button>
-                    <div class="account-center-options" role="group" aria-label="Account display options">{displayFilters}{viewToggle}</div>
-                  </WorkspaceMenu>
-                </div> : null}
-                {!compact ? viewToggle : null}
+                {viewToggle}
               </div>
             </div>
             <div class="accounts-grid">

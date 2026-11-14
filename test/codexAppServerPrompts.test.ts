@@ -16,6 +16,20 @@ function createRpc() {
 }
 afterEach(() => vi.useRealTimers());
 
+it('distinguishes answered requests from unanswered disconnects in resolution events', async () => {
+  const resolutions: Array<{ answered?: boolean }> = [];
+  const stop = subscribeDashboardRealtime(message => { if (message.type === 'dashboard:codex-request-resolved') resolutions.push(message); });
+  const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'answered');
+  try {
+    fake.emit({ id: 1, method: 'item/tool/requestUserInput', params: { threadId: 'answered', questions: [{ id: 'choice', question: 'Continue?' }] } });
+    const prompt = listPendingCodexAppServerPrompts().find(request => request.threadId === 'answered')!;
+    await respondCodexAppServerPrompt(prompt.id, 'approve', { choice: 'Yes' });
+    expect(resolutions.at(-1)?.answered).toBe(true);
+    fake.emit({ id: 2, method: 'item/tool/requestUserInput', params: { threadId: 'answered', questions: [{ id: 'next', question: 'Again?' }] } });
+    detach(); expect(resolutions.at(-1)?.answered).toBeUndefined();
+  } finally { detach(); stop(); }
+});
+
 it('preserves native question age across owner resync and prompt expiry', async () => {
   vi.useFakeTimers(); const source = {}, respond = vi.fn();
   const requests = [{ id: 'native-question', method: 'item/tool/requestUserInput', params: { threadId: 'native-age', questions: [{ id: 'choice', question: 'Continue?' }] } }];

@@ -1,7 +1,22 @@
 # Changelog
 
-## 2.0.1-pre.1
+## 2.0.2
 
+- Keep live conversations updating when tool output or hydrated images exceed live snapshot limits; preserve full saved history.
+- Recover verified disconnected work through Auto Resume in VS Code and standalone, with durable dispatch and newer-turn guards.
+- Capture first-turn quota failures in both hosts and resume after refreshed quota or a verified account replacement becomes available.
+- Open Windows drive-letter links from chat inside the project while preserving file and symlink boundaries.
+- Raise the workspace text editor limit to 10 MB and add a 1–16 MB setting shared by file reads and saves.
+- Delete large and binary files from the project tree without applying editor limits, while checking revisions with bounded reads.
+- Clear answered question banners across dashboards and reloads while retaining unanswered questions during disconnects.
+- Preserve the original request error when cleanup also fails, and distinguish confirmed actions from unconfirmed process cleanup.
+- Copy inline code silently on success or failure, without changing the text or showing feedback.
+- Place an icon copy control inside the top-right corner of each Markdown code block.
+- Match Account Center's search row to the dashboard toolbar and place More beside the account counts.
+- Keep agent activity in Agents and show only file changes in Reviews.
+- Move Account Center by its desktop header or arrow keys, keep it within the window, and close it with its close button. Sidebar Account Center stays open after account switches and outside clicks until dismissed.
+- Open individual files and reviews without automatically adding their Files or Reviews tool tabs.
+- Ignore hidden menus when handling Escape so dialogs still close after using mobile navigation.
 - Compact command and skill suggestions and show them only for matching names.
 - Resize the browser workspace when the mobile keyboard opens.
 - Shorten connection banners and add a page Reload action; informational toasts remain hidden.

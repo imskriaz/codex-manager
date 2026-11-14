@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildDashboardStateSignature } from "../src/presentation/dashboard/signature";
 import type { DashboardState } from "../src/domain/dashboard/types";
 
+it('publishes workspace file limit changes to connected dashboards', () => {
+  const state = createState(), original = buildDashboardStateSignature(state);
+  state.settings.workspaceTextFileLimitMb = 16;
+  expect(buildDashboardStateSignature(state)).not.toBe(original);
+});
+
 it('publishes tag-only and favorite-only changes, including removals', () => {
   const state = createState(), original = buildDashboardStateSignature(state);
   state.accounts[0]!.tags = ['Work'];

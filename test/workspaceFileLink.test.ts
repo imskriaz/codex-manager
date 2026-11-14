@@ -4,6 +4,7 @@ import {workspaceFileFromLink, workspaceRelativePath} from '../webview-src/dashb
 describe('chat file references',()=>{
   it.each([
     ['C:\\Project\\docs\\design.md', 'c:\\project', 'docs/design.md'],
+    ['/D:/Project/output/release-plan.md', 'D:\\Project', 'output/release-plan.md'],
     ['file:///C:/Project/docs/design%20draft.md:12', 'C:\\Project', 'docs/design draft.md'],
     ['\\\\?\\C:\\Project\\docs\\design.md', 'C:\\Project', 'docs/design.md'],
     ['/repo/docs/design.md', '/repo', 'docs/design.md'],
@@ -15,6 +16,8 @@ describe('chat file references',()=>{
   it.each([
     ['src/main.ts','src/main.ts'],['./README.md#usage','./README.md'],
     ['D:\\Project\\My File.ts:12:3','D:/Project/My File.ts'],
+    ['/D:/Project/My%20File.ts:12:3','D:/Project/My File.ts'],
+    ['/D:/Project-other/private.md','D:/Project-other/private.md'],
     ['file:///D:/Project/My%20File.ts#L12','D:/Project/My File.ts'],
     ['file:///home/dev/src/main.ts:12','/home/dev/src/main.ts'],
     ['vscode://file/D:/Project/main.ts:12:3','D:/Project/main.ts'],

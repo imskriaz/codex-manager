@@ -7,6 +7,7 @@ import {
   getCodexManagerConfiguration,
   normalizeAutoRefreshMinutes,
   normalizeDailyTokenUsageIntervalMinutes,
+  normalizeWorkspaceTextFileLimitMb,
   normalizeCurrentAutoRefreshMinutes,
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
@@ -191,6 +192,12 @@ export async function handleDashboardSettingUpdate(
     case "dailyTokenUsageIntervalMinutes":
       if (typeof value === "number") {
         await updateDashboardConfiguration(config, key, normalizeDailyTokenUsageIntervalMinutes(value), target);
+        updated = true;
+      }
+      break;
+    case "workspaceTextFileLimitMb":
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        await updateDashboardConfiguration(config, key, normalizeWorkspaceTextFileLimitMb(value), target);
         updated = true;
       }
       break;

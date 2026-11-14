@@ -15,7 +15,7 @@ export function workspaceFileFromLink(href: string): string | undefined {
   } else if (value.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) return;
   value = value.split(/[?#]/, 1)[0]!;
   try { value = decodeURIComponent(value); } catch { /* Keep a malformed filename local so its read reports failure. */ }
-  value = value.replace(/(?::\d+(?::\d+)?)$/, '').replace(/\\/g, '/');
+  value = value.replace(/(?::\d+(?::\d+)?)$/, '').replace(/\\/g, '/').replace(/^\/([a-z]:\/)/i, '$1');
   return value && !/[\0\r\n]/.test(value) ? value : undefined;
 }
 

@@ -5,11 +5,18 @@ import path from 'node:path';
 export async function checkReviewsUi(page, { origin, parentId, width, output }) {
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('textbox', {name:'Message Codex',exact:true}).waitFor();
+  const change = page.locator('.cli-file-change-list > details').first();
+  await change.evaluate(element => { for (let node=element; node; node=node.parentElement) if (node instanceof HTMLDetailsElement) node.open=true; });
+  await change.getByRole('button', {name:'Review',exact:true}).click();
+  await page.getByRole('table', {name:/Changes in/}).waitFor();
+  assert.equal(await page.getByRole('tab', {name:'Reviews',exact:true}).count(),0,'An individual review does not automatically add Reviews');
   const show = page.getByRole('button', {name:'Show workspace tools',exact:true});
   if (await show.isVisible()) await show.click();
   await page.getByRole('button', {name:'Add workspace tool',exact:true}).click();
   await page.getByRole('menuitem', {name:'Reviews',exact:true}).click();
   await page.getByText('Review changes', {exact:true}).waitFor();
+  assert.equal(await page.locator('.cli-reviews-view > details').count(), 0, 'Agent activity stays in Agents');
+  assert.ok(!(await page.locator('.cli-reviews-view > header').innerText()).includes('agent activities'), 'Reviews counts files only');
   const row = page.locator('.cli-review-file-list > button').first();
   await row.waitFor();
   await page.screenshot({path:path.join(output,`workspace-reviews-${width}.png`),animations:'disabled'});
@@ -29,6 +36,7 @@ export async function checkReviewsUi(page, { origin, parentId, width, output }) 
   await page.screenshot({path:path.join(output,`workspace-review-detail-${width}.png`),animations:'disabled'});
   await page.getByRole('button', {name:'Open in Files',exact:true}).click();
   await page.locator('.cli-file-editor .cm-content').waitFor();
+  assert.equal(await page.getByRole('tab', {name:'Files',exact:true}).count(), 0, 'Opening a file does not automatically add Files');
 }
 
 // Called only by the intercepted responsive harness; every mutation stays in its fixture.

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as vscode from 'vscode';
 const m = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
   config: true,
@@ -9,7 +10,10 @@ const m = vi.hoisted(() => ({
   summary: vi.fn(),
   resume: vi.fn(),
   preferences: new Map(),
-  home: "/retry-home"
+  home: "/retry-home",
+  deleted: false,
+  paused: false,
+  lease: undefined as AbortController | undefined
 }));
 vi.mock("../src/storage/sqliteState", () => ({
   getSqliteStateStore: () => ({
@@ -32,11 +36,14 @@ vi.mock("../src/services/codexSessionResume", () => ({
 vi.mock("../src/services/codexSessionLive", () => ({ getCodexSessionLiveState: () => m.live }));
 vi.mock("../src/services/codexSessionPreferences", () => ({ readCodexSessionPreferences: () => m.preferences }));
 vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: m.resume }));
+vi.mock('../src/storage/sqliteSessions', () => ({ isConfirmedSessionDeleted: () => m.deleted }));
+vi.mock('../src/services/codexSessionGoals', () => ({ isExplicitSessionGoalPause: () => m.paused }));
 vi.mock("../src/utils/crossWindowOperations", () => ({
-  runCrossWindowExclusive: async (key: string, _label: string, work: () => Promise<void>) => {
+  runCrossWindowExclusive: async (key: string, _label: string, work: (signal: AbortSignal) => Promise<void>) => {
     m.locks.push(key);
     if (m.holdCapacity && key === `model-capacity:${m.home}`) throw new Error('Model capacity selection is still in progress');
-    return work();
+    m.lease = new AbortController();
+    return work(m.lease.signal);
   }
 }));
 import { registerStandaloneCapacityRetry } from "../src/services/standaloneCapacityRetry";
@@ -52,6 +59,9 @@ const repo = { listAccounts: vi.fn(async () => [{ id: "active", isActive: true, 
 let allowed = true;
 const start = () => registerStandaloneCapacityRetry({ subscriptions } as never, repo as never, () => allowed);
 beforeEach(() => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, writable: true, value: 'node' });
+  m.deleted = false;
+  m.paused = false; m.lease = undefined;
   vi.useFakeTimers();
   repo.listAccounts.mockReset().mockResolvedValue([{ id: "active", isActive: true, enabled: true }]);
   m.data.clear();
@@ -69,6 +79,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const item of subscriptions.splice(0)) item.dispose();
   vi.useRealTimers();
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, writable: true, value: undefined });
 });
 it("retries capacity after a bounded wait, deduplicates terminal replay, and uses private recovery", async () => {
   start();
@@ -204,4 +215,78 @@ it('defers capacity retries without consuming the budget while quota is exhauste
   expect(m.resume).not.toHaveBeenCalled();
   repo.listAccounts.mockResolvedValue([{ id: 'active', isActive: true, enabled: true }]);
   await vi.advanceTimersByTimeAsync(1000); expect(m.resume).toHaveBeenCalledOnce();
+});
+
+it.each(['node', 'desktop'])('recovers a disconnected turn through the %s host after verifying idle state', async host => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, writable: true, value: host });
+  start(); emit('lost-stream', 'disconnected', 'The Codex turn outcome is unconfirmed.');
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(m.resume).toHaveBeenCalledExactlyOnceWith('session', expect.any(AbortSignal), 'automatic', host === 'node' ? 'private' : 'native');
+});
+
+it.each(['completed', 'cancelled', 'running', 'replacement', 'deleted', 'stop', 'pause', 'ownership'])('does not revive stale recovery after %s during inspection', async outcome => {
+  start(); emit('disconnected', 'disconnected', 'Connection closed');
+  m.summary.mockImplementationOnce(async () => {
+    if (outcome === 'replacement') emit('new-failure', 'disconnected', 'New connection closed');
+    else if (outcome === 'deleted') m.deleted = true;
+    else if (outcome === 'stop') m.preferences.set('session', { manualStop: true });
+    else if (outcome === 'pause') m.paused = true;
+    else if (outcome === 'ownership') allowed = false;
+    else emit('new-turn', outcome, '');
+    return { id: 'session', status: 'idle', goal: { status: 'active' }, interrupted: true };
+  });
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(m.resume).not.toHaveBeenCalled();
+});
+
+it('does not send under an aborted lease and can recover after reacquiring one', async () => {
+  start(); emit('disconnected', 'disconnected', 'Connection closed');
+  m.summary.mockImplementationOnce(async () => {
+    m.lease?.abort(new Error('Lease lost'));
+    return { id: 'session', status: 'idle', goal: null, interrupted: true };
+  });
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(m.resume).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(m.resume).toHaveBeenCalledOnce();
+});
+
+it.each([undefined, { status: 'unknown' }, { status: 'idle', goal: undefined, interrupted: undefined }])('retains recovery when session inspection is incomplete: %j', async session => {
+  start(); emit('disconnected', 'disconnected', 'Connection closed');
+  m.summary.mockResolvedValue(session);
+  await vi.advanceTimersByTimeAsync(12000);
+  expect(m.resume).not.toHaveBeenCalled();
+  expect(m.data.size).toBe(1);
+  m.summary.mockResolvedValue({ id: 'session', status: 'idle', goal: null, interrupted: true });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(m.resume).toHaveBeenCalledOnce();
+});
+
+it('persists an unconfirmed dispatch before sending and never replays it after restart', async () => {
+  start(); emit('disconnected', 'disconnected', 'Connection closed');
+  m.resume.mockImplementationOnce(async () => {
+    expect([...m.data.values()][0]).toMatchObject({ due: Number.MAX_SAFE_INTEGER, attempts: 1 });
+    throw new Error('Connection closed after send');
+  });
+  await vi.advanceTimersByTimeAsync(6000);
+  subscriptions.pop()!.dispose(); start();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(m.resume).toHaveBeenCalledOnce();
+});
+
+it('does not dispatch if the durable claim cannot be written', async () => {
+  start(); emit('disconnected', 'disconnected', 'Connection closed');
+  const write = vi.spyOn(m.data, 'set').mockImplementation(() => { throw new Error('storage full'); });
+  try { await vi.advanceTimersByTimeAsync(6000); expect(m.resume).not.toHaveBeenCalled(); }
+  finally { write.mockRestore(); }
+});
+
+it('keeps the shared attempt budget when another host observes an automatic stream', async () => {
+  start(); start();
+  m.resume.mockImplementation(async () => { emit('automatic', 'running', ''); return 'continued'; });
+  emit('first'); await vi.advanceTimersByTimeAsync(6000);
+  expect(m.resume).toHaveBeenCalledOnce();
+  expect([...m.data.values()][0]).toMatchObject({ attempts: 1, automaticStreamId: 'automatic' });
+  emit('automatic'); await vi.advanceTimersByTimeAsync(11000);
+  expect([...m.data.values()][0]).toMatchObject({ attempts: 2 });
 });

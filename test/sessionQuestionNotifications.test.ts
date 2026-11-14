@@ -70,3 +70,37 @@ it('respects dismissals saved by earlier versions', () => {
   render(); emit({ type: 'dashboard:codex-request', request: request() });
   expect(render().active).toBeUndefined();
 });
+
+it('clears confirmed answers durably without clearing another system or a replacement owner', () => {
+  render(); emit({ type: 'dashboard:codex-requests', requests: [request(), request({ deviceId: 'remote' })] });
+  emit({ type: 'dashboard:codex-request-resolved', requestId: 'owner-request', answered: true });
+  expect(render().active?.deviceId).toBe('remote');
+  expect(reopen().active?.deviceId).toBe('remote');
+  emit({ type: 'dashboard:codex-request', request: request({ id: 'replacement', deviceId: 'remote' }) });
+  emit({ type: 'dashboard:codex-request-resolved', requestId: 'owner-request', deviceId: 'remote', answered: true });
+  expect(render().active?.id).toBe('replacement');
+  emit({ type: 'dashboard:codex-request-resolved', requestId: 'replacement', deviceId: 'remote', answered: true });
+  expect(render().active).toBeUndefined(); expect(reopen().active).toBeUndefined();
+});
+
+it('clears a transcript notification only after every question has a confirmed answer', () => {
+  render(); emit({ type: 'dashboard:codex-request', request: request() });
+  const question = { id: 'question', text: 'Choose', questions: [{ title: 'First' }, { title: 'Second' }] };
+  const reply = (index: number) => ({ id: 'reply-' + index, role: 'user', text: '<send_user_message_question_reply>' + JSON.stringify([{ questionItemId: JSON.stringify(['request_user_input_async', 'question', index]), answer: 'Yes' }]) + '</send_user_message_question_reply>' });
+  const live = (messages: unknown[]) => emit({ type: 'dashboard:codex-session-live', state: { sessionId: 'thread', messages } });
+  live([question, reply(0)]); expect(render().active).toBeDefined();
+  live([question, reply(0), reply(1)]); expect(render().active).toBeUndefined(); expect(reopen().active).toBeUndefined();
+});
+
+it('observes a successful same-tab response dismissal without a browser storage event', () => {
+  render(); emit({ type: 'dashboard:codex-request', request: request() });
+  records.set('codexManager.dismissedRequests.v1', JSON.stringify([JSON.stringify(['local', 'owner-request'])]));
+  expect(render().active).toBeUndefined();
+});
+
+it('clears answered banners in memory if storage fails and warns about persistence', () => {
+  render(); emit({ type: 'dashboard:codex-request', request: request() }); full = true;
+  emit({ type: 'dashboard:codex-request-resolved', requestId: 'owner-request', answered: true });
+  expect(render().active).toBeUndefined();
+  expect(notice).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
+});

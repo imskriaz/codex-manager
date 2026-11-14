@@ -85,7 +85,7 @@ export function registerQuotaRecoveryAutoResume(
       if (disposed || home !== resolveCodexHome() || !isAutoResumeAvailable()) return;
       const active = accounts.find((account) => account.isActive);
       if (!active || active.enabled === false || !canUseAccount(active.id)) return;
-      const switched = vscode.env.appHost === 'node' && observedAccountId !== undefined && observedAccountId !== active.id;
+      const switched = observedAccountId !== undefined && observedAccountId !== active.id;
       observedAccountId = active.id;
       // A replacement account must not inherit the failed account's retry delay.
       if (Date.now() < retryAt && !switched) return;
@@ -176,7 +176,7 @@ export function registerQuotaRecoveryAutoResume(
   });
   const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
   const stopLive = subscribeDashboardRealtime(message => {
-    if (vscode.env.appHost !== 'node' || message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
+    if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
         !['failed', 'disconnected'].includes(message.state.status) || !isAutoResumeAvailable()) return;
     const detail = message.state.error ?? '';
     if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;

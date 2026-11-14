@@ -201,7 +201,20 @@ export class CodexSessionLiveReducer {
 
   snapshot(): DashboardCodexSessionLiveState {
     if (this.snapshotJson) return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
-    const state = { ...this.state, messages: this.parseItems({ thread: { turns: [{ id: this.state.turnId, status: this.state.status === "running" ? "inProgress" : this.state.status, items: [...this.items.values(), ...(this.errorItem ? [this.errorItem] : [])] }] } }) };
+    const parsed = this.parseItems({ thread: { turns: [{ id: this.state.turnId, status: this.state.status === "running" ? "inProgress" : this.state.status, items: [...this.items.values(), ...(this.errorItem ? [this.errorItem] : [])] }] } });
+    const state = { ...this.state, messages: [] as DashboardCliSessionMessage[] };
+    for (const message of parsed) {
+      const { images, textAttachments, ...fields } = message;
+      const limited = bounded(fields, 0, () => { state.truncated = true; }) as DashboardCliSessionMessage;
+      if (textAttachments) limited.textAttachments = textAttachments;
+      if (images) {
+        limited.images = images.filter(image => image.src.length <= MAX_TEXT).map(image => ({ src: image.src, alt: string(image.alt) }));
+        if (limited.images.length !== images.length || images.some(image => (image.alt?.length ?? 0) > MAX_TEXT)) state.truncated = true;
+      }
+      // A malformed presentation item must not freeze the rest of the live turn.
+      if (validMessage(limited)) state.messages.push(limited);
+      else state.truncated = true;
+    }
     if (state.messages.length > MAX_CODEX_LIVE_ITEMS) { state.messages = state.messages.slice(-MAX_CODEX_LIVE_ITEMS); state.truncated = true; }
     const sizes = state.messages.map(jsonBytes);
     let bytes = jsonBytes({ ...state, messages: [], truncated: true }) + sizes.reduce((sum, size) => sum + size, 0) + Math.max(0, sizes.length - 1);

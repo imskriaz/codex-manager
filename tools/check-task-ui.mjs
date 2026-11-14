@@ -436,6 +436,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.getByRole('button',{name:'Board actions',exact:true}).click();
     await page.getByRole('menuitem',{name:/^Sync drafts/}).click();
     const legacy=page.locator('.task-sync-conflicts').filter({hasText:'Saved changes need a system'});
+    await legacy.waitFor();
     assert.ok(await page.locator('.browser-notification-offer').evaluateAll(items=>items.every(item=>getComputedStyle(item).display==='none')),'Notification offers stay clear of saved-change recovery');
     await legacy.locator('summary').click();
     assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='saveProjectTask').length),beforeLegacy,'An unowned legacy change is never replayed automatically');

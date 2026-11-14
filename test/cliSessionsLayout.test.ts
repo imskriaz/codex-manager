@@ -434,6 +434,10 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('currentPath ? "cli-files-workbench is-detail" : "cli-files-workbench is-list"');
     expect(source).toContain('{currentPath ? null : <div class="cli-file-tree" aria-busy={props.loading}>');
     expect(source).toContain('if (props.activePath) return <div class="cli-reviews-view is-detail">');
+    const reviews = source.slice(source.indexOf('function WorkspaceReviewsView('), source.indexOf('type DiffCell ='));
+    expect(reviews.includes('props.agents')).toBe(false);
+    expect(reviews.includes('agent activities')).toBe(false);
+    expect(reviews.includes('No recorded changes.')).toBe(true);
     expect(css).toContain(".cli-files-workbench.is-detail");
     expect(css).toContain(".cli-review-detail");
     expect(source).toContain('props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"');

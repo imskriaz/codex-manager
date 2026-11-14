@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.1-pre.1",
+  "version": "2.0.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -138,6 +138,14 @@
           "default": false,
           "scope": "machine",
           "markdownDescription": "Allow generated Bearer tokens to call the local dashboard API."
+        },
+        "codexManager.workspaceTextFileLimitMb": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 16,
+          "multipleOf": 1,
+          "default": 10,
+          "markdownDescription": "Maximum text file size in MB for the workspace editor, used for opening and saving files."
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",

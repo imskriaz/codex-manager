@@ -169,7 +169,9 @@ For a standalone Node launch from a source checkout, run `npm run compile` first
 
 Standalone hides the Terminal tab and its add/overview controls. Files, Git, reviews, agents, sessions, and account controls remain available.
 
-Standalone retries verified capacity interruptions up to four times with increasing delays, retaining its attempt count in SQLite. It uses the existing Auto Switch, Model Capacity Auto Switch and global/per-session Auto Resume settings. Manual Stop, explicit goal pause, session disablement, ownership conflicts and uncertain failures prevent replay. Goal Resume in Node uses the private app-server without opening a VS Code tab.
+VS Code and standalone retry verified disconnected, capacity and execution-policy interruptions up to four times with increasing delays, retaining the attempt count in SQLite. Recovery checks that the session is idle and honors global/per-session Auto Resume; capacity retries also require Auto Switch and Model Capacity Auto Switch. Deleted sessions, manual Stop, explicit goal pause, ownership conflicts and uncertain recovery launches prevent replay. Goal Resume in Node uses the private app-server without opening a VS Code tab.
+
+The workspace editor opens and saves text files up to 10 MB by default. Change **Settings → General → Enable workspace → Text file limit** to choose 1–16 MB. File-version conflicts and project/symlink boundaries remain enforced.
 
 Node also starts the shared queue, session recording, Auto Resume, quota refresh, token refresh, and model-capacity recovery services. Recovery uses a private app-server connection without opening VS Code. Account changes apply to new turns without a VS Code reload. Account automation uses the shared ownership coordinator in both hosts. Authenticated peer synchronization works in standalone; the VS Code Settings Sync transport requires VS Code.
 

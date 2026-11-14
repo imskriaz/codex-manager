@@ -20,13 +20,13 @@ import { publishDashboardRealtime } from "./dashboardRealtime";
 import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { getCodexManagerConfiguration, normalizeWorkspaceTextFileLimitMb } from '../infrastructure/config/extensionSettings';
 import { sharedTerminalInfo, findSharedTerminal, disposeSharedTerminals } from './workspaceTerminalPty';
 
 const MAX_COMMAND_CHARS = 8_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const COMMAND_TIMEOUT_MS = 120_000;
 const GIT_TIMEOUT_MS = 30_000;
-const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 5_000;
 const WORKSPACE_READ_TIMEOUT_MS = 5_000;
@@ -266,10 +266,11 @@ export async function readWorkspaceFile(
 ): Promise<DashboardWorkspaceFile> {
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   const preview = previewTypeForFile(relative);
+  const textLimitMb = normalizeWorkspaceTextFileLimitMb(getCodexManagerConfiguration().get<number>('workspaceTextFileLimitMb', 10));
   let snapshot;
   try {
     snapshot = await readSafeFileSnapshot(absolute, {
-      maxBytes: preview ? MAX_PREVIEW_BYTES : MAX_FILE_BYTES,
+      maxBytes: preview ? MAX_PREVIEW_BYTES : textLimitMb * 1024 * 1024,
       rejectIfLarger: true,
       timeoutMs: WORKSPACE_READ_TIMEOUT_MS
     });
@@ -278,7 +279,7 @@ export async function readWorkspaceFile(
     if ((error as Error)?.name === "SafeFileReadLimitError") {
       throw new Error(preview
         ? "This preview is larger than 8 MB. Open the file in VS Code instead."
-        : "This text file is larger than 1 MB and cannot be edited here.");
+        : `This text file exceeds the ${textLimitMb} MB editor limit. Increase Text file limit in Settings to open it.`);
     }
     throw error;
   }
@@ -302,6 +303,29 @@ export async function readWorkspaceFile(
   return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
 }
 
+export async function readWorkspaceFileRevision(projectPath: string | undefined, filePath: string | undefined): Promise<string> {
+  const { absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
+  return hashWorkspaceFile(absolute);
+}
+
+async function hashWorkspaceFile(absolute: string): Promise<string> {
+  const deadline = Date.now() + WORKSPACE_READ_TIMEOUT_MS;
+  const before = await workspaceReadBeforeDeadline(fs.stat(absolute), deadline, 'The file took too long to inspect.');
+  if (!before.isFile()) throw new Error('Only files can be deleted from the project tree.');
+  const hash = crypto.createHash('sha256');
+  for (let offset = 0; offset < before.size;) {
+    const snapshot = await readSafeFileSnapshot(absolute, { maxBytes: Math.min(1024 * 1024, before.size - offset), startOffset: offset, timeoutMs: Math.max(1, deadline - Date.now()) });
+    if (!snapshot.bytesRead || snapshot.size !== before.size || snapshot.mtimeMs !== before.mtimeMs) throw new Error('This file changed while it was being checked. Refresh it before deleting.');
+    hash.update(snapshot.buffer);
+    offset += snapshot.bytesRead;
+    if (Date.now() >= deadline) throw new Error('The file took too long to inspect. Retry deletion after storage responds.');
+  }
+  const after = await workspaceReadBeforeDeadline(fs.stat(absolute), deadline, 'The file took too long to inspect.');
+  if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+    throw new Error('This file changed while it was being checked. Refresh it before deleting.');
+  return hash.digest('base64url');
+}
+
 export async function deleteWorkspaceFile(
   projectPath: string | undefined,
   filePath: string | undefined,
@@ -312,8 +336,7 @@ export async function deleteWorkspaceFile(
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Only files can be deleted from the project tree.");
   if (expectedRevision) {
-    const current = await fs.readFile(absolute);
-    if (workspaceFileRevision(current) !== expectedRevision)
+    if (await hashWorkspaceFile(absolute) !== expectedRevision)
       throw new Error("This file changed after it was opened. Refresh it before deleting.");
   }
   await fs.unlink(absolute);
@@ -457,13 +480,15 @@ export async function saveWorkspaceFile(
   if (!expectedRevision) {
     throw new Error("The file version is missing. Reload the file before saving.");
   }
-  if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new Error("Keep edited files under 1 MB.");
+  const textLimitMb = normalizeWorkspaceTextFileLimitMb(getCodexManagerConfiguration().get<number>('workspaceTextFileLimitMb', 10));
+  const maxFileBytes = textLimitMb * 1024 * 1024;
+  if (Buffer.byteLength(content, "utf8") > maxFileBytes) throw new Error(`Keep edited files within the ${textLimitMb} MB editor limit, or increase Text file limit in Settings.`);
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   return runCrossWindowExclusive(sharedPathKey("workspace-file", absolute), "Workspace file change", async () => {
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Choose a file from the project tree.");
   const currentSnapshot = await readSafeFileSnapshot(absolute, {
-    maxBytes: MAX_FILE_BYTES,
+    maxBytes: maxFileBytes,
     rejectIfLarger: true,
     timeoutMs: WORKSPACE_READ_TIMEOUT_MS
   });
@@ -483,7 +508,7 @@ export async function saveWorkspaceFile(
       throw new Error("The file changed in another app while it was open. Reload it before saving.");
     }
     const latestSnapshot = await readSafeFileSnapshot(absolute, {
-      maxBytes: MAX_FILE_BYTES,
+      maxBytes: maxFileBytes,
       rejectIfLarger: true,
       timeoutMs: WORKSPACE_READ_TIMEOUT_MS
     });

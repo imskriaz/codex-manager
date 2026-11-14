@@ -16,6 +16,7 @@ import {
   listWorkspaceTerminals,
   focusWorkspaceTerminal,
   readWorkspaceFile,
+  readWorkspaceFileRevision,
   readWorkspaceEnvironment,
   readWorkspaceGitHistory,
   registerWorkspaceTerminalMonitoring,
@@ -29,6 +30,38 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import { removeTestDirectory } from "./testFilesystem";
 
 describe("workspace tools", () => {
+  it('deletes large binary files without loading them into the text editor and rejects stale revisions', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'codex-binary-delete-')), restore = exposeWorkspaceRoot(project);
+    try {
+      const file = join(project, 'large.bin');
+      await writeFile(file, Buffer.alloc(17 * 1024 * 1024));
+      const revision = await readWorkspaceFileRevision(project, 'large.bin');
+      await expect(deleteWorkspaceFile(project, 'large.bin', 'stale')).rejects.toThrow('changed after it was opened');
+      await expect(deleteWorkspaceFile(project, 'large.bin', revision)).resolves.toBe('large.bin');
+      await expect(fs.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { restore(); await removeTestDirectory(project); }
+  });
+  it('opens larger files by default and uses the configured UTF-8 byte limit for both reads and atomic saves', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'codex-file-limit-'));
+    const restore = exposeWorkspaceRoot(project), previous = vscode.workspace.getConfiguration('codexManager');
+    const content = '界'.repeat(512 * 1024), file = join(project, 'large.txt');
+    let limit = 10;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'workspaceTextFileLimitMb' ? limit : fallback } as never);
+    try {
+      await writeFile(file, content);
+      const opened = await readWorkspaceFile(project, 'large.txt');
+      expect(opened.content).toBe(content);
+      limit = 1;
+      await expect(readWorkspaceFile(project, 'large.txt')).rejects.toThrow('1 MB editor limit');
+      await expect(saveWorkspaceFile(project, 'large.txt', content, opened.revision)).rejects.toThrow('1 MB editor limit');
+      expect(await readFile(file, 'utf8')).toBe(content);
+      limit = 2;
+      await expect(saveWorkspaceFile(project, 'large.txt', content, opened.revision)).resolves.toMatchObject({ content });
+    } finally {
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(previous);
+      restore(); await removeTestDirectory(project);
+    }
+  });
   it('reads and saves an absolute file link inside the project while refusing outside files and junction escapes', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'codex-linked-file-')), project = join(parent, 'project');
     await mkdir(project); await mkdir(join(project, 'docs'));

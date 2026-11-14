@@ -4,13 +4,13 @@ vi.mock('preact/hooks', () => ({ useRef: (current: unknown) => ({ current }), us
 import { useModalAccessibility } from '../webview-src/dashboard/primitives';
 afterEach(() => { effects.splice(0); vi.unstubAllGlobals(); });
 it('lets an open child menu handle Escape before closing its dialog', () => {
-  vi.stubGlobal('document', { querySelectorAll: () => [{ getClientRects: () => [{}] }] });
+  vi.stubGlobal('document', { querySelectorAll: () => [{ checkVisibility: () => true }] });
   const close = vi.fn(), stopPropagation = vi.fn(), preventDefault = vi.fn();
   useModalAccessibility(true, close).onKeyDown({ key: 'Escape', stopPropagation, preventDefault } as unknown as KeyboardEvent);
   expect(close).not.toHaveBeenCalled(); expect(stopPropagation).not.toHaveBeenCalled(); expect(preventDefault).not.toHaveBeenCalled();
 });
 it('closes the dialog once its child menu is gone, ignoring hidden menus', () => {
-  vi.stubGlobal('document', { querySelectorAll: () => [{ getClientRects: () => [] }] });
+  vi.stubGlobal('document', { querySelectorAll: () => [{ getClientRects: () => [{}], checkVisibility: () => false }] });
   const close = vi.fn();
   useModalAccessibility(true, close).onKeyDown({ key: 'Escape', stopPropagation() {}, preventDefault() {} } as KeyboardEvent);
   expect(close).toHaveBeenCalledOnce();

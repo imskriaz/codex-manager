@@ -308,6 +308,19 @@ export function SettingsOverlay(props: {
                               ? "已停用。工作區入口與工作階段讀取均關閉。"
                               : "Workspace is off."}
                       </div>
+                      <div class="settings-block-head">
+                        <div class="settings-block-title">Text file limit</div>
+                        <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
+                      </div>
+                      <SettingsDiscreteSlider
+                        value={props.settings.workspaceTextFileLimitMb ?? 10}
+                        values={Array.from({ length: 16 }, (_, index) => index + 1)}
+                        accent="sky"
+                        valueLabel={value => `${value} MB`}
+                        description={value => `Open and save text files up to ${value} MB.`}
+                        onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
+                        onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
+                      />
                     </SettingsToggleBlock>
                     <SettingsToggleBlock
                       title="Always Active"

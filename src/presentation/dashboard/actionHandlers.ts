@@ -73,6 +73,7 @@ import {
   focusWorkspaceTerminal,
   listWorkspaceFiles,
   readWorkspaceFile,
+  readWorkspaceFileRevision,
   readWorkspaceEnvironment,
   runWorkspaceTerminalCommand,
   saveWorkspaceFile,
@@ -1119,7 +1120,7 @@ async function runDashboardAction(
     case "deleteWorkspaceFile": {
       // A tree entry has no content hash. Capture one at confirmation time so
       // deleting directly from the tree still keeps the stale-edit guard.
-      const revision = payload?.fileRevision ?? (await readWorkspaceFile(payload?.projectPath, payload?.filePath)).revision;
+      const revision = payload?.fileRevision ?? await readWorkspaceFileRevision(payload?.projectPath, payload?.filePath);
       const deletedPath = await deleteWorkspaceFile(payload?.projectPath, payload?.filePath, revision);
       try {
         const result = await listWorkspaceFiles(payload?.projectPath);
@@ -1556,6 +1557,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "tokenHistoryRetentionDays",
     "dailyTokenUsageEnabled",
     "dailyTokenUsageIntervalMinutes",
+    "workspaceTextFileLimitMb",
     "autoSwitchEnabled",
     "modelCapacityAutoSwitchEnabled",
     "modelCapacityFailureCount",

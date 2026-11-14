@@ -13453,6 +13453,9 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-account-center svg { flex: none; width: 15px; height: 15px; }
 .cli-account-center-header { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 8px 12px 6px; background: var(--bg-surface); }
 .cli-account-center-header > span { color: var(--text-muted); font-size: calc(9px * var(--dashboard-text-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.cli-account-center-header:has([role="button"]) { cursor: move; touch-action: none; user-select: none; }
+.cli-account-center-header > [role="button"]:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
+.cli-account-menu.cli-account-center.is-moved { left: var(--account-center-left) !important; top: var(--account-center-top) !important; right: auto !important; bottom: auto !important; transform: none; }
 .cli-account-center-header .cli-icon-button { width: 24px; min-height: 24px; border: 0; border-radius: 5px; }
 .cli-account-current { display: flex; align-items: center; gap: 9px; padding: 5px 12px 12px; }
 .cli-account-current .cli-account-avatar { flex: none; width: 34px; height: 34px; background: color-mix(in srgb, var(--accent-blue) 13%, var(--bg-elevated)); color: var(--accent-blue); }
@@ -14416,8 +14419,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-message-markdown code { font-family: var(--vscode-editor-font-family, Consolas, monospace); }
 .cli-workspace .cli-message-markdown :not(pre) > code { padding: 1px 4px; border-radius: 4px; background: var(--bg-muted); }
 .cli-workspace .cli-inline-code-copy { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; text-align: inherit; cursor: copy; }
-.cli-workspace .cli-inline-code-copy:hover code, .cli-workspace .cli-inline-code-copy.is-copied code { background: var(--bg-elevated); }
-.cli-workspace .cli-inline-code-copy.is-copied::after { content: ' Copied'; color: var(--text-muted); font-size: .85em; }
+.cli-workspace .cli-inline-code-copy:hover code { background: var(--bg-elevated); }
 .cli-workspace .cli-message-markdown table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; margin: 8px 0; }
 .cli-workspace .cli-message-markdown th, .cli-workspace .cli-message-markdown td { padding: 5px 8px; border: 1px solid var(--border-default); text-align: left; vertical-align: top; }
 .cli-workspace .cli-message-markdown th { background: color-mix(in srgb, var(--bg-muted) 72%, transparent); font-weight: 700; }
@@ -14568,7 +14570,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-activity-result.is-error .cli-code-surface { border-left-color: var(--danger); }
 .cli-workspace .cli-activity-result.is-error .cli-activity-result-head { color: var(--danger); }
 .cli-workspace .cli-markdown-code-block { margin: 8px 0; border: 1px solid var(--border-default); border-radius: 7px; background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-surface)); }
-.cli-workspace .cli-message-markdown .cli-markdown-code-block pre { margin: 0; padding: 10px 96px 10px 12px; max-height: min(320px, 40dvh); white-space: pre; overflow-wrap: normal; word-break: normal; background: transparent; font-size: calc(11px * var(--dashboard-text-scale, 1)); scrollbar-width: thin; }
+.cli-workspace .cli-message-markdown .cli-markdown-code-block pre { margin: 0; padding: 10px 52px 10px 12px; min-height: 44px; max-height: min(320px, 40dvh); white-space: pre; overflow-wrap: normal; word-break: normal; background: transparent; font-size: calc(11px * var(--dashboard-text-scale, 1)); scrollbar-width: thin; }
 .cli-workspace .cli-message-markdown pre code { white-space: inherit; overflow-wrap: normal; word-break: normal; }
 .cli-workspace .cli-markdown-code-block .cli-code-copy { border-color: var(--border-default); background: var(--bg-surface); color: var(--text-muted); font: inherit; font-size: calc(10px * var(--dashboard-text-scale, 1)); line-height: 1.2; }
 
@@ -17190,16 +17192,17 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 
 /* Respond to the account center's own width, including resizing and dashboard zoom. */
 .cli-account-center .cli-account-grid { padding: 4px 6px 0; }
-.cli-account-center .cli-account-dashboard .accounts-section-header { gap: 3px; margin-bottom: 5px; }
+.cli-account-center .cli-account-dashboard .accounts-section-header { flex-direction: row; align-items: center; gap: 3px; margin-bottom: 5px; }
+.cli-account-center .cli-account-dashboard .accounts-section-header > div:first-child { flex: 1 1 0; }
 .cli-account-center .cli-account-dashboard .header-title-with-meta { gap: 6px; font-size: calc(16px * var(--dashboard-text-scale, 1)); }
 .cli-account-center .cli-account-dashboard .account-count-badges { gap: 4px; }
 .cli-account-center .cli-account-dashboard .dashboard-account-toolbar { display: flex; flex-wrap: nowrap; gap: 3px; margin-bottom: 5px; overflow: visible; }
-.cli-account-center .cli-account-dashboard .account-search-control { flex: 1 1 0; min-width: 0; width: auto; min-height: 28px; padding-inline: 5px; }
+.cli-account-center .cli-account-dashboard .account-search-control { flex: 1 1 0; min-width: 0; width: auto; height: 28px; min-height: 28px; padding-inline: 5px; }
 .cli-account-center .cli-account-dashboard .account-search-control input,
 .cli-account-center .cli-account-dashboard .dashboard-select-control select { min-width: 0; font-size: inherit; }
-.cli-account-center .cli-account-dashboard .dashboard-select-control { position: relative; display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; min-width: 28px; min-height: 28px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-elevated); color: var(--text-primary); box-sizing: border-box; }
-.cli-account-center .cli-account-dashboard .dashboard-select-control svg { width: 15px; height: 15px; pointer-events: none; }
-.cli-account-center .cli-account-dashboard .dashboard-select-control select { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 0; opacity: 0; cursor: pointer; }
+.cli-account-center .cli-account-dashboard .dashboard-account-toolbar > .dashboard-select-control { display: flex; flex: 0 1 30%; max-width: 122px; min-width: 0; min-height: 28px; }
+.cli-account-center .cli-account-dashboard .dashboard-account-toolbar > .metric-priority-control { flex-basis: 26%; max-width: 90px; }
+.cli-account-center .cli-account-dashboard .dashboard-select-control select { position: static; width: 100%; max-width: none; height: 28px; min-width: 0; min-height: 28px; padding: 3px 5px; opacity: 1; cursor: pointer; border: 1px solid var(--border-default); border-radius: 5px; background: var(--bg-elevated); color: var(--text-primary); }
 .cli-account-center .cli-account-dashboard .dashboard-select-control:focus-within { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
 .cli-account-center .dashboard-view-controls { flex: none; }
 .cli-account-center .dashboard-view-toggle { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; }
@@ -17361,7 +17364,9 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 /* Compact account and project controls share the existing dashboard colors. */
 .cli-account-center .dashboard-view-controls { display: flex; gap: 4px; width: auto; min-width: 0; margin-left: 0; }
 .cli-account-center .account-center-actions { display: flex; align-items: center; gap: 4px; flex: none; }
-.cli-account-center .account-center-actions .workspace-tool-menu > button { width: 28px; height: 28px; font-size: calc(20px * var(--dashboard-text-scale, 1)); }
+.cli-account-center .accounts-section-header .account-center-actions { margin-left: auto; }
+.cli-account-center .account-center-actions .workspace-tool-menu { display: flex; }
+.cli-account-center .account-center-actions .workspace-tool-menu > button { display: grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
 .cli-error-notice { padding: 8px 10px; }
 .cli-error-message { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cli-capacity-notice { flex-wrap: wrap; }
@@ -17372,7 +17377,6 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-account-center .account-center-options .dashboard-select-control { position: static; display: grid; gap: 4px; width: auto; max-width: none; height: auto; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text-primary); }
 .cli-account-center .account-center-options .dashboard-select-control > svg { display: none; }
 .cli-account-center .account-center-options .dashboard-select-control select { position: static; opacity: 1; width: 100%; height: auto; min-height: 32px; padding: 4px 8px; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: 5px; }
-.cli-account-center .account-center-options .dashboard-view-toggle { display: flex; gap: 8px; width: 100%; height: auto; min-height: 32px; }
 
 /* Folder selection is a separate dialog so project details keep their place. */
 .create-project-location-field { display: flex; gap: 8px; min-width: 0; }

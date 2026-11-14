@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardCodexServerRequest, DashboardHostMessage, DashboardNotice } from '../../src/domain/dashboard/types';
 import { codexPromptKey, readDismissedCodexRequests, saveDismissedCodexRequests } from './codexSessionPrompts';
+import { answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
 
 type QuestionNotification = Pick<DashboardCodexServerRequest, 'id' | 'threadId' | 'deviceId' | 'sourceMessageId'> & { kind: 'question'; title: string };
 const STORAGE_KEY = 'codexManager.questionNotifications.v1';
@@ -26,15 +27,37 @@ function readNotifications(): QuestionNotification[] {
 export function useSessionQuestionNotifications(onNotice: (notice: DashboardNotice) => void) {
   const [notices, setNotices] = useState(readNotifications);
   const current = useRef(notices), dismissed = useRef(new Set(readDismissedCodexRequests()));
+  for (const key of readDismissedCodexRequests()) dismissed.current.add(key);
   const hidden = (request: QuestionNotification): boolean => dismissed.current.has(questionNotificationKey(request)) || dismissed.current.has(codexPromptKey(request));
   const feedback = useRef(onNotice); feedback.current = onNotice;
   const save = (next: QuestionNotification[]): boolean => {
     current.current = next; setNotices(next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); return true; } catch { return false; }
   };
+  const clearAnswered = (answered: QuestionNotification[]): void => {
+    if (!answered.length) return;
+    const keys = new Set(answered.map(questionNotificationKey));
+    for (const request of answered) dismissed.current.add(questionNotificationKey(request));
+    const saved = save(current.current.filter(request => !keys.has(questionNotificationKey(request))));
+    if (!saveDismissedCodexRequests([...readDismissedCodexRequests(), ...dismissed.current]) || !saved)
+      feedback.current({ level: 'warning', message: 'Answered question cleared in this tab. Browser storage is unavailable.' });
+  };
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>): void => {
       const message = event.data;
+      if (message?.type === 'dashboard:codex-request-resolved' && message.answered === true) {
+        clearAnswered(current.current.filter(request => request.id === message.requestId && request.deviceId === message.deviceId));
+        return;
+      }
+      const session = message?.type === 'dashboard:codex-session-live' ? { id: message.state.sessionId, deviceId: message.state.deviceId } :
+        message?.type === 'dashboard:action-result' && message.status === 'completed' && message.action === 'getCodexCliSessionMessages' ? message.payload?.cliSession : undefined;
+      const history = message?.type === 'dashboard:codex-session-live' ? message.state.messages :
+        message?.type === 'dashboard:action-result' && message.action === 'getCodexCliSessionMessages' ? message.payload?.cliSessionMessages : undefined;
+      if (session && history) {
+        const answered = answeredSessionQuestionIds(history);
+        clearAnswered(current.current.filter(request => request.threadId === session.id && request.deviceId === session.deviceId &&
+          history.some(item => item.id === request.sourceMessageId && item.questions?.length && item.questions.every((_, index) => answered.has(JSON.stringify(['request_user_input_async', item.id, index]))))));
+      }
       const requests = message?.type === 'dashboard:codex-request' ? [message.request] : message?.type === 'dashboard:codex-requests' && Array.isArray(message.requests) ? message.requests : [];
       if (!requests.length) return;
       const next = new Map(current.current.map(request => [questionNotificationKey(request), request]));

@@ -374,13 +374,13 @@ describe("executeDashboardActionMessage", () => {
     expect(result.payload?.workspaceFiles).toBeUndefined();
   });
   it("captures a tree file revision before deleting when it was not opened", async () => {
-    vi.spyOn(workspaceTools, "readWorkspaceFile").mockResolvedValue({
-      path: "tree-only.txt", content: "current", language: "text", kind: "text", mimeType: "text/plain", size: 7, revision: "fresh-revision"
-    });
+    const editor = vi.spyOn(workspaceTools, 'readWorkspaceFile');
+    vi.spyOn(workspaceTools, 'readWorkspaceFileRevision').mockResolvedValue('fresh-revision');
     const deleted = vi.spyOn(workspaceTools, "deleteWorkspaceFile").mockResolvedValue("tree-only.txt");
     const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "deleteWorkspaceFile", requestId: "delete-tree-only", payload: { projectPath: process.cwd(), filePath: "tree-only.txt" } });
     expect(result.status).toBe("completed");
     expect(deleted).toHaveBeenCalledWith(expect.any(String), "tree-only.txt", "fresh-revision");
+    expect(editor).not.toHaveBeenCalled();
   });
   it("returns browser downloads to their initiating browser without a VS Code save dialog", async () => {
     const dialog = vi.fn(); Object.assign(vscode.window, { showSaveDialog: dialog });

@@ -13,6 +13,10 @@ import { sqliteConfiguration } from "../../storage/sqliteContext";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
 
+export function normalizeWorkspaceTextFileLimitMb(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(16, Math.round(value))) : 10;
+}
+
 export class ExtensionSettingsStore {
   getDashboardSettings(): DashboardSettings {
     const config = getCodexManagerConfiguration();
@@ -32,6 +36,7 @@ export class ExtensionSettingsStore {
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "auto",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", true),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
+      workspaceTextFileLimitMb: normalizeWorkspaceTextFileLimitMb(config.get<number>('workspaceTextFileLimitMb', 10)),
       codexSessionTransport: readCodexSessionTransport(config),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),

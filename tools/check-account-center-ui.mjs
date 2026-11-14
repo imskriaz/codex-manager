@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-export async function checkAccountCenterUi(page,{origin,output}) {
+export async function checkAccountCenterUi(page,{origin,output,parentId}) {
   await page.goto(origin+'/workspace'); await page.locator('.cli-workspace').waitFor();
   for(const [viewport,center] of [[320,280],[390,366],[760,320],[1440,280],[1440,420],[1440,720]]) {
     await page.setViewportSize({width:viewport,height:850});
@@ -11,32 +11,35 @@ export async function checkAccountCenterUi(page,{origin,output}) {
     await dialog.locator('.saved-card-front').first().waitFor();
     assert.equal(await dialog.getByRole('heading', { name: /Saved Accounts/ }).count(), 0, 'Account Center omits the redundant Saved Accounts title');
     assert.equal(await dialog.getByRole('button', { name: 'Add account', exact: true }).count(), 0, 'Account Center has no Add action');
-    assert.equal(await dialog.locator('.dashboard-account-toolbar > .dashboard-select-control').count(), 0, 'Secondary selectors stay out of the search row');
-    const more = dialog.locator('.account-center-actions').getByRole('button', { name: 'More account actions', exact: true });
+    assert.equal(await dialog.locator('.dashboard-account-toolbar > .dashboard-select-control').count(), 2, 'Sort and quota selectors stay in the search row');
+    const more = dialog.locator('.accounts-section-header .account-center-actions').getByRole('button', { name: 'More account actions', exact: true });
+    const badgesBounds = await dialog.locator('.account-count-badges').boundingBox(), moreBounds = await more.boundingBox();
+    const dotsBounds = await more.locator('svg').boundingBox();
+    assert.equal(await more.locator('circle').count(), 3, 'More uses three visible dots');
+    assert.ok(Math.abs(dotsBounds.y + dotsBounds.height / 2 - moreBounds.y - moreBounds.height / 2) < 2, 'More dots stay centered within the button');
+    assert.ok(moreBounds.x >= badgesBounds.x + badgesBounds.width - 1 && Math.abs(moreBounds.y + moreBounds.height / 2 - badgesBounds.y - badgesBounds.height / 2) < 4, 'More sits beside the account counts');
     await more.click();
     const menu = page.getByRole('menu', { name: 'More account actions', exact: true });
     await menu.waitFor();
-    assert.equal(await menu.getByRole('menuitem').count(), 5, 'More keeps account actions and the view toggle reachable');
-    const sort = menu.getByRole('combobox', { name: 'Sort accounts', exact: true });
+    assert.equal(await menu.getByRole('menuitem').count(), 4, 'More keeps all account actions reachable');
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    const sort = dialog.getByRole('combobox', { name: 'Sort accounts', exact: true });
     const originalSort = await sort.inputValue();
     await sort.selectOption('email');
     await sort.selectOption(originalSort);
-    assert.ok(await menu.getByRole('combobox', { name: 'Metric', exact: true }).isVisible(), 'Metric selection is accessible from More');
-    await page.keyboard.press('Escape');
-    await menu.waitFor({ state: 'hidden' });
+    assert.ok(await dialog.locator('.dashboard-account-toolbar').getByRole('combobox', { name: 'Metric', exact: true }).isVisible(), 'Quota selection is visible beside search');
     const toolbar = await dialog.locator('.dashboard-account-toolbar').evaluate(element => [...element.children].map(child=>child.getBoundingClientRect().toJSON()));
     assert.ok(toolbar.every(bounds=>Math.abs(bounds.y+bounds.height/2-toolbar[0].y-toolbar[0].height/2)<3), 'Search and all icon controls stay on one row: '+JSON.stringify(toolbar));
     const searchBounds = await dialog.locator('.account-search-control').boundingBox();
-    assert.ok(searchBounds.width >= (await dialog.locator('.dashboard-account-toolbar').boundingBox()).width - 48, 'Search gets the available row width');
+    assert.ok(searchBounds.width >= 55, 'Search retains usable space beside the visible selectors');
     const footer = await dialog.locator('.cli-account-navigation').evaluate(element=>({width:element.clientWidth,scroll:element.scrollWidth,buttons:[...element.querySelectorAll('button')].map(button=>button.getBoundingClientRect().toJSON())}));
     assert.ok(footer.scroll<=footer.width+1&&footer.buttons.every(bounds=>Math.abs(bounds.y-footer.buttons[0].y)<3&&bounds.height<=30), 'Compact footer keeps every shortcut on one row without overflow');
     const dashboardView = await page.locator('.panel .section[class*="dashboard-view-"]').getAttribute('class');
-    await more.click();
-    await menu.locator('.dashboard-view-toggle').click();
+    await dialog.locator('.dashboard-account-toolbar .dashboard-view-toggle').click();
     await dialog.locator('.saved-table-row').first().waitFor();
     assert.equal(await page.locator('.panel .section[class*="dashboard-view-"]').getAttribute('class'), dashboardView, 'Account Center view never changes the dashboard view');
-    await more.click();
-    await menu.locator('.dashboard-view-toggle').click();
+    await dialog.locator('.dashboard-account-toolbar .dashboard-view-toggle').click();
     await dialog.locator('.saved-card-front').first().waitFor();
     const layout=await dialog.evaluate(element=>{
       const selectors=['.cli-account-grid','.accounts-grid','.saved-card-front','.saved-progress','.dashboard-account-toolbar'];
@@ -60,11 +63,41 @@ export async function checkAccountCenterUi(page,{origin,output}) {
     await page.waitForTimeout(250);
     await page.screenshot({path:path.join(output,`account-center-${viewport}-${center}-dark.png`)});
     await page.evaluate(value => value === null ? document.documentElement.removeAttribute('data-theme') : document.documentElement.setAttribute('data-theme', value), theme);
+    if (viewport > 760) {
+      await page.mouse.click(viewport - 3, 847);
+      assert.equal(await dialog.isVisible(), true, 'Sidebar Account Center stays open after an outside click');
+      const header = dialog.locator('.cli-account-center-header');
+      const before = await dialog.boundingBox(), handle = await header.boundingBox();
+      await page.mouse.move(handle.x + 70, handle.y + handle.height / 2); await page.mouse.down();
+      await page.mouse.move(handle.x + 190, handle.y + handle.height / 2 - 50, { steps: 4 }); await page.mouse.up();
+      const moved = await dialog.boundingBox();
+      assert.ok(Math.abs(moved.x - before.x) > 20, 'Desktop header dragging moves Account Center');
+      const keyboardHandle = dialog.getByRole('button', { name: 'Move account center', exact: true });
+      await keyboardHandle.press('ArrowRight');
+      assert.ok((await dialog.boundingBox()).x > moved.x + 10, 'Arrow keys provide an alternative to dragging');
+      await page.setViewportSize({ width: 900, height: 700 });
+      await page.waitForTimeout(100);
+      const bounded = await dialog.boundingBox();
+      assert.ok(bounded.x >= 0 && bounded.x + bounded.width <= 901 && bounded.y >= 0 && bounded.y + bounded.height <= 701, 'Moved panel stays within a resized window');
+      await page.setViewportSize({ width: viewport, height: 850 });
+    }
     await dialog.getByRole('button', { name: 'Close account menu', exact: true }).click();await dialog.waitFor({state:'detached'});
   }
+  await page.setViewportSize({width:1440,height:850});
+  await page.goto(`${origin}/workspace/${parentId}`);
+  await page.locator('.cli-turn-account').click();
+  const standalone = page.getByRole('dialog',{name:'Account center',exact:true});
+  await standalone.waitFor();
+  const handle = standalone.getByRole('button',{name:'Move account center',exact:true});
+  const centered = await standalone.boundingBox();
+  await handle.press('ArrowLeft');
+  assert.ok((await standalone.boundingBox()).x < centered.x - 10, 'Conversation Account Center also moves');
+  await standalone.getByRole('button',{name:'Close account menu',exact:true}).click();
+  await standalone.waitFor({state:'detached'});
+  assert.equal(await page.locator('.cli-composer textarea').isVisible(),true,'Desktop close restores the conversation');
   await page.setViewportSize({width:390,height:850});
-  const trigger = page.getByRole('button',{name:'Open account center',exact:true});
-  if (!await trigger.isVisible()) await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+  const trigger = page.locator('.cli-account-footer > button[aria-label="Open account center"]');
+  await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
   await trigger.click();
   const dialog = page.getByRole('dialog',{name:'Account center',exact:true});
   await dialog.waitFor();
@@ -79,5 +112,7 @@ export async function checkAccountCenterUi(page,{origin,output}) {
   snapshot.accounts = updateAccounts(snapshot.accounts);
   for (const peer of snapshot.peers ?? []) if (peer.local && snapshot.peerAccounts?.[peer.id]) snapshot.peerAccounts[peer.id] = updateAccounts(snapshot.peerAccounts[peer.id]);
   await page.evaluate(state => dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}})), snapshot);
+  assert.equal(await dialog.isVisible(),true,'Sidebar Account Center stays open after switching accounts');
+  await dialog.getByRole('button',{name:'Close account menu',exact:true}).click();
   await dialog.waitFor({state:'detached'});
 }

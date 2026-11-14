@@ -12,6 +12,31 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it('keeps real parser output valid without freezing the remaining live messages', () => {
+    const live = reducer(); live.started('turn-1');
+    live.accept('item/completed', params({ item: { id: 'tool', type: 'mcpToolCall', server: 'local', tool: 'inspect', arguments: { payload: '\\"'.repeat(6000) }, result: { content: [{ type: 'text', text: 'done' }] } } }));
+    live.accept('item/completed', params({ item: { id: 'reasoning', type: 'reasoning', summary: ['x'.repeat(8000), 'y'.repeat(8000)] } }));
+    live.accept('item/completed', params({ item: { id: 'reply', type: 'agentMessage', text: 'Still updating' } }));
+    const state = live.snapshot();
+    expect(state.messages.some(message => message.id === 'tool')).toBe(true);
+    expect(state.messages.at(-1)?.text).toBe('Still updating');
+    expect(isCodexSessionLiveState(state)).toBe(true);
+  });
+  it('omits oversized hydrated images and malformed items while retaining valid content and attachments', () => {
+    const live = new CodexSessionLiveReducer(sessionId, streamId, () => [
+      { id: 'invalid', text: 'Unsafe', questions: [{ title: 'Choose', options: Array.from({ length: 21 }, () => 'option') }] },
+      { id: 'image', text: 'x'.repeat(20000), arguments: 'x'.repeat(16000), images: [{ src: 'data:image/png;base64,' + 'A'.repeat(16000) }, { src: '/small.png' }], textAttachments: [{ name: 'brief.txt', text: '界'.repeat(5000) }] },
+      { id: 'reply', text: 'Current text' }
+    ]);
+    const state = live.snapshot();
+    expect(state.messages.map(message => message.id)).toEqual(['image', 'reply']);
+    expect(state.messages[0]?.images).toEqual([{ src: '/small.png' }]);
+    expect(state.messages[0]?.text).toHaveLength(12000);
+    expect(state.messages[0]?.arguments).toHaveLength(12000);
+    expect(state.messages[0]?.textAttachments?.[0]?.text).toHaveLength(5000);
+    expect(state.truncated).toBe(true);
+    expect(isCodexSessionLiveState(state)).toBe(true);
+  });
   it.each(['compaction', 'image'] as const)('merges rollout and live %s mirrors once without losing repeated events', kind => {
     const activity = { id: kind === 'compaction' ? 'compacted-2' : '2-image', kind, text: 'Activity', status: 'completed' as const, turnId: 'turn-1', ...(kind === 'image' ? { images: [{ src: 'data:image/png;base64,AA==' }] } : {}) };
     const reply = { id: 'reply', role: 'assistant' as const, text: 'Working', turnId: 'turn-1' };

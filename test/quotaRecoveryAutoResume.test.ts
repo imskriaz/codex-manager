@@ -245,7 +245,7 @@ it.each(["storage", "offline", "capture", "resume"])(
     expect(mocks.resume).toHaveBeenCalledTimes(attempts);
   }
 );
-it("joins duplicate checks while recovery is pending and rechecks the account after discovery", async () => {
+it("joins duplicate checks while recovery is pending and rejects an exhausted replacement after discovery", async () => {
   start();
   await tick();
   recover();
@@ -259,7 +259,7 @@ it("joins duplicate checks while recovery is pending and rechecks the account af
   await tick();
   await tick();
   expect(mocks.capture).toHaveBeenCalledOnce();
-  account = { ...account, id: "other" };
+  account = { ...account, id: "other", quotaSummary: { ...account.quotaSummary!, hourlyPercentage: 0 } };
   finish();
   await tick();
   expect(mocks.resume).not.toHaveBeenCalled();
@@ -310,8 +310,8 @@ it('does not make a replacement account wait for the previous account recovery c
   expect(mocks.resume).toHaveBeenCalledTimes(2);
 });
 
-it('does not let an old account quota refresh or failure timestamp block a freshly verified replacement', async () => {
-  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+it.each(['node', 'desktop'])('does not let an old account quota refresh or failure timestamp block a freshly verified replacement in %s', async host => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
   recover(); start(); await flush();
   const verifiedAt = account.lastQuotaAt;
   await vi.advanceTimersByTimeAsync(1_000);
@@ -324,6 +324,20 @@ it('does not let an old account quota refresh or failure timestamp block a fresh
   changed(); await flush();
   expect(mocks.resume).toHaveBeenCalledOnce();
   finish(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+});
+
+it.each(['node', 'desktop'])('captures first-turn quota rejection in %s and waits for a fresh verified quota before recovering', async host => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
+  recover(); start(); await flush();
+  await vi.advanceTimersByTimeAsync(1000);
+  vi.mocked(vscode.commands.executeCommand).mockResolvedValueOnce(undefined);
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'first-turn', streamId: 'rejected-stream', status: 'failed', error: 'You’ve hit your usage limit.' } });
+  await flush();
+  expect(mocks.capture).toHaveBeenCalledWith(context, expect.any(Function));
+  expect(mocks.resume).not.toHaveBeenCalled();
+  account.lastQuotaAt = Date.now();
+  recordAccountQuotaCheck(account); await flush();
   expect(mocks.resume).toHaveBeenCalledOnce();
 });
 

@@ -365,6 +365,15 @@ describe("native App Server new sessions", () => {
     expect(rpc.request.mock.calls[0]?.[0]).toBe(`thread/${operation}`);
   });
 
+  it.each([false, true])('preserves confirmed action and primary failure details when process cleanup fails (request failed: %s)', async failed => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const rpc = { request: vi.fn(async () => { if (failed) throw new Error('Original provider rejection'); return {}; }), close: vi.fn(async () => { throw new Error('Process tree stop unconfirmed'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(deleteCodexCliSession(id)).rejects.toThrow(failed ? 'Original provider rejection' : 'Codex confirmed the action, but process cleanup could not be confirmed');
+    expect(rpc.request).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['completed', 'missing', 'during-resume', 'writer-conflict', 'truncated', 'cancelled', 'home-changed', 'resume-failed'])('does not send recovery after completion or unsafe startup (%s)', async scenario => {
     await mkdir(path.join(root, 'sessions'));
     const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);

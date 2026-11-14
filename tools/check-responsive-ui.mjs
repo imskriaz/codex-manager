@@ -520,18 +520,15 @@ async function checkAccountCenterUi(page, width, height, restoredDraft) {
   await center.locator('.accounts-empty-filter').waitFor();
   await center.locator('.account-search-control button').click();
   assert.equal(await cards.count(), 9);
-  const centerMore = center.locator('.account-center-actions').getByRole('button', { name: 'More account actions', exact: true });
-  await centerMore.click();
   const sort = center.getByRole('combobox', { name: 'Sort accounts', exact: true });
   await sort.selectOption('email'); await sort.selectOption('auto-queue');
-  await page.keyboard.press('Escape');
   await card('rea***com').locator('.saved-select-toggle').click();
   await center.locator('.batch-menu-trigger').click();
   assert.ok(await page.locator('.batch-menu-popover').isVisible(), 'Dashboard batch actions are available');
   await page.keyboard.press('Escape');
   assert.equal(await center.isVisible(), true, 'Escape closes a child menu before account center');
   await card('rea***com').locator('.saved-select-toggle').click();
-  assert.equal(await center.locator('.dashboard-account-toolbar > .dashboard-view-controls > .dashboard-view-toggle').count(), 0, 'The view toggle stays in More');
+  assert.equal(await center.locator('.dashboard-account-toolbar > .dashboard-view-controls > .dashboard-view-toggle').count(), 1, 'The view toggle stays beside search and sorting');
   const ready = () => card('rea***com');
   await ready().getByRole('button', { name: 'Prioritize in auto queue', exact: true }).click();
   await ready().getByRole('button', { name: 'Remove queue priority', exact: true }).waitFor();
@@ -1132,8 +1129,40 @@ try {
       await captureDocsScreenshots(page,{origin,width,parentId});assert.deepEqual(errors,[]);
       results.push({width,height,checks:'documentation screenshots with fictional data'});await context.close();continue;
     }
+    if (process.argv.includes('--about-escape')) {
+      await page.goto(`${origin}/`); await page.locator('.hero').waitFor();
+      await page.locator('.dashboard-mobile-actions>summary').click();
+      const label = await page.locator('#aboutOpenButton').getAttribute('aria-label');
+      await page.getByRole('menuitem',{name:label,exact:true}).click();
+      const about = page.locator('.about-modal'); await about.waitFor();
+      await page.keyboard.press('Escape'); await about.waitFor({state:'hidden'});
+      assert.deepEqual(errors,[]); results.push({width,height,checks:'Hidden mobile menu does not intercept dialog Escape'}); await context.close(); continue;
+    }
+    if (process.argv.includes('--draft-navigation')) {
+      await page.goto(`${origin}/workspace/${parentId}`);
+      const composer = page.getByRole('textbox', {name:'Message Codex',exact:true});
+      const showRail = async () => { const show = page.getByRole('button',{name:'Show sessions sidebar',exact:true}); if (await show.isVisible()) await show.click(); };
+      await showRail(); await page.getByRole('button',{name:'New chat',exact:true}).click();
+      const project = page.getByRole('combobox',{name:'Project',exact:true});
+      await project.selectOption('D:/empty-project-with-a-long-name'); await project.selectOption('D:/demo');
+      await page.getByRole('button',{name:'Message settings',exact:true}).click();
+      await page.getByRole('combobox',{name:'Reasoning',exact:true}).selectOption('high');
+      await page.getByRole('combobox',{name:'Access mode',exact:true}).selectOption('read-only');
+      await page.keyboard.press('Escape');
+      await page.getByRole('button',{name:'Message settings',exact:true}).click();
+      await page.getByRole('button',{name:'Close message settings',exact:true}).click();
+      await page.locator('.cli-composer-options').waitFor({state:'detached'});
+      await composer.click();
+      await composer.fill('Separate new chat draft');
+      await page.waitForTimeout(100);
+      assert.equal(await composer.inputValue(),'Separate new chat draft','Draft remains after composer settings');
+      await showRail(); await page.locator('.cli-session-row-select').filter({hasText:'Evaluate stack'}).click();
+      await showRail(); await page.getByRole('button',{name:'New chat',exact:true}).click();
+      await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === 'Separate new chat draft');
+      assert.deepEqual(errors, []); results.push({width,height,checks:'New-chat draft survives conversation navigation'}); await context.close(); continue;
+    }
     if(process.argv.includes('--account-layout')){
-      await checkNarrowAccountCenterUi(page,{origin,output});assert.deepEqual(errors,[]);results.push({width,height,checks:'Account Center resize, narrow cards, quota visibility and no horizontal overflow'});await context.close();continue;
+      await checkNarrowAccountCenterUi(page,{origin,output,parentId});assert.deepEqual(errors,[]);results.push({width,height,checks:'Account Center resize, narrow cards, quota visibility and no horizontal overflow'});await context.close();continue;
     }
     if(process.argv.includes('--flyouts')){
       await checkFlyoutUi(page,{origin,parentId,width,height,output});assert.deepEqual(errors,[]);
@@ -1957,7 +1986,7 @@ try {
     const welcome=await empty.boundingBox(), conversation=await page.locator('.cli-conversation').boundingBox();
     assert.ok(welcome && conversation && welcome.height > conversation.height * .7, 'Welcome uses the available workspace instead of an extra grid track');
 
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     const folderView=page.locator('.cli-session-view-toggle');
     await folderView.waitFor({state:'visible'});
     if(await folderView.getAttribute('aria-pressed')==='true') await folderView.click();
@@ -2037,7 +2066,7 @@ try {
     assert.equal(await page.locator(".cli-project-group").count(), 0, "Compact view has no project nesting");
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("codexManager.workspaceLayout.v2") || "{}").sessionView === "compact");
     await page.reload();
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "Show projects and sessions", exact: true }).waitFor();
     await page.locator(".cli-compact-session-list").waitFor();
     await page.getByRole("button", { name: "Show projects and sessions", exact: true }).click();
@@ -2130,7 +2159,7 @@ try {
     assert.ok(await turnUsage.locator('.cli-usage-grid > span').evaluateAll(items => items.every(item => { const label = item.querySelector('b').getBoundingClientRect(), value = item.querySelector('strong').getBoundingClientRect(); return Math.abs((label.top+label.bottom-value.top-value.bottom)/2)<1; })),'Usage labels and values share one code-style line');
     assert.equal(await turnUsage.getAttribute('aria-label'),'Session usage');
     await page.getByRole('button', {name:'Hide workspace tools',exact:true}).click();
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).waitFor();
     if (width <= 760) {
@@ -2149,7 +2178,7 @@ try {
     assert.equal(await completedWork.evaluate(element => element.open), false, "Completed work starts compact");
     await page.screenshot({ path: path.join(output, "completed-turn-" + width + ".png") });
     await completedWork.locator(":scope > summary").click();
-    await page.getByText("Reviewer started working", { exact: true }).waitFor();
+    await completedWork.getByText("Reviewer started working", { exact: true }).waitFor({ state: 'attached' });
     assert.equal(await page.locator(".cli-completed-file").count(), 3, "Completed changes preview three files");
     await page.getByRole("button", { name: "Show 1 more file", exact: true }).click();
     assert.equal(await page.locator(".cli-completed-file").count(), 4);
@@ -2218,7 +2247,7 @@ try {
     assert.equal(await page.getByText("List workspace terminals completed.", { exact: true }).count(), 0, "Routine background refreshes do not show success toasts");
     const copyCode = page.locator(".cli-markdown-code-block .cli-code-copy").first();
     await copyCode.click();
-    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.textContent === "Copied").catch(async error => {
+    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.title === "Copied").catch(async error => {
       console.log("Copy feedback:", await page.locator(".cli-code-copy-feedback").allTextContents());
       await page.screenshot({ path: path.join(output, "copy-failure-" + width + ".png") });
       throw error;
@@ -2227,10 +2256,10 @@ try {
       try { return (await navigator.clipboard.readText()).replace(/\r\n/g, "\n"); } catch { return undefined; }
     });
     if (markdownCopied !== undefined) assert.equal(markdownCopied, "const answer = 42;\n");
-    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.textContent === "Copy code");
+    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.title === "Copy code");
     await page.evaluate(() => { window.__originalClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = () => Promise.reject(new Error("Clipboard unavailable")); });
     await copyCode.click();
-    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.textContent === "Copied");
+    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.title === "Copied");
     await page.evaluate(() => { navigator.clipboard.writeText = window.__originalClipboardWrite; });
     const documentation = page.getByRole("link", { name: "Documentation", exact: true }).first();
     assert.equal(await documentation.getAttribute("target"), "_blank");
@@ -2254,7 +2283,8 @@ try {
     assert.deepEqual(Object.keys(shareRequests[0].body).sort(),['includeActivities','sessionKey','title'],"Sharing does not include account or dashboard state");
     await page.getByRole("button", { name: "Revoke shared link", exact: true }).click();
     await page.getByRole("group", { name: "Confirm link revocation", exact: true }).getByRole("button", { name: "Revoke access", exact: true }).click();
-    await page.getByRole("dialog", { name: "Share session" }).getByRole("status").filter({ hasText: "Shared link revoked" }).waitFor();
+    await page.getByRole("button", { name: "Create read-only link", exact: true }).waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector('.cli-share-modal button:disabled'));
     assert.equal(await page.getByRole("textbox", { name: "Session link", exact: true }).count(), 0);
     await page.keyboard.press("Escape");
     await page.locator(".cli-share-modal").waitFor({ state: "detached" });
@@ -2270,9 +2300,11 @@ try {
     await git.getByRole('button',{name:'Refresh Git',exact:true}).waitFor();
     await page.evaluate(() => { window.__failNextGitRead = true; });
     await git.getByRole('button',{name:'Refresh Git',exact:true}).click();
-    await git.getByText('Simulated Git read failure.',{exact:true}).waitFor();
+    const gitFailure = page.locator('.dashboard-notice').filter({ hasText: 'Simulated Git read failure.' });
+    await gitFailure.waitFor();
+    await gitFailure.getByRole('button', { name: 'Dismiss notification', exact: true }).click();
     await git.getByRole('button',{name:'Refresh Git',exact:true}).click();
-    await git.getByText('Simulated Git read failure.',{exact:true}).waitFor({state:'detached'});
+    await page.waitForFunction(() => document.querySelector('.workspace-git')?.getAttribute('aria-busy') === 'false');
     await git.getByRole('tab',{name:'Branches',exact:true}).click();
     await git.getByText('feature/demo',{exact:true}).waitFor();
     await page.getByRole('tab',{name:'Env',exact:true}).click();
@@ -2330,7 +2362,7 @@ try {
     assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', "Failed sends leave the composer empty");
     const failedMessage = page.locator('.cli-queued-message.is-failed').last();
     await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
-    assert.equal(await failedMessage.getByText('1 attachment',{exact:true}).count(),1,'Failed attachments remain in the queue');
+    assert.equal(await failedMessage.locator('.cli-queued-attachments').getByText('notes.txt',{exact:true}).count(),1,'Failed attachments remain in the queue');
     await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).click();
     await failedMessage.getByRole('button',{name:'Resend queued message',exact:true}).waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), '', 'Resend never repopulates the composer');
@@ -2341,7 +2373,7 @@ try {
         window.__draftTransactions=IDBDatabase.prototype.transaction;window.__failedDraftWrites=0;
         IDBDatabase.prototype.transaction=function(stores,mode,...rest){if(mode==='readwrite'){window.__failedDraftWrites++;throw new DOMException('Storage full','QuotaExceededError');}return window.__draftTransactions.call(this,stores,mode,...rest);};
       });
-      const warning=page.getByRole('alert').filter({hasText:'Browser storage could not save your draft.'});
+      const warning=page.locator('.cli-composer-warning[aria-label*="Browser storage could not save your draft."]');
       const composer=page.getByRole('textbox',{name:'Message Codex',exact:true});
       await composer.fill(originalDraft+' storage failure');
       await page.locator('.cli-composer-warning').waitFor();
@@ -2350,7 +2382,8 @@ try {
       await page.keyboard.press('Escape');
       const failedWrites=await page.evaluate(()=>window.__failedDraftWrites);
       await composer.fill(originalDraft+' another edit');await page.waitForFunction(before=>window.__failedDraftWrites>before,failedWrites);
-      assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Browser storage could not save your draft.'}).count(),0,'Draft failures remain in the initiating composer');
+      assert.ok(await warning.isVisible(), 'Draft failures remain available in the initiating composer');
+      assert.ok(await page.locator('.dashboard-notice').filter({hasText:'Browser storage could not save your draft.'}).count() <= 1, 'Repeated draft failures do not stack duplicate notifications');
       await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.__draftTransactions;});
       await composer.fill(originalDraft);
     }
@@ -2363,7 +2396,7 @@ try {
       };
     });
     await page.locator('input[type="file"][aria-label="Choose attachments"]').setInputFiles({ name: "late.txt", mimeType: "text/plain", buffer: Buffer.from("Original conversation only") });
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Message Codex", exact: true });
     assert.equal(await composer.inputValue(), "", "New chats must not inherit another chat's draft");
@@ -2371,7 +2404,7 @@ try {
     assert.equal(await page.getByRole('complementary',{name:'Workspace tools',exact:true}).count(),0);
     await page.evaluate(() => window.__releaseAttachmentRead());
     await page.getByRole("button", { name: "Attach files", exact: true }).waitFor();
-    await page.getByText("Attachments saved in the previous chat draft. Return there to use them.", { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Remove late.txt', exact: true }).count(), 0, 'Late attachments stay out of the new chat');
     const emptyComposerHeight = (await page.locator(".cli-composer").boundingBox()).height;
     assert.ok(emptyComposerHeight <= 110, `Empty composer is compact at ${width}px (${emptyComposerHeight}px)`);
     await composer.fill("First line\nSecond line\nThird line\nFourth line");
@@ -2399,20 +2432,22 @@ try {
     await page.getByRole("button", { name: "Message settings", exact: true }).click();
     assert.equal(await page.getByRole("combobox", { name: "Reasoning", exact: true }).inputValue(), "high");
     assert.equal(await page.getByRole("combobox", { name: "Access mode", exact: true }).inputValue(), "read-only");
-    await composer.click();
+    await page.getByRole('button', { name: 'Close message settings', exact: true }).click();
     assert.equal(await page.locator(".cli-composer-options").count(), 0);
     assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0);
+    await composer.click();
     await composer.fill("Separate new chat draft");
     assert.equal(await page.getByRole("button", { name: "Remove late.txt", exact: true }).count(), 0, "Late file reads stay with the originating chat");
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     assert.equal(await composer.inputValue(), "", "Returning to a chat keeps sent text out of the composer");
     await page.getByRole("button", { name: "Remove late.txt", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0, "Failed upload stays with the inline Resend message");
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === 'Separate new chat draft');
     assert.equal(await composer.inputValue(), "Separate new chat draft", "Returning to a new-chat project restores its separate draft");
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.evaluate(() => { window.__holdNextMessageRead = true; window.__heldMessageResult = undefined; });
     if (width <= 760) {
@@ -2420,12 +2455,12 @@ try {
       await page.getByRole("menuitem", { name: "Refresh conversation", exact: true }).click();
     } else await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
     await page.waitForFunction(() => window.__heldMessageResult);
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldMessageResult })));
     assert.equal(new URL(page.url()).pathname, "/workspace", "A late transcript read cannot reopen an old conversation");
     assert.equal(await composer.inputValue(), "Separate new chat draft");
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await composer.fill("Original long-running turn");
     await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });
@@ -2433,7 +2468,7 @@ try {
     await page.waitForFunction(() => window.__heldSendResult);
     assert.equal(await composer.inputValue(), '', 'Sending immediately clears the composer while completion is pending');
     assert.equal(await page.getByRole('button',{name:'Retry saving draft',exact:true}).count(), 0, 'Draft storage warnings never add a permanent session banner');
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await composer.fill("Keep this new draft");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
@@ -2451,7 +2486,7 @@ try {
     assert.ok(menuBounds && menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= width, "Session actions stay inside the viewport when toolbar buttons wrap");
     await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
     await page.waitForFunction(() => window.__heldArchiveResult);
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole('button', { name: /^Show active sessions/ }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     const activeChatUrl = page.url();
@@ -2464,11 +2499,11 @@ try {
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "unreachable" } })));
-    await page.locator('.dashboard-connection-banner').getByText('Connection Interrupted in Workspace', { exact: true }).waitFor();
-    assert.equal(await page.locator('.dashboard-connection-banner').getByRole('button', { name: 'Retry now', exact: true }).isEnabled(), true, 'Workspace names its interrupted connection and provides a retry');
+    await page.locator('.dashboard-connection-banner').getByText('Connection interrupted', { exact: true }).waitFor();
+    assert.equal(await page.locator('.dashboard-connection-banner').getByRole('button', { name: 'Reload', exact: true }).isEnabled(), true, 'Workspace names its interrupted connection and provides a reload');
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
-    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    if (width <= 760) { const show = page.getByRole("button", { name: "Show sessions sidebar", exact: true }); if (await show.isVisible()) await show.click(); }
     await page.getByRole("button", { name: "Open dashboard", exact: true }).click();
     assert.equal(new URL(page.url()).pathname, "/", "Dashboard navigation opens home without /dash");
     await page.locator("#dashboard-main").waitFor({ state: "visible" });
@@ -2654,7 +2689,8 @@ try {
     if(await showSystems.isVisible()) await showSystems.click();
     assert.equal(await page.locator('.cli-system-count').textContent(),'2','Multiple PCs have a compact count badge');
     await selectSidebarSystem(page, width, 'fixture-remote');
-    await page.locator('.cli-session-rail').getByText('The host is offline. This operation was not sent or queued. Reconnect and retry.',{exact:true}).waitFor();
+    await page.waitForFunction(() => document.querySelector('.cli-rail-system select')?.value === 'fixture-local');
+    assert.equal(new URL(page.url()).searchParams.has('device'), false, 'A confirmed offline remote falls back to the connected local system');
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='fixture-remote').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
     await selectSidebarSystem(page, width, 'fixture-local');
     await page.evaluate(() => {
