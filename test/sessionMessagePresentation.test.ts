@@ -25,9 +25,11 @@ describe('readable activity payloads', () => {
   });
   it('discovers commands and skills without executing a turn', () => {
     const skills = [{ name: 'review', description: 'Review the current changes' }];
-    expect(commandChoices('/', skills).map(choice => choice.name)).toEqual(['model', 'permissions', 'skills', 'review']);
+    expect(commandChoices('/', skills).map(choice => choice.name)).toEqual([]);
     expect(commandChoices('/skills', skills)).toEqual([{ ...skills[0], skill: true }]);
-    expect(commandChoices('/changes', skills)).toHaveLength(1);
+    expect(commandChoices('/changes', skills)).toHaveLength(0);
+    expect(commandChoices('/rev', skills).map(choice => choice.name)).toEqual(['review']);
+    expect(commandChoices('/mo', skills).map(choice => choice.name)).toEqual(['model']);
     expect(commandChoices('/unknown', skills)).toEqual([]);
   });
   it('names recipient conversations for sent messages and confirmed completions without linking call IDs', () => {

@@ -6,8 +6,9 @@ import { createActionRequestId, postMessageToHost } from './host';
 export type ComposerSkill = { name: string; description: string };
 export function commandChoices(draft: string, skills: ComposerSkill[]) {
   const query = draft.slice(1).toLowerCase();
+  if (!query) return [];
   const commands = [{ name: 'model', description: 'Choose the model and reasoning' }, { name: 'permissions', description: 'Choose access for this session' }, { name: 'skills', description: 'Browse available skills' }];
-  return [...(query === 'skills' ? [] : commands.filter(command => command.name.startsWith(query))), ...skills.filter(skill => query === 'skills' || `${skill.name} ${skill.description}`.toLowerCase().includes(query)).map(skill => ({ ...skill, skill: true }))].slice(0, 80);
+  return [...(query === 'skills' ? [] : commands.filter(command => command.name.startsWith(query))), ...skills.filter(skill => query === 'skills' || skill.name.toLowerCase().includes(query)).map(skill => ({ ...skill, skill: true }))].slice(0, 80);
 }
 
 export function useComposerCommands(props: { draft: string; projectPath?: string; deviceId?: string; onDraft: (value: string) => void; onSettings: () => void; onFocus: () => void }) {
@@ -17,8 +18,9 @@ export function useComposerCommands(props: { draft: string; projectPath?: string
   const revision = useRef({ scope, value: 0 });
   if (revision.current.scope !== scope) revision.current = { scope, value: revision.current.value + 1 };
   const selected = selection.scope === scope ? selection.index : 0;
-  const active = /^\/[\w:.-]*$/.test(props.draft) && dismissed !== revision.current.value;
+  const active = /^\/[\w:.-]+$/.test(props.draft) && dismissed !== revision.current.value;
   const choices = commandChoices(props.draft, skills), id = useId();
+  const visible = active && (choices.length > 0 || props.draft.toLowerCase() === '/skills');
   useEffect(() => {
     if (!active) return;
     setSkills([]);
@@ -47,11 +49,11 @@ export function useComposerCommands(props: { draft: string; projectPath?: string
     props.onFocus();
   };
   const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!active || event.isComposing) return false;
+    if (!visible || event.isComposing) return false;
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDismissed(revision.current.value); return true; }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSelection(current => ({ scope, index: choices.length ? ((current.scope === scope ? current.index : 0) + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length : 0 })); return true; }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) { event.preventDefault(); if (choices.length) choose(Math.min(selected, choices.length - 1)); return true; }
     return false;
   };
-  return { active, id, selectedId: choices.length ? `${id}-${Math.min(selected, choices.length - 1)}` : undefined, onKeyDown, panel: active ? <div class="cli-composer-commands" id={id} role="listbox" aria-label="Commands and skills">{choices.map((choice, index) => <button type="button" role="option" id={`${id}-${index}`} aria-selected={index === selected} key={`${'skill' in choice ? '$' : '/'}${choice.name}`} onClick={() => choose(index)}><strong>{'skill' in choice ? '$' : '/'}{choice.name}</strong><small>{choice.description}</small></button>)}{!choices.length && !status ? <div role="status">No matching commands or skills. Press Escape to keep typing.</div> : null}{status ? <div role="status">{status}{status !== 'Loading skills…' ? <button type="button" onClick={() => setRetry(value => value + 1)}>Retry skills</button> : null}</div> : null}</div> : null };
+  return { active: visible, id, selectedId: choices.length ? `${id}-${Math.min(selected, choices.length - 1)}` : undefined, onKeyDown, panel: visible ? <div class="cli-composer-commands" id={id} role="listbox" aria-label="Commands and skills">{choices.map((choice, index) => <button type="button" role="option" id={`${id}-${index}`} aria-selected={index === selected} key={`${'skill' in choice ? '$' : '/'}${choice.name}`} onClick={() => choose(index)}><strong>{'skill' in choice ? '$' : '/'}{choice.name}</strong><small>{choice.description}</small></button>)}{!choices.length && !status ? <div role="status">No matching commands or skills. Press Escape to keep typing.</div> : null}{status ? <div role="status">{status}{status !== 'Loading skills…' ? <button type="button" onClick={() => setRetry(value => value + 1)}>Retry skills</button> : null}</div> : null}</div> : null };
 }

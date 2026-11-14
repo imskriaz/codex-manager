@@ -78,3 +78,13 @@ it('keeps account center resize success and cancellation silent while reporting 
   expect(source).not.toContain('Resize cancelled');
   expect(source).toContain("props.onFeedback({ level: 'warning', message: 'Size changed for this tab. Browser storage could not remember it.' })");
 });
+
+ it('keeps workspace connection recovery compact and reloads the page', () => {
+  const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+  const banner = source.slice(source.indexOf('function WorkspaceConnectionBanner('), source.indexOf('function sortAccounts('));
+  expect(banner).toContain('Connection interrupted');
+  expect(banner).toContain('onClick={props.onReload}>Reload</button>');
+  expect(banner).not.toContain('<small>');
+  expect(source.match(/onReload=\{\(\) => window.location.reload\(\)\}/g)).toHaveLength(2);
+  expect(source).toContain("notice && notice.level !== 'info'");
+});

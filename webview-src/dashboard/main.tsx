@@ -1905,7 +1905,7 @@ function App() {
         id="dashboard-main"
       >
         <section class="section loading-section">
-          {connectionFailed ? hasBrowserWorkspaceShell(browserPath) ? <WorkspaceConnectionBanner stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
+          {connectionFailed ? hasBrowserWorkspaceShell(browserPath) ? <WorkspaceConnectionBanner stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} onReload={() => window.location.reload()} /> : <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
@@ -2768,7 +2768,7 @@ function App() {
         Skip to main content
       </a>
       {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage
-        ? createPortal(<WorkspaceConnectionBanner stage={connectionBannerStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} />, document.body)
+        ? createPortal(<WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} />, document.body)
         : null}
       {notice && notice.level !== 'info'
         ? createPortal(
@@ -3513,18 +3513,14 @@ function DashboardMobileActions(props: {
   );
 }
 
-function WorkspaceConnectionBanner(props: { stage: ConnectionStage; lastSyncAt?: number; onRetry: () => void }) {
-  const copy = props.stage === 'offline'
-    ? ['You are offline', 'Your browser cannot reach the dashboard. Reconnect this device to continue.']
-    : props.stage === 'system-offline'
-      ? ['Selected system is offline', 'This system has not checked in. Reconnect it or switch to another system.']
-      : props.stage === 'reloading'
-        ? ['Switch applied · reloading', 'The active account changed. Codex Manager is reloading this window.']
-        : ['Connection Interrupted in Workspace', 'Checking automatically. On the selected system, open VS Code and check Codex Manager in Extensions.'];
+function WorkspaceConnectionBanner(props: { stage: ConnectionStage; onReload: () => void }) {
+  const title = props.stage === 'offline' ? 'You are offline'
+    : props.stage === 'system-offline' ? 'System offline'
+    : props.stage === 'reloading' ? 'Reloading…' : 'Connection interrupted';
   return <aside class={`dashboard-connection-banner is-${props.stage}`} role="alert" aria-live="polite">
     <span class="dashboard-connection-indicator" aria-hidden="true" />
-    <span class="dashboard-connection-copy"><strong>{copy[0]}</strong><small>{copy[1]}{props.lastSyncAt ? ` Last update ${new Date(props.lastSyncAt).toLocaleTimeString()}.` : ''}</small></span>
-    {props.stage === 'reloading' ? <span class="dashboard-connection-progress" aria-label="Reload in progress" /> : <button type="button" onClick={props.onRetry}>Retry now</button>}
+    <span class="dashboard-connection-copy"><strong>{title}</strong></span>
+    {props.stage === 'reloading' ? <span class="dashboard-connection-progress" aria-label="Reload in progress" /> : <button type="button" onClick={props.onReload}>Reload</button>}
   </aside>;
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1-pre.1
+
+- Compact command and skill suggestions and show them only for matching names.
+- Resize the browser workspace when the mobile keyboard opens.
+- Shorten connection banners and add a page Reload action; informational toasts remain hidden.
+
 ## 2.0.1
 
 - Keep account keyboard shortcuts out of Workspace, Tasks, editors, menus, and dialogs so they cannot open account modals or steal focus while working.
