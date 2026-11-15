@@ -26,6 +26,13 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it("uses the shared workspace icon toolbar and anchored Browser actions flyout", () => {
+    const source = readFileSync("webview-src/dashboard/workspaceBrowser.tsx", "utf8");
+    expect(source).toContain('import { WorkspaceMenu } from "./workspaceMenu";');
+    expect(source).toContain('label="Browser actions"');
+    expect(source).toContain('class="workspace-browser-icon-button"');
+    expect(source).toContain('<ToolIcon kind="more" />');
+  });
   it("prioritizes running status over unseen and attention dots", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('const indicator = running ? "running" : cliSessionIndicator(');

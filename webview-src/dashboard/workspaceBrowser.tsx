@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { useWorkspaceRequest } from "./workspaceRequest";
+import { WorkspaceMenu } from "./workspaceMenu";
+import { ToolIcon } from "./icons";
 import type { DashboardNotice } from "../../src/domain/dashboard/types";
 import type {
   BrowserFeedback,
@@ -219,12 +221,16 @@ export default function WorkspaceBrowser(props: {
   };
   return (
     <section class={`workspace-browser ${expanded ? "is-expanded" : ""}`} aria-label="Development browser">
-      <header class="workspace-browser-toolbar">
-        <strong>Development browser</strong>
+      <header class="workspace-browser-header">
+        <span class="workspace-browser-heading"><span class="workspace-browser-globe" aria-hidden="true">◉</span><strong>Development browser</strong></span>
         <span style={{ flex: "1" }} />
-        <button aria-pressed={expanded} onClick={() => setExpanded((value) => !value)}>
-          {expanded ? "Collapse" : "Expand"} browser
-        </button>
+        <button class="workspace-browser-icon-button" aria-label={expanded ? "Collapse browser" : "Expand browser"} title={expanded ? "Collapse browser" : "Expand browser"} aria-pressed={expanded} onClick={() => setExpanded((value) => !value)}><ToolIcon kind={expanded ? "close" : "external"} /></button>
+        <WorkspaceMenu label="Browser actions" icon={<ToolIcon kind="more" />}>
+          <button type="button" disabled={busy || !props.connected} onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}><ToolIcon kind="refresh" />Refresh preview</button>
+          <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "close" })}><ToolIcon kind="close" />Close page</button>
+          <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" />Reload page</button>
+          <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" />{size.width === 1280 ? "Use mobile viewport" : "Use desktop viewport"}</button>
+        </WorkspaceMenu>
       </header>
       <form
         class="workspace-browser-address"
@@ -240,12 +246,8 @@ export default function WorkspaceBrowser(props: {
           value={url}
           onInput={(e) => setUrl(e.currentTarget.value)}
         />
-        <button disabled={busy || !props.connected} type="submit">
-          Go
-        </button>
-        <button disabled={busy || !props.connected} type="button" onClick={() => command({ operation: "open", url })}>
-          New
-        </button>
+        <button class="workspace-browser-icon-button workspace-browser-go" aria-label="Go to URL" title="Go to URL" disabled={busy || !props.connected} type="submit"><ToolIcon kind="play" /></button>
+        <button class="workspace-browser-icon-button" aria-label="Open new browser page" title="Open new browser page" disabled={busy || !props.connected} type="button" onClick={() => command({ operation: "open", url })}><ToolIcon kind="plus" /></button>
       </form>
       <div class="workspace-browser-toolbar">
         <select
@@ -265,44 +267,27 @@ export default function WorkspaceBrowser(props: {
             </option>
           ))}
         </select>
-        <button
+        <button class="workspace-browser-icon-button" aria-label="Refresh browser pages" title="Refresh browser pages"
           disabled={busy || !props.connected}
           onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}
-          title="Refresh preview and page list"
-        >
-          Refresh
-        </button>
-        <button disabled={busy || !current || !props.connected} onClick={() => command({ operation: "close" })}>
-          Close page
-        </button>
+        ><ToolIcon kind="refresh" /></button>
       </div>
       <div class="workspace-browser-toolbar">
-        <button
+        <button class="workspace-browser-icon-button"
           aria-label="Go back"
           disabled={busy || !current || !props.connected}
           onClick={() => command({ operation: "back" })}
         >
-          ←
+          <ToolIcon kind="left" />
         </button>
-        <button
+        <button class="workspace-browser-icon-button"
           aria-label="Go forward"
           disabled={busy || !current || !props.connected}
           onClick={() => command({ operation: "forward" })}
         >
-          →
+          <ToolIcon kind="right" />
         </button>
-        <button disabled={busy || !current || !props.connected} onClick={() => command({ operation: "reload" })}>
-          Reload
-        </button>
-        <button
-          disabled={busy || !current || !props.connected}
-          onClick={() => {
-            const width = size.width === 1280 ? 390 : 1280;
-            command({ operation: "resize", width, height: 800 });
-          }}
-        >
-          Desktop / Mobile
-        </button>
+        <span class="workspace-browser-toolbar-caption">{current ? current.title || current.url : "No page open"}</span>
       </div>
       {notice ? (
         <p role={failed ? "alert" : "status"} class={failed ? "is-error" : ""}>

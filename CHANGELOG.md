@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.1
+
+- Refine the Browser workspace panel with shared themed icon controls and an anchored Browser actions flyout.
+
 ## 2.0.6
 
 - Add page DevTools commands for HTML/CSS, script injection, console/events, network interception and response inspection, cookies and storage.
