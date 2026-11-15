@@ -106,6 +106,7 @@ export function SavedAccountCard(props: {
   exportPending: boolean;
   selected: boolean;
   metricPriority: string;
+  showAddedDate?: boolean;
   compactRow?: boolean;
   onToggleSelected: () => void;
   onExportAuth: () => void;
@@ -139,6 +140,7 @@ export function SavedAccountCard(props: {
   const hant = props.lang === "zh-hant";
   const exportLabel = zh ? "导出 auth" : hant ? "匯出 auth" : "Export auth";
   const infoLabel = zh ? "账号信息" : hant ? "帳號資訊" : "Account info";
+  const addedDate = props.showAddedDate ? <span class="saved-credits-line" title={account.addedAtLabel}>{zh ? '添加日期' : hant ? '新增日期' : 'Added'}: {account.addedAtLabel || '—'}</span> : null;
   const moreLabel = zh ? "更多操作" : hant ? "更多操作" : "More account actions";
   const queuePriorityLabel = account.queuePriority
     ? zh
@@ -447,6 +449,7 @@ export function SavedAccountCard(props: {
                 <strong title={emailDisplay}>{emailDisplay}</strong>
               </div>
               <div class="saved-table-meta">
+                {addedDate}
                 <>
                   {compactIdentityBadge ? (
                     <span class="pill saved-running-device" title={compactIdentityBadge.label}>
@@ -755,6 +758,7 @@ export function SavedAccountCard(props: {
             </div>
             <div class="saved-card-footer">
               <div class="saved-credit-summary">
+                {addedDate}
                 <>
                   {cardPlanBadge ? (
                     <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>

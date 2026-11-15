@@ -34,6 +34,26 @@ const change = async (root: string, request: WorkspaceGitRequest) =>
   workspaceGit(root, { ...request, operationId: randomUUID(), revision: (await read(root)).revision }, true);
 
 describe("workspace source control", () => {
+  it("initializes a folder and adds a validated GitHub origin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "workspace-source-control-setup-"));
+    const folders = vscode.workspace.workspaceFolders;
+    Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: [{ uri: { fsPath: root } }] });
+    try {
+      const operation = (request: WorkspaceGitRequest) => workspaceGit(root, { ...request, operationId: randomUUID() }, true);
+      const initialized = await operation({ operation: "init" });
+      expect(initialized.environment?.isGitRepository).toBe(true);
+      await expect(operation({ operation: 'init' })).rejects.toThrow('already manages');
+      await mkdir(path.join(root, 'nested'));
+      await expect(workspaceGit(path.join(root, 'nested'), { operation: 'addRemote', remote: 'https://github.com/example/project', operationId: randomUUID() }, true)).rejects.toThrow('repository root');
+      const added = await operation({ operation: "addRemote", remote: "https://github.com/example/project.git" });
+      expect(added.environment?.hasRemote).toBe(true);
+      expect(execFileSync("git", ["remote", "get-url", "origin"], { cwd: root, encoding: "utf8" }).trim()).toBe("https://github.com/example/project.git");
+      await expect(operation({ operation: "addRemote", remote: "https://github.com.evil.test/example/project" })).rejects.toThrow("canonical GitHub");
+    } finally {
+      Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: folders });
+      await removeTestDirectory(root);
+    }
+  });
   it("stages and unstages an unborn repository without deleting work, then commits exactly staged changes", async () =>
     fixture(async (root, git) => {
       await writeFile(path.join(root, "first.txt"), "first");

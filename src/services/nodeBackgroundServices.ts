@@ -18,6 +18,7 @@ import { waitWithin } from '../utils/concurrency';
 import { resolveCodexHome } from './codexSessionResume';
 import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from '../application/accounts/autoQueueOrder';
 import { isAutoQueueSnapshotFresh } from '../domain/autoQueuePolicy';
+import { maybeAutoSwitchForActiveQuota } from '../application/accounts/quota';
 
 /** Start only after this host owns the port, so a rejected competing host cannot automate accounts. */
 export function registerNodeBackgroundServices(context: vscode.ExtensionContext, repo: AccountsRepository, dashboard: WebDashboardServer,
@@ -44,7 +45,8 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   context.subscriptions.push(
     registerCodexSessionAutoResumeTracking(context),
     registerModelCapacitySwitch(repo, view, canUseAccount),
-    registerQuotaRecoveryAutoResume(context, repo, canUseAccount),
+    registerQuotaRecoveryAutoResume(context, repo, canUseAccount, accountId =>
+      maybeAutoSwitchForActiveQuota(repo, view, { quotaRejectedAccountId: accountId, canUseAccount })),
     registerAutoRefreshScheduler({ context, repo, onRefresh: refresh, canRefreshAccount: canUseAccount }),
     registerTokenRefreshScheduler({ context, repo, view, checkIntervalMs: 15 * 60_000, skewSeconds: 5 * 60, canRefreshAccount: canUseAccount }),
     scheduleCodexSessionAutoResume(async () => {

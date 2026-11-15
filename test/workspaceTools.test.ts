@@ -16,6 +16,8 @@ import {
   listWorkspaceTerminals,
   focusWorkspaceTerminal,
   readWorkspaceFile,
+  readWorkspaceFileDownload,
+  saveWorkspaceFileDownload,
   readWorkspaceFileRevision,
   readWorkspaceEnvironment,
   readWorkspaceGitHistory,
@@ -30,6 +32,59 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import { removeTestDirectory } from "./testFilesystem";
 
 describe("workspace tools", () => {
+  it('downloads original binary bytes in versioned chunks beyond the editor limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workspace-download-'));
+    const restore = exposeWorkspaceRoot(root);
+    const bytes = Buffer.alloc(11 * 1024 * 1024 + 7, 0xff);
+    try {
+      await writeFile(join(root, 'package.vsix'), bytes);
+      expect(await readWorkspaceFile(root, 'package.vsix')).toMatchObject({ kind: 'binary', size: bytes.length });
+      const first = await readWorkspaceFileDownload(root, 'package.vsix', 0);
+      expect(first.size).toBe(bytes.length);
+      const parts = [Buffer.from(first.data, 'base64')];
+      let offset = parts[0]!.length;
+      while (offset < first.size) {
+        const next = await readWorkspaceFileDownload(root, 'package.vsix', offset, first.revision);
+        const part = Buffer.from(next.data, 'base64'); parts.push(part); offset += part.length;
+      }
+      expect(Buffer.concat(parts).equals(bytes)).toBe(true);
+      await writeFile(join(root, 'package.vsix'), 'changed');
+      await expect(readWorkspaceFileDownload(root, 'package.vsix', 0, first.revision)).rejects.toThrow('changed');
+      for (const offset of [-1, NaN, 1.5]) await expect(readWorkspaceFileDownload(root, 'package.vsix', offset)).rejects.toThrow('offset');
+      await expect(readWorkspaceFileDownload(root, '../outside', 0)).rejects.toThrow('outside');
+      await writeFile(join(root, 'empty'), '');
+      expect(await readWorkspaceFileDownload(root, 'empty', 0)).toMatchObject({ size: 0, data: '' });
+      await expect(readWorkspaceFileDownload(root, 'missing', 0)).rejects.toThrow();
+    } finally { restore(); await removeTestDirectory(root); }
+  });
+  it('saves native downloads intact and reports save-dialog cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workspace-native-download-'));
+    const restore = exposeWorkspaceRoot(root);
+    const previousSave = vscode.window.showSaveDialog;
+    const save = vi.fn();
+    Object.defineProperty(vscode.window, 'showSaveDialog', { configurable: true, value: save });
+    try {
+      const bytes = Buffer.from([0xff, 0, 1, 2]);
+      await writeFile(join(root, 'source.bin'), bytes);
+      save.mockResolvedValueOnce(undefined);
+      expect(await saveWorkspaceFileDownload(root, 'source.bin')).toContain('cancelled');
+      save.mockResolvedValueOnce({ scheme: 'file', fsPath: join(root, 'copy.bin') } as never);
+      expect(await saveWorkspaceFileDownload(root, 'source.bin')).toContain('downloaded');
+      expect(await readFile(join(root, 'copy.bin'))).toEqual(bytes);
+      expect(await readFile(join(root, 'source.bin'))).toEqual(bytes);
+      save.mockResolvedValueOnce({ scheme: 'file', fsPath: join(root, 'copy.bin') } as never);
+      const open = fs.open.bind(fs);
+      const failing = vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+        const handle = await open(...args);
+        vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(Object.assign(new Error('Storage full'), { code: 'ENOSPC' }));
+        return handle;
+      });
+      try { await expect(saveWorkspaceFileDownload(root, 'source.bin')).rejects.toThrow('Storage full'); }
+      finally { failing.mockRestore(); }
+      expect(await readFile(join(root, 'copy.bin'))).toEqual(bytes);
+      expect((await fs.readdir(root)).filter(name => name.endsWith('.download.tmp'))).toEqual([]);
+    } finally { Object.defineProperty(vscode.window, 'showSaveDialog', { configurable: true, value: previousSave }); restore(); await removeTestDirectory(root); }
+  });
   it('deletes large binary files without loading them into the text editor and rejects stale revisions', async () => {
     const project = await mkdtemp(join(tmpdir(), 'codex-binary-delete-')), restore = exposeWorkspaceRoot(project);
     try {
@@ -52,7 +107,7 @@ describe("workspace tools", () => {
       const opened = await readWorkspaceFile(project, 'large.txt');
       expect(opened.content).toBe(content);
       limit = 1;
-      await expect(readWorkspaceFile(project, 'large.txt')).rejects.toThrow('1 MB editor limit');
+      await expect(readWorkspaceFile(project, 'large.txt')).resolves.toMatchObject({ kind: 'binary', size: Buffer.byteLength(content) });
       await expect(saveWorkspaceFile(project, 'large.txt', content, opened.revision)).rejects.toThrow('1 MB editor limit');
       expect(await readFile(file, 'utf8')).toBe(content);
       limit = 2;
@@ -574,12 +629,12 @@ describe("workspace tools", () => {
     }
   });
 
-  it("refuses to edit non-UTF-8 text bytes instead of replacing them", async () => {
+  it("offers non-UTF-8 text bytes as a downloadable binary", async () => {
     const projectPath = await mkdtemp(join(tmpdir(), "codex-workspace-encoding-"));
     const restoreWorkspace = exposeWorkspaceRoot(projectPath);
     try {
       await writeFile(join(projectPath, "legacy.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
-      await expect(readWorkspaceFile(projectPath, "legacy.txt")).rejects.toThrow(/valid UTF-8/i);
+      await expect(readWorkspaceFile(projectPath, "legacy.txt")).resolves.toMatchObject({ kind: "binary", content: "" });
     } finally { restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
   });
 

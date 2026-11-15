@@ -8,6 +8,7 @@ import {
   normalizeAutoRefreshMinutes,
   normalizeDailyTokenUsageIntervalMinutes,
   normalizeWorkspaceTextFileLimitMb,
+  normalizeStandaloneCapacityRetryDelaySeconds,
   normalizeCurrentAutoRefreshMinutes,
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
@@ -199,6 +200,12 @@ export async function handleDashboardSettingUpdate(
         updated = true;
       }
       break;
+    case "standaloneCapacityRetryDelaySeconds":
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        await updateDashboardConfiguration(config, key, normalizeStandaloneCapacityRetryDelaySeconds(value), target);
+        updated = true;
+      }
+      break;
     case "workspaceTextFileLimitMb":
       if (typeof value === 'number' && Number.isFinite(value)) {
         await updateDashboardConfiguration(config, key, normalizeWorkspaceTextFileLimitMb(value), target);
@@ -297,6 +304,7 @@ function resolveConfigurationTarget(
     key === "cliIntegrationEnabled" ||
     key === "modelCapacityAutoSwitchEnabled" ||
     key === "modelCapacityFailureCount" ||
+    key === "standaloneCapacityRetryDelaySeconds" ||
     key === "autoResumeEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||

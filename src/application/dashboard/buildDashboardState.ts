@@ -333,6 +333,7 @@ function mapAccount(
     subscriptionExpiresAt,
     addMethodLabel: `${formatAddMethod(account.addedVia, lang)} | ${formatAuthProvider(account.authProvider, lang)}`,
     addedAtLabel: formatAddedAt(account.createdAt, copy.never),
+    addedAt: account.createdAt,
     loginAt: account.loginAt,
     sessionStartedAt: account.sessionStartedAt,
     lastSelectedAt: account.lastSelectedAt,

@@ -30,7 +30,11 @@ export function WorkspaceGitHub(props: {
     [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">("open");
   const [state, setState] = useState<WorkspaceGitHubState>(),
     [busy, setBusy] = useState(false),
-    [failed, setFailed] = useState(false);
+    [failed, setFailed] = useState(false),
+    [setup, setSetup] = useState<"init" | "remote">(),
+    [remoteUrl, setRemoteUrl] = useState(""),
+    [setupDialog, setSetupDialog] = useState(false),
+    [setupNotice, setSetupNotice] = useState("");
   const [detail, setDetail] = useState<WorkspaceGitHubItem>(),
     [detailTab, setDetailTab] = useState<"activity" | "files" | "checks">("activity");
   const [form, setForm] = useState<Form>(),
@@ -66,6 +70,7 @@ export function WorkspaceGitHub(props: {
         throw new Error("GitHub data was not returned. Update the selected system and retry.");
       }
       setState(result.workspaceGitHub);
+      setSetup(undefined);
       if (result.workspaceGitHub.warning) props.onFeedback({ level: "warning", message: result.workspaceGitHub.warning });
       setFailed(false);
       setFormError("");
@@ -75,9 +80,18 @@ export function WorkspaceGitHub(props: {
       }
     } catch (error) {
       if (token === revision.current) {
-        setFormError((error as Error).message);
-        props.onFeedback({ level: "error", message: (error as Error).message });
-        setFailed(true);
+        const message = (error as Error).message;
+        if (/not a git repository|needs a Git repository/i.test(message)) {
+          setSetup("init");
+          setFailed(false);
+        } else if (/remote .*not found|no such remote|remote is missing/i.test(message)) {
+          setSetup("remote");
+          setFailed(false);
+        } else {
+          setFormError(message);
+          props.onFeedback({ level: "error", message });
+          setFailed(true);
+        }
       }
     } finally {
       if (token === revision.current) {
@@ -214,6 +228,33 @@ export function WorkspaceGitHub(props: {
   const disabled = busy || Boolean(props.pending) || failed || !props.connected;
   const authenticated = state?.authenticated === true,
     canWrite = state?.canWrite === true;
+  const setupGit = async (operation: "init" | "addRemote") => {
+    if (busy || props.pending || !props.connected) return;
+    if (operation === "addRemote" && !remoteUrl.trim()) {
+      props.onFeedback({ level: "warning", message: "Enter a GitHub remote URL." });
+      return;
+    }
+    setBusy(true);
+    setFormError("");
+    try {
+      const result = await request("workspaceGit", {
+        gitRequest: { operation, ...(operation === "addRemote" ? { remote: remoteUrl.trim() } : {}), operationId: crypto.randomUUID() },
+        confirmed: true
+      });
+      if (!result.workspaceGit) throw new Error("Git setup did not complete. Refresh and retry.");
+      setSetupNotice(result.workspaceGit.warning || (operation === "init" ? "Git repository initialized." : "GitHub remote added."));
+      if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
+      setSetupDialog(false);
+      setRemoteUrl("");
+      setSetup(undefined);
+      await load();
+    } catch (error) {
+      setFormError((error as Error).message);
+      props.onFeedback({ level: "error", message: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
   const itemActions = (item: WorkspaceGitHubItem) => (
     <div class="workspace-github-actions">
       <button
@@ -425,6 +466,37 @@ export function WorkspaceGitHub(props: {
           </button>
         ) : null}
       </header>
+      {setupNotice ? <p role="status" class="workspace-empty-inline">{setupNotice}</p> : null}
+      {setup ? (
+        <div class="workspace-tool-empty">
+          <ToolIcon kind="github" />
+          <strong>{setup === "init" ? "Git repository required" : "GitHub remote required"}</strong>
+          <p>
+            {setup === "init"
+              ? "Initialize Git in this project before using the GitHub tab."
+              : "Add the project’s GitHub origin remote to load this tab."}
+          </p>
+          {setup === "init" ? (
+            <button type="button" disabled={busy || !props.connected} onClick={() => void setupGit("init")}>
+              Initialize repository
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || !props.connected}
+              onClick={() => {
+                setRemoteUrl("");
+                setFormError("");
+                setSetupDialog(true);
+              }}
+            >
+              Add remote
+            </button>
+          )}
+          {formError ? <p role="alert">{formError}</p> : null}
+        </div>
+      ) : null}
+      {!setup ? <>
       <nav class="workspace-tool-tabs" role="tablist" aria-label="GitHub sections" onKeyDown={handleTabKeyDown}>
         {(["pulls", "issues", "actions", "releases"] as const).map((tab) => (
           <button
@@ -729,6 +801,38 @@ export function WorkspaceGitHub(props: {
             </label>
           ))}
           {!form.fields?.length ? <p>Repository: {state?.repository}</p> : null}
+        </WorkspaceDialog>
+      ) : null}
+      </> : null}
+      {setupDialog ? (
+        <WorkspaceDialog
+          title="Add GitHub remote"
+          subtitle="Use the HTTPS or SSH URL for this GitHub repository."
+          onClose={() => {
+            if (!busy) setSetupDialog(false);
+          }}
+          footer={
+            <>
+              <button type="button" disabled={busy} onClick={() => { setSetupDialog(false); setSetupNotice("Add remote cancelled."); }}>
+                Cancel
+              </button>
+              <button type="button" disabled={busy || !remoteUrl.trim()} onClick={() => void setupGit("addRemote")}>
+                {busy ? "Working…" : "Add remote"}
+              </button>
+            </>
+          }
+        >
+          <label>
+            GitHub remote URL
+            <input
+              autoFocus
+              maxLength={2048}
+              value={remoteUrl}
+              placeholder="https://github.com/owner/repository.git"
+              onInput={(event) => setRemoteUrl(event.currentTarget.value)}
+            />
+          </label>
+          {formError ? <p role="alert">{formError}</p> : null}
         </WorkspaceDialog>
       ) : null}
     </section>

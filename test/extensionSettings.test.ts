@@ -5,6 +5,7 @@ import {
   ExtensionSettingsStore,
   normalizeDailyTokenUsageIntervalMinutes,
   normalizeWorkspaceTextFileLimitMb,
+  normalizeStandaloneCapacityRetryDelaySeconds,
   getQuotaWarningThresholds,
   isHourlyQuotaControlEnabled,
   normalizeQuotaWarningThreshold,
@@ -19,6 +20,8 @@ describe("5-hour quota control defaults", () => {
   it('shares the larger bounded workspace file limit with the dashboard', () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings().workspaceTextFileLimitMb).toBe(10);
+    expect(new ExtensionSettingsStore().getDashboardSettings().standaloneCapacityRetryDelaySeconds).toBe(5);
+    expect([NaN, Infinity, 0, 1, 2.5, 60, 100].map(normalizeStandaloneCapacityRetryDelaySeconds)).toEqual([5, 5, 1, 1, 3, 60, 60]);
     expect([NaN, Infinity, 0, 1, 2.5, 16, 100].map(normalizeWorkspaceTextFileLimitMb)).toEqual([10, 10, 1, 1, 3, 16, 16]);
   });
   it("matches the shipped portable defaults in fresh dashboard settings and keeps explicit Off", () => {

@@ -73,6 +73,8 @@ import {
   focusWorkspaceTerminal,
   listWorkspaceFiles,
   readWorkspaceFile,
+  readWorkspaceFileDownload,
+  saveWorkspaceFileDownload,
   readWorkspaceFileRevision,
   readWorkspaceEnvironment,
   runWorkspaceTerminalCommand,
@@ -1102,6 +1104,8 @@ async function runDashboardAction(
       return { workspaceFiles: result.files, workspaceFilesWarning: result.warning, ...(result.warning ? { notice: { level: "warning" as const, message: result.warning } } : {}) };
     }
     case "readWorkspaceFile":
+      if (payload?.fileDownloadNative && ctx.hostKind !== 'browser') return { notice: { level: 'info', message: await saveWorkspaceFileDownload(payload.projectPath, payload.filePath) } };
+      if (payload?.fileDownloadOffset !== undefined) return { workspaceFileDownload: await readWorkspaceFileDownload(payload.projectPath, payload.filePath, payload.fileDownloadOffset, payload.fileDownloadRevision) };
       if (payload?.filePath?.startsWith('@manager-attachment/')) {
         if (!payload.taskId) throw new Error('Choose the task that owns this attachment.');
         return { workspaceFile: await readProjectAttachment(await resolveWorkspaceProjectPathAsync(payload.projectPath), payload.taskId, payload.filePath) };
@@ -1558,6 +1562,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "dailyTokenUsageEnabled",
     "dailyTokenUsageIntervalMinutes",
     "workspaceTextFileLimitMb",
+    "standaloneCapacityRetryDelaySeconds",
     "autoSwitchEnabled",
     "modelCapacityAutoSwitchEnabled",
     "modelCapacityFailureCount",

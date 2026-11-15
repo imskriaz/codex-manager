@@ -15,18 +15,8 @@ const string = (value: unknown, max = 20_000): string => (typeof value === "stri
 const positive = (value: unknown): number =>
   Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
 
-export function parseGitHubRemote(remote: string): string {
-  const match =
-    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38}))\/([a-zA-Z0-9_.-]+?)(?:\.git)?\/?$/.exec(
-      remote.trim()
-    );
-  if (!match || match[2] === "." || match[2] === ".." || match[2]!.length > 100) {
-    throw new Error(
-      "Select a project with a github.com origin remote. Embedded credentials, custom hosts and redirect URLs are not accepted."
-    );
-  }
-  return `${match[1]}/${match[2]}`;
-}
+import { parseGitHubRemote } from "../domain/workspaceGitStatus";
+export { parseGitHubRemote } from "../domain/workspaceGitStatus";
 async function credential(cwd: string): Promise<string | undefined> {
   const session = await waitWithin(
     Promise.resolve(vscode.authentication.getSession("github", ["repo"], { silent: true })),
@@ -329,7 +319,19 @@ export async function workspaceGitHub(
   ) {
     throw new Error("Choose a supported GitHub action.");
   }
-  const repository = parseGitHubRemote(await workspaceGitCommand(cwd, ["remote", "get-url", "origin"]));
+  let repository: string;
+  try {
+    repository = parseGitHubRemote(await workspaceGitCommand(cwd, ["remote", "get-url", "origin"]));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/not a git repository/i.test(message)) {
+      throw new Error("GitHub needs a Git repository. Initialize it in this panel.");
+    }
+    if (/no such remote|remote .*not found/i.test(message)) {
+      throw new Error("GitHub remote is missing. Add an origin remote in this panel.");
+    }
+    throw error;
+  }
   let token: string | undefined;
   if (request.operation === "connect") {
     const session = await waitWithin(

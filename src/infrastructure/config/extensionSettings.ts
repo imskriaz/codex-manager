@@ -17,6 +17,10 @@ export function normalizeWorkspaceTextFileLimitMb(value: number): number {
   return Number.isFinite(value) ? Math.max(1, Math.min(16, Math.round(value))) : 10;
 }
 
+export function normalizeStandaloneCapacityRetryDelaySeconds(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(60, Math.round(value))) : 5;
+}
+
 export class ExtensionSettingsStore {
   getDashboardSettings(): DashboardSettings {
     const config = getCodexManagerConfiguration();
@@ -37,6 +41,7 @@ export class ExtensionSettingsStore {
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", true),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
       workspaceTextFileLimitMb: normalizeWorkspaceTextFileLimitMb(config.get<number>('workspaceTextFileLimitMb', 10)),
+      standaloneCapacityRetryDelaySeconds: normalizeStandaloneCapacityRetryDelaySeconds(config.get<number>('standaloneCapacityRetryDelaySeconds', 5)),
       codexSessionTransport: readCodexSessionTransport(config),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),

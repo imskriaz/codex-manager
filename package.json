@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -164,6 +164,15 @@
           "multipleOf": 1,
           "default": 3,
           "markdownDescription": "Consecutive model-capacity failures before switching accounts. Failures while another session is running do not count."
+        },
+        "codexManager.standaloneCapacityRetryDelaySeconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60,
+          "multipleOf": 1,
+          "default": 5,
+          "scope": "machine",
+          "markdownDescription": "Initial standalone retry delay after a verified capacity interruption. Later retries back off exponentially."
         },
         "codexManager.autoSwitchWaitForSessionsEnabled": {
           "type": "boolean",

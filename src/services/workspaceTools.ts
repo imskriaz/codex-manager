@@ -12,6 +12,7 @@ import type {
   DashboardWorkspaceGitRequest,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
+  WorkspaceFileDownload,
   DashboardWorkspaceTerminalInfo,
   DashboardWorkspaceTerminalOutput,
   DashboardWorkspaceTerminalResult
@@ -277,9 +278,8 @@ export async function readWorkspaceFile(
   } catch (error) {
     if (error instanceof SafeFileReadTimeoutError) throw error;
     if ((error as Error)?.name === "SafeFileReadLimitError") {
-      throw new Error(preview
-        ? "This preview is larger than 8 MB. Open the file in VS Code instead."
-        : `This text file exceeds the ${textLimitMb} MB editor limit. Increase Text file limit in Settings to open it.`);
+      const stat = await waitWithin(fs.stat(absolute), WORKSPACE_READ_TIMEOUT_MS, "File details did not respond.");
+      return { path: relative, content: "", language: "binary", kind: "binary", mimeType: "application/octet-stream", size: stat.size, revision: "" };
     }
     throw error;
   }
@@ -297,15 +297,56 @@ export async function readWorkspaceFile(
   try {
     content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(snapshot.buffer);
   } catch {
-    throw new Error("This text file is not valid UTF-8 and cannot be edited in the dashboard. Open it in VS Code instead.");
+    return { path: relative, content: "", language: "binary", kind: "binary", mimeType: "application/octet-stream", size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
   }
-  if (content.includes("\0")) throw new Error("Binary files cannot be edited in the dashboard.");
+  if (content.includes("\0")) return { path: relative, content: "", language: "binary", kind: "binary", mimeType: "application/octet-stream", size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
   return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
 }
 
 export async function readWorkspaceFileRevision(projectPath: string | undefined, filePath: string | undefined): Promise<string> {
   const { absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   return hashWorkspaceFile(absolute);
+}
+
+/** Read original bytes in bounded chunks, fencing every chunk to the same file version. */
+export async function readWorkspaceFileDownload(projectPath: string | undefined, filePath: string | undefined, offset: number, expectedRevision?: string): Promise<WorkspaceFileDownload> {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 0 && !expectedRevision || expectedRevision !== undefined && (typeof expectedRevision !== 'string' || expectedRevision.length > 128)) throw new Error('Choose a valid file download offset and revision.');
+  const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
+  const before = await waitWithin(fs.stat(absolute), WORKSPACE_READ_TIMEOUT_MS, 'File download inspection timed out.');
+  if (!before.isFile() || offset > before.size) throw new Error('Choose a regular project file.');
+  const revisionOf = (stat: fsSync.Stats) => crypto.createHash('sha256').update(JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs])).digest('base64url');
+  const revision = revisionOf(before);
+  if (expectedRevision && expectedRevision !== revision) throw new Error('The file changed during download. Start the download again.');
+  const snapshot = await readSafeFileSnapshot(absolute, { maxBytes: 512 * 1024, startOffset: offset, timeoutMs: WORKSPACE_READ_TIMEOUT_MS });
+  const after = await waitWithin(fs.stat(absolute), WORKSPACE_READ_TIMEOUT_MS, 'File download verification timed out.');
+  if (revisionOf(after) !== revision || snapshot.size !== before.size || snapshot.mtimeMs !== before.mtimeMs || snapshot.bytesRead !== Math.min(512 * 1024, before.size - offset)) throw new Error('The file changed during download. Start the download again.');
+  return { path: relative, revision, offset, size: before.size, data: snapshot.buffer.toString('base64') };
+}
+
+export async function saveWorkspaceFileDownload(projectPath: string | undefined, filePath: string | undefined): Promise<string> {
+  const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
+  const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(path.dirname(absolute), `download-${path.basename(relative)}`)), saveLabel: 'Download file' });
+  if (!target) return 'File download cancelled.';
+  if (target.scheme !== 'file' || path.resolve(target.fsPath) === path.resolve(absolute)) throw new Error('Choose a different local destination for this download.');
+  const temporary = `${target.fsPath}.${crypto.randomUUID()}.download.tmp`;
+  const handle = await fs.open(temporary, 'wx');
+  try {
+    let offset = 0, revision: string | undefined;
+    for (;;) {
+      const chunk = await readWorkspaceFileDownload(projectPath, filePath, offset, revision);
+      const bytes = Buffer.from(chunk.data, 'base64');
+      await handle.writeFile(bytes);
+      offset += bytes.length;
+      revision = chunk.revision;
+      if (offset === chunk.size) break;
+    }
+    await handle.close();
+    await fs.rename(temporary, target.fsPath);
+    return 'File downloaded.';
+  } finally {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('[codexManager] download cleanup failed', error); });
+  }
 }
 
 async function hashWorkspaceFile(absolute: string): Promise<string> {

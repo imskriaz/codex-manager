@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 const m = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
   config: true,
+  delay: 5,
   holdCapacity: false,
   locks: [] as string[],
   autoResume: true,
@@ -26,7 +27,7 @@ vi.mock("../src/storage/sqliteState", () => ({
   })
 }));
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({
-  getCodexManagerConfiguration: () => ({ get: () => m.config }),
+  getCodexManagerConfiguration: () => ({ get: (key: string) => key === 'standaloneCapacityRetryDelaySeconds' ? m.delay : m.config }),
   isAutoResumeEnabled: () => m.autoResume
 }));
 vi.mock("../src/services/codexSessionResume", () => ({
@@ -68,6 +69,7 @@ beforeEach(() => {
   m.preferences.clear();
   m.live = undefined;
   m.config = true;
+  m.delay = 5;
   m.holdCapacity = false; m.locks = [];
   m.autoResume = true;
   allowed = true;
@@ -89,6 +91,13 @@ it("retries capacity after a bounded wait, deduplicates terminal replay, and use
   expect(m.resume).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1001);
   expect(m.resume).toHaveBeenCalledExactlyOnceWith("session", expect.any(AbortSignal), "automatic", "private");
+});
+it('uses the configured standalone capacity delay', async () => {
+  m.delay = 12; start(); emit('configured');
+  await vi.advanceTimersByTimeAsync(11_999);
+  expect(m.resume).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1_001);
+  expect(m.resume).toHaveBeenCalledOnce();
 });
 it('waits for capacity account selection before retrying instead of racing the switch', async () => {
   start(); m.holdCapacity = true; emit('switching');

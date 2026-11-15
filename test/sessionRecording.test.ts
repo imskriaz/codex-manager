@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { readSessionDiscovery, readSessionStatus, saveSessionDiscovery } from "../src/storage/sqliteSessions";
-import { disposeSessionRecording, recordNativeSessionStatus, registerSessionRecording } from "../src/services/sessionRecording";
+import { disposeSessionRecording, recordNativeSessionStatus, registerSessionRecording, recordSessionLive, flushSessionRecording, readRecordedSessionAccount } from "../src/services/sessionRecording";
 import * as sessions from "../src/services/codexSessionResume";
 import * as nativeFs from "node:fs";
 import { EventEmitter } from "node:events";
@@ -48,6 +48,15 @@ it("discovers and renews native activity before expiry without any dashboard, th
   subscriptions.pop()!.dispose();disposeSessionRecording();
   const calls=scan.mock.calls.length;await vi.advanceTimersByTimeAsync(60_000);
   expect(scan).toHaveBeenCalledTimes(calls);expect(vi.getTimerCount()).toBe(0);
+});
+
+it('retains the originating account before and after a turn snapshot is persisted', () => {
+  const streamId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  recordSessionLive({ sessionId: id, streamId, status: 'failed', sequence: 1, updatedAt: Date.now(), messages: [] }, 'original');
+  expect(readRecordedSessionAccount(streamId, root)).toBe('original');
+  flushSessionRecording();
+  expect(readRecordedSessionAccount(streamId, root)).toBe('original');
+  expect(readRecordedSessionAccount('missing', root)).toBeUndefined();
 });
 
 it.each(["offline","timeout"])("retains saved discovery after %s inspection and retries on the next background tick",async failure=>{

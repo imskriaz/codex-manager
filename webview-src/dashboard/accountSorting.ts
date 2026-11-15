@@ -15,6 +15,11 @@ export type DashboardAutoQueueCapabilityThresholds = AutoQueueCapabilityThreshol
 
 type DashboardMetric = DashboardAccountViewModel["metrics"][number];
 
+export function compareDashboardDateAdded(left: DashboardAccountViewModel, right: DashboardAccountViewModel): number {
+  const date = (account: DashboardAccountViewModel) => typeof account.addedAt === 'number' && Number.isFinite(account.addedAt) && account.addedAt > 0 ? account.addedAt : 0;
+  return date(right) - date(left) || left.email.localeCompare(right.email);
+}
+
 function mainQuotaMetric(account: DashboardAccountViewModel): DashboardMetric | undefined {
   return (account.metrics ?? []).find(
     (metric) =>

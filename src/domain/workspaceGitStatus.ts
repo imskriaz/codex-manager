@@ -19,3 +19,16 @@ export function parseWorkspaceGitStatus(output: string, limit = 256) {
     ahead: Number(branch?.[3]?.match(/ahead\s+(\d+)/)?.[1] ?? 0), behind: Number(branch?.[3]?.match(/behind\s+(\d+)/)?.[1] ?? 0),
     changes, changedFiles: files, changedFilesTruncated: truncated || changes > files.length };
 }
+
+export function parseGitHubRemote(remote: string): string {
+  const match =
+    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38}))\/([a-zA-Z0-9_.-]+?)(?:\.git)?\/?$/.exec(
+      remote.trim()
+    );
+  if (!match || match[2] === "." || match[2] === ".." || match[2]!.length > 100) {
+    throw new Error(
+      "Select a project with a github.com origin remote. Embedded credentials, custom hosts and redirect URLs are not accepted."
+    );
+  }
+  return `${match[1]}/${match[2]}`;
+}

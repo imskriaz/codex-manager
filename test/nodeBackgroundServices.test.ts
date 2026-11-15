@@ -16,6 +16,7 @@ vi.mock('../src/services/standaloneCapacityRetry', () => ({ registerStandaloneCa
 vi.mock("../src/services/workspaceTools", () => ({ registerWorkspaceTerminalMonitoring: () => disposable("terminals") }));
 vi.mock("../src/services/modelCapacitySwitch", () => ({ registerModelCapacitySwitch: () => disposable("capacity") }));
 vi.mock("../src/services/quotaRecoveryAutoResume", () => ({ registerQuotaRecoveryAutoResume: () => disposable("quota-recovery") }));
+vi.mock('../src/application/accounts/quota', () => ({ maybeAutoSwitchForActiveQuota: vi.fn().mockResolvedValue(true) }));
 vi.mock("../src/services/codexSessionAutoResume", () => ({
   registerCodexSessionAutoResumeTracking: () => disposable("tracking"), resumePersistedCodexSessions: fixture.resume,
   scheduleCodexSessionAutoResume: (start: () => Promise<boolean>) => { fixture.recovery = start; return disposable("recovery"); },

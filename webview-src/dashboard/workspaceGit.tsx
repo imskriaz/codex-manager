@@ -31,7 +31,8 @@ export function WorkspaceGit(props: {
   const [state, setState] = useState<WorkspaceGitState>(),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
-    [stale, setStale] = useState(true);
+    [stale, setStale] = useState(true),
+    [setupRequired, setSetupRequired] = useState(false);
   const [history, setHistory] = useState<DashboardWorkspaceGitHistory>(),
     [selectedCommit, setSelectedCommit] = useState<string>(),
     [diff, setDiff] = useState<{ title: string; content: string; truncated?: boolean }>();
@@ -72,12 +73,14 @@ export function WorkspaceGit(props: {
         throw new Error("Git state was not returned. Update the selected system and retry.");
       }
       setState(result.workspaceGit);
+      setSetupRequired(false);
       setStale(!props.connected);
       setNotice("");
       if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
     } catch (error) {
       if (token === generation.current) {
-        props.onFeedback({ level: "error", message: (error as Error).message });
+        if (/not a git repository/i.test((error as Error).message)) { setSetupRequired(true); setState(undefined); setHistory(undefined); }
+        else props.onFeedback({ level: "error", message: (error as Error).message });
         setStale(true);
       }
     } finally {
@@ -207,7 +210,26 @@ export function WorkspaceGit(props: {
     setField(value.field === "message" ? draft : "");
     setDialog(value);
   };
-  const disabled = busy || Boolean(props.pending) || stale || !props.connected;
+  const initializeRepository = async () => {
+    if (busy || !props.connected) return;
+    setBusy(true);
+    try {
+      const result = await request("workspaceGit", {
+        gitRequest: { operation: "init", operationId: crypto.randomUUID() },
+        confirmed: true
+      });
+      if (!result.workspaceGit) throw new Error("Git repository initialization was not confirmed. Refresh and retry.");
+      setNotice(result.workspaceGit.warning || "Git repository initialized.");
+      if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
+      await read();
+      setNotice(result.workspaceGit.warning || "Git repository initialized.");
+    } catch (error) {
+      props.onFeedback({ level: "error", message: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disabled = busy || Boolean(props.pending) || stale || !props.connected || !state?.environment?.isGitRepository;
   const environment = state?.environment;
   const changed = environment?.changedFiles ?? [];
   const staged = changed.filter((file) => file.index !== " " && file.index !== "?" && file.index !== "!");
@@ -287,7 +309,7 @@ export function WorkspaceGit(props: {
             onClick={() => {
               setView(tab);
               setFilter("");
-              if (tab === "history" && !history) {
+              if (tab === "history" && !history && environment?.isGitRepository) {
                 void loadHistory();
               }
             }}
@@ -304,8 +326,13 @@ export function WorkspaceGit(props: {
           {!state || !environment?.isGitRepository ? (
             <div class="workspace-tool-empty">
               <ToolIcon kind="branch" />
-              <strong>{busy ? "Reading repository…" : state ? "No Git repository" : "Repository unavailable"}</strong>
-              <p>Select a Git project, or refresh when its folder is available.</p>
+              <strong>{busy ? "Reading repository…" : setupRequired ? "No Git repository" : "Repository unavailable"}</strong>
+              <p>{setupRequired ? "Initialize Git in this project to use source control." : "Select a Git project, or refresh when its folder is available."}</p>
+              {setupRequired ? (
+                <button type="button" disabled={busy || !props.connected} onClick={() => void initializeRepository()}>
+                  Initialize repository
+                </button>
+              ) : null}
             </div>
           ) : view === "changes" ? (
             <>

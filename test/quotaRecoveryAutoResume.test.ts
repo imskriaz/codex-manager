@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   stopStorage: vi.fn(), liveListener: undefined as undefined | ((message: any) => void)
 }));
 vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ subscribe: mocks.subscribe }) }));
+vi.mock('../src/services/sessionRecording', () => ({ readRecordedSessionAccount: vi.fn() }));
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isAutoResumeEnabled: mocks.enabled }));
 vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: mocks.home }));
 vi.mock("../src/services/codexSessionAutoResume", () => ({
@@ -39,6 +40,7 @@ vi.mock("../src/application/accounts/autoQueueOrder", async () => {
 });
 import { registerQuotaRecoveryAutoResume } from "../src/services/quotaRecoveryAutoResume";
 import { recordAccountQuotaCheck } from "../src/services/quotaCheckCoordination";
+import { readRecordedSessionAccount } from '../src/services/sessionRecording';
 
 let account: CodexManagerAccountRecord, saved: Map<string, unknown>, context: ExtensionContext;
 let read: ReturnType<typeof vi.fn>, write: ReturnType<typeof vi.fn>, allowed: ReturnType<typeof vi.fn>;
@@ -103,9 +105,41 @@ beforeEach(() => {
   context = { workspaceState: { get: (key: string) => saved.get(key), update: write } } as unknown as ExtensionContext;
 });
 afterEach(() => {
+  vi.mocked(readRecordedSessionAccount).mockReset();
   for (const service of services.splice(0)) service.dispose();
   Reflect.deleteProperty(vscode.env, 'appHost');
   vi.useRealTimers();
+});
+
+it('does not reject a replacement account when a delayed failure belongs to an older account', async () => {
+  recover();
+  const select = vi.fn().mockResolvedValue(true);
+  services.push(registerQuotaRecoveryAutoResume(context, { listAccounts: read } as never, allowed, select));
+  await flush();
+  vi.mocked(readRecordedSessionAccount).mockReturnValue('older-account');
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'old-turn', streamId: 'old-stream', status: 'failed', error: 'usage limit reached' } });
+  await flush();
+  expect(select).not.toHaveBeenCalled();
+});
+
+it('selects a verified replacement immediately after standalone rejection despite cached healthy quota', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  recover();
+  const select = vi.fn(async (id: string) => {
+    expect(id).toBe('active');
+    account = { ...account, id: 'replacement' };
+    return true;
+  });
+  services.push(registerQuotaRecoveryAutoResume(context, { listAccounts: read } as never, allowed, select));
+  await flush();
+  const refresh = vi.mocked(vscode.commands.executeCommand); refresh.mockClear();
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'first', streamId: 'reject-once', status: 'failed', error: 'You have hit your usage limit' } });
+  await flush();
+  expect(select).toHaveBeenCalledOnce();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'first', streamId: 'reject-once', status: 'failed', error: 'You have hit your usage limit' } });
+  await flush(); expect(select).toHaveBeenCalledOnce();
 });
 
 it('recovers immediately after a standalone account change above the exhaustion threshold', async () => {

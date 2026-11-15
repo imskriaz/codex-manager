@@ -42,6 +42,7 @@ import { isAutomaticRequest, postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
+  compareDashboardDateAdded,
   filterAccounts,
   hasDashboardQuotaRemaining,
   isDashboardAccountOutOfQuota,
@@ -129,6 +130,7 @@ type AccountSort =
   | "quota"
   | "time-left"
   | "login-date"
+  | "date-added"
   | "account-type"
   | "subscription-expiry"
   | "email"
@@ -175,6 +177,7 @@ function isAccountSort(value: string | null): value is AccountSort {
     value === "quota" ||
     value === "time-left" ||
     value === "login-date" ||
+    value === "date-added" ||
     value === "account-type" ||
     value === "subscription-expiry" ||
     value === "email" ||
@@ -2202,6 +2205,7 @@ function App() {
                   exportPending={isActionPending("shareTokens") || isActionPending("exportAuthFile")}
                   selected={selectedAccountIds.has(account.id)}
                   metricPriority={uiPreferences.metricPriority}
+                  showAddedDate={accountSort === "date-added"}
                   compactRow={compactRow}
                   onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
                   onExportAuth={() => handleExportAccount(account.id)}
@@ -2518,6 +2522,7 @@ function App() {
                 "quota",
                 "time-left",
                 "login-date",
+                "date-added",
                 "last-refresh",
                 "subscription-expiry",
                 "account-type",
@@ -3174,6 +3179,7 @@ function App() {
               privacyMode={state.privacyMode}
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}
+                attentionSessionKeys={codexPrompts.entries.filter(entry => !entry.responseId).map(entry => cliSessionTargetKey({ id: entry.request.threadId, deviceId: entry.request.deviceId }))}
               selectedSession={selectedCliSession}
               requestPanel={codexRequestView}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
@@ -3530,6 +3536,7 @@ function sortAccounts(
   if (sort === "auto-queue") {
     return sortWithQueuedAccount(accounts, compareAutoQueue, false);
   }
+  if (sort === "date-added") return sortWithQueuedAccount(accounts, compareDashboardDateAdded);
 
   const valueFor = (account: DashboardAccountViewModel): number | string | undefined => {
     if (sort === "email") {
@@ -3781,6 +3788,7 @@ function resolveSortOptionLabel(sort: AccountSort, lang: string): string {
   if (sort === "quota") return zh ? "配额" : hant ? "配額" : "Quota";
   if (sort === "time-left") return zh ? "剩余时间" : hant ? "剩餘時間" : "Time left";
   if (sort === "login-date") return zh ? "登录日期" : hant ? "登入日期" : "Login date";
+  if (sort === "date-added") return zh ? "添加日期" : hant ? "新增日期" : "Date added";
   if (sort === "account-type") return zh ? "账号类型" : hant ? "帳號類型" : "Account type";
   if (sort === "subscription-expiry") return zh ? "订阅即将到期" : hant ? "訂閱即將到期" : "Expiring soon";
   if (sort === "email") return zh ? "电子邮箱地址" : hant ? "電子郵件地址" : "Email Address";

@@ -18,6 +18,8 @@ import { waitWithin } from "../utils/concurrency";
 import * as vscode from "vscode";
 
 const MUTATIONS = new Set([
+  "init",
+  "addRemote",
   "stage",
   "unstage",
   "discard",
@@ -52,6 +54,7 @@ const REPOSITORY_OPERATIONS = new Set([
   "dropStash"
 ]);
 const MAX_BYTES = 256 * 1024;
+import { parseGitHubRemote } from "../domain/workspaceGitStatus";
 export async function workspaceGitCommand(cwd: string, args: string[], timeout = 30_000, literalPathspecs = true): Promise<string> {
   const result = await runProcess(
     "git",
@@ -192,7 +195,45 @@ export async function workspaceGit(
   if (!request || !["read", "diff", ...MUTATIONS].includes(request.operation)) {
     throw new Error("Choose a supported Git operation.");
   }
-  const root = (await workspaceGitCommand(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  if (request.operation === "init" || request.operation === "addRemote") {
+    if (!confirmed) throw new Error("Confirm this Git setup action before continuing.");
+    if (vscode.workspace.isTrusted === false) throw new Error("Trust this workspace in VS Code before changing Git setup.");
+    if (!request.operationId || !/^[a-zA-Z0-9-]{8,100}$/.test(request.operationId)) throw new Error("A unique Git operation ID is required.");
+    const common = request.operation === "init" ? path.join(cwd, ".git") : path.resolve(cwd, (await workspaceGitCommand(cwd, ["rev-parse", "--git-common-dir"])).trim());
+    const lock = sharedPathKey("workspace-git", common);
+    return runCrossWindowOnce(sharedResourceKey("workspace-git-action", [lock, request.operationId]), "Git setup action", () =>
+      runCrossWindowExclusive(lock, "Git setup action", async (signal) => {
+        const repository = await runProcess("git", ["rev-parse", "--show-toplevel"], cwd, 30_000);
+        if (repository.timedOut) throw new Error("Git setup verification timed out. Refresh before retrying.");
+        if (request.operation === "init") {
+          if (repository.exitCode === 0) throw new Error("Git already manages this folder. Refresh the repository.");
+          if (!/not a git repository/i.test(repository.stderr)) throw new Error(repository.stderr.trim() || "Git could not verify this folder.");
+        } else {
+          if (repository.exitCode !== 0) throw new Error(repository.stderr.trim() || "Initialize this repository first.");
+          if (await fs.realpath(repository.stdout.trim()) !== await fs.realpath(cwd)) throw new Error("Select the repository root project before adding a remote.");
+          if (typeof request.remote !== "string" || request.remote.length > 2048) throw new Error("Enter a canonical GitHub remote URL.");
+          try { parseGitHubRemote(request.remote); } catch { throw new Error('Enter a canonical GitHub remote URL. Embedded credentials and custom hosts are not accepted.'); }
+        }
+
+        signal.throwIfAborted();
+        const args = request.operation === "init" ? ["init"] : ["remote", "add", "origin", request.remote!.trim()];
+        const output = await workspaceGitCommand(cwd, args);
+        const message = output.trim() || (request.operation === "init" ? "Git repository initialized." : "GitHub remote added.");
+        try { return { ...(await readState(cwd)), output: message }; }
+        catch (error) { return { revision: "", branches: [], stashes: [], output: message,
+          warning: `Git setup completed, but status could not refresh. Refresh before another change. ${String(error)}` }; }
+      })
+    );
+  }
+  let root: string;
+  try {
+    root = (await workspaceGitCommand(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  } catch (error) {
+    if (request.operation === "read" && /not a git repository/i.test(error instanceof Error ? error.message : String(error))) {
+      throw new Error("This folder is not a Git repository.");
+    }
+    throw error;
+  }
   if (request.operation === "read") {
     return readState(cwd);
   }

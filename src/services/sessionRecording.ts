@@ -47,6 +47,19 @@ export function captureSessionAccount(): string | undefined {
   catch (error) { warn(error); return undefined; }
 }
 
+/** Failure handling must use the turn's credentials, even after a manual switch. */
+export function readRecordedSessionAccount(streamId: string, home = getCodexHome()): string | undefined {
+  const entry = [...pending.values()].find(entry => entry.home === home && entry.state.streamId === streamId);
+  if (entry?.accountId) return entry.accountId;
+  const store = getSqliteStateStore();
+  if (!store) return;
+  try {
+    initializeSessionStorage(store);
+    const row = store.prepare("SELECT account_id FROM session_turns WHERE home=? AND device_id='' AND stream_id=?").get(getCodexHomeStateKey(home), streamId);
+    return typeof row?.['account_id'] === 'string' ? row['account_id'] : undefined;
+  } catch (error) { warn(error); return; }
+}
+
 /** Keep the newest bounded snapshot per turn while storage is unavailable. */
 export function recordSessionLive(state:DashboardCodexSessionLiveState,accountId?:string): void {
   if (!getSqliteStateStore()) return;

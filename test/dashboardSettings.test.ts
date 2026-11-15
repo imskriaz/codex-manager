@@ -3,6 +3,15 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it('persists the standalone retry delay globally and validates its bounds', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    for (const [value, expected] of [[0, 1], [5, 5], [100, 60], [2.5, 3]]) {
+      expect(await handleDashboardSettingUpdate('standaloneCapacityRetryDelaySeconds', value)).toBe(true);
+      expect(update).toHaveBeenLastCalledWith('standaloneCapacityRetryDelaySeconds', expected, vscode.ConfigurationTarget.Global);
+    }
+    for (const value of [NaN, Infinity, '5']) expect(await handleDashboardSettingUpdate('standaloneCapacityRetryDelaySeconds', value)).toBe(false);
+  });
   it('persists the bounded workspace file limit and rejects nonnumeric or nonfinite values', async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);

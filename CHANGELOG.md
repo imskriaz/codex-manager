@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.4
+
+- Offer repository initialization and GitHub origin setup in the Git panel.
+- Download original project files, including binaries and files larger than the editor limit, from their open panel.
+- Mark unseen completed sessions green, new unseen sessions blue, and questions or approvals red. Flash account and quota changes with reduced-motion support.
+- Start standalone quota-rejection account selection immediately, preserve recovery guards, and make the standalone capacity retry delay configurable in Settings (default 5 seconds, with exponential backoff).
+- Show an inline quota waiting message on interrupted standalone sessions until automatic recovery resumes work.
+- Add Date added sorting (newest first within account groups) and show the added date on cards while selected.
+
 ## 2.0.3
 
 - Hand off the saved session message queue to the focused tab when another tab moves to the background, without replaying in-flight sends.

@@ -19,7 +19,12 @@ import { isExplicitSessionGoalPause } from './codexSessionGoals';
 
 type Retry = { sessionId: string; streamId: string; attempts: number; due: number; automaticStreamId?: string };
 const NAMESPACE = "standalone-capacity-retry";
-const DELAYS = [5000, 10000, 20000, 40000];
+const MAX_RETRIES = 4;
+const retryDelayMs = () => {
+  const value = getCodexManagerConfiguration().get<number>('standaloneCapacityRetryDelaySeconds', 5);
+  return Number.isFinite(value) ? Math.max(1, Math.min(60, Math.round(value))) * 1000 : 5_000;
+};
+const nextRetryDue = (attempts: number) => Date.now() + retryDelayMs() * 2 ** Math.min(attempts, MAX_RETRIES - 1);
 
 /** Continue verified interrupted work without requiring a reload. */
 export function registerStandaloneCapacityRetry(
@@ -70,7 +75,7 @@ export function registerStandaloneCapacityRetry(
       if (!enabled() || !retryableState(state)) return;
       if (previous?.streamId === state.streamId) return;
       const attempts = previous?.attempts ?? 0;
-      if (attempts >= DELAYS.length) {
+      if (attempts >= MAX_RETRIES) {
         notice("warning", "Standalone recovery retry limit reached. Review the session before resuming manually.");
         return;
       }
@@ -78,15 +83,16 @@ export function registerStandaloneCapacityRetry(
         notice("warning", "Standalone recovery queue is full. Resume this session manually.");
         return;
       }
+      const delay = retryDelayMs() * 2 ** attempts;
       store.set(NAMESPACE, recordKey, {
         sessionId: state.sessionId,
         streamId: state.streamId,
         attempts,
-        due: Date.now() + DELAYS[attempts]!
+        due: Date.now() + delay
       });
       notice(
         "info",
-        `Execution interrupted the turn. Standalone will retry in ${DELAYS[attempts]! / 1000}s (${attempts + 1}/${DELAYS.length}).`
+        `Execution interrupted the turn. Standalone will retry in ${delay / 1000}s (${attempts + 1}/${MAX_RETRIES}).`
       );
     } catch (error) {
       notice(
@@ -112,7 +118,7 @@ export function registerStandaloneCapacityRetry(
           !retry ||
           !Number.isSafeInteger(retry.attempts) ||
           retry.attempts < 0 ||
-          retry.attempts >= DELAYS.length ||
+          retry.attempts >= MAX_RETRIES ||
           retry.due > Date.now()
         )
           continue;
@@ -209,7 +215,7 @@ export function registerStandaloneCapacityRetry(
               const latest = store.get<Retry>(NAMESPACE, recordKey);
               if (latest?.streamId !== retry.streamId) return;
               if (recoverable(String(error))) {
-                store.set(NAMESPACE, recordKey, { ...latest, due: Date.now() + DELAYS[Math.min(latest.attempts, DELAYS.length - 1)]! });
+                store.set(NAMESPACE, recordKey, { ...latest, due: nextRetryDue(latest.attempts) });
               } else {
                 notice(
                   "warning",

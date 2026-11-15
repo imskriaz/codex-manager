@@ -401,7 +401,7 @@ export function ToolIcon(props: {
     | "check"
     | "minus"
     | "save" | "edit" | "eye" | "left" | "right" | "up" | "down" | "comment" | "play" | "archive"
-    | "external";
+    | "external" | "download";
 }) {
   const paths = {
     plus: "M12 5v14M5 12h14",
@@ -426,7 +426,8 @@ export function ToolIcon(props: {
     left: "m14 5-7 7 7 7", right: "m10 5 7 7-7 7", up: "m5 14 7-7 7 7", down: "m5 10 7 7 7-7",
     comment: "M21 15a3 3 0 0 1-3 3H8l-5 4V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3zM7 8h10M7 12h7",
     play: "m8 4 12 8-12 8z", archive: "M3 3h18v5H3zM5 8v13h14V8M9 12h6",
-    external: "M14 3h7v7M10 14L21 3M10 3H3v18h18v-7"
+    external: "M14 3h7v7M10 14L21 3M10 3H3v18h18v-7",
+    download: "M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"
   };
   return (
     <svg

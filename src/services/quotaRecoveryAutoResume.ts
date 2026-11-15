@@ -20,12 +20,14 @@ import { onDidRecordAccountQuotaCheck } from "./quotaCheckCoordination";
 import type { CodexManagerAccountRecord } from "../core/types";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
+import { readRecordedSessionAccount } from './sessionRecording';
 
 /** Remember exhaustion across restarts; resume through the existing verified native recovery path. */
 export function registerQuotaRecoveryAutoResume(
   context: vscode.ExtensionContext,
   repo: AccountsRepository,
-  canUseAccount: (id: string) => boolean
+  canUseAccount: (id: string) => boolean,
+  selectAfterRejection?: (accountId: string) => Promise<boolean>
 ): vscode.Disposable {
   let disposed = false,
     running = false,
@@ -39,10 +41,10 @@ export function registerQuotaRecoveryAutoResume(
   let lastFailureAccountId: string | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleRetry = () => {
-    retryAt = Date.now() + 60_000;
+    retryAt = Date.now() + (vscode.env.appHost === 'node' ? 5_000 : 60_000);
     if (retryTimer) clearTimeout(retryTimer);
     if (disposed) return;
-    retryTimer = setTimeout(() => { retryTimer = undefined; void check(); }, 60_000);
+    retryTimer = setTimeout(() => { retryTimer = undefined; void check(); }, vscode.env.appHost === 'node' ? 5_000 : 60_000);
     retryTimer.unref?.();
   };
   const check = async () => {
@@ -177,24 +179,28 @@ export function registerQuotaRecoveryAutoResume(
   const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
   const stopLive = subscribeDashboardRealtime(message => {
     if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
-        !['failed', 'disconnected'].includes(message.state.status) || !isAutoResumeAvailable()) return;
+        !['failed', 'disconnected'].includes(message.state.status) || (!isAutoResumeAvailable() && !selectAfterRejection)) return;
     const detail = message.state.error ?? '';
     if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;
     if (observedFailures.has(message.state.streamId)) return;
     observedFailures.add(message.state.streamId);
     if (observedFailures.size > 256) observedFailures.delete(observedFailures.values().next().value!);
     if (interrupted.size >= 200) { recordPersistentEvent('warning', 'auto-resume', 'Session recovery queue is full; automatic recovery retained'); return; }
-    interrupted.add(message.state.sessionId);
+    if (isAutoResumeAvailable()) interrupted.add(message.state.sessionId);
     retryAt = 0;
     lastFailureAt = Date.now();
-    lastFailureAccountId = observedAccountId;
+    lastFailureAccountId = readRecordedSessionAccount(message.state.streamId) ?? observedAccountId;
     if (!quotaRefresh || quotaRefresh.accountId !== observedAccountId) {
-      const refresh = { accountId: observedAccountId };
+      const rejectedAccountId = lastFailureAccountId;
+      const refresh = { accountId: rejectedAccountId };
       quotaRefresh = refresh;
       void waitWithin((async () => {
         const active = (await repo.listAccounts()).find(account => account.isActive);
-        if (active && active.enabled !== false && canUseAccount(active.id) && (!refresh.accountId || refresh.accountId === active.id)) {
+        if (!disposed && active && active.enabled !== false && canUseAccount(active.id) && (!refresh.accountId || refresh.accountId === active.id)) {
           refresh.accountId = active.id;
+          lastFailureAccountId = active.id;
+          if (selectAfterRejection && rejectedAccountId === active.id && await selectAfterRejection(active.id)) return;
+          if (disposed) return;
           await vscode.commands.executeCommand('codexManager.refreshQuota', active);
         }
       })(), 30_000, 'Quota refresh is still pending. Saved recovery will retry.')

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
+  compareDashboardDateAdded,
   filterAccounts,
   hasDashboardQuotaRemaining,
   hasDashboardAutoQueueCapability,
@@ -10,6 +11,12 @@ import {
 } from "../webview-src/dashboard/accountSorting";
 
 describe("sortWithQueuedAccount", () => {
+  it('sorts by numeric date added newest first, keeps missing dates last, and breaks ties consistently', () => {
+    const account = (email: string, addedAt?: number) => ({ email, addedAt }) as any;
+    const accounts = [account('unknown'), account('old', 10), account('b', 20), account('a', 20), account('invalid', NaN)];
+    expect([...accounts].sort(compareDashboardDateAdded).map(item => item.email)).toEqual(['a', 'b', 'old', 'invalid', 'unknown']);
+    expect(accounts[0].email).toBe('unknown');
+  });
   it.each([true, false])("keeps current accounts first and remote claims before exhausted quota with grouping %s", (groupQuota) => {
     const account = (id: string, overrides: Record<string, unknown> = {}) => ({
       id, email: `${id}@example.com`, isActive: false, switchQueued: false,

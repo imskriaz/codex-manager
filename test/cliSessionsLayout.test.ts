@@ -16,7 +16,9 @@ import {
   splitMessageParagraphs,
   filterCliSessionsBySection,
   shouldShowLatestButton,
-  canonicalWebPath
+  canonicalWebPath,
+  cliSessionIndicator,
+  sessionQuotaWaitingMessage
 } from "../webview-src/dashboard/cliSessionsModal";
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
@@ -24,6 +26,32 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it('shows quota waiting only for the blocked session and clears it on resume, completion, pause, or opt-out', () => {
+    const session = { id: 'quota', status: 'idle' as const, interrupted: true };
+    const error = { id: 'error', kind: 'error' as const, text: 'You have hit your usage limit' };
+    const waiting = 'No account quota available. Waiting for quota to reset, then resuming automatically.';
+    const status = (s = session, messages = [error], live = undefined, automatic = true, connected = true, running = false) => sessionQuotaWaitingMessage(s, messages, live, [], automatic, connected, running);
+    expect(status()).toBe(waiting);
+    expect(status(session, [error], undefined, true, false)).toContain('Waiting for connection');
+    expect(status(session, [error], undefined, false)).toBeUndefined();
+    expect(status(session, [error], undefined, true, true, true)).toBeUndefined();
+    for (const patch of [{ archived: true }, { autoResumeEnabled: false }, { queueEnabled: true }, { goal: { objective: 'Paused', status: 'paused' } }]) expect(status({ ...session, ...patch })).toBeUndefined();
+    expect(sessionQuotaWaitingMessage(session, [error, { id: 'new', role: 'user', text: 'Next task' }], undefined, [], true, true, false)).toBeUndefined();
+    expect(sessionQuotaWaitingMessage(session, [error], { sessionId: 'quota', streamId: 'done', status: 'completed', updatedAt: 1 }, [], true, true, false)).toBeUndefined();
+    const account = { enabled: true, metrics: [{ key: 'hourly', label: '5h', visible: true, percentage: 50 }] } as never;
+    expect(sessionQuotaWaitingMessage(session, [error], undefined, [account], true, true, false)).toBe('Quota recovery in progress. Resuming automatically.');
+  });
+  it("marks completed sessions green and pending requests red", () => {
+    const session = { id: "chat", status: "idle" as const, updatedAt: "2026-11-15T00:00:00Z" };
+    const key = JSON.stringify(["local", session.id]);
+    expect(cliSessionIndicator(session, {}, new Set([key]))).toBe("attention");
+    expect(cliSessionIndicator(session, {}, new Set())).toBe("complete");
+    expect(cliSessionIndicator(session, { [key]: session.updatedAt }, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set())).toBe("new");
+    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set([key]))).toBe("attention");
+    expect(cliSessionIndicator({ ...session, interrupted: true }, {}, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, status: "unknown" }, {}, new Set())).toBe("seen");
+  });
   it('keeps the selected local system during transient remote-only discovery', () => {
     const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
     expect(source).not.toContain('setSelectedPeerId(pcOptions.find((peer) => peer.local)?.id ?? pcOptions[0]!.id)');

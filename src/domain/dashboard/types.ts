@@ -18,6 +18,7 @@ export type DashboardSettingKey =
   | "cliIntegrationEnabled"
   | "apiAccessEnabled"
   | "workspaceTextFileLimitMb"
+  | "standaloneCapacityRetryDelaySeconds"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -67,6 +68,7 @@ export interface DashboardSettings {
   cliIntegrationEnabled?: boolean;
   apiAccessEnabled?: boolean;
   workspaceTextFileLimitMb?: number;
+  standaloneCapacityRetryDelaySeconds?: number;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */
   codexSessionTransport?: DashboardCodexSessionTransport;
@@ -417,6 +419,7 @@ export interface DashboardAccountViewModel {
   subscriptionExpiresAt?: number;
   addMethodLabel: string;
   addedAtLabel: string;
+  addedAt?: number;
   loginAt?: number;
   sessionStartedAt?: number;
   lastSelectedAt?: number;
@@ -720,6 +723,9 @@ export interface DashboardActionPayload {
   autoApprove?: boolean;
   projectPath?: string;
   filePath?: string;
+  fileDownloadOffset?: number;
+  fileDownloadRevision?: string;
+  fileDownloadNative?: boolean;
   projectName?: string;
   parentFolder?: string;
   includeBranchDiff?: boolean;
@@ -940,11 +946,19 @@ export interface DashboardWorkspaceFile {
   path: string;
   content: string;
   language: string;
-  kind: "text" | "image" | "audio" | "video" | "pdf" | "document";
+  kind: "text" | "binary" | "image" | "audio" | "video" | "pdf" | "document";
   mimeType: string;
   size: number;
   revision: string;
   dataUrl?: string;
+}
+
+export interface WorkspaceFileDownload {
+  path: string;
+  revision: string;
+  offset: number;
+  size: number;
+  data: string;
 }
 
 export interface DashboardWorkspaceTerminalResult {
@@ -986,12 +1000,13 @@ export interface WorkspaceTerminalSnapshot {
 }
 
 export interface WorkspaceGitRequest {
-  operation: 'read' | 'diff' | 'stage' | 'unstage' | 'discard' | 'fetch' | 'pull' | 'push' | 'commit' | 'switch' | 'createBranch' | 'renameBranch' | 'deleteBranch' | 'merge' | 'abortMerge' | 'stash' | 'applyStash' | 'popStash' | 'dropStash';
+  operation: 'read' | 'diff' | 'init' | 'addRemote' | 'stage' | 'unstage' | 'discard' | 'fetch' | 'pull' | 'push' | 'commit' | 'switch' | 'createBranch' | 'renameBranch' | 'deleteBranch' | 'merge' | 'abortMerge' | 'stash' | 'applyStash' | 'popStash' | 'dropStash';
   operationId?: string;
   revision?: string;
   path?: string;
   ref?: string;
   name?: string;
+  remote?: string;
   message?: string;
   staged?: boolean;
 }
@@ -1166,6 +1181,7 @@ export interface DashboardActionResultPayload {
   workspaceFiles?: DashboardWorkspaceFileEntry[];
   workspaceFilesWarning?: string;
   workspaceFile?: DashboardWorkspaceFile;
+  workspaceFileDownload?: WorkspaceFileDownload;
   workspaceTerminals?: DashboardWorkspaceTerminalInfo[];
   workspaceTerminal?: DashboardWorkspaceTerminalInfo;
   deletedWorkspaceFilePath?: string;

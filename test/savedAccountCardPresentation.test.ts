@@ -11,6 +11,12 @@ import {
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
+  it('shows the added date in both card layouts only while Date added sorting is selected', () => {
+    const source = readFileSync('webview-src/dashboard/savedAccountCard.tsx', 'utf8');
+    expect(source).toContain('const addedDate = props.showAddedDate ?');
+    expect(source.match(/\{addedDate\}/g)).toHaveLength(2);
+    expect(readFileSync('webview-src/dashboard/main.tsx', 'utf8')).toContain('showAddedDate={accountSort === "date-added"}');
+  });
   it("keeps unrelated card actions enabled while one action is pending", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     expect(source).not.toContain("disabled={props.busy");
