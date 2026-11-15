@@ -38,13 +38,13 @@ export function reloadStage(reload: ReloadProgress, now: number): ConnectionStag
 
 export function connectionCopy(stage: ConnectionStage, system = 'Selected system', transition?: string) {
   switch (stage) {
-    case 'offline': return { title: 'This device is offline', detail: 'Your browser reports no network connection. Reconnect this device; we’ll check again automatically.' };
+    case 'offline': return { title: 'This device is offline', detail: 'The dashboard host could not be reached. We’ll check again automatically.' };
     case 'system-offline': return { title: `${system} is offline`, detail: 'This system stopped checking in. Its network, power, and VS Code status are not confirmed. Open VS Code there to reconnect.' };
     case 'reloading': return { title: transition ? 'Switching accounts · reloading' : 'Reloading VS Code', detail: `${transition ? `${transition} ` : ''}A brief disconnect is expected. We’ll reconnect automatically.` };
     case 'reload-slow': return { title: 'Reload is taking longer than expected', detail: `${transition ? `${transition} ` : ''}The system has not reconnected after 90 seconds. Check VS Code there, then check the connection again. The account switch will not be repeated.` };
     case 'reload-failed': return { title: 'VS Code could not reload', detail: `${transition ? `${transition} ` : ''}Run Developer: Reload Window on that system to finish applying the change. Check the current account before switching again.` };
     case 'reload-cancelled': return { title: 'Automatic reload was cancelled', detail: 'Automatic reload is disabled. Reload VS Code on that system to apply the pending account change.' };
-    case 'degraded': return { title: 'Live updates are unavailable', detail: 'Saved data is available, but the live connection is not ready. Actions are paused while we reconnect.' };
+    case 'degraded': return { title: 'Live updates are unavailable', detail: 'Saved data is available. We’ll keep trying to restore live updates.' };
     case 'connecting': return { title: 'Connecting to the dashboard', detail: 'Waiting for the system to respond. Your current view stays open.' };
     case 'reconnecting': return { title: 'Reconnecting to the dashboard', detail: 'The live connection was interrupted. The cause is not confirmed; we’re checking automatically.' };
     default: return { title: 'Dashboard connection unavailable', detail: 'The dashboard is not responding. The cause is not confirmed. Check the system’s connection and that Codex Manager is running.' };

@@ -78,8 +78,6 @@
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
 
-  const networkOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
-  const isBrowserOffline = () => networkOffline() && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
   const publishStatus = (stage, retryInMs) => {
     const timings = {};
     if (socketOpenedAt !== undefined) timings.socketMs = Math.max(0, socketOpenedAt - hostStartedAt);
@@ -87,7 +85,7 @@
     if (reconnectMs !== undefined) timings.reconnectMs = reconnectMs;
     dispatch({
       type: "dashboard:host-status",
-      stage: stage === "unreachable" && networkOffline() ? "offline" : stage,
+      stage: stage === "unreachable" && typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : stage,
       ...(statusDetail ? { detail: statusDetail } : {}),
       retrying,
       ...(lastSyncAt ? { lastSyncAt } : {}),
@@ -191,7 +189,6 @@
 
   const scheduleReconnect = () => {
     if (authenticationRequired) return;
-    if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (reconnectTimer !== undefined) return;
     const delay = reconnectDelayMs;
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
@@ -205,7 +202,6 @@
 
   const connectRealtime = () => {
     if (authenticationRequired) return;
-    if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (connectingSocket || realtimeSocket) return;
     if (typeof window.WebSocket !== "function") {
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
@@ -342,7 +338,7 @@
         // Recovery feedback belongs to the persistent connection surface.
       } })();
       if (!manual) return refresh;
-      retryInFlight = refresh.finally(() => { retrying = false; retryInFlight = undefined; publishStatus(isRealtimeOpen() ? 'live' : networkOffline() ? 'offline' : 'unreachable'); });
+      retryInFlight = refresh.finally(() => { retrying = false; retryInFlight = undefined; publishStatus(isRealtimeOpen() ? 'live' : 'unreachable'); });
       return retryInFlight;
     }
     let reachedHost = false;
@@ -352,7 +348,6 @@
     if (message?.type === "dashboard:action" && (pendingSocketActions.has(message.requestId) || pendingHttpActions.has(message.requestId))) return;
     try {
       if (authenticationRequired) throw new Error("Dashboard session expired. This action was not sent. Sign in again before retrying.");
-      if (isBrowserOffline()) throw new Error("The browser is offline. This action was not sent; reconnect and try again.");
       if (message?.type === "dashboard:action" && pendingSocketActions.size + pendingHttpActions.size >= 128) throw new Error("The dashboard request queue is full. This action was not sent. Wait for pending actions before retrying.");
       // All dashboard actions use the live socket when available. A disconnected
       // socket still falls back to the existing confirmed HTTP request path.
@@ -405,7 +400,7 @@
       const acceptSnapshot = revision === snapshotRevision;
       payload.messages.forEach(result => { if (result?.type !== "dashboard:snapshot" || acceptSnapshot) dispatch(result); });
     } catch (error) {
-      if (!reachedHost && (awaitingHttpResponse || isBrowserOffline())) publishStatus(isRealtimeOpen() ? "live" : "unreachable");
+      if (!reachedHost && awaitingHttpResponse) publishStatus(isRealtimeOpen() ? "live" : "unreachable");
       console.error("[codex-manager] browser dashboard bridge", error);
       const detail = error?.name === "AbortError"
         ? "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
@@ -445,17 +440,9 @@
       void loadSnapshot().catch(() => undefined);
     });
     window.addEventListener("offline", () => {
-      // Loopback remains usable without internet; report offline only when its host cannot be reached.
-      if (!isBrowserOffline()) { void loadSnapshot().catch(() => undefined); return; }
-      resetConnectingSocket();
-      const active = realtimeSocket;
-      realtimeSocket = undefined;
-      try { active?.close(); } catch { /* Network already unavailable. */ }
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      reconnectTimer = undefined;
-      failUnconfirmedSocketActions();
-      publishConnection();
-      publishStatus("unreachable");
+      // navigator.onLine can be false while the dashboard host remains reachable.
+      connectRealtime();
+      void loadSnapshot().catch(() => undefined);
     });
   }
 

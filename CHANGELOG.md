@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.3
+
+- Hand off the saved session message queue to the focused tab when another tab moves to the background, without replaying in-flight sends.
+- Fill task detail panels consistently and make mobile tabs compact and horizontally scrollable.
+
 ## 2.0.2-pre.1
 
 - Keep offline dashboard navigation, cached views and local drafts usable while blocking server execution; preserve disconnected account snapshots.

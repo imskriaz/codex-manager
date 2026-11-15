@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.2-pre.1",
+  "version": "2.0.3",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -312,7 +312,13 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Keep the local dashboard and system services running after the VS Code window closes. Uses the same dashboard port and requires a shared dashboard password."
+          "markdownDescription": "Keep the local dashboard, session queue, and automation services running after VS Code closes. Runs as a standalone local Node host using the same dashboard port and requires a shared dashboard password."
+        },
+        "codexManager.alwaysActiveStartWithSystem": {
+          "type": "boolean",
+          "scope": "machine",
+          "default": false,
+          "markdownDescription": "Start the Always Active local dashboard host when you sign in to your system. Requires Always Active."
         },
         "codexManager.cloudflaredDomain": {
           "type": "string",

@@ -201,7 +201,8 @@ export class AccountsWorkbench {
         if (event.affectsConfiguration("codexManager.webDashboardEnabled") ||
             event.affectsConfiguration("codexManager.cloudflaredDomain") ||
             event.affectsConfiguration("codexManager.webSocketServerEnabled") ||
-            event.affectsConfiguration("codexManager.alwaysActive")) {
+            event.affectsConfiguration("codexManager.alwaysActive") ||
+            event.affectsConfiguration("codexManager.alwaysActiveStartWithSystem")) {
           this.scheduleAlwaysOnlinePreparation();
           void this.webDashboard.applyConfiguration().catch(error => {
             console.warn("[codexManager] Web Dashboard configuration update failed", error);

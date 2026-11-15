@@ -758,7 +758,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace", targetDeviceId: undefined })');
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
-    expect(source).toContain('if (!isBrowserDashboard || !realtimeConnected) return;');
+    expect(source).toContain('if (!isBrowserDashboard || connectionUnavailable) return;');
     expect(source).toContain('return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);');
     expect(source).toContain("if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("(sessionId || hasBrowserWorkspaceShell(path))) requestCliSessions(true);");

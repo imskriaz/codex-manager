@@ -115,6 +115,20 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("persists the system startup toggle globally", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const values = new Map<string, unknown>();
+    values.set("alwaysActive", true);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) => values.has(key) ? values.get(key) : fallback), update,
+      inspect: vi.fn(() => ({ key: "codexManager.alwaysActiveStartWithSystem", defaultValue: false }))
+    } as never);
+    update.mockImplementation(async (key, value) => { values.set(key, value); });
+    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", true)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("alwaysActiveStartWithSystem", true, vscode.ConfigurationTarget.Global);
+    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", "true")).resolves.toBe(false);
+  });
+
   it("updates the workspace value when an effective setting is overridden there", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

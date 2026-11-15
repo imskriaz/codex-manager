@@ -48,7 +48,7 @@ describe('connection recovery', () => {
   it('explains confirmed causes and states uncertainty without inventing a switch', () => {
     expect(connectionCopy('reloading').title).toBe('Reloading VS Code');
     expect(connectionCopy('reloading', 'PC', 'Switching from A to B.').detail).toContain('Switching from A to B.');
-    expect(connectionCopy('offline').detail).toContain('browser reports');
+    expect(connectionCopy('offline').detail).toContain('dashboard host');
     expect(connectionCopy('system-offline').detail).toContain('not confirmed');
     expect(connectionCopy('unreachable').detail).toContain('cause is not confirmed');
     expect(connectionCopy('reload-slow').detail).toContain('will not be repeated');

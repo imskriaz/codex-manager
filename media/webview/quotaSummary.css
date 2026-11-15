@@ -16898,7 +16898,16 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .task-detail-panel { inset: 12px 12px auto auto; width: min(720px, calc(var(--dashboard-viewport-width, 100vw) - 24px)); height: min(820px, calc(var(--dashboard-viewport-height, 100dvh) - 24px)); max-height: calc(var(--dashboard-viewport-height, 100dvh) - 24px); border: 1px solid var(--border-muted); border-radius: 12px; box-shadow: 0 12px 48px #0003; }
 .task-detail-panel > .settings-modal-head { min-height: 38px; padding: 7px 10px; align-items: center; }
 .task-detail-panel .settings-modal-title { font-size: calc(13px * var(--dashboard-text-scale, 1)); }
-.task-detail-panel-body:has(.task-session-conversation) { display: flex; flex: 1; flex-direction: column; overflow: hidden; }
+.task-detail-panel-body { display: flex; flex: 1; flex-direction: column; overflow: auto; }
+.task-detail-panel-body > .task-detail-tabs { flex: none; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.task-detail-panel-body > .task-detail-tabs::-webkit-scrollbar { display: none; }
+.task-detail-panel-body > .task-detail-tabs button { flex: none; min-height: 40px; white-space: nowrap; }
+.task-detail-panel-body > .task-detail-scroll:not([hidden]) { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.task-detail-panel-body > .cli-agent-panel:not([hidden]) { display: flex; flex: 0 0 auto; min-height: 0; overflow: visible; }
+.task-detail-panel-body > .cli-agent-panel:has(.task-session-conversation):not([hidden]) { flex: 1 1 auto; overflow: hidden; }
+.task-detail-panel-body > .cli-agent-panel > .cli-agent-workspace { flex: 1 1 auto; min-height: 0; }
+.task-detail-panel-body > .cli-agent-panel:not(:has(.task-session-conversation)) > .cli-agent-workspace { flex: 0 1 auto; }
+.task-detail-panel-body > .task-overview { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .task-detail-panel .task-detail-scroll:has(.task-session-conversation) { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
 .task-detail-scroll:has(.task-session-conversation) > .cli-agent-workspace { height: 100%; display: flex; flex-direction: column; gap: 0; overflow: hidden; }
 .task-detail-panel .cli-agent-tabs { position: sticky; top: 0; z-index: 2; flex: none; padding: 4px 6px; background: var(--bg-surface); }
@@ -17457,7 +17466,6 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-new-session-status[role="alert"] { color: var(--danger); }
 
 .task-detail-panel .task-detail-scroll[hidden] { display: none !important; }
-.task-detail-panel-body:has(.task-session-conversation):not(:has(.cli-agent-panel:not([hidden]))) { overflow: auto; }
 .task-detail-loading { color: var(--text-muted); font-size: calc(13px * var(--dashboard-text-scale, 1)); padding: 8px 0; }
 
 .task-quick-actions { display: flex; gap: 8px; margin: 4px 0 8px; }

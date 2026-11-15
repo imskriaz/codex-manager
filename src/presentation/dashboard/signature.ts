@@ -72,6 +72,8 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.codexAppPath,
     state.settings.resolvedCodexAppPath,
     state.settings.webSocketServerEnabled !== false ? "1" : "0",
+    state.settings.alwaysActive ? "1" : "0",
+    state.settings.alwaysActiveStartWithSystem ? "1" : "0",
     state.settings.autoRefreshMinutes,
     state.settings.autoRefreshCurrentMinutes,
     state.settings.quotaFreshnessMs ?? "",

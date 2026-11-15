@@ -457,10 +457,10 @@ function App() {
   const connectionUnavailable = ["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage);
   const browserOffline = browserHostStage === "offline";
   useEffect(() => {
-    if (!isBrowserDashboard || realtimeConnected && !connectionUnavailable) { setConnectionIssue(undefined); return; }
+    if (!isBrowserDashboard || realtimeConnected || browserHostStage === "degraded" || browserHostStage === "live") { setConnectionIssue(undefined); return; }
     const timer = window.setTimeout(() => setConnectionIssue(browserOffline ? "offline" : "unreachable"), 3_000);
     return () => window.clearTimeout(timer);
-  }, [isBrowserDashboard, realtimeConnected, connectionUnavailable, browserOffline]);
+  }, [isBrowserDashboard, realtimeConnected, browserHostStage, browserOffline]);
   useEffect(() => {
     const timer = window.setInterval(() => setConnectionClock(Date.now()), 5_000);
     return () => window.clearInterval(timer);
@@ -564,7 +564,7 @@ function App() {
     showNotice,
     selectedPeerId,
     handleActionTimeout,
-    !isBrowserDashboard || realtimeConnected && !connectionUnavailable,
+    !isBrowserDashboard || !connectionUnavailable,
     isBrowserDashboard ? (action, payload, requestId) => {
       const scope = workspaceRequests.current.get(requestId);
       if (scope && scope.scope === workspaceScopeRef.current && scope.generation === workspaceGeneration.current && latestWorkspaceRequests.current.get(scope.family) === requestId) {
@@ -586,7 +586,7 @@ function App() {
   );
   const codexPrompts = useCodexSessionPrompts({
     target: currentSessionTarget(), browser: isBrowserDashboard,
-    connected: !isBrowserDashboard || (realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage)),
+    connected: !isBrowserDashboard || !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage),
     peers: state.snapshot?.connectedPeers, sendAction, onNotice: showNotice
   });
   codexPromptTimeoutRef.current = codexPrompts.timeout;
@@ -599,7 +599,7 @@ function App() {
     const id=sendAction(action,undefined,{...payload,targetDeviceId:undefined,automatic:true});
     if(mutation) apiRequests.current.mutation=id; else apiRequests.current.list=id;
   };
-  useEffect(() => { if (apiTokenOpen && (!isBrowserDashboard || realtimeConnected)) sendApiRequest('listApiTokens'); }, [apiTokenOpen,realtimeConnected]);
+  useEffect(() => { if (apiTokenOpen && (!isBrowserDashboard || !connectionUnavailable)) sendApiRequest('listApiTokens'); }, [apiTokenOpen,realtimeConnected,connectionUnavailable]);
   const openExternalLink = useCallback((url: string): void => {
     if (!isBrowserDashboard) {
       sendAction("openExternalUrl", undefined, { url });
@@ -1090,7 +1090,7 @@ function App() {
             setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
             // Heartbeats can be truncated by older relays. Refresh only the visible
             // owner's catalogue; partial pushes must never confirm deletions.
-            if (appliesToSelectedSystem && partialList && realtimeConnected && selectedPeer?.connected)
+            if (appliesToSelectedSystem && partialList && !connectionUnavailable && selectedPeer?.connected)
               requestCliSessions();
             if (requested) void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig }, listTarget);
             if (!requested && appliesToSelectedSystem && liveSessionListReceived.current)
@@ -1591,10 +1591,10 @@ function App() {
   const workspaceRootsKey = cliComposerConfig?.projects?.map((project) => project.path).join("\n") ?? "";
   const viewingBrowserWorkspace = isBrowserDashboard && isCliSessionsPath(browserPath) && snapshot?.settings.cliIntegrationEnabled === true;
   useEffect(() => {
-    if (viewingBrowserWorkspace && realtimeConnected && cliComposerConfig?.terminalSupported !== false) requestWorkspaceTerminals();
-  }, [viewingBrowserWorkspace, realtimeConnected, requestWorkspaceTerminals, cliComposerConfig?.terminalSupported]);
+    if (viewingBrowserWorkspace && !connectionUnavailable && cliComposerConfig?.terminalSupported !== false) requestWorkspaceTerminals();
+  }, [viewingBrowserWorkspace, connectionUnavailable, requestWorkspaceTerminals, cliComposerConfig?.terminalSupported]);
   useEffect(() => {
-    if (!viewingBrowserWorkspace) return;
+    if (!viewingBrowserWorkspace || connectionUnavailable) return;
     const projectPath = selectedCliSession ? selectedCliSession.projectPath : cliComposerConfig?.projects?.[0]?.path;
     const loadKey = `${selectedPeerId}:${browserPath}\n${projectPath ?? ""}:${workspaceRootsKey}`;
     // Object-valued composer/session state can be replaced by every realtime
@@ -1612,6 +1612,7 @@ function App() {
     browserPath,
     cliComposerConfig?.projects?.[0]?.path,
     viewingBrowserWorkspace,
+    connectionUnavailable,
     requestWorkspaceEnvironment,
     requestWorkspaceTerminals,
     selectedCliSession?.projectPath,
@@ -1621,7 +1622,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!isBrowserDashboard || !realtimeConnected) return;
+    if (!isBrowserDashboard || connectionUnavailable) return;
     const announce = (viewing: boolean): void => {
       postMessageToHost({ type: "dashboard:workspace-presence", viewing, targetDeviceId: browserPresenceTargetDeviceId });
     };
@@ -1635,13 +1636,13 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       announce(false);
     };
-  }, [isBrowserDashboard, realtimeConnected, browserPresenceTargetDeviceId]);
+  }, [isBrowserDashboard, connectionUnavailable, browserPresenceTargetDeviceId]);
 
   useEffect(() => {
-    if (!isBrowserDashboard || !realtimeConnected) return;
+    if (!isBrowserDashboard || connectionUnavailable) return;
     const route = cliSessionTargetFromLocation(window.location.pathname, window.location.search);
     if (route) requestCliSessionMessages(route.id, route.deviceId, true);
-  }, [browserPath, isBrowserDashboard, realtimeConnected, requestCliSessionMessages]);
+  }, [browserPath, isBrowserDashboard, connectionUnavailable, requestCliSessionMessages]);
 
   useEffect(() => {
     const session = selectedCliSession;
@@ -1649,7 +1650,7 @@ function App() {
     // Live events and session-list pushes refresh history; focus/reconnect
     // revalidate it without an independent browser polling loop.
     const refresh = (): void => {
-      if (document.visibilityState === "visible" && navigator.onLine) requestCliSessionMessages(session.id, session.deviceId);
+      if (document.visibilityState === "visible") requestCliSessionMessages(session.id, session.deviceId);
     };
     const onVisibilityChange = (): void => {
       if (document.visibilityState === "visible") refresh();
@@ -1663,7 +1664,7 @@ function App() {
       window.removeEventListener("focus", onVisibilityChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [requestCliSessionMessages, realtimeConnected, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
+  }, [requestCliSessionMessages, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
 
   useEffect(() => {
     if (!isBrowserDashboard) return;
@@ -1701,8 +1702,9 @@ function App() {
     const changedHost = !!cliCatalogHost.current && !!localCacheSystemId && cliCatalogHost.current !== localCacheSystemId;
     if (localCacheSystemId) cliCatalogHost.current = localCacheSystemId;
     const changedSystem = changedHost || cliCatalogTarget.current !== key;
-    const reconnected = realtimeConnected && !cliListConnection.current;
-    cliListConnection.current = realtimeConnected;
+    const connected = !connectionUnavailable;
+    const reconnected = connected && !cliListConnection.current;
+    cliListConnection.current = connected;
     if (changedSystem) {
       cliCatalogTarget.current = key;
       const cached = peekCliSessionListCache(targetDeviceId);
@@ -1726,7 +1728,7 @@ function App() {
     let disposed = false;
     const cachedRevision = lastCliRealtimeRevisionRef.current.get(key) ?? 0;
     // Start discovery immediately; the optional cache must not delay a manual switch.
-    if (!isBrowserDashboard || realtimeConnected) requestCliSessions(changedSystem || reconnected);
+    if (!isBrowserDashboard || !connectionUnavailable) requestCliSessions(changedSystem || reconnected);
     if (isBrowserDashboard) void readCliSessionListCache(targetDeviceId).then((cached) => {
       if (!disposed && cached && !liveSessionListReceived.current) {
         setCliSessions(current => {
@@ -1738,7 +1740,7 @@ function App() {
       }
     });
     return () => { disposed = true; };
-  }, [browserPath, isBrowserDashboard, requestCliSessions, selectedPeer?.id, selectedPeer?.local, localCacheSystemId, snapshot?.settings.cliIntegrationEnabled, realtimeConnected]);
+  }, [browserPath, isBrowserDashboard, requestCliSessions, selectedPeer?.id, selectedPeer?.local, localCacheSystemId, snapshot?.settings.cliIntegrationEnabled, connectionUnavailable]);
 
   useEffect(() => {
     if (!isBrowserDashboard || !snapshot) return;
@@ -1860,7 +1862,7 @@ function App() {
   const transition = hostReload?.toAccountId && hostReload.toAccountId !== hostReload.fromAccountId
     ? `Switching from ${accountLabel(hostReload.fromAccountId)} to ${accountLabel(hostReload.toAccountId)}.` : undefined;
   const connectionBannerStage: ConnectionStage | undefined = reloadStatus ?? connectionIssue ?? (selectedPeerOffline ? 'system-offline' : browserHostStage === 'offline' ? 'offline' : browserHostStage === 'unreachable' ? 'unreachable' : browserHostStatus.detail ? 'degraded' : undefined);
-  const dashboardUnavailable = reloadInProgress || selectedPeerOffline || isBrowserDashboard && (!realtimeConnected || connectionUnavailable);
+  const dashboardUnavailable = reloadInProgress || selectedPeerOffline || isBrowserDashboard && (browserHostStage === "offline" || browserHostStage === "unreachable");
   offlineNoticeMode.current = dashboardUnavailable;
   const dismissReload = () => setHostReloads(current => Object.fromEntries(Object.entries(current).filter(([, reload]) => reload !== hostReload)));
   const recovery = connectionBannerStage ? <ConnectionRecovery compact stage={connectionBannerStage} transition={transition}
@@ -2033,7 +2035,7 @@ function App() {
   const handlePrivacyToggle = (): void => {
     const privacyMode = !state.privacyMode;
     dispatch({ type: "toggle-privacy" });
-    if (!isBrowserDashboard || realtimeConnected && !connectionUnavailable) sendAction("setPrivacyMode", undefined, { privacyMode, targetDeviceId: undefined });
+    if (!isBrowserDashboard || !connectionUnavailable) sendAction("setPrivacyMode", undefined, { privacyMode, targetDeviceId: undefined });
   };
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
@@ -2181,9 +2183,9 @@ function App() {
                   settings={snapshot.settings}
                   now={state.now}
                   privacyMode={state.privacyMode}
-                  busy={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => request.action === "switch")}
+                  busy={state.pendingActions.some(request => request.action === "switch")}
                   lockPending={isActionPending('setAutoSwitchLock', account.id)}
-                  connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
+                  connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
                   unloadAuthPending={isActionPending("unloadAuth")}
                   reloadPromptPending={isActionPending("reloadPrompt", account.id)}
                   switchPending={isActionPending("switch", account.id)}
@@ -2787,7 +2789,7 @@ function App() {
         <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
-          connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
+          connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
@@ -2826,7 +2828,7 @@ function App() {
                   peers={pcOptions}
                   ready={liveSessionListReceived.current || runningCliSessions.some(session => session.status === 'running' || session.interrupted === true)}
                   error={cliSessionsError}
-                  connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
+                  connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
                   loading={cliListLoading}
                   isSessionPending={session => state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session))}
                   onOpen={(session) => {
@@ -2997,7 +2999,7 @@ function App() {
       </main>
 
       <SettingsOverlay
-        connected={!isBrowserDashboard || realtimeConnected}
+        connected={!isBrowserDashboard || !connectionUnavailable}
         targetConnected={selectedPeer?.connected !== false}
         onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
         crossPcSyncPending={isActionPending("setCrossPcSyncEnabled")}
@@ -3101,7 +3103,7 @@ function App() {
         uncertain={apiUncertain}
         loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
         onRefresh={() => sendApiRequest("listApiTokens")}
-        connected={!isBrowserDashboard || realtimeConnected}
+        connected={!isBrowserDashboard || !connectionUnavailable}
         enabled={snapshot.settings.apiAccessEnabled === true}
         pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
         onClose={() => { setApiTokenOpen(false); setApiToken(undefined); }}
@@ -3110,7 +3112,7 @@ function App() {
       />
 
       {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} initialTags={tagEditor.initialTags} privacyMode={state.privacyMode}
-        connected={(!isBrowserDashboard || realtimeConnected) && (!tagEditor.targetDeviceId || snapshot.connectedPeers?.some(peer => peer.id === tagEditor.targetDeviceId && peer.connected) === true)}
+        connected={(!isBrowserDashboard || !connectionUnavailable) && (!tagEditor.targetDeviceId || snapshot.connectedPeers?.some(peer => peer.id === tagEditor.targetDeviceId && peer.connected) === true)}
         results={submissionResults} onClose={() => setTagEditor(undefined)} onSave={(tags, expectedTags) => {
           tagDrafts.current.set(`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`, [...tags]);
           const requestId = sendAction('setAccountTags', tagEditor.account.id, { tags, expectedTags, targetDeviceId: tagEditor.targetDeviceId });
@@ -3120,7 +3122,7 @@ function App() {
           return requestId;
         }} /> : null}
       {tagManager ? <TagManagerModal key={tagManager.deviceId ?? 'local'} accounts={tagManager.deviceId ? snapshot.peerAccounts?.[tagManager.deviceId] ?? [] : snapshot.accounts}
-        connected={(!isBrowserDashboard || realtimeConnected) && (!tagManager.deviceId || snapshot.connectedPeers?.some(peer => peer.id === tagManager.deviceId && peer.connected) === true)}
+        connected={(!isBrowserDashboard || !connectionUnavailable) && (!tagManager.deviceId || snapshot.connectedPeers?.some(peer => peer.id === tagManager.deviceId && peer.connected) === true)}
         results={submissionResults} onClose={() => setTagManager(undefined)} onFilter={tag => {
           setSelectedPeerId(tagManager.deviceId ?? 'local');
           setUiPreferences(current => ({ ...current, accountTag: tag.toLowerCase(), accountSearch: '', filter: 'all' }));
@@ -3177,7 +3179,7 @@ function App() {
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
-              connected={realtimeConnected && !reloadInProgress && selectedPeer?.connected !== false && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
+              connected={!connectionUnavailable && !reloadInProgress && selectedPeer?.connected !== false && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
               submissionResults={submissionResults}
               steering={Boolean(selectedCliSession && [...steerRequests.current].some(requestId => sameCliSessionTarget(turnRequests.current.get(requestId), selectedCliSession)))}
               composerConfig={cliComposerConfig}
@@ -3186,7 +3188,7 @@ function App() {
               sending={isActionPending("sendCodexCliSessionMessage") && [...turnRequests.current.values()].some((target) => sameCliSessionTarget(target, selectedCliSession))}
               stopping={isActionPending("cancelCodexCliSessionTurn")}
               isSessionPending={session => state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), session))}
-              mutating={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), selectedCliSession))}
+              mutating={(isBrowserDashboard && connectionUnavailable) || state.pendingActions.some(request => sameCliSessionTarget(sessionActionRequests.current.get(request.requestId), selectedCliSession))}
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
               onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status, ...(status === 'clear' ? { confirmed: true } : {}) })}
               onResume={(session) => requestSessionAction("resumeCodexSessions", session)}

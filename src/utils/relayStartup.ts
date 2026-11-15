@@ -37,8 +37,13 @@ export async function resolveNodeExecutable(): Promise<string> {
   throw new Error("Always Active requires Node.js 22.13 or newer, or a compatible VS Code runtime.");
 }
 
-export async function installRelayStartup(configPath: string, scriptPath: string, executable = process.execPath): Promise<void> {
+export async function installRelayStartup(configPath: string, scriptPath: string, executable = process.execPath, enabled = true): Promise<void> {
   if (process.platform !== "win32") return;
+  if (!enabled) {
+    await removeRelayStartup();
+    await removeLegacyLauncher();
+    return;
+  }
   const literal = (value: string): string => `'${value.replaceAll("'", "''")}'`;
   const script = `$env:ELECTRON_RUN_AS_NODE='1'; Start-Process -WindowStyle Hidden -FilePath ${literal(executable)} -ArgumentList ${literal(`"${scriptPath}" "${configPath}"`)}`;
   const encoded = Buffer.from(script, "utf16le").toString("base64");

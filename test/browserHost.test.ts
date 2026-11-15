@@ -137,9 +137,9 @@ describe("browser dashboard bridge", () => {
     finish({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({ accounts: [], revision: 2 }) });
     await pending;
   });
-  it("rejects an offline browser action immediately without sending it or starting a timeout", async () => {
+  it("tries the host when the browser reports offline and classifies reachability from the response", async () => {
     const events: Array<Record<string, unknown>> = [];
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({ messages: [{ type: "dashboard:action-result", requestId: "false-offline", status: "completed" }] }) }));
     const timer = vi.fn();
     const windowMock = {
       dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
@@ -148,13 +148,27 @@ describe("browser dashboard bridge", () => {
     };
     class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
     runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
-      window: windowMock, navigator: { onLine: false }, MessageEvent: Event, fetch: fetchMock,
+      window: windowMock, navigator: { onLine: false }, MessageEvent: Event,
+      fetch: fetchMock,
       console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map
     });
-    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "switch", requestId: "offline" });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(timer).not.toHaveBeenCalled();
-    expect(events).toContainEqual(expect.objectContaining({ requestId: "offline", status: "failed", error: expect.stringContaining("was not sent") }));
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "switch", requestId: "false-offline" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/message", expect.objectContaining({ method: "POST" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:action-result", requestId: "false-offline", status: "completed" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "degraded" }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "offline" }));
+  });
+  it("reports offline only after the HTTP reachability check fails", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock,
+      navigator: { onLine: false }, MessageEvent: Event, fetch: vi.fn().mockRejectedValue(new Error("Network failure")),
+      console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map });
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:retry-connection" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "offline" }));
   });
   it("replaces stale sockets on retry, network recovery, and suspension without replaying actions", async () => {
     const events: Array<Record<string, unknown>> = [], sockets: Socket[] = [];
@@ -208,11 +222,11 @@ describe("browser dashboard bridge", () => {
     await post({ type: "dashboard:action", requestId: "recovered", action: "listCodexCliSessions" });
     expect(sockets[1]!.send).toHaveBeenCalledOnce();
     navigatorMock.onLine = false; listeners.get("offline")!();
-    expect(events).toContainEqual(expect.objectContaining({ stage: "offline" }));
+    expect(events).not.toContainEqual(expect.objectContaining({ stage: "offline" }));
     documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
     expect(sockets).toHaveLength(2);
     navigatorMock.onLine = true; listeners.get("online")!();
-    expect(sockets).toHaveLength(3);
+    expect(sockets).toHaveLength(2);
   });
   it("aborts a stalled HTTP action and reports its unconfirmed outcome", async () => {
     const events: Array<Record<string, unknown>> = [];

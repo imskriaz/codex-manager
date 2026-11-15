@@ -38,6 +38,10 @@ export async function handleDashboardSettingUpdate(
       if (typeof value !== "boolean") return false;
       await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
       return config.get<boolean>(key, !value) === value;
+    case "alwaysActiveStartWithSystem":
+      if (typeof value !== "boolean") return false;
+      await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
+      return config.get<boolean>(key, !value) === value;
     case "persistentLogLevel":
       if (typeof value === "string") { await setPersistentLogLevel(value); updated = true; }
       break;
@@ -301,7 +305,8 @@ function resolveConfigurationTarget(
     key === "fullCrossPcAccountSyncEnabled" ||
     key === "encryptedSyncVsCodeHeartbeatMinutes" ||
     key === "crossWindowAccountModeEnabled" ||
-    key === "alwaysActive"
+    key === "alwaysActive" ||
+    key === "alwaysActiveStartWithSystem"
   ) {
     return vscode.ConfigurationTarget.Global;
   }

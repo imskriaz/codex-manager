@@ -56,7 +56,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
-  const owned = useRef(false), draining = useRef(false), writes = useRef(Promise.resolve(true)), generation = useRef(0);
+  const owned = useRef(false), draining = useRef(false), writes = useRef(Promise.resolve(true)), generation = useRef(0), releaseInBackground = useRef<() => void>(() => {});
   const loadFailed = (message: string) => { setError(message); };
   const update = (next: CliQueuedMessage[]) => { current.current = next; setItems(next); };
   const save = (next: CliQueuedMessage[], scope = options.current.scope) => {
@@ -68,28 +68,45 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     const epoch = ++generation.current;
     owned.current = false; draining.current = false; update([]); setReady(false); setError(undefined); setNotice(undefined);
     if (!props.scope) return;
-    let release = () => {}, disposed = false;
+    let release = () => {}, disposed = false, waiting = false;
     const scope = props.scope;
+    const isForeground = () => document.visibilityState === 'visible' && document.hasFocus();
     if (!navigator.locks) { loadFailed('This browser cannot safely own a saved message queue. Open this session in a current browser. Your composer draft is kept.'); return; }
-    void navigator.locks.request(`codex-message-queue:${scope}`, { ifAvailable: true }, async lock => {
-      if (disposed) return;
-      if (!lock) { loadFailed('This session queue is open in another tab. Close it and refresh this view before sending here. Your draft is kept.'); return; }
-      await new Promise<void>(resolve => {
-        release = resolve;
-        void readBrowserCache<unknown>(`message-queue:${scope}`, Number.MAX_SAFE_INTEGER).then(saved => {
-          if (disposed) return;
-          try { update(normalizeCliMessageQueue(saved ?? [])); owned.current = true; setReady(true); }
-          catch (error) { loadFailed((error as Error).message); }
-        }).catch(error => { if (!disposed) { loadFailed(`Saved queue is unavailable: ${(error as Error).message}`); resolve(); } });
-      });
-    }).catch(error => { if (!disposed) loadFailed(`Message queue ownership failed: ${(error as Error).message}`); });
-    return () => { disposed = true; if (generation.current === epoch) { owned.current = false; generation.current++; } void writes.current.finally(release); };
+    const acquire = () => {
+      if (disposed || waiting || !isForeground()) return;
+      waiting = true; setError(undefined);
+      let retryForeground = false;
+      void navigator.locks.request(`codex-message-queue:${scope}`, async lock => {
+        if (disposed) return;
+        if (!isForeground()) { retryForeground = true; return; }
+        if (!lock) return;
+        await new Promise<void>(resolve => {
+          release = resolve;
+          void readBrowserCache<unknown>(`message-queue:${scope}`, Number.MAX_SAFE_INTEGER).then(saved => {
+            if (disposed || document.visibilityState !== 'visible') { resolve(); return; }
+            try { update(normalizeCliMessageQueue(saved ?? [])); owned.current = true; setReady(true); setError(undefined); }
+            catch (error) { loadFailed((error as Error).message); resolve(); }
+          }).catch(error => { if (!disposed) { loadFailed(`Saved queue is unavailable: ${(error as Error).message}`); resolve(); } });
+        });
+      }).catch(error => { if (!disposed) loadFailed(`Message queue ownership failed: ${(error as Error).message}`); })
+        .finally(() => { waiting = false; if (retryForeground && !disposed && isForeground() && !owned.current) acquire(); });
+    };
+    const foreground = () => {
+      if (isForeground()) acquire();
+      else if (owned.current && !draining.current && !current.current.some(item => item.state === 'sending')) {
+        owned.current = false; setReady(false); setError(undefined); update([]); void writes.current.finally(release);
+      }
+    };
+    releaseInBackground.current = () => { if (!isForeground() && owned.current && !draining.current && !current.current.some(item => item.state === 'sending')) foreground(); };
+    document.addEventListener('visibilitychange', foreground); window.addEventListener('focus', foreground); window.addEventListener('blur', foreground);
+    foreground();
+    return () => { disposed = true; releaseInBackground.current = () => {}; document.removeEventListener('visibilitychange', foreground); window.removeEventListener('focus', foreground); window.removeEventListener('blur', foreground); if (generation.current === epoch) { owned.current = false; generation.current++; } void writes.current.finally(release); };
   }, [props.scope, loadAttempt]);
   useEffect(() => {
     if (!ready || !owned.current) return;
     const reconciled = queuedMessageEchoes(current.current, props.messages);
     if (reconciled.matched.size) {
-      update(reconciled.items); void save(reconciled.items);
+      update(reconciled.items); void save(reconciled.items).finally(() => releaseInBackground.current());
     }
     const results = new Map(props.results.map(result => [result.requestId, result]));
     let changed = false;
@@ -100,7 +117,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'sendCodexCliSessionMessage', ...result, requestId: item.id } }));
       return { ...item, state: result.status === 'completed' ? 'sent' as const : 'failed' as const, error: result.message };
     });
-    if (changed) { update(next); void save(next); }
+    if (changed) { update(next); void save(next).finally(() => releaseInBackground.current()); }
   }, [props.messages, props.results, ready, items]);
   useEffect(() => {
     if (!ready || !owned.current || !props.canDispatch || draining.current) return;
@@ -123,14 +140,14 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
       const message = (error as Error).message;
       const failed = current.current.map(item => item.id === next.id ? { ...item, state: 'failed' as const, error: message } : item);
       update(failed); void save(failed);
-    }).finally(() => { if (epoch === generation.current) { draining.current = false; setItems([...current.current]); } });
+    }).finally(() => { if (epoch === generation.current) { draining.current = false; setItems([...current.current]); releaseInBackground.current(); } });
   }, [items, ready, props.canDispatch, props.turnId]);
   useEffect(() => {
     const pending = items.find(item => item.state === 'sending');
     if (!pending) return;
     const timer = setTimeout(() => {
       const next = current.current.map(item => item.id === pending.id && item.state === 'sending' ? { ...item, state: 'uncertain' as const, error: 'Confirmation is taking longer than expected. Refresh before retrying; this message will not be sent again automatically.' } : item);
-      update(next); void save(next);
+      update(next); void save(next).finally(() => releaseInBackground.current());
     }, Math.max(65_000, chatUploadTimeoutMs(pending.draft.attachments)));
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
@@ -158,7 +175,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
         const message = error instanceof Error ? error.message : String(error);
         const failed = current.current.map(entry => entry.id === id ? { ...entry, state: 'failed' as const, durable: true, error: message } : entry);
         update(failed); void save(failed); setNotice(message);
-      }).finally(() => { if (epoch === generation.current) draining.current = false; });
+      }).finally(() => { if (epoch === generation.current) { draining.current = false; releaseInBackground.current(); } });
     },
     sendNow: (id: string) => {
       const item = current.current.find(item => item.id === id);

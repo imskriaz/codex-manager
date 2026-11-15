@@ -35,6 +35,12 @@ describe("relay startup without generated files", () => {
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("timeout")));
     await expect(removeRelayStartup()).rejects.toThrow("timeout");
   });
+  it("removes login startup when system startup is disabled", async () => {
+    fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(Object.assign(new Error("missing"), { code: 1 })));
+    await installRelayStartup("config", "script", "node", false);
+    expect(fixture.exec).toHaveBeenCalledWith("reg.exe", ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "CodexManagerAlwaysOnline"], { windowsHide: true, timeout: 2000 }, expect.any(Function));
+    expect(fixture.exec).toHaveBeenCalledOnce();
+  });
   it("migrates an existing startup launcher and does not arm a previously disabled host", async () => {
     await migrateRelayStartup("new-storage", "extension");
     expect(fixture.exec).toHaveBeenCalledOnce();

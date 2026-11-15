@@ -27,6 +27,9 @@ const draft = (text = 'First') => ({ text, attachments: [] });
 const entry = (patch: Partial<CliQueuedMessage> = {}): CliQueuedMessage => ({ id: 'one', draft: draft(), state: 'sending', createdAt: Date.now(), seenIds: ['old'], ...patch });
 let options: Parameters<typeof useCliMessageQueue>[0], queue: ReturnType<typeof useCliMessageQueue>;
 const send = vi.fn(), steer = vi.fn(), restore = vi.fn(), feedback = vi.fn(), locks = vi.fn();
+const pageVisibility = new EventTarget() as EventTarget & { visibilityState: DocumentVisibilityState };
+const pageFocus = new EventTarget();
+let hasPageFocus = true;
 function render(patch: Partial<typeof options> = {}) {
   options = { ...options, ...patch }; harness.cursor = 0; harness.dirty = false;
   queue = useCliMessageQueue(options); harness.effects.splice(0).forEach(effect => effect()); return queue;
@@ -37,8 +40,10 @@ beforeEach(() => {
   send.mockReset().mockImplementation(() => 'request-' + send.mock.calls.length); steer.mockReset().mockImplementation(() => 'steer-' + steer.mock.calls.length); restore.mockReset().mockReturnValue(true); feedback.mockReset();
   harness.read.mockReset().mockImplementation(async key => structuredClone(harness.records.get(key)));
   harness.writes.mockReset().mockImplementation(async (key, value) => { harness.records.set(key, structuredClone(value)); return true; });
-  locks.mockReset().mockImplementation(async (name, _options, work) => work({ name }));
-  vi.stubGlobal('navigator', { locks: { request: locks } }); vi.stubGlobal('window', new EventTarget());
+  locks.mockReset().mockImplementation(async (name, optionsOrWork, maybeWork) => (typeof optionsOrWork === 'function' ? optionsOrWork : maybeWork)({ name }));
+  pageVisibility.visibilityState = 'visible'; hasPageFocus = true;
+  Object.assign(pageVisibility, { hasFocus: () => hasPageFocus });
+  vi.stubGlobal('document', pageVisibility); vi.stubGlobal('navigator', { locks: { request: locks } }); vi.stubGlobal('window', pageFocus);
   options = { scope: 'pc:session', messages: [], results: [], canDispatch: false, send, restore, feedback };
 });
 afterEach(() => { for (const slot of harness.slots) slot?.cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -120,6 +125,25 @@ it('rejects queue overflow, isolates another session, and refuses a second tab o
   expect(queue.enqueue(draft('overflow'))).toBeUndefined(); await flush(); expect(queue.items).toHaveLength(20);
   locks.mockImplementationOnce(async (_name, _options, work) => work(null)); render({ scope: 'other-pc:other-session', canDispatch: true }); await flush();
   expect(queue.ready).toBe(false); expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.records.has('message-queue:pc:session')).toBe(true);
+});
+
+it('releases queue ownership in the background and reacquires it when the tab returns', async () => {
+  render(); await flush(); expect(queue.ready).toBe(true);
+  hasPageFocus = false; pageFocus.dispatchEvent(new Event('blur')); await flush();
+  expect(queue.ready).toBe(false);
+  hasPageFocus = true; pageFocus.dispatchEvent(new Event('focus')); await flush();
+  expect(queue.ready).toBe(true); expect(locks).toHaveBeenCalledTimes(2);
+});
+
+it('keeps ownership until a background send is confirmed, then releases it', async () => {
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
+  expect(send).toHaveBeenCalledOnce();
+  hasPageFocus = false; pageFocus.dispatchEvent(new Event('blur')); await flush();
+  expect(queue.ready).toBe(true);
+  render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
+  expect(queue.ready).toBe(false);
+  hasPageFocus = true; pageFocus.dispatchEvent(new Event('focus')); await flush();
+  expect(queue.ready).toBe(true); expect(queue.items).toEqual([]);
 });
 
 it('keeps a failed message when a newer composer draft prevents restoration', async () => {
@@ -354,7 +378,7 @@ it('reports stale or non-owned priority actions and can reorder a full queue wit
   await flush(); const urgent = queue.items.at(-1)!.id;
   queue.sendNow(urgent); await flush(); expect(queue.items).toHaveLength(20); expect(queue.items[0]?.id).toBe(urgent);
   queue.sendNow('missing'); await flush(); expect(queue.items).toHaveLength(20); expect(queue.notice).toContain('not ready');
-  locks.mockImplementationOnce(async (_name, _options, work) => work(null));
+  locks.mockImplementationOnce(async (_name, optionsOrWork, maybeWork) => (typeof optionsOrWork === 'function' ? optionsOrWork : maybeWork)(null));
   render({ scope: 'another-session' }); await flush(); queue.sendNow(urgent); await flush();
   expect(queue.notice).toContain('not ready'); expect(send).not.toHaveBeenCalled();
 });
