@@ -11,6 +11,7 @@ import { runAccountBatch } from "../../application/accounts/batch";
 import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
 import { workspaceTerminal } from '../../services/workspaceTerminalPty';
+import { workspaceBrowser } from '../../services/workspaceBrowser';
 import { workspaceGit } from '../../services/workspaceGit';
 import { workspaceGitHub } from '../../services/workspaceGitHub';
 import { createHash } from "node:crypto";
@@ -178,7 +179,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "unarchiveCodexCliSession",
   "deleteCodexCliSession",
   "getWorkspaceEnvironment",
-  "workspaceTerminal", "workspaceGit", "workspaceGitHub",
+  "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
   "listWorkspaceFiles",
   "readWorkspaceFile",
   "saveWorkspaceFile",
@@ -276,7 +277,7 @@ async function executeDashboardActionMessageInTransport(
   // Routine reads and the console itself must not generate audit traffic.
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
     "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
-    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal"
+    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser"
   ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
@@ -389,12 +390,14 @@ async function runDashboardAction(
   requestId?: string
 ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
   const translate = t(ctx.resolveLanguage());
-  if (payload?.sessionId && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
+  if (payload?.sessionId && ["workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
     payload = { ...payload, projectPath: await waitWithin(resolveRecordedSessionProject(payload.sessionId, payload.projectPath, action !== 'getWorkspaceEnvironment'),
       5_000, "This session's project folder is unavailable. Retry when it is connected.") };
   }
 
   switch (action) {
+    case 'workspaceBrowser':
+      return { workspaceBrowser: await workspaceBrowser(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.browserRequest) };
     case "setCrossPcSyncEnabled": {
       if (typeof payload?.enabled !== "boolean") {
         throw new Error("The cross-PC sync request is invalid. Refresh the dashboard and try again.");
@@ -1145,13 +1148,13 @@ async function runDashboardAction(
           payload?.terminalName
         ),
         workspaceTerminals: listWorkspaceTerminals(),
-        notice: { level: "info" as const, message: "VS Code terminal opened." }
+        notice: { level: "info" as const, message: "Terminal opened." }
       };
     case "focusWorkspaceTerminal":
       return {
         workspaceTerminal: focusWorkspaceTerminal(payload?.terminalId),
         workspaceTerminals: listWorkspaceTerminals(),
-        notice: { level: "info" as const, message: "VS Code terminal focused." }
+        notice: { level: "info" as const, message: "Terminal focused." }
       };
     case "runWorkspaceTerminalCommand": {
       const terminalResult = await runWorkspaceTerminalCommand(payload ?? {});
@@ -1159,7 +1162,7 @@ async function runDashboardAction(
         terminalResult,
         workspaceTerminals: listWorkspaceTerminals().map(terminal => ({ ...terminal, isActive: terminal.id === terminalResult.terminalId })),
         notice: terminalResult.status === "untracked"
-          ? { level: "warning" as const, message: "Command sent to VS Code, but this shell does not expose live output. View the terminal tab for status." }
+          ? { level: "warning" as const, message: vscode.env.appHost === 'node' ? 'Command sent to the native shell. Read its terminal screen to check output and completion.' : "Command sent to VS Code, but this shell does not expose live output. View the terminal tab for status." }
           : { level: "info" as const, message: terminalResult.status === "running" ? "Terminal command started; output is streaming live." : "Terminal command completed." }
       };
     }
@@ -1170,7 +1173,7 @@ async function runDashboardAction(
       return { notice: { level: "warning" as const, message: "Stopping the terminal command…" } };
     case "closeWorkspaceTerminal":
       if (!closeWorkspaceTerminal(payload?.terminalId)) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
-      return { workspaceTerminals: listWorkspaceTerminals().filter(terminal => terminal.id !== payload?.terminalId), notice: { level: "info" as const, message: "VS Code terminal closed." } };
+      return { workspaceTerminals: listWorkspaceTerminals().filter(terminal => terminal.id !== payload?.terminalId), notice: { level: "info" as const, message: vscode.env.appHost === 'node' ? 'Terminal closed.' : "VS Code terminal closed." } };
     case "commitWorkspaceChanges":
       return {
         workspaceEnvironment: await commitWorkspaceChanges(
@@ -1576,6 +1579,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "autoResetEnabled",
     "autoResetWeeklyThreshold",
     "autoSwitchLockMinutes",
+    "systemInfoEnabled",
     "quotaWarningEnabled",
     "quotaWarningThreshold",
     "quotaWarningWeeklyThreshold",

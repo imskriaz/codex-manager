@@ -5,6 +5,14 @@ const Module = require("node:module");
 const args = process.argv.slice(2);
 let configPath;
 
+if (args[0] === "mcp") {
+  void import(require('node:url').pathToFileURL(path.join(__dirname, 'codex-manager-mcp.mjs')).href).catch(error => {
+    console.error(`MCP startup failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+  return;
+}
+
 function waitForStorage(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

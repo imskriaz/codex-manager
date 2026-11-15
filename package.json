@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.4",
+  "version": "2.0.6",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -28,7 +28,8 @@
   ],
   "main": "./out/extension.js",
   "bin": {
-    "codex-manager": "tools/start-node.cjs"
+    "codex-manager": "tools/start-node.cjs",
+    "codex-manager-mcp": "tools/codex-manager-mcp.mjs"
   },
   "contributes": {
     "icons": {
@@ -68,6 +69,11 @@
           ],
           "default": "auto",
           "markdownDescription": "Choose a dashboard theme; `auto` follows VS Code."
+        },
+        "codexManager.systemInfoEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show System Info in Account Center and the system picker: battery, network, CPU, RAM, disk space, and uptime when available."
         },
         "codexManager.privacyMode": {
           "type": "boolean",
@@ -442,6 +448,7 @@
     "@xterm/headless": "6.0.0",
     "mammoth": "^1.12.2",
     "node-pty": "1.1.0",
+    "playwright-core": "1.63.0",
     "undici": "6.29.1",
     "web-push": "^3.6.7",
     "ws": "^8.18.3"

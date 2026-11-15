@@ -111,6 +111,7 @@ async function loadPty(): Promise<typeof import("node-pty")> {
     }
     return await import("node-pty");
   } catch {
+    if (vscode.env.appHost === 'node') throw new Error('The native terminal backend is unavailable. Install the node-pty build matching this Node version and platform; VS Code is not required.');
     // VS Code ships a matching native build on platforms without an npm prebuild.
     try {
       return createRequire(path.join(vscode.env.appRoot, "package.json"))("node-pty") as typeof import("node-pty");

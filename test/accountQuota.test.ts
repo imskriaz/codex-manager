@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { DashboardAccountViewModel, DashboardMetricViewModel } from '../src/domain/dashboard/types';
-import { AccountQuota, getAccountQuotaMetrics } from '../webview-src/dashboard/accountQuota';
+import { AccountQuota, getAccountQuotaMetrics, isSessionQuotaWarning } from '../webview-src/dashboard/accountQuota';
 
 const metric = (key: string, percentage?: number, visible = true): DashboardMetricViewModel => ({ key, label: key, percentage, visible });
 
 describe('compact account quota', () => {
+  it('uses configured warning thresholds without changing quota numbers or treating stale data as a warning', () => {
+    const settings = { quotaWarningEnabled: true, quotaWarningThreshold: 7, quotaWarningWeeklyThreshold: 3 };
+    const account = { metrics: [metric('hourly', 7), metric('weekly', 50)] } as DashboardAccountViewModel;
+    expect(isSessionQuotaWarning(account, settings)).toBe(true);
+    expect(isSessionQuotaWarning(account, { ...settings, quotaWarningEnabled: false })).toBe(false);
+    expect(isSessionQuotaWarning(account, { ...settings, quotaWarningThreshold: 6 })).toBe(false);
+    expect(isSessionQuotaWarning({ ...account, hasQuotaError: true }, settings)).toBe(false);
+    expect(isSessionQuotaWarning({ ...account, metrics: [metric('weekly', 3)] }, settings)).toBe(true);
+    expect(isSessionQuotaWarning({ ...account, metrics: [metric('weekly', NaN)] }, settings)).toBe(false);
+  });
   it.each([
     { name: "two windows", metrics: [metric("5h", 95), metric("Weekly", 20)], expected: "95%/20%" },
     { name: "one available window", metrics: [metric("5h"), metric("Weekly", 20)], expected: "20%" },

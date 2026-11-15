@@ -28,7 +28,7 @@ export default defineConfig({
             if (file.includes("/@xterm/")) return "terminal-vendor";
             return "vendor";
           }
-          if (file.includes("vite/preload-helper") || (file.startsWith(rootDir.replace(/\\/g, "/")) && !/\/(?:main|workspaceCodeEditor|workspaceTerminal)\.tsx$/.test(file))) return "dashboard-core";
+          if (file.includes("vite/preload-helper") || (file.startsWith(rootDir.replace(/\\/g, "/")) && !/\/(?:main|workspaceCodeEditor|workspaceTerminal|workspaceBrowser)\.tsx$/.test(file))) return "dashboard-core";
         }
       }
     }

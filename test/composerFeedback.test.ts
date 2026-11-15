@@ -72,7 +72,7 @@ it('keeps task agent views mounted and cached messages available through refresh
 
 it('keeps account center resize success and cancellation silent while reporting storage failure', () => {
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
-  expect(source.match(/<SessionAccountFooter onFeedback={props.onActionFeedback}/g)).toHaveLength(2);
+  expect(source.match(/<SessionAccountFooter [^>]*onFeedback={props.onActionFeedback}/g)).toHaveLength(2);
   expect(source).not.toContain('sizeNotice');
   expect(source).not.toContain('Size saved');
   expect(source).not.toContain('Resize cancelled');

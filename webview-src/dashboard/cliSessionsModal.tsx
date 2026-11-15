@@ -1,3 +1,4 @@
+import { SystemPicker, SystemStatusRows } from './systemPicker';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
@@ -19,8 +20,9 @@ import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
 import { BrowserWorkWindow } from './browserWorkWindow';
 import { ScrollMore } from './scrollMore';
-import { AccountQuota, getAccountQuotaMetrics } from './accountQuota';
+import { AccountQuota, getAccountQuotaMetrics, isSessionQuotaWarning } from './accountQuota';
 import { deferredPanel } from './deferredPanel';
+const WorkspaceBrowser = deferredPanel(() => import('./workspaceBrowser'), 'browser');
 const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'terminal');
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
 import { WorkspaceGit } from './workspaceGit';
@@ -70,7 +72,7 @@ export function sessionQuotaWaitingMessage(session: DashboardCliSessionSummary |
   return available ? 'Quota recovery in progress. Resuming automatically.' : 'No account quota available. Waiting for quota to reset, then resuming automatically.';
 }
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}`;
-type WorkspaceToolTab = "env" | "git" | "terminal" | "files" | "reviews" | "agents";
+type WorkspaceToolTab = "browser" | "env" | "git" | "terminal" | "files" | "reviews" | "agents";
 type WorkspaceFileDraft = { text: string; revision: string };
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
@@ -193,6 +195,9 @@ export type CliSessionsPageProps = {
   onApi?: () => void;
   /** Show the remote dashboard sign-out action in the avatar menu. */
   showLogout?: boolean;
+  systemInfoEnabled?: boolean;
+  hostConnected?: boolean;
+  quotaWarningSettings?: Parameters<typeof isSessionQuotaWarning>[1];
   privacyMode: boolean;
   autoResumeEnabled: boolean;
   sessions: DashboardCliSessionSummary[];
@@ -247,7 +252,7 @@ export type CliSessionsPageProps = {
   localAccounts?: DashboardAccountViewModel[];
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
   renderAccounts?: () => preact.ComponentChildren;
-  peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
+  peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean; sessionCount?: number; systemStatus?: import("../../src/domain/systemStatus").SystemStatus }>;
   selectedPeerId?: string;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   onPeerChange?: (peerId: string) => void;
@@ -304,15 +309,17 @@ function readSessionSeen(): Record<string, string> {
 function writeSessionSeen(value: Record<string, string>): void {
   try { localStorage.setItem(SESSION_SEEN_KEY, JSON.stringify(value)); } catch { /* optional browser storage */ }
 }
-export function cliSessionIndicator(session: Pick<DashboardCliSessionSummary, "id" | "deviceId" | "status" | "updatedAt" | "interrupted" | "locked">, seen: Record<string, string>, attentionKeys: ReadonlySet<string>, live?: DashboardCodexSessionLiveState): "running" | "attention" | "complete" | "new" | "seen" {
+export function cliSessionIndicator(session: Pick<DashboardCliSessionSummary, "id" | "deviceId" | "status" | "updatedAt" | "interrupted" | "locked">, seen: Record<string, string>, attentionKeys: ReadonlySet<string>, live?: DashboardCodexSessionLiveState): "running" | "attention" | "complete" | "new" | "interrupted" | "seen" {
   const key = cliSessionTargetKey(session);
+  if (session.status === 'running' || session.locked) return 'running';
   if (attentionKeys.has(key)) return "attention";
-  if (session.status === "unknown" || session.interrupted) return "seen";
+  if (session.status === "unknown") return "seen";
   const version = sessionReadVersion(session, live);
-  if (session.status === "running" || session.locked) return seen[key] === version ? "running" : "new";
+  if (session.interrupted) return seen[key] === version ? 'seen' : 'interrupted';
   return version && seen[key] !== version ? "complete" : "seen";
 }
-function sessionReadVersion(session: Pick<DashboardCliSessionSummary, "updatedAt">, live?: DashboardCodexSessionLiveState): string {
+function sessionReadVersion(session: Pick<DashboardCliSessionSummary, "updatedAt" | "interrupted">, live?: DashboardCodexSessionLiveState): string {
+  if (session.interrupted) return `${session.updatedAt ?? live?.streamId ?? ''}:interrupted`;
   return live ? `${live.streamId}:${live.status === 'completed' ? 'completed' : 'running'}` : session.updatedAt ?? '';
 }
 
@@ -892,7 +899,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return () => { clearTimeout(timer); window.removeEventListener('pagehide', save); save(); };
   }, [contextProjectKey, contextProjectState.fileDrafts, restoredFileDraftKeys, props.browser]);
 
-  const activeContextTab = props.standalone && contextProjectState.active === 'terminal' ? 'env' : contextProjectState.active;
+  const activeContextTab = contextProjectState.active;
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
@@ -902,7 +909,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     else if (toolProjectPath && (kind === 'env' || kind === 'git')) props.onRefreshEnvironment(toolProjectPath);
   }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed, props.connected, props.standalone]);
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
-  const contextTabs = props.standalone ? contextProjectState.tabs.filter(tab => tab !== 'terminal') : contextProjectState.tabs;
+  const contextTabs = contextProjectState.tabs;
   const terminalDraft = contextProjectState.draft ?? '';
   const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), draft } }));
   useEffect(() => { setContextAddOpen(false); }, [contextProjectKey]);
@@ -1002,7 +1009,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return candidates.filter(agent => ids.has(agent.id));
   }, [props.sessions, props.messages, props.selectedSession?.id, props.selectedSession?.deviceId]);
   const selectContextTab = (tab: WorkspaceTab): void => {
-    if (props.standalone && tab === 'terminal') return;
     setActiveContextTab(tab);
     if (toolProjectPath && (tab === 'env' || tab === 'git')) props.onRefreshEnvironment(toolProjectPath);
     const filePath = workspaceTabPath(tab);
@@ -1016,7 +1022,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   };
   const openContextTab = (tab: WorkspaceToolTab, filePath?: string): void => {
-    if (props.standalone && tab === 'terminal') return;
     if (tab === "reviews") setBranchReview(false);
     const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;
     const tabId: WorkspaceTab = resolvedFilePath ? `${tab === "agents" ? "agent" : tab === "files" ? "file" : "review"}:${resolvedFilePath}` : tab;
@@ -1037,15 +1042,15 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     (() => {
       const running = isCodexSessionRunning(session);
       const live = props.liveStates?.[cliSessionTargetKey(session)];
-      const indicator = cliSessionIndicator(session, sessionSeen, new Set(props.attentionSessionKeys), live && isCliLiveStateCurrent(session, live) ? live : undefined);
+      const indicator = running ? "running" : cliSessionIndicator(session, sessionSeen, new Set(props.attentionSessionKeys), live && isCliLiveStateCurrent(session, live) ? live : undefined);
       const canResume = canResumeCodexSession(session);
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); selectNewRequest(); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
-      <span class={`cli-session-row-status ${indicator === "attention" ? "is-attention" : indicator === "complete" ? "is-complete" : indicator === "new" ? "is-unseen" : ""}`} title={running ? (session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running") : undefined} aria-label={indicator === "attention" ? "Needs attention" : indicator === "new" ? "New unseen session" : running ? (session.status === "unknown" ? "Running state unavailable" : "Running") : indicator === "complete" ? "Unseen completion" : undefined}>
-        {indicator === "attention" || indicator === "complete" || indicator === "new" ? <i class="cli-session-status-dot" aria-hidden="true" /> : running ? (session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />) : null}
+      <span class={`cli-session-row-status ${indicator === "attention" ? "is-attention" : indicator === "complete" ? "is-complete" : indicator === "new" ? "is-unseen" : indicator === "interrupted" ? "is-interrupted" : ""}`} title={running ? (session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running") : undefined} aria-label={indicator === "attention" ? "Needs attention" : indicator === "new" ? "New unseen session" : indicator === "interrupted" ? "Unseen interruption" : running ? (session.status === "unknown" ? "Running state unavailable" : "Running") : indicator === "complete" ? "Unseen completion" : undefined}>
+        {indicator === "attention" || indicator === "complete" || indicator === "new" || indicator === "interrupted" ? <i class="cli-session-status-dot" aria-hidden="true" /> : running ? (session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />) : null}
         <SessionRowMenu session={session} running={running} canResume={canResume} autoResume={autoResume} disabled={props.connected === false || (props.isSessionPending?.(session) ?? props.mutating)} onResume={() => props.onResume(session)} onStop={() => props.onStop(session)} onAutoResume={(enabled) => props.onAutoResume(session, enabled)} onQueue={(enabled, priority) => props.onQueue(session, enabled, priority)} onArchive={() => props.onArchive(session)} onRestore={() => props.onUnarchive(session)} onDelete={() => setDeleteTarget(session)} />
       </span>
       </div>;
@@ -1349,7 +1354,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
 
           </div>
-          <SessionAccountFooter onFeedback={props.onActionFeedback} connected={props.connected}
+          <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} connected={props.connected}
             onApi={props.onApi}
             account={props.account}
             privacyMode={props.privacyMode}
@@ -1367,7 +1372,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
-        {accountCenterOpen ? <SessionAccountFooter onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
+        {accountCenterOpen ? <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
         <PanelResizeHandle
           label="Resize sessions sidebar"
           value={layout.railWidth}
@@ -1428,7 +1433,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               </section>
               {showLatestButton ? <button type="button" class={"cli-scroll-latest" + (currentTurnRunning ? " is-running" : "")} aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}>{currentTurnRunning ? <span class="cli-scroll-dots" aria-hidden="true"><i /><i /><i /></span> : <ChevronIcon />}</button> : null}</div>
               {props.requestPanel}
-              <TurnUsageStrip account={props.account} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpenAccountCenter={() => setAccountCenterOpen(true)} />
+              <TurnUsageStrip account={props.account} quotaWarningSettings={props.quotaWarningSettings} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpenAccountCenter={() => setAccountCenterOpen(true)} />
 
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatUsageDuration(goal.elapsedMs).toUpperCase() : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Delete goal" title={currentTurnRunning ? 'Stop the session before deleting its goal' : 'Delete goal'} disabled={props.goalUpdating || props.connected === false || props.selectedSession.status !== 'idle' || currentTurnRunning} onClick={event => { event.preventDefault(); event.stopPropagation(); setGoalDeleteTarget(props.selectedSession?.id); }}><TrashIcon /></button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               <ModalShell open={!!goalDeleteTarget && goalDeleteTarget === props.selectedSession?.id} title="Delete goal?" closeLabel="Cancel goal deletion" className="dashboard-modal-compact" onClose={() => { setGoalDeleteTarget(undefined); reportLocalFeedback({ level: 'info', message: 'Goal deletion cancelled.' }); }}>
@@ -1539,7 +1544,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onPush={() => runGitAction('push')}
           onRefreshEnvironment={(gitHistory) => props.onRefreshEnvironment(toolProjectPath, undefined, gitHistory)}
           onBranchReview={() => { openContextTab('reviews'); setBranchReview(true); props.onRefreshEnvironment(toolProjectPath, true); }}
-          hideTerminal={props.standalone === true}
+          onBrowserInstruction={(value, image) => { if (image) { const next = validateChatAttachments([...attachments, { id: crypto.randomUUID(), name: "browser-feedback.jpg", kind: "image", mimeType: "image/jpeg", data: image, size: 0 }]); setAttachments(next); } setDraft(current => `${current}${current ? "\n\n" : ""}${value}`); props.onActionFeedback({ level: "info", message: "Browser feedback added to the composer. Review and send it when ready." }); }}
+          hideTerminal={false}
           terminalWidth={layout.terminalWidth}
           draft={terminalDraft}
           results={props.terminalResults}
@@ -1774,22 +1780,21 @@ export function LiveTurnDetails({ state, usage }: { state?: DashboardCodexSessio
   </div>;
 }
 
-export function TurnUsageStrip({ account, privacyMode, contextLabel, saved, changedFiles, additions, deletions, onOpenChanges, onOpenAccountCenter }: { account?: DashboardAccountViewModel; privacyMode: boolean; contextLabel?: string; saved?: boolean; changedFiles?: number; additions?: number; deletions?: number; onOpenChanges: () => void; onOpenAccountCenter?: () => void }) {
+export function TurnUsageStrip({ account, quotaWarningSettings, privacyMode, contextLabel, saved, changedFiles, additions, deletions, onOpenChanges, onOpenAccountCenter }: { account?: DashboardAccountViewModel; quotaWarningSettings?: Parameters<typeof isSessionQuotaWarning>[1]; privacyMode: boolean; contextLabel?: string; saved?: boolean; changedFiles?: number; additions?: number; deletions?: number; onOpenChanges: () => void; onOpenAccountCenter?: () => void }) {
   const metrics = getAccountQuotaMetrics(account);
-  const quotaSignature = `${account?.id ?? ''}:${metrics.map(metric => `${metric.key}:${metric.value}`).join("|")}`;
-  const previousQuota = useRef(quotaSignature);
+  const warning = isSessionQuotaWarning(account, quotaWarningSettings);
   const [quotaFlash, setQuotaFlash] = useState(false);
   useEffect(() => {
-    if (previousQuota.current === quotaSignature) return;
-    previousQuota.current = quotaSignature;
+    const age = Date.now() - (account?.autoSwitchedAt ?? 0);
+    if (age < 0 || age >= 5000) { setQuotaFlash(false); return; }
     setQuotaFlash(true);
-    const timer = window.setTimeout(() => setQuotaFlash(false), 1200);
+    const timer = window.setTimeout(() => setQuotaFlash(false), 5000 - age);
     return () => window.clearTimeout(timer);
-  }, [quotaSignature]);
+  }, [account?.id, account?.autoSwitchedAt]);
   const name = account ? getSensitiveDisplayValue(account.email || account.displayName, privacyMode, 'email') : undefined;
-  const quota = account ? <span class={`cli-turn-quota ${quotaFlash ? "is-updated" : ""}`} aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span> : null;
-  const accountSummary = name ? <span class={`cli-turn-account-group ${quotaFlash ? "is-updated" : ""}`} role="status" aria-label="Active account and quota">{onOpenAccountCenter
-    ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}><span class="cli-turn-account-name">{name}</span></button>
+  const quota = account ? <span class="cli-turn-quota" aria-label={saved ? 'Saved quota' : 'Quota remaining'}>{metrics.length ? metrics.map(metric => <span key={metric.key} title={`${metric.label} ${metric.value}% remaining${saved ? ' · saved' : ''}`}><small>{metric.label} </small><strong>{metric.value}%</strong></span>) : <span>—</span>}</span> : null;
+  const accountSummary = name ? <span class="cli-turn-account-group" role="status" aria-label="Active account and quota">{onOpenAccountCenter
+    ? <button type="button" class="cli-turn-account" title={`Open account center · ${name}`} aria-label="Open account center" onClick={onOpenAccountCenter}><span class="cli-turn-account-name" data-warning={warning || undefined} data-switched={quotaFlash || undefined}>{name}</span></button>
     : <span class="cli-turn-account" title={name}>{name}</span>}{quota}</span>
     : contextLabel ? <span class="cli-turn-context" title={contextLabel}>{contextLabel}</span> : null;
   return <div class="cli-turn-usage-strip" role="group" aria-label="Account and session usage">{accountSummary}<span class="cli-turn-usage-actions">{changedFiles ? <button type="button" onClick={onOpenChanges} aria-label={`View ${changedFiles} changed file${changedFiles === 1 ? '' : 's'}`}><FileIcon /><span>{changedFiles} file{changedFiles === 1 ? '' : 's'} changed</span><b class="is-added">+{additions ?? 0}</b><b class="is-removed">−{deletions ?? 0}</b></button> : null}</span></div>;
@@ -2419,6 +2424,7 @@ export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]
 }
 
 function WorkspaceContextPanel(props: {
+  onBrowserInstruction: (text: string, image?: string) => void;
   hideTerminal?: boolean;
   liveState?: DashboardCodexSessionLiveState;
   targetDeviceId?: string;
@@ -2530,9 +2536,10 @@ function WorkspaceContextPanel(props: {
     <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={event => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{visibleTabs.map((tab, index) => {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
-      return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
-    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal')).every(tab => visibleTabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
+      return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'browser' ? <BrowserIcon /> : kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
+    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal')).every(tab => visibleTabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
+    <div hidden={props.collapsed || props.activeTab !== 'browser'} style={{ height: '100%' }}>{props.tabs.includes('browser') ? <WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && props.activeTab === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
@@ -2784,6 +2791,8 @@ function PanelResizeHandle(props: {
 }
 
 function SessionAccountFooter(props: {
+  systemInfoEnabled?: boolean;
+  hostConnected?: boolean;
   connected?: boolean;
   onFeedback: (notice: DashboardNotice) => void;
   onApi?: () => void;
@@ -2792,7 +2801,7 @@ function SessionAccountFooter(props: {
   showLogout?: boolean;
   accounts?: DashboardAccountViewModel[];
   localAccounts?: DashboardAccountViewModel[];
-  peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
+  peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean; sessionCount?: number; systemStatus?: import("../../src/domain/systemStatus").SystemStatus }>;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   selectedPeerId?: string;
   onPeerChange?: (peerId: string) => void;
@@ -2833,13 +2842,15 @@ function SessionAccountFooter(props: {
     catch { props.onFeedback({ level: 'warning', message: 'Size changed for this tab. Browser storage could not remember it.' }); }
   };
   const [open, setOpen] = useState(Boolean(props.standalone));
+  const [systemPickerOpen, setSystemPickerOpen] = useState(false);
+  const systemPickerTrigger = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const focusSearchOnOpen = useRef(false);
   const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
   const peer = peers.find(item => item.id === props.selectedPeerId) ?? peers.find(item => item.local) ?? peers[0]!;
-  const connected = props.connected !== false && peer.connected;
+  const connected = (props.hostConnected ?? props.connected) !== false && peer.connected;
   const name = (account: DashboardAccountViewModel | undefined, emailFirst = false): string => {
     const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
     return raw ? getSensitiveDisplayValue(raw, props.privacyMode, raw.includes("@") ? "email" : "name") : account ? "Unnamed account" : "No active account";
@@ -2849,6 +2860,7 @@ function SessionAccountFooter(props: {
   const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
   const closeMenu = (restoreFocus = false): void => {
     moving.current = undefined;
+    setSystemPickerOpen(false);
     setOpen(false);
     props.onClose?.();
     if (restoreFocus) triggerRef.current?.focus();
@@ -2888,6 +2900,7 @@ function SessionAccountFooter(props: {
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
     const keydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && document.querySelector(".system-picker-dropdown:popover-open")) return;
       if (event.key === "Escape" && !document.querySelector('.overlay.open, .saved-overflow-menu-portal, .claim-popover-portal, .batch-menu-popover, .workspace-menu-popover:popover-open')) { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
     };
     const frame = window.requestAnimationFrame(() => { if (focusSearchOnOpen.current) menuRef.current?.querySelector<HTMLInputElement>('[name="account-search"]')?.focus({ preventScroll: true }); });
@@ -2929,7 +2942,9 @@ function SessionAccountFooter(props: {
           move(bounds.left + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0), bounds.top + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0));
         }}>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={event => { event.stopPropagation(); closeMenu(true); }}><CloseIcon /></button>
       </header>
-      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
+      <div class="cli-account-system"><label for="account-center-system">System</label><button ref={systemPickerTrigger} id="account-center-system" type="button" aria-label="Account system" aria-haspopup="listbox" aria-expanded={systemPickerOpen} onClick={() => setSystemPickerOpen(value => !value)}><span>{getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}</span><ChevronIcon /></button><span class={connected ? "is-online" : "is-offline"}>{connected ? "Online" : "Offline"}</span></div>
+      {props.systemInfoEnabled !== false ? <SystemStatusRows peer={peer} connected={connected} /> : null}
+      {systemPickerOpen ? <SystemPicker anchor={systemPickerTrigger} systemInfoEnabled={props.systemInfoEnabled !== false} peers={peers} selectedId={peer.id} connected={(props.hostConnected ?? props.connected) !== false} privacyMode={props.privacyMode} accountCount={item => item.local ? props.localAccounts?.length : props.peerAccounts?.[item.id]?.length} onSelect={id => props.onPeerChange?.(id)} onClose={() => setSystemPickerOpen(false)} /> : null}
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <div class="cli-account-grid">{props.renderAccounts?.()}</div>
       <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { props.onApi?.(); }}><ApiIcon />API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
@@ -3161,6 +3176,7 @@ function ForkIcon() { return <Icon><circle cx="7" cy="5" r="2" fill="none" strok
 function LinkIcon() { return <Icon><path d="m9.5 14.5 5-5M7 16.8l-1 .9a3.3 3.3 0 0 1-4.7-4.7l3.2-3.2a3.3 3.3 0 0 1 4.7 0M17 7.2l1-.9a3.3 3.3 0 0 1 4.7 4.7l-3.2 3.2a3.3 3.3 0 0 1-4.7 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></Icon>; }
 function ShareIcon() { return <Icon><circle cx="18" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="18" cy="19" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m8 11 8-5M8 13l8 5" fill="none" stroke="currentColor" stroke-width="1.6"/></Icon>; }
 function TerminalIcon() { return <Icon><path d="m5 7 4 4-4 4m6 1h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+function BrowserIcon() { return <Icon><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M5 7h14M5 17h14" stroke="currentColor" stroke-width="1.4"/></Icon>; }
 function PanelIcon() { return <Icon><rect x="3.5" y="4" width="17" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15 4v16M7 9h4M7 12h4M7 15h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></Icon>; }
 function FileIcon() { return <Icon><path d="M6 3h8l4 4v14H6V3Zm8 0v5h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function ToolIcon() { return <Icon><path d="m14 6 4 4 3-3a6 6 0 0 1-8 7l-6 6a2.1 2.1 0 0 1-3-3l6-6a6 6 0 0 1 7-8l-3 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }

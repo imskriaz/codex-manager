@@ -102,6 +102,9 @@ const window = {
         if (window.activeTerminal === terminal) window.activeTerminal = undefined;
       }
     };
+    const rename = options.pty.onDidChangeName?.(name => { terminal.name = name; });
+    const dispose = terminal.dispose;
+    terminal.dispose = () => { rename?.dispose(); dispose(); };
     window.terminals.push(terminal);
     queueMicrotask(() => { if (!disposed) options.pty.open(undefined); });
     return terminal;

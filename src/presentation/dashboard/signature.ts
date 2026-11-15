@@ -108,6 +108,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoResetEnabled ? "1" : "0",
     state.settings.autoResetWeeklyThreshold ?? 0,
     state.settings.autoSwitchLockMinutes,
+    state.settings.systemInfoEnabled === false ? "0" : "1",
     state.settings.quotaWarningEnabled ? "1" : "0",
     state.settings.quotaWarningThreshold,
     state.settings.quotaWarningWeeklyThreshold,

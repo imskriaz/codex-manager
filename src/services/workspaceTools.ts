@@ -22,7 +22,7 @@ import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { getCodexManagerConfiguration, normalizeWorkspaceTextFileLimitMb } from '../infrastructure/config/extensionSettings';
-import { sharedTerminalInfo, findSharedTerminal, disposeSharedTerminals } from './workspaceTerminalPty';
+import { sharedTerminalInfo, findSharedTerminal, disposeSharedTerminals, workspaceTerminal } from './workspaceTerminalPty';
 
 const MAX_COMMAND_CHARS = 8_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -409,6 +409,9 @@ export async function createWorkspaceTerminal(
   const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   const folder = await waitWithin(fs.stat(cwd), WORKSPACE_READ_TIMEOUT_MS, "The project folder did not respond. Retry after it becomes available.");
   if (!folder.isDirectory()) throw new Error("The selected project path is not a folder.");
+  if (vscode.env.appHost === 'node') {
+    return (await workspaceTerminal(cwd, undefined, { operation: 'create', clientId: 'manager-terminal', operationId: crypto.randomUUID() }, profile, name)).workspaceTerminal;
+  }
   const shellPath = profile === "powershell"
     ? await resolveWindowsPowerShell()
     : profile === "cmd"
@@ -667,6 +670,17 @@ export async function runWorkspaceTerminalCommand(options: {
   if (command.length > MAX_COMMAND_CHARS) {
     throw new Error(`Keep terminal commands under ${MAX_COMMAND_CHARS.toLocaleString()} characters.`);
   }
+  if (vscode.env.appHost === 'node') {
+    const cwd = await resolveWorkspaceProjectPathAsync(options.projectPath);
+    const clientId = 'manager-command-client';
+    const target = options.terminalId ? findSharedTerminal(options.terminalId) : undefined;
+    if (options.terminalId && !target) throw new Error('This native terminal is no longer open. Refresh the terminal list.');
+    const created = target ? undefined : await workspaceTerminal(cwd, undefined, { operation: 'create', clientId, operationId: crypto.randomUUID() });
+    const terminalId = options.terminalId ?? created!.workspaceTerminal.id;
+    const snapshot = (created ?? await workspaceTerminal(cwd, terminalId, { operation: 'claim', clientId })).terminalSnapshot;
+    await workspaceTerminal(cwd, terminalId, { operation: 'input', clientId, epoch: snapshot.epoch, sequence: snapshot.inputSequence + 1, data: `${command}\r` });
+    return { id: crypto.randomUUID(), terminalId, command, cwd, status: 'untracked', output: 'Command sent to the native terminal. Output streams in its screen; command completion is not inferred from the prompt. Read the terminal screen before retrying.', durationMs: 0, finishedAt: new Date().toISOString() };
+  }
   const terminalId = normalizeTerminalId(options.terminalId);
   const requestedTerminalName = options.terminalId?.trim();
   const selectedTerminal = findNativeTerminal(requestedTerminalName);
@@ -906,6 +920,12 @@ export async function runWorkspaceTerminalCommand(options: {
 }
 
 export function cancelWorkspaceTerminalCommand(terminalId: string | undefined): boolean {
+  if (vscode.env.appHost === 'node') {
+    const terminal = findSharedTerminal(terminalId);
+    if (!terminal) return false;
+    terminal.sendText('\u0003', false);
+    return true;
+  }
   const actualName = terminalId?.trim();
   const terminal = findNativeTerminal(actualName);
   const actualId = terminal ? nativeTerminalId(terminal) : actualName;

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.6
+
+- Add page DevTools commands for HTML/CSS, script injection, console/events, network interception and response inspection, cookies and storage.
+- Add the System Info setting, compact two-row host readings, and a system picker with account/session counts.
+- Prioritize running-session indicators over status dots while retaining the hover menu, and show gray interruption dots until seen.
+
+- Prefer older-added eligible accounts in Auto Queue after priority and urgent expiry checks; retain subscription timing and leave date/expiry displays unchanged.
+- Highlight only the session account email for configured low-quota warnings or briefly after Auto Switch; avoid Workspace quota-warning modals.
+
+- Add Browser to the right workspace menu: shared isolated Playwright pages,
+  responsive previews, console/network diagnostics and saved pointer/area/pen/text
+  feedback with design references and Add to instruction.
+- Add a scoped stdio MCP bridge and bundled skill for Manager actions, settings,
+  browser control and native terminal screens.
+- Enable native terminals and their list in standalone without a VS Code process;
+  preserve terminal ownership, input sequencing and visible error reporting.
+
 ## 2.0.4
 
 - Offer repository initialization and GitHub origin setup in the Git panel.

@@ -91,6 +91,7 @@ export function toAutoQueueOrderValue(account: CodexManagerAccountRecord): AutoQ
     windows: [hourly, isMonthly ? {} : longWindow, isMonthly ? longWindow : {}],
     credits: parseCreditsOrderValue(quota?.credits),
     subscriptionExpiresAt: parseSubscriptionExpiryMs(account.subscriptionActiveUntil),
+    addedAt: account.createdAt,
     lastQuotaAt: account.lastQuotaAt,
     sessionStartedAt: account.sessionStartedAt,
     lastSelectedAt: account.lastSelectedAt,

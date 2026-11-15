@@ -334,6 +334,7 @@ function mapAccount(
     addMethodLabel: `${formatAddMethod(account.addedVia, lang)} | ${formatAuthProvider(account.authProvider, lang)}`,
     addedAtLabel: formatAddedAt(account.createdAt, copy.never),
     addedAt: account.createdAt,
+    autoSwitchedAt: autoSwitchRuntime?.dashboardNotice?.switchResult && autoSwitchRuntime.dashboardNotice.accountId === account.id ? autoSwitchRuntime.dashboardNotice.createdAt : undefined,
     loginAt: account.loginAt,
     sessionStartedAt: account.sessionStartedAt,
     lastSelectedAt: account.lastSelectedAt,

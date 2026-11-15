@@ -47,6 +47,9 @@ export function scopeApiResults(token: DashboardApiToken, messages: DashboardHos
     if (message.type !== 'dashboard:action-result' || !message.payload) return message;
     const input = message.payload;
     const payload: DashboardActionResultPayload = {};
+    if (input.workspaceBrowser) payload.workspaceBrowser = input.workspaceBrowser;
+    if (input.workspaceTerminals) payload.workspaceTerminals = input.workspaceTerminals.filter(terminal => terminal.cwd && keys.has(projectTaskKey(terminal.cwd)));
+    if (input.workspaceTerminal?.cwd && keys.has(projectTaskKey(input.workspaceTerminal.cwd))) { payload.workspaceTerminal = input.workspaceTerminal; payload.terminalSnapshot = input.terminalSnapshot; }
     for (const key of ['cliSkills','notice','projectBoard','projectTaskDetails','projectShare','cliSessionMessages','cliSessionLive','workspaceEnvironment','workspaceFiles','workspaceFilesWarning','workspaceFile','deletedWorkspaceFilePath'] as const) {
       if (input[key] !== undefined) Object.assign(payload, { [key]: input[key] });
     }

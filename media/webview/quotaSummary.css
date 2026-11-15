@@ -14870,14 +14870,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .dashboard-mobile-actions { display: none; }
 }
 
-/* Place running state opposite the title, yielding to visible row actions. */
+/* Keep running state vertically centered at its natural horizontal position. */
 .cli-workspace .cli-session-row.is-running .cli-session-row-status {
   position: absolute;
-  right: 8px;
   top: 50%;
   transform: translateY(-50%);
 }
-.cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { right: 34px; z-index: 2; }
+.cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { z-index: 2; }
 
 .browser-notification-offer {
   position: fixed; z-index: var(--dashboard-z-toast, 40000);
@@ -17265,7 +17264,9 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .cli-workspace .cli-project-sessions .cli-session-row { border-radius: 0; background: transparent; box-shadow: none; }
 .cli-workspace .cli-project-group .cli-project-row:hover,
 .cli-workspace .cli-project-group .cli-project-row:focus-within,
-.cli-workspace .cli-session-row:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.cli-workspace .cli-session-row:hover { background: transparent; }
+.cli-workspace .cli-pc-project-list :is(.cli-pc-group-toggle, .cli-project-select, .cli-project-collapse, .cli-project-new):hover,
+.cli-workspace .cli-session-row :is(button:hover, .cli-session-row-actions) { background: transparent; }
 .cli-workspace .cli-session-row.is-selected { border-radius: 0; background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
 
 .cli-composer-options .cli-approval-control > span:last-child { display: flex; align-items: center; gap: 6px; }
@@ -17486,3 +17487,30 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 @media (pointer: coarse) { .task-quick-actions button { min-height: 44px; } }
 
 @media (prefers-reduced-motion: reduce) { .cli-turn-account-group.is-updated { animation: none; outline: 1px solid var(--accent-green, #2da44e); } }
+
+/* Development browser shares the workspace tool surface. */
+.workspace-browser{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;min-height:0;height:100%;box-sizing:border-box;font-size:calc(12px * var(--dashboard-text-scale, 1))}
+.workspace-browser input,.workspace-browser textarea,.workspace-browser select{min-width:0;color:var(--text-primary);background:var(--bg-base);border:1px solid var(--border-color,#444);border-radius:5px;padding:6px;font:inherit}
+.workspace-browser button{background:var(--bg-base);color:var(--text-primary);border:1px solid var(--border-color,#444);border-radius:5px;padding:5px 8px;cursor:pointer}
+.workspace-browser button:disabled{opacity:.5;cursor:default}.workspace-browser button[aria-pressed=true]{border-color:#ff6545;color:#ff987b}
+.workspace-browser-address,.workspace-browser-toolbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.workspace-browser-address input,.workspace-browser-toolbar select,.workspace-browser-toolbar input{flex:1;min-width:90px}
+.workspace-browser-preview{position:relative;width:100%;flex-shrink:0;line-height:0;background:#171717;border:1px solid #444;border-radius:6px;overflow:hidden}.workspace-browser-preview img{width:100%;display:block}.workspace-browser-preview svg{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.workspace-browser-feedback{display:flex;flex-wrap:wrap;gap:6px}.workspace-browser-feedback textarea,.workspace-browser-feedback input{width:100%;box-sizing:border-box}.workspace-browser-feedback textarea{min-height:70px}
+.workspace-browser-empty{padding:30px 12px;text-align:center;color:var(--text-secondary)}.workspace-browser pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto}.workspace-browser article{padding:8px 0;border-bottom:1px solid #444;overflow-wrap:anywhere}.workspace-browser small{color:var(--text-secondary)}.workspace-browser .is-error{color:#ff987b}
+
+.workspace-browser.is-expanded{position:fixed;inset:12px;z-index:1200;background:var(--bg-base);border:1px solid #666;border-radius:9px;box-shadow:0 10px 40px #0005}.workspace-browser.is-expanded .workspace-browser-preview{width:min(100%,1280px);margin:auto}
+.workspace-browser-mark-tools{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:3px;padding:4px;background:var(--bg-base);border:1px solid #8886;border-radius:9px;box-shadow:0 2px 8px #0003;line-height:normal}.workspace-browser-mark-tools button{font-size:calc(17px * var(--dashboard-text-scale, 1));padding:5px 9px}.workspace-browser-mark-tools .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+.workspace-browser-key-cursor{display:none}.workspace-browser-preview svg:focus .workspace-browser-key-cursor{display:block}.workspace-browser :focus-visible{outline:2px solid #469fff;outline-offset:2px}@media(max-width:760px){.workspace-browser-mark-tools button{min-width:36px;min-height:40px}.workspace-browser.is-expanded{inset:4px}}
+
+.cli-turn-account-name[data-switched=true]{color:var(--accent-green,#2da44e);background:color-mix(in srgb,var(--accent-green,#2da44e) 12%,transparent);border-radius:3px}.cli-turn-account-name[data-warning=true]{color:var(--accent-red,#d1242f);background:color-mix(in srgb,var(--accent-red,#d1242f) 10%,transparent)}
+
+.cli-account-system > button{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1;min-width:0;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text);font:inherit;padding:7px 9px;cursor:pointer}.cli-account-system > button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cli-account-system > button svg{flex:none}
+.system-status-rows{display:grid;gap:7px;padding:8px 12px;color:var(--text-secondary);font-size:calc(11px * var(--dashboard-text-scale, 1));border-bottom:1px solid var(--border-default);font-variant-numeric:tabular-nums}.system-status-rows > div{display:flex;align-items:center;gap:12px;min-height:16px;min-width:0}.system-status-rows span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;min-width:0}.system-status-rows svg{flex:none}.system-status-rows small{margin-left:auto;font-size:calc(10px * var(--dashboard-text-scale, 1));color:var(--text-muted)}.system-status-rows .is-low{color:var(--accent-orange)}.system-status-rows.is-saved{color:var(--text-muted)}
+
+.cli-account-system{position:relative}.system-picker-dropdown{position:absolute;z-index:20;top:calc(100% + 5px);left:12px;right:12px;max-height:min(520px,calc(100dvh - 180px));overflow:auto;border:1px solid var(--border-default);border-radius:8px;background:var(--bg-surface);box-shadow:var(--shadow-lg);padding:6px}.system-picker-list{display:grid;gap:6px}.system-picker-item{display:block;width:100%;padding:10px;text-align:left;border:1px solid var(--border-default);border-radius:7px;background:var(--bg-base);color:var(--text);font:inherit;cursor:pointer}.system-picker-item:hover{background:var(--bg-elevated)}.system-picker-item.is-selected{border-color:var(--accent-blue);box-shadow:inset 3px 0 var(--accent-blue)}.system-picker-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.system-picker-heading strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.system-picker-heading > span{font-size:calc(11px * var(--dashboard-text-scale, 1));white-space:nowrap;color:var(--text-muted)}.system-picker-heading .is-online{color:var(--accent-green)}.system-picker-counts{display:flex;gap:12px;margin-top:8px;font-size:calc(11px * var(--dashboard-text-scale, 1));color:var(--text-secondary)}.system-picker-item .system-status-rows{padding:8px 0 0;border:0;gap:6px}.system-picker-item .system-status-rows > div{justify-content:space-between;gap:6px}.system-status-rows > div{justify-content:space-between}.system-picker-dropdown .system-picker-item:focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}.cli-account-system > button:focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}
+
+.cli-session-row-status.is-interrupted{color:var(--text-muted)}.cli-session-row-status.is-interrupted .cli-session-status-dot{background:var(--text-muted)}
+.cli-session-row:is(:hover,:focus-within) .cli-session-row-status > :is(.cli-session-status-dot,svg),.cli-session-row-status:has(.cli-session-row-menu-wrap[data-open="true"]) > :is(.cli-session-status-dot,svg){opacity:0}
+
+.system-picker-item .system-status-rows{font-size:calc(10px * var(--dashboard-text-scale, 1))}

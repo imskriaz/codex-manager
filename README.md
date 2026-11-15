@@ -8,6 +8,8 @@ Auto Resume restores eligible unfinished parent sessions after a VS Code restart
 
 It is an independent, community project. It is not an official OpenAI product.
 
+Use the [AI control and browser guide](docs/ai-control.md) for MCP setup, browser feedback and standalone native terminals.
+
 ## What it provides
 
 | Area | What you can do |

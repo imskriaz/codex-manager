@@ -24,6 +24,7 @@ test/**
 **/*.map
 
 docs/**
+!docs/ai-control.md
 coverage/**
 tsconfig.json
 tsconfig.webview.json

@@ -26,6 +26,11 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it("prioritizes running status over unseen and attention dots", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain('const indicator = running ? "running" : cliSessionIndicator(');
+  });
+
   it('shows quota waiting only for the blocked session and clears it on resume, completion, pause, or opt-out', () => {
     const session = { id: 'quota', status: 'idle' as const, interrupted: true };
     const error = { id: 'error', kind: 'error' as const, text: 'You have hit your usage limit' };
@@ -47,10 +52,15 @@ describe("sessions sidebar layout", () => {
     expect(cliSessionIndicator(session, {}, new Set([key]))).toBe("attention");
     expect(cliSessionIndicator(session, {}, new Set())).toBe("complete");
     expect(cliSessionIndicator(session, { [key]: session.updatedAt }, new Set())).toBe("seen");
-    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set())).toBe("new");
-    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set([key]))).toBe("attention");
-    expect(cliSessionIndicator({ ...session, interrupted: true }, {}, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set())).toBe("running");
+    expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set([key]))).toBe("running");
+    expect(cliSessionIndicator({ ...session, interrupted: true }, {}, new Set())).toBe("interrupted");
     expect(cliSessionIndicator({ ...session, status: "unknown" }, {}, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, interrupted: true }, { [key]: `${session.updatedAt}:interrupted` }, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, interrupted: true }, { [key]: session.updatedAt }, new Set())).toBe("interrupted");
+    expect(cliSessionIndicator({ ...session, interrupted: true, status: "running" }, {}, new Set())).toBe("running");
+    expect(cliSessionIndicator({ id: "missing-date", status: "idle", interrupted: true }, {}, new Set())).toBe("interrupted");
+    expect(cliSessionIndicator({ id: "missing-date", status: "idle", interrupted: true }, { [JSON.stringify(["local", "missing-date"])]: ":interrupted" }, new Set())).toBe("seen");
   });
   it('keeps the selected local system during transient remote-only discovery', () => {
     const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
@@ -124,7 +134,7 @@ describe("sessions sidebar layout", () => {
   it("keeps running spinners visible beside workspace row actions", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    expect(css).toContain(".cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { right: 34px;");
+    expect(css).toContain(".cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { z-index: 2;");
     expect(css).not.toContain(".cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-spinner { visibility: hidden; }");
     expect(source).toContain("function SessionRowMenu");
     expect(source).toContain('aria-label={`Actions for ${session.title}`}');
@@ -530,7 +540,7 @@ describe("sessions sidebar layout", () => {
 
     expect(source).not.toContain('class="cli-tool-tabs"');
     expect(source).toContain("WorkspaceContextPanel");
-    expect(source).toContain("['git', 'terminal', 'files', 'reviews', 'agents']");
+    expect(source).toContain("['browser', 'git', 'terminal', 'files', 'reviews', 'agents']");
     expect(source).toContain("WorkspaceFilesView");
     expect(source).toContain("WorkspaceReviewsView");
     expect(source).toContain('class="cli-context-tab-scroll"');

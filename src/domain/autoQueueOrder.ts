@@ -7,6 +7,7 @@ export interface AutoQueueOrderValue {
   windows: readonly AutoQueueWindowOrderValue[];
   credits?: number;
   subscriptionExpiresAt?: number;
+  addedAt?: number;
   lastQuotaAt?: number;
   lastSelectedAt?: number;
   sessionStartedAt?: number;

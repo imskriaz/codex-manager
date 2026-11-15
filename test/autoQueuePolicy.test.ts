@@ -18,6 +18,19 @@ const policy = createAutoQueuePolicy({ autoSwitchEnabled: true, autoResetEnabled
 const candidate = (id: string, overrides: Partial<AutoQueueCandidate> = {}): AutoQueueCandidate => ({ id, autoResetAllowed: true, windows: [{ percentage: 70 }, { percentage: 70 }, {}], lastQuotaAt: now - 1_000, ...overrides });
 
 describe("shared auto queue policy", () => {
+  it('prefers older eligible accounts while preserving stars, urgency, freshness and deterministic missing dates', () => {
+    const older = candidate('older', { addedAt: now - 90 * 86400_000, windows: [{ percentage: 10 }, { percentage: 10 }] });
+    const newer = candidate('newer', { addedAt: now - 86400_000 });
+    expect(compareAutoQueueCandidates(older, newer, policy)).toBeLessThan(0);
+    expect(compareAutoQueueCandidates(older, { ...newer, queuePriority: true }, policy)).toBeGreaterThan(0);
+    expect(compareAutoQueueCandidates(older, { ...newer, subscriptionExpiresAt: now + 60000 }, policy)).toBeGreaterThan(0);
+    expect(compareAutoQueueCandidates({ ...older, lastQuotaAt: 1 }, newer, policy)).toBeGreaterThan(0);
+    expect(compareAutoQueueCandidates({ ...older, windows: [{ percentage: 0 }] }, newer, policy)).toBeGreaterThan(0);
+    for (const addedAt of [undefined, 0, -1, NaN, Infinity, now + 1]) {
+      expect(compareAutoQueueCandidates(older, { ...newer, addedAt }, policy)).toBeLessThan(0);
+      expect(Number.isFinite(compareAutoQueueCandidates({ ...older, addedAt }, { ...newer, addedAt }, policy))).toBe(true);
+    }
+  });
   it.each([false, undefined])('excludes reset reserves without account opt-in (%s)', autoResetAllowed => {
     expect(usableAutoQueueResetCount(candidate('reset', { autoResetAllowed, resetCreditsAvailable: 4 }), policy)).toBe(0);
   });
@@ -93,9 +106,10 @@ describe("shared auto queue policy", () => {
       { id: "exhausted", hourly: 80, long: 0, minutes: 10_080 },
       { id: "old", hourly: 100, long: 100, minutes: 10_080, lastQuotaAt: 1 }
     ].map((row) => ({ id: row.id, email: `${row.id}@example.com`, createdAt: 1, updatedAt: 1, isActive: false, queuePriority: row.queuePriority, lastQuotaAt: row.lastQuotaAt ?? now - 1_000, planType: row.planType, quotaSummary: { hourlyPercentage: row.hourly ?? 0, hourlyWindowPresent: row.hourly !== undefined, hourlyWindowMinutes: 300, weeklyPercentage: row.long ?? 0, weeklyWindowPresent: row.long !== undefined, weeklyWindowMinutes: row.minutes, resetCreditsAvailable: row.resetCreditsAvailable, resetCreditsNextExpiresAt: row.resetCreditsNextExpiresAt } }));
+    records.forEach((record, index) => { record.createdAt = now - (index + 1) * 86400_000; });
     const views = records.map((record) => {
       const value = toAutoQueueOrderValue(record);
-      return { id: record.id, email: record.email, enabled: true, queuePriority: record.queuePriority, lastQuotaAt: record.lastQuotaAt, resetCreditsAvailable: value.resetCreditsAvailable, resetCreditsNextExpiresAt: value.resetCreditsNextExpiresAt, metrics: value.windows.flatMap((window, index) => window.percentage === undefined ? [] : [{ key: index === 0 ? "hourly" : "weekly", period: index === 0 ? "hourly" : index === 1 ? "weekly" : "monthly", visible: true, ...window }]) } as any;
+      return { id: record.id, email: record.email, addedAt: record.createdAt, enabled: true, queuePriority: record.queuePriority, lastQuotaAt: record.lastQuotaAt, resetCreditsAvailable: value.resetCreditsAvailable, resetCreditsNextExpiresAt: value.resetCreditsNextExpiresAt, metrics: value.windows.flatMap((window, index) => window.percentage === undefined ? [] : [{ key: index === 0 ? "hourly" : "weekly", period: index === 0 ? "hourly" : index === 1 ? "weekly" : "monthly", visible: true, ...window }]) } as any;
     });
     expect(records.sort((a, b) => compareCodexManagerAccountAutoQueueOrder(a, b, policy)).map((row) => row.id)).toEqual(views.sort((a, b) => compareDashboardAutoQueueAccounts(a, b, policy)).map((row: any) => row.id));
   });

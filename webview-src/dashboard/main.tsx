@@ -959,7 +959,11 @@ function App() {
         });
       }
       const actionPrompt = message.type === "dashboard:action-result" ? message.payload?.actionPrompts?.[0] : message.type === "dashboard:notice" ? message.actionPrompt : undefined;
-      if (actionPrompt?.kind === "quotaWarning") {
+      if (actionPrompt?.kind === 'quotaWarning' && isBrowserDashboard && isCliSessionsPath(window.location.pathname) && message.type === 'dashboard:notice') {
+        if (message.notificationId) postMessageToHost({ type: 'dashboard:notification-response', notificationId: message.notificationId });
+        return;
+      }
+      if (actionPrompt?.kind === "quotaWarning" && !(isBrowserDashboard && isCliSessionsPath(window.location.pathname))) {
         setBrowserActionRequest({
           kind: "quotaWarning",
           action: "switch",
@@ -3168,6 +3172,9 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+              hostConnected={!connectionUnavailable && !reloadInProgress}
+              systemInfoEnabled={snapshot?.settings.systemInfoEnabled !== false}
+              quotaWarningSettings={snapshot?.settings}
               connectionStatus={null}
               browser={isBrowserDashboard}
               standalone={cliComposerConfig?.terminalSupported === false}

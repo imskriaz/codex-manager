@@ -9,6 +9,7 @@ import type {
 
 export type DashboardSettingKey =
   | "dashboardTheme"
+  | "systemInfoEnabled"
   | "privacyMode"
   | "persistentLoggingEnabled"
   | "persistentLogRetentionDays"
@@ -56,6 +57,7 @@ export type DashboardSettingKey =
 
 export interface DashboardSettings {
   dashboardTheme: DashboardThemeOption;
+  systemInfoEnabled?: boolean;
   /** Shared privacy preference used by every dashboard and details surface. */
   privacyMode?: boolean;
   /** Local file-backed diagnostic preference, disabled by default. */
@@ -463,6 +465,7 @@ export interface DashboardAccountViewModel {
   resetCreditsNextExpiresAt?: number;
   hasPendingResetCreditAttempt?: boolean;
   autoSwitchLockedUntil?: number;
+  autoSwitchedAt?: number;
   metrics: DashboardMetricViewModel[];
 }
 
@@ -526,9 +529,11 @@ export interface DashboardPeerView {
   sessionCount: number;
   connected: boolean;
   local?: boolean;
+  systemStatus?: import('../systemStatus').SystemStatus;
 }
 
 export type DashboardActionName =
+  | "workspaceBrowser"
   | "browseWorkspaceFolders"
   | "createWorkspaceProject"
   | "addAccount"
@@ -731,6 +736,7 @@ export interface DashboardActionPayload {
   includeBranchDiff?: boolean;
   gitHistory?: DashboardWorkspaceGitRequest;
   terminalRequest?: WorkspaceTerminalRequest;
+  browserRequest?: import('../workspaceBrowser').WorkspaceBrowserRequest;
   gitRequest?: WorkspaceGitRequest;
   githubRequest?: WorkspaceGitHubRequest;
   fileContent?: string;
@@ -1127,6 +1133,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
   workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };
   workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;

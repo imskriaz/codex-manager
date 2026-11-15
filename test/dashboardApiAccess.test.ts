@@ -146,3 +146,13 @@ it('authorizes every explicitly granted host operation without an implicit state
     await expect(authorizeApiMessage({ ...base, permissions: [] }, message(action))).rejects.toThrow(/does not permit/);
   }
 });
+
+it('scopes browser and native terminal access to the granted projects and filters unrelated shells', async () => {
+  const { record } = await createDashboardApiToken(context, { name: 'Tools', projectPath: root, permissions: ['workspaceBrowser', 'workspaceTerminal', 'listWorkspaceTerminals', 'createWorkspaceTerminal'] });
+  for (const action of ['workspaceBrowser', 'workspaceTerminal', 'listWorkspaceTerminals', 'createWorkspaceTerminal'] as const) {
+    await expect(authorizeApiMessage(record, message(action, { projectPath: root }))).resolves.toMatchObject({ payload: { projectPath: root } });
+    await expect(authorizeApiMessage(record, message(action, { projectPath: process.cwd() }))).rejects.toThrow('another project');
+  }
+  const messages = scopeApiResults(record, [{ type: 'dashboard:action-result', requestId: 'tools', action: 'listWorkspaceTerminals', status: 'completed', payload: { workspaceTerminals: [ { id: 'allowed', name: 'Allowed', cwd: root, isActive: true, state: 'idle' }, { id: 'secret', name: 'Other project', cwd: process.cwd(), isActive: false, state: 'idle' } ] } }]);
+  expect(messages[0]).toMatchObject({ payload: { workspaceTerminals: [{ id: 'allowed' }] } });
+});

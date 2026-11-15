@@ -125,6 +125,8 @@ export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewMode
     }),
     credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
     subscriptionExpiresAt: account.subscriptionExpiresAt,
+    addedAt: account.addedAt,
+    capacityTag: account.tags?.some(tag => tag.toLowerCase() === 'capacity'),
     lastQuotaAt: account.lastQuotaAt,
     sessionStartedAt: account.sessionStartedAt,
     lastSelectedAt: account.lastSelectedAt,

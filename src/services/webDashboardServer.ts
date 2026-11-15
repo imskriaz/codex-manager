@@ -1,5 +1,8 @@
+import { getSystemStatus } from './systemStatus';
+import { normalizeSystemStatus } from '../domain/systemStatus';
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
 import { AiProxy, isAiProxyPath } from './aiProxy';
+import { disposeWorkspaceBrowsers } from './workspaceBrowser';
 import { isCodexSessionAccess } from '../domain/codexSessionAccess';
 import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import { notificationTargetUrl } from '../domain/notificationTarget';
@@ -167,6 +170,8 @@ export type WebDashboardOpenResult = "opened" | "cancelled" | "unavailable";
 type LoginAttempt = { count: number; resetAt: number };
 type PeerSessionMessage = {
   type: "peer:sessions";
+  systemStatus?: import("../domain/systemStatus").SystemStatus;
+  systemStatusSignature?: string;
   deviceId: string;
   deviceName: string;
   sessions: import("../domain/dashboard/types").DashboardCliSessionSummary[];
@@ -300,6 +305,7 @@ function copyQuotaPresentation(
     subscriptionTitle: source.subscriptionTitle,
     subscriptionColor: source.subscriptionColor,
     subscriptionExpiresAt: source.subscriptionExpiresAt,
+    autoSwitchedAt: source.autoSwitchedAt,
     planTypeLabel: source.planTypeLabel,
     creditsText: source.creditsText,
     creditsBalance: source.creditsBalance,
@@ -400,6 +406,7 @@ export function getWebDashboardAssetVersion(extensionPath: string, version: stri
 export class WebDashboardServer implements vscode.Disposable {
   private readonly dashboardPeerListeners = new Set<() => void>();
   private dashboardPeerSignature = "";
+  private systemStatusSignature = "";
   private readonly peerNotifications = new Map<string, PeerNotification>();
   private readonly notificationReplaySockets = new WeakSet<object>();
   private readonly peerNotificationSends = new Set<Promise<void>>();
@@ -737,6 +744,7 @@ export class WebDashboardServer implements vscode.Disposable {
   prepareForShutdown(): void { this.shuttingDown = true; this.aiProxy?.stop(); for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer); this.sessionFailurePushTimers.clear(); }
 
   async stop(): Promise<void> {
+    await disposeWorkspaceBrowsers().catch(error => console.warn('[codexManager] browser shutdown failed', error));
     for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer);
     this.sessionFailurePushTimers.clear();
     this.aiProxy?.stop(); this.aiProxy = undefined;
@@ -1485,6 +1493,12 @@ export class WebDashboardServer implements vscode.Disposable {
     this.webSocketHeartbeatTimer = setInterval(() => {
       this.projectShareEvents.heartbeat();
       const now = Date.now();
+      const systemSignature = JSON.stringify(getSystemStatus()) ?? '';
+      if (systemSignature !== this.systemStatusSignature) {
+        this.systemStatusSignature = systemSignature;
+        this.notifyDashboardPeers();
+        this.publishRealtimeState();
+      }
       if (!this.server && !this.peerStopped && now >= this.serverRetryAt) {
         void this.start().catch(error => console.warn('[codexManager] dashboard listener recovery failed', error));
       }
@@ -1646,7 +1660,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -2487,14 +2501,16 @@ export class WebDashboardServer implements vscode.Disposable {
         name: os.hostname(),
         sessionCount: localSessionCount,
         connected: true,
-        local: true
+        local: true,
+        systemStatus: getSystemStatus()
       },
       ...[...this.peerSessions.values()].map((peer) => ({
         id: peer.deviceId,
         name: peer.deviceName,
         sessionCount: filterCliSessionsBySection(peer.sessions, "active").length,
         connected: this.peerSockets.get(peer.deviceId)?.readyState === WebSocket.OPEN || this.peerSocket?.readyState === UndiciWebSocket.OPEN,
-        local: false
+        local: false,
+        systemStatus: peer.systemStatus
       }))
     ];
   }
@@ -2632,6 +2648,8 @@ export class WebDashboardServer implements vscode.Disposable {
       type: "peer:sessions",
       deviceId: message.deviceId.slice(0, 256),
       deviceName: message.deviceName.slice(0, 120),
+      systemStatus: message.systemStatus && typeof message.systemStatusSignature === "string" && await this.encryptedSync?.verifyRealtimePeerPayload(JSON.stringify({ deviceId: message.deviceId, sentAt: message.sentAt, systemStatus: message.systemStatus }), message.systemStatusSignature) ? normalizeSystemStatus(message.systemStatus) : undefined,
+      systemStatusSignature: message.systemStatusSignature,
       sessions: message.sessions
         .slice(0, 1000)
         .filter(
@@ -3021,6 +3039,7 @@ export class WebDashboardServer implements vscode.Disposable {
       type: "peer:sessions",
       deviceId: this.deviceId,
       deviceName: os.hostname(),
+      systemStatus: getSystemStatus(),
       sessions: state.sessions.filter(session => !session.archived && (parents.has(session.id) || isCodexSessionRunning(session)))
         .sort((a, b) => Number(isCodexSessionRunning(b)) - Number(isCodexSessionRunning(a))),
       accounts: state.accounts,
@@ -3030,6 +3049,7 @@ export class WebDashboardServer implements vscode.Disposable {
     };
     return {
       ...unsigned,
+      systemStatusSignature: unsigned.systemStatus ? await this.encryptedSync?.signRealtimePeerPayload(JSON.stringify({ deviceId: unsigned.deviceId, sentAt: unsigned.sentAt, systemStatus: unsigned.systemStatus })) : undefined,
       signature: await this.encryptedSync?.signRealtimePeerPayload(peerSessionSignaturePayload(unsigned))
     };
   }

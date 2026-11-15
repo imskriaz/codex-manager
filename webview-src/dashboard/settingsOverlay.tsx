@@ -213,6 +213,7 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("dashboardTheme", value);
                 }}
               />
+              <SettingsToggleBlock title="System Info" sub="Show battery, network, CPU, RAM, disk space, and uptime in Account Center and the system picker when available." enabled={props.settings.systemInfoEnabled !== false} onToggle={enabled => patchAndSend("systemInfoEnabled", enabled)} />
               <SettingsLanguageBlock
                 copy={props.copy}
                 settings={props.settings}

@@ -1,4 +1,8 @@
-import type { DashboardAccountViewModel } from '../../src/domain/dashboard/types';
+import type { DashboardAccountViewModel, DashboardSettings } from '../../src/domain/dashboard/types';
+
+export function isSessionQuotaWarning(account: DashboardAccountViewModel | undefined, settings: Pick<DashboardSettings, 'quotaWarningEnabled' | 'quotaWarningThreshold' | 'quotaWarningWeeklyThreshold'> | undefined): boolean {
+  return !!settings?.quotaWarningEnabled && !account?.hasQuotaError && (account?.metrics ?? []).some(metric => metric.visible && ['hourly', 'weekly'].includes(metric.key) && typeof metric.percentage === 'number' && Number.isFinite(metric.percentage) && metric.percentage >= 0 && metric.percentage <= (metric.key === 'hourly' ? settings.quotaWarningThreshold : settings.quotaWarningWeeklyThreshold));
+}
 
 export function getAccountQuotaMetrics(account?: Pick<DashboardAccountViewModel, 'metrics'>) {
   return (account?.metrics ?? [])

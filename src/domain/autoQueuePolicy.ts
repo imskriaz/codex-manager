@@ -109,7 +109,7 @@ export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: Auto
   if (leftRank !== rightRank) return leftRank - rightRank;
   const leftStar = left.queuePriority === true && (leftRank === 0 || leftRank === 2);
   const rightStar = right.queuePriority === true && (rightRank === 0 || rightRank === 2);
-  if (left.capacityTag !== right.capacityTag) return left.capacityTag ? 1 : -1;
+  if (Boolean(left.capacityTag) !== Boolean(right.capacityTag)) return left.capacityTag ? 1 : -1;
   if (leftStar !== rightStar) return leftStar ? -1 : 1;
   if (leftRank === 0) {
     const urgency = compareAutoQueueUrgency(left, right, policy.nowMs / 1_000);
@@ -121,6 +121,10 @@ export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: Auto
   const leftExpiry = resetUrgency(left, leftCount);
   const rightExpiry = resetUrgency(right, rightCount);
   if (leftExpiry !== rightExpiry) return leftExpiry < rightExpiry ? -1 : 1;
+  // Added dates are stable; invalid/imported future dates must not gain priority.
+  const addedAt = (value: AutoQueueCandidate) => typeof value.addedAt === 'number' && Number.isFinite(value.addedAt) && value.addedAt > 0 && value.addedAt <= policy.nowMs ? value.addedAt : Number.POSITIVE_INFINITY;
+  const leftAdded = addedAt(left), rightAdded = addedAt(right);
+  if (leftRank === 0 && leftAdded !== rightAdded) return leftAdded < rightAdded ? -1 : 1;
   // Whole-point buckets prevent millisecond refresh jitter from defeating
   // fairness between accounts with the same usable capacity.
   const efficiency = (value: AutoQueueCandidate, count: number) => Math.round(calculateAutoQueueEfficiency(value, policy).score + Math.min(count, 100) * 2);

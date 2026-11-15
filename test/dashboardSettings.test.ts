@@ -3,6 +3,13 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it('persists System Info as a boolean setting and rejects invalid values', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    expect(await handleDashboardSettingUpdate('systemInfoEnabled', false)).toBe(true);
+    expect(update).toHaveBeenLastCalledWith('systemInfoEnabled', false, vscode.ConfigurationTarget.Global);
+    expect(await handleDashboardSettingUpdate('systemInfoEnabled', 'false')).toBe(false);
+  });
   it('persists the standalone retry delay globally and validates its bounds', async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
