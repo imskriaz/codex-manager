@@ -637,7 +637,7 @@ export function resumePersistedCodexSessions(
       // After an extension-host reload the short in-memory lease is empty even
       // when Codex kept the turn alive, which otherwise makes every recovery
       // wait through the full editor-readiness timeout before discovering it.
-      const nativeRunning = (await readNativeCodexSessionRunning(home, sessionId, signal) ?? getNativeCodexSessionRunning(home, sessionId)) === true;
+      const nativeRunning = (await readNativeCodexSessionRunning(home, sessionId, signal, true) ?? getNativeCodexSessionRunning(home, sessionId)) === true;
       // A native owner can survive an extension-host restart while its VS Code
       // custom-editor tab is lost. Keep the fast path only when the tab still
       // exists; otherwise open the official editor so the user can see it.

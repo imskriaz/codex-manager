@@ -247,6 +247,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('.cli-workspace .cli-session-row-select { width: auto; min-width: 0; }');
     expect(css).toContain('.cli-workspace .cli-session-row-status { position: relative; z-index: 1;');
     expect(source).toContain("status === \"running\" || session.locked === true || Boolean(session.statusError)");
+    expect(readFileSync("src/services/codexSessionAutoResume.ts", "utf8")).toContain("readNativeCodexSessionRunning(home, sessionId, signal, true)");
   });
 
   it("offers one copy target with the complete text only after an assistant turn ends", () => {

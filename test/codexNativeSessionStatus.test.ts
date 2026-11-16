@@ -289,6 +289,11 @@ it.each(["win32", "darwin", "linux"])("reads active and idle native sessions ove
   expect(socket.sent.some(value => value.method === "thread-stream-following-changed" && value.params.following)).toBe(true);
   expect(socket.sent.some(value => value.method?.includes("start-turn"))).toBe(false);
 });
+it("force refreshes a leased native status", async () => {
+  const initial = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active", 1)); expect(await initial).toBe(true);
+  const refresh = readNativeCodexSessionRunning(home, id, undefined, true); await vi.advanceTimersByTimeAsync(0); message(snapshot("idle", 2));
+  expect(await refresh).toBe(false);
+});
 it("decodes split headers and UTF-8 frames, and coalesces reads", async () => {
   const first = readNativeCodexSessionRunning(home, id), second = readNativeCodexSessionRunning(home, id); await initialize();
   const data = frame(snapshot("idle")); for (let offset = 0; offset < data.length; offset += 3) socket.emit("data", data.subarray(offset, offset + 3));

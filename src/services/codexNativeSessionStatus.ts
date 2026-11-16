@@ -474,7 +474,7 @@ function applyPromptPatch(entry: Observation, patch: { path?: unknown; op?: unkn
 }
 
 /** Read native runtime state across windows; retained writer handles are not running turns. */
-export async function readNativeCodexSessionRunning(home: string, id: string, signal?: AbortSignal): Promise<boolean | undefined> {
+export async function readNativeCodexSessionRunning(home: string, id: string, signal?: AbortSignal, forceRefresh = false): Promise<boolean | undefined> {
   signal?.throwIfAborted();
   const revision = connectionRevision;
   const key = `${path.resolve(home)}:${id}`;
@@ -504,7 +504,7 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
     if (!entry.waiters.size && entry.running === undefined) { follow(entry, false); observations.delete(key); }
     return undefined;
   }
-  if (entry.running !== undefined && entry.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS) return entry.running;
+  if (!forceRefresh && entry.running !== undefined && entry.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS) return entry.running;
   if (entry.running !== undefined) {
     // Refresh missed completion events without trusting a retained writer handle.
     entry.needsTurnSnapshot = true; settle(entry, undefined); follow(entry, true);

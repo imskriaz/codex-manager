@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.12
+
+- Verify native Codex status freshly before reporting running sessions or resuming work.
+
 ## 2.0.6-pre.11
 
 - Keep running session spinners in the right side status column.

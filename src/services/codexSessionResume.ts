@@ -3300,7 +3300,7 @@ async function inspectCliSessionRunning(
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
   if (turnState === "terminal" || turnState === "stopped" || turnState === "failed" || turnState === "quota-paused") return false;
-  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal);
+  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
   signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;
   if (liveRunning) return true;

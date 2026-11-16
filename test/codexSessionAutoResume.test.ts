@@ -161,7 +161,7 @@ it("refreshes native running state before waiting for editor readiness", async (
   const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("running");
   try {
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ attempted: 1, opened: 1, failed: [] });
-    expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(expect.any(String), id, expect.any(AbortSignal));
+    expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(expect.any(String), id, expect.any(AbortSignal), true);
     expect(open).not.toHaveBeenCalled();
     expect(resume).not.toHaveBeenCalled();
     expect(observe).toHaveBeenCalledWith(expect.objectContaining({ id, status: "running" }));
