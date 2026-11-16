@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.16
+
+- Auto-steer workspace prompts when Codex reports an active writer despite stale idle UI state.
+
 ## 2.0.6-pre.15
 
 - Allow workspace sends when native status is unknown while preserving blocking for other actions.

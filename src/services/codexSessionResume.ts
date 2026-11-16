@@ -1249,7 +1249,17 @@ async function sendAppServerSessionMessage(options: {
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   await waitForCancelledTurnRelease(resolveCodexHome(), options.sessionId);
-  if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  const activeHome = resolveCodexHome();
+  if (await isCliSessionRunning(activeHome, options.sessionId)) {
+    const nativeRunning = await readNativeCodexSessionRunning(activeHome, options.sessionId, options.signal, true).catch(() => undefined);
+    const activeTurnId = activeAppServerTurns.get(options.sessionId)?.turnId ?? getNativeCodexSessionTurnId(activeHome, options.sessionId);
+    if (activeTurnId && (nativeRunning === true || activeAppServerTurns.has(options.sessionId))) {
+      await steerCodexCliSessionTurnOnce({ sessionId: options.sessionId, text: options.text, expectedTurnId: activeTurnId, projectPath: cwd }, onAttempt ?? (() => undefined));
+      options.onStarted?.();
+      return;
+    }
+    throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  }
   const savedAccess = standalone ? readSavedCodexSessionAccess(resolveCodexHome(), options.sessionId)?.access : undefined;
   const standaloneApproval = savedAccess?.mode === 'danger-full-access' ? savedAccess.approvalPolicy ?? 'never' : 'never';
   const params = {

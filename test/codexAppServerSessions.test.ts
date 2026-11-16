@@ -703,6 +703,18 @@ describe("native App Server new sessions", () => {
       expect(completed).toHaveBeenCalledOnce();
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
+  it("steers when a stale idle send encounters a native active writer", async () => {
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    vi.mocked(getNativeCodexSessionTurnId).mockReturnValue("native-active-turn");
+    vi.mocked(steerNativeCodexSessionTurn).mockResolvedValue(true);
+    const accepted = vi.fn();
+    await sendCodexCliSessionMessage({ sessionId: id, text: "Follow up", onStarted: accepted });
+    expect(steerNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, "native-active-turn", expect.any(Array), root);
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
   it.each(["active", "usage_limited", "paused"])("continues a native-owned %s goal once and reactivates interrupted paused work", async status => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
