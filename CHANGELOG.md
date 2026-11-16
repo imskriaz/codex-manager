@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.17
+
+- Read native Codex protocol 13 status and canonical turn IDs for VS Code sends, steering, and reload recovery.
+
 ## 2.0.6-pre.16
 
 - Auto-steer workspace prompts when Codex reports an active writer despite stale idle UI state.

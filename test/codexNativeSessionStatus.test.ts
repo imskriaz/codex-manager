@@ -289,6 +289,22 @@ it.each(["win32", "darwin", "linux"])("reads active and idle native sessions ove
   expect(socket.sent.some(value => value.method === "thread-stream-following-changed" && value.params.following)).toBe(true);
   expect(socket.sent.some(value => value.method?.includes("start-turn"))).toBe(false);
 });
+it("reads version 13 canonical state and subsequent idle patches from installed Codex", async () => {
+  const pending = readNativeCodexSessionRunning(home, id); await initialize();
+  const value = snapshot("active"); value.version = 13;
+  Object.assign(value.params.change.conversationState, { turns: [], turnHistory: { kind: "canonical", history: {
+    entitiesByKey: { "tail:local": { turnId: "native-turn", status: "inProgress" } },
+    islands: [{ newerBoundary: { status: "exhausted" }, entries: [{ value: "tail:local" }] }]
+  } } });
+  message(value); expect(await pending).toBe(true);
+  expect(getNativeCodexSessionTurnId(home, id)).toBe("native-turn");
+  message({ type: "broadcast", version: 13, sourceClientId: "owner", method: "thread-stream-state-changed", params: {
+    hostId: "local", conversationId: id, change: { type: "patches", baseRevision: 1, revision: 2,
+      patches: [{ op: "replace", path: ["threadRuntimeStatus"], value: { type: "idle" } }] }
+  } });
+  expect(getNativeCodexSessionRunning(home, id)).toBe(false);
+  expect(getNativeCodexSessionTurnId(home, id)).toBeUndefined();
+});
 it("force refreshes a leased native status", async () => {
   const initial = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active", 1)); expect(await initial).toBe(true);
   const refresh = readNativeCodexSessionRunning(home, id, undefined, true); await vi.advanceTimersByTimeAsync(0); message(snapshot("idle", 2));

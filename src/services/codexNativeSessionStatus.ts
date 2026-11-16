@@ -111,7 +111,7 @@ function receive(message: NativeMessage): void {
     }
     return;
   }
-  if (message.method !== "thread-stream-state-changed" || message.version !== 11 || !message.params || message.params.hostId !== "local") return;
+  if (message.method !== "thread-stream-state-changed" || (message.version !== 11 && message.version !== 13) || !message.params || message.params.hostId !== "local") return;
   const { conversationId, change } = message.params;
   if (!change || typeof change.revision !== "number" || !Number.isSafeInteger(change.revision) || change.revision < 0 || typeof message.sourceClientId !== "string") return;
   for (const entry of observations.values()) {
