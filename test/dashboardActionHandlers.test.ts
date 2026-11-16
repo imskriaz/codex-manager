@@ -813,6 +813,20 @@ describe("executeDashboardActionMessage", () => {
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
   });
 
+  it("routes a send from a truly running session to steer", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce({ id: sessionId, title: "Running", status: "running", locked: true, runningBy: "another Codex process", steerTurnId: "turn-1", archived: false });
+    const result = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "route-steer", payload: { sessionId, text: "Follow up" }
+    });
+    expect(result.status).toBe("completed");
+    expect(steerCodexCliSessionTurnMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId, expectedTurnId: "turn-1", text: "Follow up" }));
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a reply routed to a different project and leaves the session untouched", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
       get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)

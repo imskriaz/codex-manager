@@ -2040,6 +2040,11 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   const live = getCodexSessionLiveState(payload.sessionId);
   const settling = live?.status === "cancelled" || currentSession.runningBy === "Codex Manager" && live &&
     ["completed", "failed"].includes(live.status) && (!currentSession.steerTurnId || currentSession.steerTurnId === live.turnId);
+  if (currentSession.status === "running" && !settling) {
+    if (!currentSession.steerTurnId)
+      throw new Error(`This session has an active writer${currentSession.runningBy ? ` in ${currentSession.runningBy}` : ""}. The active turn cannot accept a follow-up yet.`);
+    return handleSteerCodexCliSessionTurn({ ...payload, expectedTurnId: currentSession.steerTurnId });
+  }
   if ((currentSession.status === "running" || currentSession.locked) && !settling) {
     throw new Error(`This session has an active writer${currentSession.runningBy ? ` in ${currentSession.runningBy}` : ""}. Wait for the current turn to finish before sending.`);
   }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.14
+
+- Route workspace sends to native steering for active turns and allow fresh idle sends through stale cache state.
+
 ## 2.0.6-pre.13
 
 - Refresh native session status before sending workspace prompts.

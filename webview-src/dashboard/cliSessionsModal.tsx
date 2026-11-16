@@ -1099,10 +1099,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     props.onBackToList();
   };
 
-  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending && !canSteer ? 'Waiting for the current action to finish.' : currentTurnRunning && !(followUpMode === 'steer' && canSteer) ? 'Waiting for the current turn to finish.' : undefined;
+  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending && !canSteer ? 'Waiting for the current action to finish.' : currentTurnRunning && props.selectedSession?.status === 'unknown' ? 'Waiting for a verified session status.' : undefined;
   const messageQueue = useCliMessageQueue({ webview: !props.browser, connected: props.connected !== false,
     scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
-    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && (!props.sending || canSteer) && !access.pending && !resume.pending && (!currentTurnRunning || followUpMode === 'steer' && canSteer)),
+    canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && (!props.sending || canSteer) && !access.pending && !resume.pending),
     canSteer: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && (!props.sending || canSteer) && !access.pending && !resume.pending && (!currentTurnRunning || canSteer)),
     dispatchReason: queueDispatchReason,
     turnId: canSteer ? steeringTurnId : undefined,
