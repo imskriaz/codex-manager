@@ -62,7 +62,7 @@ describe("overview actions", () => {
     const workspace = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(workspace).toContain("activeNewRequestRef.current === result.requestId");
     expect(workspace).toContain("(JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local')");
-    expect(main).toContain("setCliSessionMessages(initialMessages ?? [])");
+    expect(main).toContain("setCliSessionMessages(initialMessages ?? peekCliSessionMessagesCache(session.id, session.deviceId) ?? [])");
     expect(main).toContain("requestCliSessionMessages(session.id, session.deviceId, false, false)");
     expect(main).toContain('codexModelLabel(session.model) || "Model unavailable"');
     expect(main).toContain(': "Session dashboard"');

@@ -598,6 +598,16 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-diff-cell.is-removed");
   });
 
+  it("gives binary files a useful download state instead of a tiny empty card", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(source).toContain('class="cli-binary-file-state"');
+    expect(source).toContain("This file is ready to download from the selected system.");
+    expect(source).toContain("Downloads save a local copy and do not modify the project.");
+    expect(css).toContain(".cli-binary-file-state");
+    expect(css).toContain(".cli-binary-file-actions > button");
+  });
+
   it("connects Environment and terminal controls to real host actions", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
@@ -1049,7 +1059,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("(JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local')");
     expect(source).toContain("activeNewRequestRef.current === result.requestId");
-    expect(main).toContain("setCliSessionMessages(initialMessages ?? [])");
+    expect(main).toContain("setCliSessionMessages(initialMessages ?? peekCliSessionMessagesCache(session.id, session.deviceId) ?? [])");
   });
 
 });

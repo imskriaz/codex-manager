@@ -308,8 +308,26 @@ export async function readCliSessionMessagesCache(
 ): Promise<DashboardCliSessionMessage[] | undefined> {
   const systemId = cacheSystemId(deviceId);
   if (!systemId) return undefined;
-  const cached = await readFreshRecord<unknown>(`messages:${JSON.stringify([systemId, sessionId])}`, MAX_CACHE_AGE_MS);
-  return cached && Array.isArray(cached.value) ? (cached.value as DashboardCliSessionMessage[]) : undefined;
+  const key = `messages:${JSON.stringify([systemId, sessionId])}`;
+  const memory = peekBrowserCache<DashboardCliSessionMessage[]>(key);
+  if (memory) return memory;
+  let pending = browserReadLoads.get(key);
+  if (!pending) {
+    pending = readFreshRecord<unknown>(key, MAX_CACHE_AGE_MS).then(cached => {
+      if (browserReadLoads.get(key) !== pending) return peekBrowserCache<DashboardCliSessionMessage[]>(key);
+      if (!cached || !Array.isArray(cached.value)) return undefined;
+      const messages = cached.value as DashboardCliSessionMessage[];
+      rememberBrowserRead(key, messages, Date.now() - cached.ageMs);
+      return messages;
+    }).finally(() => { if (browserReadLoads.get(key) === pending) browserReadLoads.delete(key); });
+    browserReadLoads.set(key, pending);
+  }
+  return structuredClone(await pending) as DashboardCliSessionMessage[] | undefined;
+}
+
+export function peekCliSessionMessagesCache(sessionId: string, deviceId?: string): DashboardCliSessionMessage[] | undefined {
+  const systemId = cacheSystemId(deviceId);
+  return systemId ? peekBrowserCache<DashboardCliSessionMessage[]>(`messages:${JSON.stringify([systemId, sessionId])}`) : undefined;
 }
 
 export async function writeCliSessionListCache(value: CliSessionListCache, deviceId?: string): Promise<void> {
@@ -336,7 +354,10 @@ export async function writeCliSessionMessagesCache(
 ): Promise<void> {
   const systemId = cacheSystemId(deviceId);
   if (!systemId) return;
-  await writeRecord({ key: `messages:${JSON.stringify([systemId, sessionId])}`, updatedAt: Date.now(), value: messages });
+  const key = `messages:${JSON.stringify([systemId, sessionId])}`;
+  browserReadLoads.delete(key);
+  rememberBrowserRead(key, messages);
+  await writeRecord({ key, updatedAt: Date.now(), value: messages });
 }
 
 export async function readDashboardStateCache(): Promise<DashboardState | undefined> {
@@ -376,6 +397,7 @@ export async function invalidateCliSessionCache(sessionId?: string, deviceId?: s
   const systemId = cacheSystemId(deviceId);
   if (!systemId) return;
   const listKey = `list:${systemId}`, messagesKey = `messages:${JSON.stringify([systemId, sessionId])}`;
+  if (sessionId) { browserReadMemory.delete(messagesKey); browserReadLoads.delete(messagesKey); }
   listWriteVersions.set(listKey, (listWriteVersions.get(listKey) ?? 0) + 1);
   recentSessionLists.delete(systemId);
   const transaction = await openCacheTransaction("readwrite");
@@ -476,13 +498,18 @@ function rememberBrowserRead(key: string, value: unknown, persistedAt = 0): void
     total -= browserReadMemory.get(oldest)!.bytes; browserReadMemory.delete(oldest);
   }
 }
-export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): Promise<T | undefined> {
+export function peekBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): T | undefined {
   const memory = browserReadMemory.get(key);
   if (memory && Date.now() >= memory.at && Date.now() - memory.at <= maxAgeMs) {
     browserReadMemory.delete(key); browserReadMemory.set(key, memory);
     return structuredClone(memory.value) as T;
   }
   browserReadMemory.delete(key);
+  return undefined;
+}
+export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): Promise<T | undefined> {
+  const memory = peekBrowserCache<T>(key, maxAgeMs);
+  if (memory !== undefined) return memory;
   let pending = browserReadLoads.get(key);
   if (!pending) {
     pending = readFreshRecord<T>(`browser:${key}`, maxAgeMs).then(record => {

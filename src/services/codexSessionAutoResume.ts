@@ -24,6 +24,8 @@ const AUTO_RESUME_HOME_KEY = "codexManager.autoResumeCodexHome";
 export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
 const PER_SESSION_OPEN_TIMEOUT_MS = 135_000;
+// Keep VS Code recovery responsive while still waiting for the official tab to become safe to resume.
+const AUTO_RESUME_VSCODE_READINESS_TIMEOUT_MS = 40_000;
 const STORAGE_TIMEOUT_MS = 5_000;
 const EMPTY_STARTUP_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
@@ -641,7 +643,7 @@ export function resumePersistedCodexSessions(
       }
       phase = "readiness";
       recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", details);
-      await openCodexSessionInVsCode(sessionId, signal, !readOpenCodexSessionIds(false).includes(sessionId), 120_000, true);
+      await openCodexSessionInVsCode(sessionId, signal, !readOpenCodexSessionIds(false).includes(sessionId), AUTO_RESUME_VSCODE_READINESS_TIMEOUT_MS, true);
       if (nativeRunning) {
         observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
         recordPersistentEvent("info", "auto-resume", "Native session tab restored without replaying its turn", details);

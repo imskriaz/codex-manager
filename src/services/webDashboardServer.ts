@@ -1,4 +1,5 @@
 import { getSystemStatus } from './systemStatus';
+import { nextDashboardSnapshot, type DashboardSnapshotBaseline } from '../domain/confirmedSnapshot';
 import { normalizeSystemStatus } from '../domain/systemStatus';
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
 import { AiProxy, isAiProxyPath } from './aiProxy';
@@ -448,6 +449,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private serverRetryAt = 0;
   private legacyPasswordCleanupStarted = false;
   private readonly webSocketClients = new Set<WebSocket>();
+  private readonly incrementalClients = new WeakSet<WebSocket>();
+  private readonly snapshotBaselines = new WeakMap<WebSocket, DashboardSnapshotBaseline>();
   private readonly webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_DASHBOARD_MESSAGE_BYTES });
   private realtimePublishInFlight = false;
   private realtimePublishQueued = false;
@@ -624,6 +627,7 @@ export class WebDashboardServer implements vscode.Disposable {
         });
       } else {
         this.webSocketClients.add(socket);
+        if (query.get('updates') === '1') this.incrementalClients.add(socket);
         const removeClient = (): void => {
           const expiryTimer = this.browserSocketExpiryTimers.get(socket);
           if (expiryTimer) {
@@ -2083,7 +2087,7 @@ export class WebDashboardServer implements vscode.Disposable {
         const state = await waitWithin(this.buildState(), 5_000, 'Dashboard state is still loading. Use Refresh dashboard to retry.');
         if (socket.readyState !== WebSocket.OPEN) return;
         this.lastRealtimeSignature = buildDashboardStateSignature(state);
-        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:snapshot", state }));
+        this.sendClientSnapshot(socket, state, true);
       }
     } catch (error) {
       console.warn("[codexManager] WebSocket snapshot failed", error);
@@ -2228,6 +2232,10 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === 'object' && (parsed as { type?: string }).type === 'dashboard:sync' && this.incrementalClients?.has(socket)) {
+        await this.sendRealtimeSnapshot(socket);
+        return;
+      }
       if (!isDashboardClientMessage(parsed)) throw new Error("Invalid dashboard message.");
       message = parsed;
       if (message.type === "dashboard:workspace-presence") {
@@ -2236,7 +2244,8 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       const result = await this.processClientMessage(message);
       for (const hostMessage of result.messages) {
-        sendDashboardSocketMessage(socket, JSON.stringify(hostMessage));
+        if (hostMessage.type === 'dashboard:snapshot') this.sendClientSnapshot(socket, hostMessage.state);
+        else sendDashboardSocketMessage(socket, JSON.stringify(hostMessage));
       }
       const completedPasswordChangeRequestId =
         message.type === "dashboard:action" && message.action === "configureEncryptedSync"
@@ -2334,11 +2343,21 @@ export class WebDashboardServer implements vscode.Disposable {
     const signature = buildDashboardStateSignature(state);
     if (signature === this.lastRealtimeSignature) return;
     this.lastRealtimeSignature = signature;
-    const message = JSON.stringify({ type: "dashboard:snapshot", state });
     for (const socket of this.webSocketClients) {
       if (socket === requester) continue;
-      sendDashboardSocketMessage(socket, message);
+      this.sendClientSnapshot(socket, state);
     }
+  }
+
+  private sendClientSnapshot(socket: WebSocket, state: DashboardState, full = false): void {
+    if (!this.incrementalClients?.has(socket)) {
+      sendDashboardSocketMessage(socket, JSON.stringify({ type: 'dashboard:snapshot', state }));
+      return;
+    }
+    const update = nextDashboardSnapshot(full ? undefined : this.snapshotBaselines.get(socket), state);
+    if (!update) return;
+    sendDashboardSocketMessage(socket, JSON.stringify(update.message));
+    this.snapshotBaselines.set(socket, update.baseline);
   }
 
   private broadcastRealtimeNotice(

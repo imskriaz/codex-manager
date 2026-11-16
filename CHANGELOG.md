@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.6-pre.7
+
+- Reduce VS Code Auto Resume readiness waiting from two minutes to forty seconds while keeping the official-tab safety check.
+
+## 2.0.6-pre.6
+
+- Keep confirmed dashboard data visible during progressive updates and improve binary file downloads with a clear file summary and responsive download action.
+
 ## 2.0.6-pre.5
 
 - Open the workspace Account Center from the account footer even when no conversation is selected, including the dashboard and task board, and keep its mobile content within the panel.

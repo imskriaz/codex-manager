@@ -8120,6 +8120,36 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-context-empty svg {
   width: 19px;
 }
+.cli-binary-file-state {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  min-height: min(420px, 62vh);
+  padding: 32px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.cli-binary-file-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 45%, var(--border-default));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
+  color: var(--accent-blue);
+}
+.cli-binary-file-icon svg { width: 30px; height: 30px; }
+.cli-binary-file-copy { display: grid; gap: 6px; max-width: min(560px, 100%); }
+.cli-binary-file-copy strong { color: var(--text-primary); font-size: calc(16px * var(--dashboard-text-scale, 1)); overflow-wrap: anywhere; }
+.cli-binary-file-copy span { font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.cli-binary-file-copy small { color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.cli-binary-file-actions { display: grid; justify-items: center; gap: 8px; }
+.cli-binary-file-actions > button { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 8px 16px; border: 1px solid var(--accent-blue); border-radius: 8px; background: var(--accent-blue); color: var(--accent-contrast, #fff); font-weight: 600; }
+.cli-binary-file-actions > button:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.cli-binary-file-actions > span { color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+@media (max-width: 560px) { .cli-binary-file-state { min-height: min(360px, 56vh); padding: 24px 16px; } }
 
 /* Compact workspace chrome: keep the navigation dense and tool-oriented. */
 .cli-rail-brand { display: flex; align-items: center; gap: 6px; min-width: 0; }

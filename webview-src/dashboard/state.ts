@@ -1,4 +1,5 @@
 import type { DashboardActionName, DashboardSettings, DashboardState } from "../../src/domain/dashboard/types";
+import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
 
 export type PendingActionRequest = {
   requestId: string;
@@ -79,8 +80,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
 
       return {
         ...state,
-        snapshot: { ...action.snapshot, accounts: retainTags(action.snapshot.accounts, state.snapshot?.accounts),
-          peerAccounts: action.snapshot.peerAccounts ? Object.fromEntries(Object.entries(action.snapshot.peerAccounts).map(([id, accounts]) => [id, retainTags(accounts, state.snapshot?.peerAccounts?.[id])])) : action.snapshot.peerAccounts },
+        snapshot: retainConfirmedValue(state.snapshot, { ...action.snapshot, accounts: retainTags(action.snapshot.accounts, state.snapshot?.accounts),
+          peerAccounts: action.snapshot.peerAccounts ? Object.fromEntries(Object.entries(action.snapshot.peerAccounts).map(([id, accounts]) => [id, retainTags(accounts, state.snapshot?.peerAccounts?.[id])])) : action.snapshot.peerAccounts }),
         now: Date.now(),
         privacyMode: action.snapshot.settings.privacyMode === true,
         selectedAccountIds,

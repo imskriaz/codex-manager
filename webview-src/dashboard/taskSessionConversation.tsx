@@ -2,7 +2,7 @@ import { useTaskViewPosition } from './taskViewPosition';
 import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { isCodexSessionRunning } from '../../src/domain/codexSessionState';
 import { useSessionResume } from './sessionResume';
-import { isCliLiveStateCurrent, reconcileCliSessionStatus } from './cliSessionLiveState';
+import { isCliLiveStateCurrent, isCliTranscriptRunning, reconcileCliSessionStatus } from './cliSessionLiveState';
 import { cliSessionTargetKey } from './cliSessionRoute';
 import { useSessionAccess } from './sessionAccess';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -123,7 +123,7 @@ export function TaskSessionConversation(props: {
   const patch = (value: Partial<CliComposerDraft>) => { draftEdited.current = true; setDraft(previous => ({ ...previous, ...value })); };
   const transcriptPosition = useTaskViewPosition(`task-scroll:${scope}`);
   return <section class="task-session-conversation cli-workspace cli-message-surface" aria-label="Session conversation">
-    <div ref={transcriptPosition} class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={running} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
+    <div ref={transcriptPosition} class="task-session-transcript cli-session-messages"><SessionTranscript page="Task management" messages={messages} running={isCliTranscriptRunning(session, props.liveState)} onActionFeedback={report} onQuestionReply={!props.session.archived ? text => queue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!queue.ready} questionScope={scope} queuedAnswers={queue.items.map(queuedMessageView)} onDraftMessage={(text, quote) => patch({ text: quote ? '> ' + text.split('\n').join('\n> ') + '\n\n' : text })} onOpenReviews={props.onChanges} onOpenFile={props.onOpenFile} />
        {props.liveState?.plan ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
     </div>
     <div class="task-session-compose">

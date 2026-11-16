@@ -7,7 +7,7 @@ import type {
 } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
 
-import { cacheSystemId, readBrowserCache, writeBrowserCache } from './cliSessionCache';
+import { cacheSystemId, peekBrowserCache, readBrowserCache, writeBrowserCache } from './cliSessionCache';
 import { offlineReadCacheKey } from './offlinePolicy';
 
 /** Transient workspace commands are never queued or automatically replayed. Cached reads never authorize mutations. */
@@ -79,7 +79,11 @@ export function useWorkspaceRequest(
             reject(new Error("The selected workspace changed. Check the previous action’s outcome before retrying."));
           }
         });
-        if (cacheKey && onCached) void readBrowserCache<DashboardActionResultPayload>(cacheKey).then(saved => { if (saved && pending.current.has(id)) onCached(saved); });
+        if (cacheKey && onCached) {
+          const saved = peekBrowserCache<DashboardActionResultPayload>(cacheKey);
+          if (saved) onCached(saved);
+          else void readBrowserCache<DashboardActionResultPayload>(cacheKey).then(saved => { if (saved && pending.current.has(id)) onCached(saved); });
+        }
         try {
           postMessageToHost({
             type: "dashboard:action",

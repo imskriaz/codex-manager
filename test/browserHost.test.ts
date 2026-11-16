@@ -199,7 +199,7 @@ describe("browser dashboard bridge", () => {
       console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date: { now: () => now }, Map
     });
     const post = windowMock.acquireVsCodeApi!().postMessage;
-    expect(sockets[0]!.url).toBe("wss://dashboard.example.com/ws");
+    expect(sockets[0]!.url).toBe("wss://dashboard.example.com/ws?updates=1");
     sockets[0]!.open();
     await post({ type: "dashboard:action", requestId: "unconfirmed", action: "switch" });
     await post({ type: "dashboard:retry-connection" });
@@ -346,7 +346,7 @@ describe("browser dashboard bridge", () => {
       JSON
     });
 
-    expect(sockets[0]?.url).toBe("ws://127.0.0.1:39875/ws");
+    expect(sockets[0]?.url).toBe("ws://127.0.0.1:39875/ws?updates=1");
     sockets[0]!.readyState = TestWebSocket.OPEN;
     sockets[0]!.emit("open");
     expect(events).toContainEqual({ type: "dashboard:connection", transport: "websocket", connected: true });

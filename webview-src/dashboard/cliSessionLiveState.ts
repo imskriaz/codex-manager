@@ -5,6 +5,13 @@ import { cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
 import { isCliTurnActive } from "../../src/domain/codexSessionState";
 export { isCliTurnActive } from "../../src/domain/codexSessionState";
 
+/** An inconclusive ownership check blocks writes but does not reopen completed work. */
+export function isCliTranscriptRunning(session: DashboardCliSessionSummary | undefined, live?: DashboardCodexSessionLiveState, sending = false): boolean {
+  if (sending) return true;
+  if (isCliLiveStateCurrent(session, live)) return isCliTurnActive(live);
+  return session?.status === 'running';
+}
+
 export function hasCurrentCliLiveHistory(session: DashboardCliSessionSummary, live: DashboardCodexSessionLiveState | undefined, hasHistory: boolean, authoritative: boolean): boolean {
   return hasHistory && authoritative && isCliLiveStateCurrent(session, live) && isCliTurnActive(live) && !live?.truncated;
 }

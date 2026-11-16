@@ -1,4 +1,5 @@
 import { retainOfflineAccounts } from './offlinePolicy';
+import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
 import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { WorkspaceMenu } from './workspaceMenu';
 import { getAccountShortcut } from './accountShortcuts';
@@ -109,6 +110,7 @@ import {
   mergeCachedCliSessions,
   readCliSessionListCache,
   peekCliSessionListCache,
+  peekCliSessionMessagesCache,
   readCliSessionMessagesCache,
   readDashboardStateCache,
   readDashboardAccountsCache,
@@ -303,6 +305,7 @@ function App() {
   const steerRequests = useRef(new Set<string>());
   const sessionActionRequests = useRef(new Map<string, CliSessionTarget>());
   const messageViewRevision = useRef(0);
+  const confirmedHistoryVersions = useRef(new Map<string, string>());
   const liveSessionListReceived = useRef(false);
   const agentRequests = useRef(new Map<string, string>());
   const [cliSessionMessages, setCliSessionMessages] = useState<DashboardCliSessionMessage[]>([]);
@@ -725,6 +728,10 @@ function App() {
   const requestCliSessionMessages = useCallback(
     (sessionId: string, targetDeviceId?: string, force = false, automatic = true): void => {
       const target = { id: sessionId, deviceId: targetDeviceId };
+      const session = cliSessionsRef.current.find(row => sameCliSessionTarget(row, target));
+      if (!force && session && session.status !== 'running' &&
+        confirmedHistoryVersions.current.get(cliSessionTargetKey(target)) === JSON.stringify([session.updatedAt, session.projectPath]) &&
+        peekCliSessionMessagesCache(sessionId, targetDeviceId) !== undefined) return;
       if ([...messageRequests.current.values()].some((pending) => sameCliSessionTarget(pending, target))) return;
       const now = Date.now();
       const previous = lastCliMessageRequestRef.current;
@@ -1171,6 +1178,10 @@ function App() {
         if (!sameCliSessionTarget(requestedTarget, currentSessionTarget())) return;
         messageViewRevision.current++;
         if (message.status === "completed") {
+          if (!Array.isArray(message.payload?.cliSessionMessages)) {
+            setCliSessionMessagesError('History refresh was incomplete. Confirmed messages were kept; refresh to retry.');
+            return;
+          }
           if (message.payload?.cliSessionLive) {
             acceptLiveSnapshot(message.payload.cliSessionLive, true);
             if (!isCliTurnActive(message.payload.cliSessionLive)) {
@@ -1197,7 +1208,11 @@ function App() {
               }
             }
           }
-          setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
+          setCliSessionMessages(current => retainConfirmedValue(current, message.payload!.cliSessionMessages!));
+          if (requestedTarget && message.payload?.cliSession) {
+            confirmedHistoryVersions.current.set(cliSessionTargetKey(requestedTarget), JSON.stringify([message.payload.cliSession.updatedAt, message.payload.cliSession.projectPath]));
+            if (confirmedHistoryVersions.current.size > 64) confirmedHistoryVersions.current.delete(confirmedHistoryVersions.current.keys().next().value!);
+          }
           if (message.payload?.cliSession?.id)
             void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? [], requestedTarget?.deviceId);
           setSelectedCliSession(
@@ -1947,7 +1962,7 @@ function App() {
     navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     selectedCliSessionRef.current = session;
     setSelectedCliSession(reconcileCliSessionStatus(session, cliLiveStatesRef.current));
-    setCliSessionMessages(initialMessages ?? []);
+    setCliSessionMessages(initialMessages ?? peekCliSessionMessagesCache(session.id, session.deviceId) ?? []);
     setCliSessionMessagesError(undefined);
     const revision = ++messageViewRevision.current;
     void readCliSessionMessagesCache(session.id, session.deviceId).then((cached) => {

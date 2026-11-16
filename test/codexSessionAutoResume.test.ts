@@ -107,7 +107,7 @@ it.each([true, false])("opens the official tab regardless of the retired editor 
     const result = await resumePersistedCodexSessions(state.context);
     expect(result).toMatchObject({ attempted: 1, opened: 0, failed: [] });
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 40_000, true);
     expect(waitForNativeCodexSessionReady).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode", outcome: "idle" }));
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("vscode.openWith", expect.anything(), expect.anything(), expect.anything());
@@ -125,7 +125,7 @@ it("opens the official Codex editor before requesting continuation", async () =>
   try {
     await resumePersistedCodexSessions(state.context);
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 40_000, true);
     expect(open.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]!);
     expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode", outcome: "continued" }));
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
@@ -144,7 +144,7 @@ it("opens a missing VS Code tab for verified native work", async () => {
     // Enable only the Auto Resume prerequisites.
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback } as never);
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] });
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 40_000, true);
     expect(resume).not.toHaveBeenCalled();
     expect(observe).toHaveBeenCalledWith(expect.objectContaining({ id, status: "running" }));
     expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ it.each([true, false])('reuses an existing tab and opens only missing tabs durin
   const resume = vi.spyOn(await import('../src/services/codexSessionRecovery'), 'resumeCodexSessionWork').mockResolvedValue('continued');
   try {
     await resumePersistedCodexSessions(state.context);
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), !alreadyOpen, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), !alreadyOpen, 40_000, true);
     expect(resume).toHaveBeenCalledOnce();
   } finally { tabs.mockRestore(); open.mockRestore(); resume.mockRestore(); }
 });

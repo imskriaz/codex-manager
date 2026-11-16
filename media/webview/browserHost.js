@@ -10,6 +10,8 @@
   let snapshotInFlight;
   let retryInFlight;
   let latestSnapshot;
+  let confirmedSnapshot;
+  let catchingUp = false;
   const startupLive = new Map();
   let startupPrompts;
   let dashboardReady = false;
@@ -211,7 +213,7 @@
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     let socket;
     try {
-      socket = new window.WebSocket(`${protocol}//${window.location.host}/ws`);
+      socket = new window.WebSocket(`${protocol}//${window.location.host}/ws?updates=1`);
     } catch (error) {
       console.warn("[codex-manager] realtime connection could not start", error);
       scheduleReconnect();
@@ -242,8 +244,26 @@
     socket.addEventListener("message", (event) => {
       if (realtimeSocket !== socket) return;
       try {
-        const message = JSON.parse(event.data);
+        let message = JSON.parse(event.data);
         if (!message?.type) return;
+        if (message.type === 'dashboard:update') {
+          if (confirmedSnapshot && message.revision <= confirmedSnapshot.revision) return;
+          if (!confirmedSnapshot || message.baseRevision !== confirmedSnapshot.revision || message.revision !== message.baseRevision + 1) {
+            if (!catchingUp) {
+              catchingUp = true;
+              socket.send(JSON.stringify({ type: 'dashboard:sync' }));
+              dispatch({ type: 'dashboard:notice', level: 'warning', message: 'Catching up on live updates. Confirmed data stays visible.' });
+            }
+            return;
+          }
+          const state = { ...confirmedSnapshot.state, ...message.changes };
+          for (const key of message.removed || []) delete state[key];
+          confirmedSnapshot = { revision: message.revision, state };
+          message = { type: 'dashboard:snapshot', state };
+        } else if (message.type === 'dashboard:snapshot' && Number.isSafeInteger(message.revision)) {
+          confirmedSnapshot = { revision: message.revision, state: message.state };
+          catchingUp = false;
+        }
         if (firstLiveAt === undefined && message.type === 'dashboard:codex-session-live') { firstLiveAt = Date.now(); publishStatus("live"); }
         if (message.type === "dashboard:action-result") forgetSocketAction(message.requestId);
         if (message.type === "dashboard:snapshot") {
@@ -259,6 +279,8 @@
     socket.addEventListener("close", (event) => {
       if (realtimeSocket !== socket && connectingSocket !== socket) return;
       if (realtimeSocket === socket) realtimeSocket = undefined;
+      confirmedSnapshot = undefined;
+      catchingUp = false;
       if (connectingSocket === socket) { connectingSocket = undefined; clearHandshake(); }
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
       failUnconfirmedSocketActions();
