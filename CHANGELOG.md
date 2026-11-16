@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.6-pre.2
+
+- Route conversation links to the selected system: workspace links open in the right Browser panel, downloads return to the dashboard, and external links open in the remote system browser.
+
+## 2.0.6-pre.1
+
+- Match the Browser workspace chrome more closely: one address row, Chrome-order navigation, and a right-docked DevTools-style Inspector with Elements, Console, Sources, and Network tabs.
+
 ## 2.0.6
 
 - Refine the Browser workspace panel with shared themed icon controls and an anchored Browser actions flyout.

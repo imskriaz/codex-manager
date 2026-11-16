@@ -22,6 +22,7 @@ export const BROWSER_OPERATIONS = [
   "snapshot",
   "screenshot",
   "click",
+  "download",
   "fill",
   "type",
   "press",
@@ -76,6 +77,7 @@ export type WorkspaceBrowserState = {
   eventSequence?: number;
   feedback: BrowserFeedback[];
   warning?: string;
+  fileDownload?: { filename: string; mimeType: string; data: string };
 };
 
 /** Coordinates are viewport pixels; the image revision fences human and AI input. */

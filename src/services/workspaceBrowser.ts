@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
   browserUrl,
@@ -155,7 +156,7 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
       const instance = await engine();
       // Recheck after launch because other projects can start concurrently.
       if (sessions.size >= 4) throw new Error("Browser session capacity reached. Close another session.");
-      const context = await instance.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false });
+      const context = await instance.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
       if (sessions.size >= 4 || browser !== instance) {
         await context.close();
         throw new Error("Browser capacity or host changed. Refresh before retrying.");
@@ -215,6 +216,37 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
     item.revision = randomUUID();
     const value = await boundedDebug(page, await debuggerFor(item), r);
     return { ...(await state(project, r.pageId)), value };
+  }
+  if (r.operation === "download") {
+    const url = browserUrl(r.url);
+    const download = await waitWithin(
+      Promise.all([
+        page.waitForEvent("download", { timeout: 15_000 }),
+        page.evaluate((href) => {
+          const link = document.createElement("a");
+          link.href = href;
+          link.download = "";
+          link.hidden = true;
+          document.body.append(link);
+          link.click();
+          link.remove();
+        }, url)
+      ]).then(([item]) => item),
+      20_000,
+      "The remote download did not start. Check the link and retry."
+    );
+    const path = await waitWithin(download.path(), 5_000, "The remote download path was unavailable.");
+    if (!path) throw new Error("The remote download was not saved. Retry the link.");
+    const file = await readFile(path);
+    if (file.byteLength > 16 * 1024 * 1024) throw new Error("The remote download is larger than 16 MiB.");
+    return {
+      ...(await state(project, r.pageId)),
+      fileDownload: {
+        filename: download.suggestedFilename().replace(/[\\/:*?\"<>|\u0000-\u001f]/g, "_").slice(0, 180) || "download",
+        mimeType: "application/octet-stream",
+        data: file.toString("base64")
+      }
+    };
   }
   if (r.operation === "feedback") {
     const rows = feedbackFor(project),

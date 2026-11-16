@@ -603,9 +603,9 @@ function App() {
     if(mutation) apiRequests.current.mutation=id; else apiRequests.current.list=id;
   };
   useEffect(() => { if (apiTokenOpen && (!isBrowserDashboard || !connectionUnavailable)) sendApiRequest('listApiTokens'); }, [apiTokenOpen,realtimeConnected,connectionUnavailable]);
-  const openExternalLink = useCallback((url: string): void => {
-    if (!isBrowserDashboard) {
-      sendAction("openExternalUrl", undefined, { url });
+  const openExternalLink = useCallback((url: string, targetDeviceId?: string): void => {
+    if (!isBrowserDashboard || targetDeviceId && targetDeviceId !== "local") {
+      sendAction("openExternalUrl", undefined, { url, targetDeviceId });
       return;
     }
     const opened = window.open(url, "_blank", "noopener,noreferrer");
@@ -3220,6 +3220,7 @@ function App() {
               }}
               messagesError={cliSessionMessagesError}
               onActionFeedback={showNotice}
+              onOpenExternalLink={openExternalLink}
               environment={workspaceEnvironment}
               workspaceScopeKey={workspaceScopeRef.current}
               onWorkspaceContextChange={changeWorkspaceContext}

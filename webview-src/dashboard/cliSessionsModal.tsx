@@ -74,7 +74,7 @@ export function sessionQuotaWaitingMessage(session: DashboardCliSessionSummary |
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}`;
 type WorkspaceToolTab = "browser" | "env" | "git" | "terminal" | "files" | "reviews" | "agents";
 type WorkspaceFileDraft = { text: string; revision: string };
-type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
+type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; browserUrl?: string; browserDownloadUrl?: string; browserActionNonce?: number; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
 import { isCodexQuotaInterruption, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
@@ -227,6 +227,7 @@ export type CliSessionsPageProps = {
   error?: string;
   messagesError?: string;
   onActionFeedback: (notice: DashboardNotice) => void;
+  onOpenExternalLink?: (url: string, targetDeviceId?: string) => void;
   environment?: DashboardWorkspaceEnvironment;
   terminalResults: DashboardWorkspaceTerminalResult[];
   terminalLiveOutputs: DashboardWorkspaceTerminalOutput[];
@@ -1021,7 +1022,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       else props.onListFiles(toolProjectPath);
     }
   };
-  const openContextTab = (tab: WorkspaceToolTab, filePath?: string): void => {
+  const openContextTab = (tab: WorkspaceToolTab, filePath?: string, browserUrl?: string, browserDownloadUrl?: string): void => {
     if (tab === "reviews") setBranchReview(false);
     const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;
     const tabId: WorkspaceTab = resolvedFilePath ? `${tab === "agents" ? "agent" : tab === "files" ? "file" : "review"}:${resolvedFilePath}` : tab;
@@ -1029,9 +1030,18 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const withBase = current.includes(tab) || resolvedFilePath && tab !== 'agents' ? current : [...current, tab];
       return withBase.includes(tabId) ? withBase : [...withBase, tabId];
     });
+    if (tab === "browser" && (browserUrl || browserDownloadUrl)) setContextTabsByProject(current => ({
+      ...current,
+      [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), ...(browserUrl ? { browserUrl } : {}), ...(browserDownloadUrl ? { browserDownloadUrl } : {}), browserActionNonce: (current[contextProjectKey]?.browserActionNonce ?? 0) + 1 }
+    }));
     selectContextTab(tabId);
     setContextCollapsed(false);
     setContextAddOpen(false);
+  };
+  const sessionLinkActions = {
+    openInternal: (url: string) => openContextTab("browser", undefined, url),
+    download: (url: string) => openContextTab("browser", undefined, undefined, url),
+    external: (url: string) => props.onOpenExternalLink?.(url, props.selectedSession?.deviceId)
   };
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
@@ -1417,13 +1427,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!pendingNewChat && !props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  <SessionTranscript automaticRecovery={props.standalone && props.autoResumeEnabled && props.selectedSession?.autoResumeEnabled !== false} agentSessions={relatedAgents} onOpenAgent={id => {
+                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript automaticRecovery={props.standalone && props.autoResumeEnabled && props.selectedSession?.autoResumeEnabled !== false} agentSessions={relatedAgents} onOpenAgent={id => {
                     if (!id) { openContextTab('agents'); return; }
                     if (id === props.selectedSession?.id) { setContextCollapsed(true); return; }
                     const agent = relatedAgents.find(session => session.id === id);
                     if (!agent) { props.onActionFeedback({ level: 'warning', message: 'This agent is not in the saved session list. Refresh sessions and try again.' }); return; }
                     openContextTab('agents', id);
-                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
+                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
                    {renderPendingMessages()}
                   {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
                   {showWorking ? <WorkingMessage /> : null}
@@ -1520,6 +1530,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
           connected={props.connected !== false}
           projectPath={toolProjectPath}
+          browserUrl={contextProjectState.browserUrl}
+          browserDownloadUrl={contextProjectState.browserDownloadUrl}
+          browserActionNonce={contextProjectState.browserActionNonce}
           targetDeviceId={workspacePeer?.local === false ? workspacePeer.id : props.selectedSession?.remote ? props.selectedSession.deviceId : undefined}
           session={props.selectedSession}
           systemName={workspaceSystemName}
@@ -1820,6 +1833,7 @@ const SessionAutomaticRecoveryContext = createContext(false);
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
+const SessionLinkContext = createContext<{ openInternal: (url: string) => void; download: (url: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, external: () => undefined });
 
 function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
   const seen = new Set<string>();
@@ -1987,6 +2001,29 @@ export function parseQuestionReply(text: string): Array<{ question: string; answ
   }
 }
 
+export function isDownloadLink(link: Pick<HTMLAnchorElement, "hasAttribute" | "textContent">, href: string): boolean {
+  if (link.hasAttribute("download")) return true;
+  try {
+    const url = new URL(href, typeof window === "undefined" ? "http://localhost/" : window.location.href);
+    return /(?:^|[._-])(xlsx?|csv|zip|pdf|docx?|pptx?|json)(?:$|[?#])/i.test(url.pathname) || /download|export|report/i.test(`${url.pathname}${url.search} ${link.textContent ?? ""}`);
+  } catch {
+    return false;
+  }
+}
+
+export function isInternalWorkspaceLink(href: string): boolean {
+  if (href.startsWith("/")) return true;
+  try {
+    const base = typeof window === "undefined" ? "http://localhost/" : window.location.href;
+    const url = new URL(href, base);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    if (url.origin === new URL(base).origin) return true;
+    return /^(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}|\[::1\])$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpenFile?: (path: string) => void; onFeedback?: (notice: DashboardNotice) => void }) {
   const inheritedFeedback = useContext(SessionFeedbackContext);
   const feedback = onFeedback ?? inheritedFeedback;
@@ -1994,6 +2031,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
   const [preview, setPreview] = useState<{ src: string; alt?: string }>();
   const [copyNotice, setCopyNotice] = useState('');
   const markdownRoot = useRef<HTMLDivElement>(null);
+  const links = useContext(SessionLinkContext);
   const gallery = () => Array.from(markdownRoot.current?.querySelectorAll('img') ?? []).map(image => ({ src: image.getAttribute('src') || image.src, alt: image.alt }));
   const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
     const file = (event.target as Element).closest<HTMLAnchorElement>('a[data-workspace-file]');
@@ -2001,6 +2039,15 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
       event.preventDefault();
       if (onOpenFile) onOpenFile(file.dataset['workspaceFile']!);
       else feedback?.({ level: 'warning', message: 'Open this conversation in its workspace to view this file.' });
+      return;
+    }
+    const link = (event.target as Element).closest<HTMLAnchorElement>("a[href]");
+    if (link) {
+      event.preventDefault();
+      const href = link.href;
+      if (isDownloadLink(link, href)) links.download(href);
+      else if (isInternalWorkspaceLink(href)) links.openInternal(href);
+      else links.external(href);
       return;
     }
     if (event.target instanceof HTMLImageElement) {
@@ -2433,6 +2480,9 @@ function WorkspaceContextPanel(props: {
   onWorkspaceGitPending: (pending: boolean, message?: string, committedDraft?: string) => void;
   connected?: boolean;
   projectPath?: string;
+  browserUrl?: string;
+  browserDownloadUrl?: string;
+  browserActionNonce?: number;
   session?: DashboardCliSessionSummary;
   systemName: string;
   autoResumeEnabled: boolean;
@@ -2539,7 +2589,7 @@ function WorkspaceContextPanel(props: {
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'browser' ? <BrowserIcon /> : kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal')).every(tab => visibleTabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
-    <div hidden={props.collapsed || props.activeTab !== 'browser'} style={{ height: '100%' }}>{props.tabs.includes('browser') ? <WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && props.activeTab === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onFeedback={props.onFeedback} /> : null}</div>
+    <div hidden={props.collapsed || props.activeTab !== 'browser'} style={{ height: '100%' }}>{props.tabs.includes('browser') ? <WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && props.activeTab === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialUrl={props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} connected={props.connected !== false} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}

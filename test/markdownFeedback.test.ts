@@ -9,7 +9,7 @@ vi.mock('preact/hooks', () => ({
   useRef: (value: unknown) => ({ current: value }),
   useEffect() {}, useLayoutEffect() {}, useId: () => 'markdown-fixture'
 }));
-import { SessionMessage } from '../webview-src/dashboard/cliSessionsModal';
+import { isDownloadLink, isInternalWorkspaceLink, SessionMessage } from '../webview-src/dashboard/cliSessionsModal';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
 function markdown(onFeedback?: typeof fixture.feedback, text = '```ts\nhello\n```') {
   const message = SessionMessage({ message: { id: 'm', role: 'assistant', text }, onActionFeedback: onFeedback });
@@ -17,6 +17,14 @@ function markdown(onFeedback?: typeof fixture.feedback, text = '```ts\nhello\n``
   return nodes((component.type as (props: any) => VNode<any>)(component.props)).find(node => node.props.class === 'cli-message-markdown')!;
 }
 afterEach(() => { fixture.feedback.mockReset(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+it('classifies remote workspace and download links before external links', () => {
+  const anchor = { hasAttribute: (name: string) => name === 'download', textContent: 'Download report' };
+  expect(isInternalWorkspaceLink('/reports/latest')).toBe(true);
+  expect(isInternalWorkspaceLink('http://127.0.0.1:3000/reports/latest')).toBe(true);
+  expect(isInternalWorkspaceLink('https://example.com/reports/latest')).toBe(false);
+  expect(isDownloadLink(anchor, 'https://example.com/reports/latest')).toBe(true);
+  expect(isDownloadLink({ hasAttribute: () => false, textContent: 'Open page' }, 'https://example.com/page')).toBe(false);
+});
 it('reports failed Markdown clipboard fallback through the initiating feedback callback', async () => {
   const direct = vi.fn();
   vi.stubGlobal('HTMLImageElement', class {});
