@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.11
+
+- Keep running session spinners in the right side status column.
+
 ## 2.0.6-pre.10
 
 - Fix session rail status dots and running spinners overlapping conversation titles.

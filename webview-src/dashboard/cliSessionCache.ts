@@ -46,7 +46,14 @@ export function peekCliSessionListCache(deviceId?: string): CliSessionListCache 
   const ageMs = Date.now() - record.updatedAt;
   if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_CACHE_AGE_MS) { recentSessionLists.delete(systemId); return undefined; }
   const sessions = record.value.sessions.filter(session => session && typeof session.id === 'string' && typeof session.title === 'string' && (deviceId ? session.deviceId === deviceId : !session.deviceId));
-  return { ...record.value, sessions: ageMs > 5000 ? sessions.map(session => ({ ...session, status: 'unknown', canStop: false, locked: true })) : sessions, ageMs };
+  return { ...record.value, sessions: ageMs > 5000 ? sessions.map(session => ({
+    ...session,
+    // Keep the last verified visual state while live data catches up. Turning
+    // every stale row into unknown/locked made the whole rail look active.
+    canStop: false,
+    locked: session.status === 'running' || session.status === 'unknown',
+    statusError: session.statusError ?? 'Session status is stale. Refresh to verify it before acting.'
+  })) : sessions, ageMs };
 }
 
 function cliSessionKey(session: DashboardCliSessionSummary): string {

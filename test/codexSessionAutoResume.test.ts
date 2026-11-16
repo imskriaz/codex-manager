@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
-import { getNativeCodexSessionRunning, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 import { createAutoResumeKeepAwake } from '../src/services/autoResumeKeepAwake';
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
@@ -151,6 +151,23 @@ it("opens a missing VS Code tab for verified native work", async () => {
   } finally { open.mockRestore(); resume.mockRestore(); tabs.mockRestore(); observe.mockRestore(); }
 });
 
+it("refreshes native running state before waiting for editor readiness", async () => {
+  const observe = vi.spyOn(sessionEditor, "observeRunningCodexSession").mockImplementation(() => undefined);
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+  const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback } as never);
+  const tabs = vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([id]);
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("running");
+  try {
+    expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ attempted: 1, opened: 1, failed: [] });
+    expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(expect.any(String), id, expect.any(AbortSignal));
+    expect(open).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({ id, status: "running" }));
+  } finally { open.mockRestore(); resume.mockRestore(); tabs.mockRestore(); observe.mockRestore(); }
+});
+
 it("leaves verified running work and its existing tab unchanged", async () => {
   const observe = vi.spyOn(sessionEditor, "observeRunningCodexSession").mockImplementation(() => undefined);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
@@ -289,6 +306,7 @@ describe("dashboard recovery list", () => {
 });
 beforeEach(() => {
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
   vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
   const ids = ["01a04882-d037-7a42-ad24-9afb61901181", "01a04882-d037-7a42-ad24-9afb61901182"];
   Object.assign(vscode.window, { tabGroups: { all: [{ tabs: ids.map(id => ({ input: {

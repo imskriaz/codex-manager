@@ -14914,11 +14914,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .dashboard-mobile-actions { display: none; }
 }
 
-/* Keep running state vertically centered at its natural horizontal position. */
+/* Keep running state in the right-side status column. */
 .cli-workspace .cli-session-row.is-running .cli-session-row-status {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  position: relative;
+  top: auto;
+  right: auto;
+  transform: none;
+  grid-column: 2;
+  justify-self: end;
 }
 .cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { z-index: 2; }
 

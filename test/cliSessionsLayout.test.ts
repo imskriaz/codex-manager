@@ -148,6 +148,8 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(css).toContain(".cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { z-index: 2;");
+    expect(css).toMatch(/\.cli-workspace \.cli-session-row\.is-running \.cli-session-row-status \{\r?\n  position: relative;/);
+    expect(css).toContain("grid-column: 2;");
     expect(css).not.toContain(".cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-spinner { visibility: hidden; }");
     expect(source).toContain("function SessionRowMenu");
     expect(source).toContain('aria-label={`Actions for ${session.title}`}');
@@ -244,6 +246,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('.cli-workspace :is(.cli-project-sessions,.cli-compact-session-list) .cli-session-row { min-height:32px;');
     expect(css).toContain('.cli-workspace .cli-session-row-select { width: auto; min-width: 0; }');
     expect(css).toContain('.cli-workspace .cli-session-row-status { position: relative; z-index: 1;');
+    expect(source).toContain("status === \"running\" || session.locked === true || Boolean(session.statusError)");
   });
 
   it("offers one copy target with the complete text only after an assistant turn ends", () => {

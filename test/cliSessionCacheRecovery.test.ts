@@ -13,7 +13,7 @@ describe("browser cache recovery", () => {
     expect(cache.peekCliSessionListCache()?.sessions[0]?.title).toBe('Local');
     expect(cache.peekCliSessionListCache('remote')?.sessions[0]?.title).toBe('Remote');
     vi.advanceTimersByTime(5001);
-    expect(cache.peekCliSessionListCache()?.sessions[0]).toMatchObject({status:'unknown',canStop:false,locked:true});
+    expect(cache.peekCliSessionListCache()?.sessions[0]).toMatchObject({status:'running',canStop:false,locked:true,statusError:'Session status is stale. Refresh to verify it before acting.'});
     await cache.invalidateCliSessionCache('same','remote');expect(cache.peekCliSessionListCache('remote')).toBeUndefined();
     cache.bindBrowserCacheSystem('host-b');expect(cache.peekCliSessionListCache()).toBeUndefined();
     for(let index=0;index<9;index++)await cache.writeCliSessionListCache({sessions:[],composerConfig},`pc-${index}`);

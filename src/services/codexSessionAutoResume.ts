@@ -14,7 +14,7 @@ import { getCodexHomeStateKey } from "../codex/authFile";
 import type { DashboardCliSessionSummary } from "../domain/dashboard/types";
 import type { CodexSessionRecoveryMetadata } from "./codexSessionResume";
 import { resumeCodexSessionWork } from "./codexSessionRecovery";
-import { getNativeCodexSessionRunning } from "./codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
 import { createAutoResumeKeepAwake } from './autoResumeKeepAwake';
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
@@ -633,7 +633,11 @@ export function resumePersistedCodexSessions(
         return "idle";
       }
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
-      const nativeRunning = getNativeCodexSessionRunning(home, sessionId) === true;
+      // Refresh the native owner state before waiting for the official editor.
+      // After an extension-host reload the short in-memory lease is empty even
+      // when Codex kept the turn alive, which otherwise makes every recovery
+      // wait through the full editor-readiness timeout before discovering it.
+      const nativeRunning = (await readNativeCodexSessionRunning(home, sessionId, signal) ?? getNativeCodexSessionRunning(home, sessionId)) === true;
       // A native owner can survive an extension-host restart while its VS Code
       // custom-editor tab is lost. Keep the fast path only when the tab still
       // exists; otherwise open the official editor so the user can see it.

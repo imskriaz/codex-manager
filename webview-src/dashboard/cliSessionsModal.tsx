@@ -380,7 +380,7 @@ function SessionRowMenu(props: {
     };
   }, [open]);
   const close = () => setOpen(false);
-  const destructiveBlocked = session.status === "running" || session.locked === true;
+  const destructiveBlocked = session.status === "running" || session.locked === true || Boolean(session.statusError);
   const menu = <div ref={panel} popover="manual" class="cli-session-menu" role="menu" aria-label={`Actions for ${session.title}`} title={props.disabled ? "Reconnect or wait for this session action to finish." : undefined} onClick={(event) => event.stopPropagation()}>
       {props.running ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onStop(); }}><StopIcon /> Stop</button> : props.canResume ? <button type="button" role="menuitem" title="Resume this interrupted conversation" disabled={props.disabled} onClick={() => { close(); props.onResume(); }}><PlayIcon /> Start / Resume</button> : null}
       {showsCodexSessionAutoResume(session) ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onAutoResume(!props.autoResume); }}><AutoResumeIcon enabled={Boolean(props.autoResume)} goal={!!session.goal} /> {props.autoResume ? "Pause Auto Resume" : "Enable Auto Resume"}</button> : null}
