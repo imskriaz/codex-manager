@@ -49,6 +49,7 @@ const restoreControllers = new Set<AbortController>();
 const startupTimers = new Set<ReturnType<typeof setTimeout>>();
 let recoveryCancellation = 0;
 const autoResumeTitles = new WeakMap<object, Array<{ sessionId: string; title: string; status: "opened" | "failed" }>>();
+const sessionRecoveryInFlight = new Map<string, Promise<void | Awaited<ReturnType<typeof resumeCodexSessionWork>>>>();
 
 /** Stop optional startup restoration before manual session or account work. */
 export function cancelCodexSessionAutoResume(reason = "Auto Resume was cancelled because the account is changing."): void {
@@ -786,14 +787,23 @@ export function resumePersistedCodexSessions(
           controller.signal.addEventListener("abort", stopSession, { once: true });
           try {
             const remainingMs = Math.max(1, deadline - Date.now());
-            outcome = await bounded(
-              () => openSession(id, sessionController.signal),
+            const recoveryKey = `${path.resolve(recoveryHome)}:${id}`;
+            let inFlight = sessionRecoveryInFlight.get(recoveryKey);
+            if (inFlight) {
+              recordPersistentEvent("debug", "auto-resume", "Joining recovery already in progress", { sessionId: id, sessionRef: toSessionLogRef(id) });
+            } else {
+              inFlight = bounded(
+                () => openSession(id, sessionController.signal),
               Math.min(PER_SESSION_OPEN_TIMEOUT_MS, remainingMs),
               remainingMs < PER_SESSION_OPEN_TIMEOUT_MS
                 ? "Auto Resume reached its three minute deadline. Remaining sessions will retry on the next activation."
                 : "This Codex window did not finish recovery within 135 seconds. The remaining sessions will continue opening; this one will retry on the next activation.",
-              sessionController.signal
-            );
+                sessionController.signal
+              );
+              sessionRecoveryInFlight.set(recoveryKey, inFlight);
+              void inFlight.finally(() => { if (sessionRecoveryInFlight.get(recoveryKey) === inFlight) sessionRecoveryInFlight.delete(recoveryKey); }).catch(() => undefined);
+            }
+            outcome = await inFlight;
           } catch (error) {
             sessionController.abort(error);
             throw error;

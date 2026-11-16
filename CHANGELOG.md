@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.8
+
+- Join an Auto Resume already in progress for the same VS Code session instead of opening or continuing it again.
+
 ## 2.0.6-pre.7
 
 - Reduce VS Code Auto Resume readiness waiting from two minutes to forty seconds while keeping the official-tab safety check.
