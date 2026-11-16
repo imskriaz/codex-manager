@@ -103,6 +103,18 @@ try {
   assert.equal(await ui.getByRole('menu', { name: 'Browser actions', exact: true }).count(), 0);
   assert.equal(await ui.locator('.workspace-browser-page-tabs').count(), 0, 'Browser pages use the parent workspace tab track.');
   await ui.locator('.workspace-browser-preview img').waitFor();
+  await ui.getByRole('button', { name: 'Open browser inspector', exact: true }).click();
+  const inspector = ui.getByRole('complementary', { name: 'Browser inspector', exact: true });
+  await inspector.waitFor();
+  assert.equal(await inspector.evaluate(element => getComputedStyle(element).position), 'static', 'Browser Inspector stays in the workspace layout');
+  const previewBounds = await ui.locator('.workspace-browser-preview').boundingBox();
+  const inspectorBounds = await inspector.boundingBox();
+  assert.ok(inspectorBounds.y >= previewBounds.y + previewBounds.height - 1, 'Browser Inspector is docked below the preview');
+  for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Feedback']) {
+    const tab = inspector.getByRole('tab', { name, exact: true });
+    await tab.click();
+    assert.equal(await tab.getAttribute('aria-selected'), 'true');
+  }
   await ui.getByRole('button', { name: 'area', exact: true }).click();
   const preview = ui.locator('.workspace-browser-preview svg');
   await preview.focus();

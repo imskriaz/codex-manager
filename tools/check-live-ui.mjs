@@ -58,6 +58,29 @@ try {
     console.log(`${width}px: real host connected in ${loadMs}ms`);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Home dashboard fits viewport");
     await page.screenshot({ path: path.join(output, `dashboard-${width}.png`) });
+    for (const route of ['/', '/workspace', '/tasks']) {
+      await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
+      await page.locator('.cli-workspace').waitFor();
+      const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+      if (await rail.isVisible()) await rail.click();
+      await page.getByRole('button', { name: 'Open account center', exact: true }).click();
+      const accounts = page.locator('.workspace-accounts');
+      await accounts.waitFor();
+      assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab][aria-selected=true]').innerText(), 'Accounts', 'Account footer selects the workspace Accounts tab without a conversation');
+      assert.equal(await page.getByRole('dialog', { name: 'Account center', exact: true }).count(), 0, 'Account footer uses the workspace panel');
+      assert.ok(await accounts.evaluate(element => element.scrollWidth <= element.clientWidth + 2), 'Account Center fits its panel');
+      assert.ok(await accounts.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight + 2), 'Account Center scrolls within the viewport height');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Account Center fits the viewport');
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+        await page.screenshot({ path: path.join(output, `accounts-${route.slice(1) || 'home'}-${width}-${theme}.png`) });
+      }
+      console.log(`${width}px ${route}: Account Center opened; closing workspace tools`);
+      await page.getByRole('complementary', { name: 'Workspace tools', exact: true }).getByRole('button', { name: 'Close workspace tools', exact: true }).click();
+      await accounts.waitFor({ state: 'hidden' });
+    }
+    await page.goto(origin + '/', { waitUntil: 'domcontentloaded' });
+    await page.locator('#dashboard-main').waitFor();
     if (width === 390) {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.locator(".dashboard-mobile-actions-menu").getByRole("menuitem", { name: /Settings/ }).click();
@@ -117,6 +140,7 @@ try {
       console.log("Real new chat and first response completed in " + (Date.now() - startedAt) + "ms.");
     }
     // Disconnect this test browser only, then require the real transport to recover.
+    await page.waitForFunction(() => window.__liveSockets.some(socket => socket.readyState === WebSocket.OPEN) && window.__liveEvents.filter(event => event.type === 'dashboard:connection').at(-1)?.connected === true);
     await context.setOffline(true);
     // Chromium keeps established loopback sockets alive when HTTP goes offline.
     await page.evaluate(() => window.__liveSockets.forEach(socket => socket.close()));
@@ -182,6 +206,12 @@ try {
     return [key, { samples: samples.length, p50: samples[Math.max(0, Math.ceil(samples.length * .5) - 1)] ?? null, p95: samples[Math.max(0, Math.ceil(samples.length * .95) - 1)] ?? null }];
   }));
   console.log(JSON.stringify({ results, timingSummary, screenshots: output }, null, 2));
+} catch (error) {
+  for (const [index, page] of browser.contexts().flatMap(context => context.pages()).entries()) {
+    console.error('Live UI failure:', page.url());
+    await page.screenshot({ path: path.join(output, `failure-${index}.png`) }).catch(() => {});
+  }
+  throw error;
 } finally {
   await browser.close();
 }

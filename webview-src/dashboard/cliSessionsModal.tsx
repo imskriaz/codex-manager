@@ -520,7 +520,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, activeNewRequest]);
 
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
-  const toolsCollapsed = contextCollapsed || !props.selectedSession || props.dashboardMode === true;
   const touchedFileDrafts = useRef(new Set<string>());
   const [contextTabsByProject, setContextTabsByProject] = useState<Record<string, WorkspaceProjectState>>({});
   useLayoutEffect(() => {
@@ -875,7 +874,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const quotaWaiting = sessionQuotaWaitingMessage(props.selectedSession, props.messages, props.liveState, props.selectedSession?.remote ? props.peerAccounts?.[props.selectedSession.deviceId ?? ''] ?? [] : props.localAccounts ?? [], props.standalone === true && props.autoResumeEnabled, props.connected !== false, currentTurnRunning);
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
-  const contextProjectKey = JSON.stringify([props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local', canonicalWebPath(toolProjectPath ?? '__workspace__')]);
+  const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
+  // Discovery replaces the local placeholder ID without changing this workspace.
+  const contextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(toolProjectPath ?? '__workspace__')]);
   const workspacePeer = props.peers?.find(peer => peer.id === (props.selectedSession?.deviceId ?? props.selectedPeerId)) ?? props.peers?.find(peer => peer.local);
   const workspaceSystemName = getSensitiveDisplayValue(props.selectedSession?.deviceName ?? workspacePeer?.name ?? (props.selectedSession?.remote ? 'Remote PC' : 'This PC'), props.privacyMode, 'name');
   const contextProjectState = contextTabsByProject[contextProjectKey] ?? emptyWorkspaceProject();
@@ -902,6 +903,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [contextProjectKey, contextProjectState.fileDrafts, restoredFileDraftKeys, props.browser]);
 
   const activeContextTab = contextProjectState.active;
+  const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
@@ -1025,6 +1027,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   };
   const openContextTab = (tab: WorkspaceToolTab, filePath?: string, browserUrl?: string, browserDownloadUrl?: string): void => {
+    if (tab === 'accounts' && mobileLayout) setRailCollapsed(true);
     if (tab === "reviews") setBranchReview(false);
     const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;
     const tabId: WorkspaceTab = resolvedFilePath ? `${tab === "agents" ? "agent" : tab === "files" ? "file" : "review"}:${resolvedFilePath}` : tab;

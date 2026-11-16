@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.5
+
+- Open the workspace Account Center from the account footer even when no conversation is selected, including the dashboard and task board, and keep its mobile content within the panel.
+
 ## 2.0.6-pre.4
 
 - Start the VS Code quota scheduler with an immediate active-account check and reopen missing Codex tabs when the native session survived a host restart.

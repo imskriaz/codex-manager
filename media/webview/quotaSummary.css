@@ -12855,6 +12855,13 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace.is-dashboard-mode .cli-context-toggle {
   display: none;
 }
+.cli-workspace.is-dashboard-mode .cli-context-panel-v3,
+.cli-workspace.is-dashboard-mode .cli-tools-backdrop {
+  pointer-events: auto;
+}
+.workspace-accounts { min-height: 0; overflow: auto; padding: 6px; }
+.workspace-accounts .dashboard-account-toolbar { margin-inline: 0; }
+.workspace-accounts .dashboard-account-toolbar .dashboard-view-controls { flex: none; width: auto; grid-template-columns: auto; }
 .workspace-route-dashboard-hidden { display: none !important; }
 @media (max-width: 760px) {
   body.is-dashboard-workspace-route #dashboard-main {
