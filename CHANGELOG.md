@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.6-pre.4
+
+- Start the VS Code quota scheduler with an immediate active-account check and reopen missing Codex tabs when the native session survived a host restart.
+
+
+## 2.0.6-pre.3
+
+- Fix VS Code queue ownership without Web Locks, unify browser pages with the workspace tab track, normalize bare URLs, and dock a visual Inspector panel in the workspace.
+
 ## 2.0.6-pre.2
 
 - Route conversation links to the selected system: workspace links open in the right Browser panel, downloads return to the dashboard, and external links open in the remote system browser.

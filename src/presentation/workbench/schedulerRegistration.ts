@@ -40,6 +40,8 @@ export function registerAutoRefreshScheduler(params: {
   repo: AccountsRepository;
   onRefresh: () => void;
   canRefreshAccount?: (accountId: string) => boolean;
+  /** Run the first active-account check as soon as VS Code owns the scheduler. */
+  runImmediately?: boolean;
 }): vscode.Disposable {
   let allTimer: NodeJS.Timeout | undefined;
   let currentTimer: NodeJS.Timeout | undefined;
@@ -385,6 +387,11 @@ export function registerAutoRefreshScheduler(params: {
       // configured cadence before starting network maintenance so extension
       // startup cannot trigger current-account and all-account bursts together.
       scheduleCurrentRefresh(currentMinutes * 60 * 1000);
+      if (params.runImmediately) runCurrentRefresh();
+    } else if (params.runImmediately && allMinutes > 0) {
+      // If the active-account cadence is disabled, the all-account sweep is
+      // still the configured source of the first quota snapshot.
+      runAllRefresh();
     }
     void scheduleNextQuotaReset().catch((error) => {
       console.warn("[codexManager] unable to schedule quota reset refresh:", error);

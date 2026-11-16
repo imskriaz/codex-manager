@@ -19,6 +19,7 @@ export default function WorkspaceBrowser(props: {
   actionNonce?: number;
   initialPageId?: string;
   closePageId?: string;
+  onClosePageHandled?: (pageId: string) => void;
   onPagesChange?: (pages: WorkspaceBrowserState["pages"]) => void;
   onPageSelected?: (pageId: string) => void;
   connected: boolean;
@@ -29,7 +30,7 @@ export default function WorkspaceBrowser(props: {
   const request = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected);
   const [state, setState] = useState<WorkspaceBrowserState>({ pages: [], feedback: [] });
   const [selected, setSelected] = useState(props.initialPageId ?? ""),
-    [url, setUrl] = useState(props.initialUrl ?? "http://localhost:3000");
+    [url, setUrl] = useState(props.initialUrl ?? "");
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [failed, setFailed] = useState(false);
@@ -39,8 +40,7 @@ export default function WorkspaceBrowser(props: {
     [reference, setReference] = useState("");
   const [input, setInput] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<"elements" | "console" | "sources" | "network">("elements");
-  const [preferences, setPreferences] = useState({ openLinks: true, autoOpenFiles: true, autoVerify: true, keepCookies: true });
+  const [inspectorTab, setInspectorTab] = useState<"elements" | "console" | "sources" | "network" | "feedback">("elements");
   const [size, setSize] = useState({ width: 1280, height: 800 });
   const [cursor, setCursor] = useState<BrowserPoint>({ x: 20, y: 20 });
   const locked = useRef(false),
@@ -52,16 +52,13 @@ export default function WorkspaceBrowser(props: {
   const openingForDownload = useRef(false);
   const reading = useRef(false), operationGeneration = useRef(0), draftPoints = useRef(points);
   draftPoints.current = points;
-  const revision = state.revision;
+  const latest = useRef(props); latest.current = props;
+  const pageDrafts = useRef(new Map<string, { points: BrowserPoint[]; text: string; reference: string; mode: typeof mode }>());
+  const draftPage = useRef(selected);
+  pageDrafts.current.set(draftPage.current, { points, text, reference, mode });
+  const revision = state.pageId === selected ? state.revision : undefined;
   const current = state.pages.find((page) => page.id === selected);
   const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
-  const togglePreference = (key: keyof typeof preferences): void => {
-    setPreferences((previous) => {
-      const next = { ...previous, [key]: !previous[key] };
-      try { localStorage.setItem(`codexManager.browser.${key}`, String(next[key])); } catch { /* optional browser preference */ }
-      return next;
-    });
-  };
   const copyUrl = async (): Promise<void> => {
     try { await navigator.clipboard.writeText(current?.url ?? url); noticeAction("URL copied."); }
     catch { setFailed(true); setNotice("Clipboard access was unavailable. Select the URL and copy it manually."); }
@@ -80,10 +77,16 @@ export default function WorkspaceBrowser(props: {
     } catch (error) { setFailed(true); setNotice(error instanceof Error ? error.message : String(error)); }
   };
   useEffect(() => {
+    if (draftPage.current !== selected) {
+      const draft = pageDrafts.current.get(selected);
+      draftPage.current = selected;
+      setPoints(draft?.points ?? []); setText(draft?.text ?? ''); setReference(draft?.reference ?? ''); setMode(draft?.mode ?? 'interact');
+    }
     if (current?.url) setUrl(current.url);
-  }, [current?.url]);
+    else if (!selected) setUrl('');
+  }, [selected, current?.url]);
   const run = async (value: WorkspaceBrowserRequest, quiet = false): Promise<void> => {
-    if (quiet && reading.current) return;
+    if (quiet && (reading.current || locked.current)) return;
     if (!quiet && locked.current) {
       if (!quiet) {
         setFailed(true);
@@ -97,7 +100,7 @@ export default function WorkspaceBrowser(props: {
     const operationVersion = operationGeneration.current;
     try {
       const response = await request("workspaceBrowser", {
-        browserRequest: { operationId: crypto.randomUUID(), ...value }
+        browserRequest: { operationId: crypto.randomUUID(), ...value, pageId: value.pageId || undefined }
       });
       if (version !== generation.current) return;
       if (quiet && (operationVersion !== operationGeneration.current || drawing.current || draftPoints.current.length)) return;
@@ -109,7 +112,7 @@ export default function WorkspaceBrowser(props: {
           (response.workspaceBrowser!.pageId === previous.pageId ? previous.image : undefined)
       }));
       const next = response.workspaceBrowser;
-      props.onPagesChange?.(next.pages);
+      latest.current.onPagesChange?.(next.pages);
       if (next.fileDownload) {
         const link = document.createElement("a");
         link.href = `data:${next.fileDownload.mimeType};base64,${next.fileDownload.data}`;
@@ -117,18 +120,21 @@ export default function WorkspaceBrowser(props: {
         link.click();
         noticeAction(`${next.fileDownload.filename} downloaded.`);
       }
-      if (next.pageId) { setSelected(next.pageId); props.onPageSelected?.(next.pageId); }
-      else
-        setSelected((previous) =>
-          next.pages.some((page) => page.id === previous) ? previous : (next.pages[0]?.id ?? "")
-        );
+      const requested = latest.current.initialPageId;
+      if (next.pageId && (!quiet || requested === undefined || requested === next.pageId)) {
+        setSelected(next.pageId);
+        if (!quiet && latest.current.active !== false && !['screenshot', 'snapshot', 'list', 'close'].includes(value.operation)) latest.current.onPageSelected?.(next.pageId);
+      } else if (!next.pageId) {
+        setSelected(previous => next.pages.some(page => page.id === previous) ? previous : requested === undefined ? next.pages[0]?.id ?? '' : '');
+      }
       if (!quiet) {
         setFailed(false);
-        setNotice("Browser action completed.");
+        setNotice(next.warning ?? (next.fileDownload ? `${next.fileDownload.filename} downloaded.` : 'Done.'));
       }
     } catch (error) {
       if (version !== generation.current) return;
-      const message = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = detail.includes('Unsupported dashboard action: workspaceBrowser') ? 'This host is running an older Manager. Restart that host with the installed version, then reconnect.' : detail;
       if (!quiet) { setNotice(message); setFailed(true); props.onFeedback({ level: "error", message }); }
     } finally {
       if (quiet) reading.current = false;
@@ -139,18 +145,19 @@ export default function WorkspaceBrowser(props: {
     }
   };
   useEffect(() => {
-    if (props.initialPageId !== undefined && props.initialPageId !== selected) {
-      setSelected(props.initialPageId);
-      setPoints([]);
-      if (props.initialPageId) void run({ operation: "screenshot", pageId: props.initialPageId });
-    }
-  }, [props.initialPageId]);
+    if (props.initialPageId === undefined || props.initialPageId === selected || busy) return;
+    setSelected(props.initialPageId);
+    operationGeneration.current++;
+    if (props.initialPageId && props.connected) void run({ operation: 'screenshot', pageId: props.initialPageId });
+  }, [props.initialPageId, props.connected, busy]);
   useEffect(() => {
-    if (props.closePageId) {
-      setSelected(props.closePageId);
-      void command({ operation: "close", pageId: props.closePageId });
-    }
-  }, [props.closePageId]);
+    if (!props.closePageId || busy || !props.connected) return;
+    const id = props.closePageId;
+    const page = state.pages.find(page => page.id === id);
+    if (!page) { latest.current.onClosePageHandled?.(id); return; }
+    if (pageDrafts.current.get(id)?.points.length) { setFailed(true); setNotice('Save or cancel the mark on this page before closing it.'); latest.current.onClosePageHandled?.(id); return; }
+    void run({ operation: 'close', pageId: id, revision: page.revision }).finally(() => latest.current.onClosePageHandled?.(id));
+  }, [props.closePageId, props.connected, busy]);
   useEffect(() => {
     const target = props.initialUrl?.trim();
     const nonce = props.actionNonce ?? 0;
@@ -300,23 +307,23 @@ export default function WorkspaceBrowser(props: {
   };
   return (
     <section class="workspace-browser" aria-label="Development browser">
-      <header class="workspace-browser-header workspace-browser-tabs">
+      <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); const nextUrl = normalizeBrowserInput(url); if (!nextUrl) { setFailed(true); setNotice("Enter a website address."); return; } setUrl(nextUrl); command({ operation: current ? "navigate" : "open", url: nextUrl }); }}>
+        <button class="workspace-browser-icon-button" aria-label="Go back" title="Go back" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "back" })}><ToolIcon kind="left" /></button>
+        <button class="workspace-browser-icon-button" aria-label="Go forward" title="Go forward" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "forward" })}><ToolIcon kind="right" /></button>
+        <button class="workspace-browser-icon-button" aria-label="Reload page" title="Reload page" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" /></button>
+        <input aria-label="Browser URL" type="text" inputMode="url" placeholder="Search or enter a URL" value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
+      <div class="workspace-browser-actions">
+        <button class="workspace-browser-icon-button" type="button" aria-label="Open new browser page" title="New page" disabled={busy || !props.connected} onClick={() => { const nextUrl = normalizeBrowserInput(url) || "about:blank"; setUrl(nextUrl); command({ operation: "open", url: nextUrl }); }}><ToolIcon kind="plus" /></button>
         <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" /></button>
         <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><ToolIcon kind="comment" /></button>
         <WorkspaceMenu label="Browser actions" icon={<ToolIcon kind="more" />}>
-          <button type="button" disabled={!current} onClick={() => current && window.open(current.url, "_blank", "noopener,noreferrer")}><ToolIcon kind="external" />Open in Google Chrome</button>
+          <button type="button" disabled={!current} onClick={() => current && window.open(current.url, "_blank", "noopener,noreferrer")}><ToolIcon kind="external" />Open externally</button>
           <button type="button" disabled={!current} onClick={() => void copyUrl()}><ToolIcon kind="copy" />Copy URL</button>
           <button type="button" disabled={!state.image} onClick={saveScreenshot}><ToolIcon kind="download" />Save screenshot</button>
           <button type="button" disabled={!current} onClick={() => void saveHtml()}><ToolIcon kind="download" />Open HTML file…</button>
           <div class="workspace-browser-menu-divider" />
           <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" />Viewport <span class="workspace-browser-menu-value">{size.width === 1280 ? "Responsive" : "Mobile"}</span></button>
-          <button type="button" onClick={() => togglePreference("openLinks")}><ToolIcon kind="external" />Open links in built-in browser <span class="workspace-browser-menu-check">{preferences.openLinks ? "✓" : ""}</span></button>
-          <button type="button" onClick={() => togglePreference("autoOpenFiles")}><ToolIcon kind="edit" />Auto-open files Codex writes <span class="workspace-browser-menu-check">{preferences.autoOpenFiles ? "✓" : ""}</span></button>
-          <button type="button" onClick={() => togglePreference("autoVerify")}><ToolIcon kind="check" />Auto-verify changes <span class="workspace-browser-menu-check">{preferences.autoVerify ? "✓" : ""}</span></button>
-          <button type="button" onClick={() => noticeAction("Allowed sites are controlled by the current project and Manager permissions.")}><ToolIcon kind="eye" />Manage allowed sites…</button>
-          <button type="button" onClick={() => noticeAction("Local network access is limited to the current project browser context.")}><ToolIcon kind="branch" />Local network access <span class="workspace-browser-menu-value">Allowed</span></button>
           <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "storage" })}><ToolIcon kind="eye" />Cookies</button>
-          <button type="button" onClick={() => togglePreference("keepCookies")}><ToolIcon kind="check" />Keep cookies <span class="workspace-browser-menu-value">{preferences.keepCookies ? "Until quit" : "Session"}</span></button>
           <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "storage", confirmed: true, params: { action: "clearCookies" } })}><ToolIcon kind="clear" />Clear browsing data</button>
           <div class="workspace-browser-menu-divider" />
           <button type="button" disabled={busy || !props.connected} onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}><ToolIcon kind="refresh" />Refresh preview</button>
@@ -324,22 +331,18 @@ export default function WorkspaceBrowser(props: {
           <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" />Reload page</button>
           <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" />{size.width === 1280 ? "Use mobile viewport" : "Use desktop viewport"}</button>
         </WorkspaceMenu>
-      </header>
-      <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); command({ operation: current ? "navigate" : "open", url }); }}>
-        <button class="workspace-browser-icon-button" aria-label="Go back" title="Go back" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "back" })}><ToolIcon kind="left" /></button>
-        <button class="workspace-browser-icon-button" aria-label="Go forward" title="Go forward" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "forward" })}><ToolIcon kind="right" /></button>
-        <button class="workspace-browser-icon-button" aria-label="Reload page" title="Reload page" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" /></button>
-        <input aria-label="Browser URL" type="text" inputMode="url" required value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
+      </div>
       </form>
       {notice ? (
-        <p role={failed ? "alert" : "status"} class={failed ? "is-error" : ""}>
+        <p role={failed ? "alert" : "status"} class={`workspace-browser-notice ${failed ? "is-error" : ""}`}>
           {notice}
         </p>
       ) : null}
       {!props.connected ? (
         <p role="status">Offline. Reconnect to control the browser. Unsaved feedback stays in this panel.</p>
       ) : null}
-      {state.image && current ? (
+      <div class="workspace-browser-stage">
+      {state.image && current && state.pageId === selected ? (
         <div class="workspace-browser-preview">
           <img
             src={state.image}
@@ -433,7 +436,7 @@ export default function WorkspaceBrowser(props: {
                 onClick={() => {
                   setMode(tool);
                   setPoints([]);
-                  setInspectorOpen(true);
+                  if (tool !== "interact") { setInspectorTab("feedback"); setInspectorOpen(true); }
                 }}
               >
                 {tool === "interact"
@@ -453,13 +456,14 @@ export default function WorkspaceBrowser(props: {
       ) : (
         <p class="workspace-browser-empty">Open your development URL. AI and manual pages appear here together.</p>
       )}
+      </div>
       <aside class={`workspace-browser-inspector ${inspectorOpen ? "is-open" : ""}`} aria-label="Browser inspector" aria-hidden={!inspectorOpen}>
         <header class="workspace-browser-inspector-header">
           <span><strong>Inspector</strong></span>
           <button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button>
         </header>
         <nav class="workspace-browser-inspector-tabs" role="tablist" aria-label="Browser inspector panels">
-          {(["elements", "console", "sources", "network"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
+          {(["elements", "console", "sources", "network", "feedback"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
         </nav>
         <div class="workspace-browser-inspector-body">
           <div class="workspace-browser-toolbar workspace-browser-interaction">
@@ -469,7 +473,7 @@ export default function WorkspaceBrowser(props: {
             <button class="workspace-browser-icon-button" aria-label="Scroll down" title="Scroll down" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "scroll", y: 500 })}><ToolIcon kind="down" /></button>
             <button class="workspace-browser-icon-button" disabled={busy || !current || !props.connected} aria-label="Scroll up" title="Scroll up" onClick={() => command({ operation: "scroll", y: -500 })}><ToolIcon kind="up" /></button>
           </div>
-          {mode !== "interact" ? (
+          {inspectorTab === "feedback" && mode !== "interact" ? (
             <div class="workspace-browser-feedback">
               <textarea aria-label="Area instruction or design feedback" placeholder="Select an area, then describe the change…" value={text} onInput={(e) => setText(e.currentTarget.value)} />
               <input type="url" aria-label="Design or inspiration reference URL" placeholder="Design / inspiration URL (optional)" value={reference} onInput={(e) => setReference(e.currentTarget.value)} />
@@ -479,18 +483,69 @@ export default function WorkspaceBrowser(props: {
               </div>
             </div>
           ) : null}
-          <details hidden={inspectorTab !== "elements"}>
+          <details hidden={inspectorTab !== "feedback"}>
             <summary>Saved feedback ({state.feedback.length})</summary>
             {state.feedback.map((f) => (
               <article key={f.id}><small>{f.kind} · {f.url}</small><p>{f.text || "Visual mark"}{" "}{f.referenceUrl ? <a href={f.referenceUrl} target="_blank" rel="noreferrer">Reference ↗</a> : null}</p><button disabled={busy || !props.connected} onClick={() => void addInstruction(f)}>Add to instruction</button><button disabled={busy || !props.connected} onClick={() => command({ operation: "deleteFeedback", feedbackId: f.id })}>Delete</button></article>
             ))}
           </details>
-          <details open={inspectorTab === "console" || inspectorTab === "network"} hidden={inspectorTab === "elements" || inspectorTab === "sources"}><summary>{inspectorTab === "network" ? "Network activity" : "Page activity"} ({state.logs?.length ?? 0})</summary><div class="workspace-browser-log-list">{state.logs?.length ? state.logs.map((log) => <div><i aria-hidden="true" /> <span>{log}</span></div>) : <p>No captured activity.</p>}</div></details>
-          {inspectorTab === "sources" ? <div class="workspace-browser-inspector-empty"><ToolIcon kind="eye" /><strong>Rendered page view</strong><span>Select a mark or use the pointer to inspect what is visible.</span></div> : null}
+          {inspectorTab !== 'feedback' ? <BrowserInspectorContent panel={inspectorTab} pageId={selected} revision={revision} connected={props.connected} request={request} /> : null}
+
         </div>
       </aside>
     </section>
   );
+}
+
+export function normalizeBrowserInput(value: string): string {
+  const input = value.trim();
+  if (!input) return "";
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(input)) return input;
+  if (/^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(input)) return `http://${input}`;
+  return `https://${input}`;
+}
+
+function BrowserInspectorContent(props: {
+  panel: "elements" | "console" | "sources" | "network";
+  pageId: string; revision?: string; connected: boolean;
+  request: ReturnType<typeof useWorkspaceRequest>;
+}) {
+  const [result, setResult] = useState<WorkspaceBrowserState>();
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    setResult(undefined); setError('');
+    if (!props.pageId || !props.connected) return;
+    setLoading(true);
+    void props.request('workspaceBrowser', { browserRequest: { operation: props.panel === 'elements' || props.panel === 'sources' ? 'html' : 'events', pageId: props.pageId } }).then(response => {
+      if (!disposed) { if (!response.workspaceBrowser) throw new Error('No inspection was returned.'); setResult(response.workspaceBrowser); }
+    }).catch(error => { if (!disposed) setError(error instanceof Error ? error.message : String(error)); }).finally(() => { if (!disposed) setLoading(false); });
+    return () => { disposed = true; };
+  }, [props.panel, props.pageId, props.revision, props.connected, retry, props.request]);
+  if (!props.pageId) return <p class="workspace-empty-inline">Open a page to inspect it.</p>;
+  if (!props.connected) return <p role="status" class="workspace-empty-inline">Reconnect to inspect this page.</p>;
+  if (error) return <div class="workspace-tool-notice" role="alert">{error} <button onClick={() => setRetry(value => value + 1)}>Retry</button></div>;
+  if (loading) return <p role="status" class="workspace-empty-inline">Loading...</p>;
+  if (props.panel === 'sources') return <pre class="workspace-browser-source" aria-label="Page HTML">{(typeof result?.value === 'string' ? result.value : JSON.stringify(result?.value ?? '', null, 2))}</pre>;
+  if (props.panel === 'elements') {
+    const document = new DOMParser().parseFromString((typeof result?.value === 'string' ? result.value : JSON.stringify(result?.value ?? '', null, 2)), 'text/html');
+    const rows: Array<{ label: string; depth: number }> = [];
+    const visit = (element: Element, depth: number) => {
+      if (rows.length >= 200 || depth > 12) return;
+      rows.push({ depth, label: `<${element.tagName.toLowerCase()}${element.id ? ` #${element.id}` : ''}${element.getAttribute('class') ? ` .${element.getAttribute('class')!.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}>` });
+      for (const child of element.children) visit(child, depth + 1);
+    };
+    visit(document.documentElement, 0);
+    return <div class="workspace-browser-dom" aria-label="Page elements">{rows.map((row, index) => <div key={index} style={{ paddingLeft: `${8 + row.depth * 12}px` }}>{row.label}</div>)}</div>;
+  }
+  const events = result?.events ?? [];
+  const rows = events.filter(event => props.panel === 'network' ? event.method === 'Network.responseReceived' || event.method === 'Network.loadingFailed' : event.method === 'Runtime.consoleAPICalled' || event.method === 'Runtime.exceptionThrown');
+  return <div class="workspace-browser-log-list" aria-label={props.panel === 'network' ? 'Network requests' : 'Console messages'}>{result?.warning ? <p role="status">{result.warning}</p> : null}{rows.length ? rows.map(event => {
+    const params = event.params as { response?: { status?: number; url?: string; mimeType?: string }; errorText?: string; type?: string; args?: Array<{ value?: unknown; description?: string }>; exceptionDetails?: { text?: string } };
+    return <div key={event.sequence}><span class="workspace-browser-event-type">{props.panel === 'network' ? params.response?.status ?? 'Failed' : params.type ?? 'Error'}</span><span>{props.panel === 'network' ? params.response?.url ?? params.errorText : params.args?.map(arg => typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value) ?? arg.description ?? '').join(' ') ?? params.exceptionDetails?.text}</span></div>;
+  }) : <p>No captured activity.</p>}</div>;
 }
 
 async function annotateScreenshot(source: string, feedback: BrowserFeedback): Promise<string> {

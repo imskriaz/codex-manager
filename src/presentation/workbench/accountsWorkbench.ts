@@ -234,7 +234,8 @@ export class AccountsWorkbench {
           context: this.context,
           repo: this.repo,
           onRefresh: refreshers.refresh,
-          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
+          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId),
+          runImmediately: true
         })
       );
     });

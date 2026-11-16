@@ -101,10 +101,7 @@ try {
   await ui.getByRole('menu', { name: 'Browser actions', exact: true }).waitFor();
   await ui.keyboard.press('Escape');
   assert.equal(await ui.getByRole('menu', { name: 'Browser actions', exact: true }).count(), 0);
-  const browserTab = ui.locator('.workspace-browser-page-tabs > button').first();
-  await browserTab.waitFor();
-  assert.equal(await ui.getByRole('tablist', { name: 'Browser pages' }).getByRole('tab').count(), 2);
-  await browserTab.click();
+  assert.equal(await ui.locator('.workspace-browser-page-tabs').count(), 0, 'Browser pages use the parent workspace tab track.');
   await ui.locator('.workspace-browser-preview img').waitFor();
   await ui.getByRole('button', { name: 'area', exact: true }).click();
   const preview = ui.locator('.workspace-browser-preview svg');

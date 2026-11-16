@@ -8,6 +8,7 @@ import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
 export type CliQueuedMessage = { id: string; draft: CliComposerDraft; state: 'queued' | 'sending' | 'sent' | 'failed' | 'uncertain'; createdAt: number; requestId?: string; seenIds: string[]; turnId?: string; durable?: boolean; error?: string };
 export const CLI_MESSAGE_QUEUE_LIMIT = 20;
 export const MAX_CLI_MESSAGE_QUEUE_BYTES = MAX_CHAT_WIRE_BYTES * 2;
+const fallbackQueueOwners = new Map<string, symbol>();
 export function normalizeCliMessageQueue(value: unknown): CliQueuedMessage[] {
   if (!Array.isArray(value) || value.length > CLI_MESSAGE_QUEUE_LIMIT || JSON.stringify(value).length * 2 > MAX_CLI_MESSAGE_QUEUE_BYTES) throw new Error('The saved message queue could not be read. It was kept for recovery.');
   const ids = new Set<string>();
@@ -52,7 +53,7 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { webview?: boolean; scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
@@ -70,20 +71,32 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     if (!props.scope) return;
     let release = () => {}, disposed = false, waiting = false;
     const scope = props.scope;
-    const isForeground = () => document.visibilityState === 'visible' && document.hasFocus();
-    if (!navigator.locks) { loadFailed('This browser cannot safely own a saved message queue. Open this session in a current browser. Your composer draft is kept.'); return; }
+    const isForeground = () => document.visibilityState === 'visible' && (props.webview === true || document.hasFocus());
+    const hasNativeLocks = typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
+    if (!hasNativeLocks && !props.webview) {
+      loadFailed('This browser cannot safely own a saved message queue. Use a browser with Web Locks support. Your draft is kept.');
+      return;
+    }
+    // VS Code gives each webview an isolated storage origin; keep one owner in that document.
+    const requestLock = (work: (lock: object | null) => Promise<void>): Promise<void> => {
+      if (hasNativeLocks) return navigator.locks.request(`codex-message-queue:${scope}`, work).then(() => undefined);
+      if (fallbackQueueOwners.has(scope)) return work(null);
+      const owner = Symbol(scope);
+      fallbackQueueOwners.set(scope, owner);
+      return work({}).finally(() => { if (fallbackQueueOwners.get(scope) === owner) fallbackQueueOwners.delete(scope); });
+    };
     const acquire = () => {
-      if (disposed || waiting || !isForeground()) return;
+      if (disposed || waiting || owned.current || !isForeground()) return;
       waiting = true; setError(undefined);
       let retryForeground = false;
-      void navigator.locks.request(`codex-message-queue:${scope}`, async lock => {
+      void requestLock(async lock => {
         if (disposed) return;
         if (!isForeground()) { retryForeground = true; return; }
-        if (!lock) return;
+        if (!lock) { loadFailed('This session queue is already open in another view. Close that view and retry.'); return; }
         await new Promise<void>(resolve => {
           release = resolve;
           void readBrowserCache<unknown>(`message-queue:${scope}`, Number.MAX_SAFE_INTEGER).then(saved => {
-            if (disposed || document.visibilityState !== 'visible') { resolve(); return; }
+            if (disposed || !isForeground()) { retryForeground = true; resolve(); return; }
             try { update(normalizeCliMessageQueue(saved ?? [])); owned.current = true; setReady(true); setError(undefined); }
             catch (error) { loadFailed((error as Error).message); resolve(); }
           }).catch(error => { if (!disposed) { loadFailed(`Saved queue is unavailable: ${(error as Error).message}`); resolve(); } });
@@ -101,7 +114,7 @@ export function useCliMessageQueue(props: { scope?: string; messages: DashboardC
     document.addEventListener('visibilitychange', foreground); window.addEventListener('focus', foreground); window.addEventListener('blur', foreground);
     foreground();
     return () => { disposed = true; releaseInBackground.current = () => {}; document.removeEventListener('visibilitychange', foreground); window.removeEventListener('focus', foreground); window.removeEventListener('blur', foreground); if (generation.current === epoch) { owned.current = false; generation.current++; } void writes.current.finally(release); };
-  }, [props.scope, loadAttempt]);
+  }, [props.scope, props.webview, loadAttempt]);
   useEffect(() => {
     if (!ready || !owned.current) return;
     const reconciled = queuedMessageEchoes(current.current, props.messages);

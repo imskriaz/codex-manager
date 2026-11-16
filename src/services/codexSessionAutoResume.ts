@@ -630,14 +630,23 @@ export function resumePersistedCodexSessions(
         return "idle";
       }
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
-      if (getNativeCodexSessionRunning(home, sessionId) === true) {
+      const nativeRunning = getNativeCodexSessionRunning(home, sessionId) === true;
+      // A native owner can survive an extension-host restart while its VS Code
+      // custom-editor tab is lost. Keep the fast path only when the tab still
+      // exists; otherwise open the official editor so the user can see it.
+      if (nativeRunning && readOpenCodexSessionIds(false).includes(sessionId)) {
         observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
-        recordPersistentEvent("info", "auto-resume", "Native session already running; tab left unchanged", details);
+        recordPersistentEvent("info", "auto-resume", "Native session and conversation tab already running; tab left unchanged", details);
         return "running";
       }
       phase = "readiness";
       recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", details);
       await openCodexSessionInVsCode(sessionId, signal, !readOpenCodexSessionIds(false).includes(sessionId), 120_000, true);
+      if (nativeRunning) {
+        observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
+        recordPersistentEvent("info", "auto-resume", "Native session tab restored without replaying its turn", details);
+        return "running";
+      }
       phase = "continuation";
       const outcome = await resumeCodexSessionWork(sessionId, signal);
       recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });

@@ -33,6 +33,12 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="workspace-browser-icon-button"');
     expect(source).toContain('<ToolIcon kind="more" />');
   });
+  it("normalizes browser addresses before native navigation", () => {
+    const source = readFileSync("webview-src/dashboard/workspaceBrowser.tsx", "utf8");
+    expect(source).toContain("export function normalizeBrowserInput");
+    expect(source).toContain("return `https://${input}`");
+    expect(source).not.toContain('class="workspace-browser-page-tabs"');
+  });
   it("prioritizes running status over unseen and attention dots", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('const indicator = running ? "running" : cliSessionIndicator(');

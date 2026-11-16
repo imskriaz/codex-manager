@@ -145,6 +145,27 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
+  it("checks the active quota immediately when VS Code starts the scheduler", async () => {
+    const current = { id: "startup-active", isActive: true, enabled: true };
+    const repo = { listAccounts: vi.fn(async () => [current]) } as unknown as AccountsRepository;
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh: vi.fn(),
+      canRefreshAccount: () => true,
+      runImmediately: true
+    });
+
+    await vi.waitFor(() => expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(
+      repo,
+      expect.anything(),
+      current.id,
+      expect.objectContaining({ forceRefresh: true, skipDisabled: false })
+    ));
+    await vi.waitFor(() => expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledWith(repo, expect.anything(), expect.anything()));
+    disposable.dispose();
+  });
+
   it("keeps the current refresh deadline when Quota Warning changes", async () => {
     let changed!: (event: vscode.ConfigurationChangeEvent) => void;
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => {

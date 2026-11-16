@@ -52,12 +52,20 @@ it('keeps the original queue intact while the floating workspace dispatches its 
   const original = cliComposerDraftKey('pc', 'session'), floating = cliComposerDraftKey('pc', 'session', undefined, true);
   render({ scope: original }); await flush(); queue.enqueue(draft('Original queued work')); await flush();
   render({ scope: floating }); await flush(); queue.enqueue(draft('Floating queued work')); await flush();
-  render({ canDispatch: true }); await flush();
+  render({ webview: true, canDispatch: true }); await flush();
   expect(send).toHaveBeenCalledExactlyOnceWith(draft('Floating queued work'));
   expect((harness.records.get(`message-queue:${original}`) as CliQueuedMessage[])[0]?.draft.text).toBe('Original queued work');
   render({ scope: original, canDispatch: false }); await flush();
   expect(queue.items[0]?.draft.text).toBe('Original queued work');
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it('owns and dispatches the queue in a VS Code webview without navigator.locks', async () => {
+  vi.stubGlobal('navigator', {});
+  render({ webview: true, canDispatch: true }); await flush();
+  expect(queue.ready).toBe(true);
+  queue.enqueue(draft('VS Code queue')); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft('VS Code queue'));
 });
 
 it('queues an answer once immediately while offline and keeps the fence through failure and resend', async () => {
