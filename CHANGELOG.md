@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.15
+
+- Allow workspace sends when native status is unknown while preserving blocking for other actions.
+
 ## 2.0.6-pre.14
 
 - Route workspace sends to native steering for active turns and allow fresh idle sends through stale cache state.

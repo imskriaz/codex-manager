@@ -396,7 +396,7 @@ describe("executeDashboardActionMessage", () => {
     const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "getWorkspaceEnvironment", requestId: "dashboard-auto-project", payload: { sessionId: id, automatic: true } });
     expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined, false); expect(environment).toHaveBeenCalledWith(project, false, undefined);
   });
-  it.each(["browser", "webview"] as const)("keeps %s history readable and reports why an unverified session cannot send", async (hostKind) => {
+  it.each(["browser", "webview"] as const)("keeps %s history readable and allows an unverified send attempt", async (hostKind) => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
     const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "unknown", statusError: "Session inspection timed out.", archived: false };
     const context = { ...createContext(), hostKind };
@@ -406,8 +406,8 @@ describe("executeDashboardActionMessage", () => {
     expect(history).toMatchObject({ status: "completed", payload: { cliSession: session, cliSessionMessages: [{ text: "Saved answer" }], notice: { level: "warning", message: expect.stringContaining(session.statusError) } } });
     readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
     const sent = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "unknown-send", payload: { sessionId: session.id, text: "Follow up" } });
-    expect(sent).toMatchObject({ status: "failed", errorMessage: expect.stringContaining(session.statusError) });
-    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+    expect(sent.status).toBe("completed");
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
   });
 
   it("returns session mutation success without waiting for full discovery", async () => {
@@ -825,6 +825,19 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
     expect(steerCodexCliSessionTurnMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId, expectedTurnId: "turn-1", text: "Follow up" }));
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("allows workspace sends when native status is unknown", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce({ id: sessionId, title: "Unverified", status: "unknown", locked: true, archived: false, statusError: "Native runtime unavailable" });
+    const result = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "unknown-send", payload: { sessionId, text: "Continue" }
+    });
+    expect(result.status).toBe("completed");
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
   });
 
   it("rejects a reply routed to a different project and leaves the session untouched", async () => {
