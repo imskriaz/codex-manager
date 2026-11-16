@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.10
+
+- Fix session rail status dots and running spinners overlapping conversation titles.
+
 ## 2.0.6-pre.9
 
 - Include recent verified native-running sessions during VS Code startup recovery, even when a plain reload did not finish persisting its recovery list.

@@ -242,6 +242,8 @@ describe("sessions sidebar layout", () => {
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
     expect(css).toContain(".cli-session-row-meta > span");
     expect(css).toContain('.cli-workspace :is(.cli-project-sessions,.cli-compact-session-list) .cli-session-row { min-height:32px;');
+    expect(css).toContain('.cli-workspace .cli-session-row-select { width: auto; min-width: 0; }');
+    expect(css).toContain('.cli-workspace .cli-session-row-status { position: relative; z-index: 1;');
   });
 
   it("offers one copy target with the complete text only after an assistant turn ends", () => {
