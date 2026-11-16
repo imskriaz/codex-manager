@@ -32,6 +32,8 @@ export default function WorkspaceBrowser(props: {
     [reference, setReference] = useState("");
   const [input, setInput] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [preferences, setPreferences] = useState({ openLinks: true, autoOpenFiles: true, autoVerify: true, keepCookies: true });
   const [size, setSize] = useState({ width: 1280, height: 800 });
   const [cursor, setCursor] = useState<BrowserPoint>({ x: 20, y: 20 });
   const locked = useRef(false),
@@ -42,6 +44,31 @@ export default function WorkspaceBrowser(props: {
   draftPoints.current = points;
   const revision = state.revision;
   const current = state.pages.find((page) => page.id === selected);
+  const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
+  const togglePreference = (key: keyof typeof preferences): void => {
+    setPreferences((previous) => {
+      const next = { ...previous, [key]: !previous[key] };
+      try { localStorage.setItem(`codexManager.browser.${key}`, String(next[key])); } catch { /* optional browser preference */ }
+      return next;
+    });
+  };
+  const copyUrl = async (): Promise<void> => {
+    try { await navigator.clipboard.writeText(current?.url ?? url); noticeAction("URL copied."); }
+    catch { setFailed(true); setNotice("Clipboard access was unavailable. Select the URL and copy it manually."); }
+  };
+  const saveScreenshot = (): void => {
+    if (!state.image) return;
+    const link = document.createElement("a"); link.href = state.image; link.download = "codex-browser-screenshot.jpg"; link.click(); noticeAction("Screenshot saved.");
+  };
+  const saveHtml = async (): Promise<void> => {
+    if (!selected) return;
+    try {
+      const response = await request("workspaceBrowser", { browserRequest: { operation: "html", pageId: selected } });
+      const html = response.workspaceBrowser?.value;
+      if (typeof html !== "string") throw new Error("HTML was not returned.");
+      const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([html], { type: "text/html" })); link.download = "codex-browser-page.html"; link.click(); URL.revokeObjectURL(link.href); noticeAction("HTML saved.");
+    } catch (error) { setFailed(true); setNotice(error instanceof Error ? error.message : String(error)); }
+  };
   useEffect(() => {
     if (current?.url) setUrl(current.url);
   }, [current?.url]);
@@ -221,11 +248,31 @@ export default function WorkspaceBrowser(props: {
   };
   return (
     <section class={`workspace-browser ${expanded ? "is-expanded" : ""}`} aria-label="Development browser">
-      <header class="workspace-browser-header">
-        <span class="workspace-browser-heading"><span class="workspace-browser-globe" aria-hidden="true">◉</span><strong>Development browser</strong></span>
+      <header class="workspace-browser-header workspace-browser-tabs">
+        <div class="workspace-browser-page-tabs" role="tablist" aria-label="Browser pages">
+          {state.pages.length ? state.pages.map((page) => <button key={page.id} type="button" role="tab" aria-selected={page.id === selected} class={page.id === selected ? "is-active" : ""} title={page.url} onClick={() => { setSelected(page.id); setPoints([]); void run({ operation: "screenshot", pageId: page.id }); }}>{page.title || page.url}</button>) : <button type="button" role="tab" aria-selected="true" class="is-active">New tab</button>}
+        </div>
+        <button class="workspace-browser-icon-button" type="button" aria-label="New browser tab" title="New browser tab" onClick={() => { setSelected(""); setUrl("http://localhost:3000"); setPoints([]); setState((previous) => ({ ...previous, pageId: undefined, revision: undefined, image: undefined })); }}><ToolIcon kind="plus" /></button>
+        <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" /></button>
         <span style={{ flex: "1" }} />
+        <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><ToolIcon kind="comment" /></button>
         <button class="workspace-browser-icon-button" aria-label={expanded ? "Collapse browser" : "Expand browser"} title={expanded ? "Collapse browser" : "Expand browser"} aria-pressed={expanded} onClick={() => setExpanded((value) => !value)}><ToolIcon kind={expanded ? "close" : "external"} /></button>
         <WorkspaceMenu label="Browser actions" icon={<ToolIcon kind="more" />}>
+          <button type="button" disabled={!current} onClick={() => current && window.open(current.url, "_blank", "noopener,noreferrer")}><ToolIcon kind="external" />Open in Google Chrome</button>
+          <button type="button" disabled={!current} onClick={() => void copyUrl()}><ToolIcon kind="copy" />Copy URL</button>
+          <button type="button" disabled={!state.image} onClick={saveScreenshot}><ToolIcon kind="download" />Save screenshot</button>
+          <button type="button" disabled={!current} onClick={() => void saveHtml()}><ToolIcon kind="download" />Open HTML file…</button>
+          <div class="workspace-browser-menu-divider" />
+          <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" />Viewport <span class="workspace-browser-menu-value">{size.width === 1280 ? "Responsive" : "Mobile"}</span></button>
+          <button type="button" onClick={() => togglePreference("openLinks")}><ToolIcon kind="external" />Open links in built-in browser <span class="workspace-browser-menu-check">{preferences.openLinks ? "✓" : ""}</span></button>
+          <button type="button" onClick={() => togglePreference("autoOpenFiles")}><ToolIcon kind="edit" />Auto-open files Codex writes <span class="workspace-browser-menu-check">{preferences.autoOpenFiles ? "✓" : ""}</span></button>
+          <button type="button" onClick={() => togglePreference("autoVerify")}><ToolIcon kind="check" />Auto-verify changes <span class="workspace-browser-menu-check">{preferences.autoVerify ? "✓" : ""}</span></button>
+          <button type="button" onClick={() => noticeAction("Allowed sites are controlled by the current project and Manager permissions.")}><ToolIcon kind="eye" />Manage allowed sites…</button>
+          <button type="button" onClick={() => noticeAction("Local network access is limited to the current project browser context.")}><ToolIcon kind="branch" />Local network access <span class="workspace-browser-menu-value">Allowed</span></button>
+          <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "storage" })}><ToolIcon kind="eye" />Cookies</button>
+          <button type="button" onClick={() => togglePreference("keepCookies")}><ToolIcon kind="check" />Keep cookies <span class="workspace-browser-menu-value">{preferences.keepCookies ? "Until quit" : "Session"}</span></button>
+          <button type="button" disabled={!current || busy || !props.connected} onClick={() => command({ operation: "storage", confirmed: true, params: { action: "clearCookies" } })}><ToolIcon kind="clear" />Clear browsing data</button>
+          <div class="workspace-browser-menu-divider" />
           <button type="button" disabled={busy || !props.connected} onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}><ToolIcon kind="refresh" />Refresh preview</button>
           <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "close" })}><ToolIcon kind="close" />Close page</button>
           <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" />Reload page</button>
@@ -246,48 +293,18 @@ export default function WorkspaceBrowser(props: {
           value={url}
           onInput={(e) => setUrl(e.currentTarget.value)}
         />
+        <button class="workspace-browser-icon-button" aria-label="Go back" title="Go back" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "back" })}><ToolIcon kind="left" /></button>
+        <button class="workspace-browser-icon-button" aria-label="Go forward" title="Go forward" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "forward" })}><ToolIcon kind="right" /></button>
+        <button class="workspace-browser-icon-button" aria-label="Reload page" title="Reload page" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" /></button>
         <button class="workspace-browser-icon-button workspace-browser-go" aria-label="Go to URL" title="Go to URL" disabled={busy || !props.connected} type="submit"><ToolIcon kind="play" /></button>
         <button class="workspace-browser-icon-button" aria-label="Open new browser page" title="Open new browser page" disabled={busy || !props.connected} type="button" onClick={() => command({ operation: "open", url })}><ToolIcon kind="plus" /></button>
       </form>
-      <div class="workspace-browser-toolbar">
-        <select
-          aria-label="Open browser pages"
-          value={selected}
-          disabled={busy || points.length > 0}
-          onChange={(event) => {
-            setSelected(event.currentTarget.value);
-            setPoints([]);
-            void run({ operation: "screenshot", pageId: event.currentTarget.value });
-          }}
-        >
-          <option value="">Open pages ({state.pages.length})</option>
-          {state.pages.map((page) => (
-            <option key={page.id} value={page.id}>
-              {page.title || page.url}
-            </option>
-          ))}
-        </select>
+      <div class="workspace-browser-toolbar workspace-browser-pagebar">
+        <span class="workspace-browser-toolbar-caption">{current ? current.url : "Type a URL or ask Codex to open a site"}</span>
         <button class="workspace-browser-icon-button" aria-label="Refresh browser pages" title="Refresh browser pages"
           disabled={busy || !props.connected}
           onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}
         ><ToolIcon kind="refresh" /></button>
-      </div>
-      <div class="workspace-browser-toolbar">
-        <button class="workspace-browser-icon-button"
-          aria-label="Go back"
-          disabled={busy || !current || !props.connected}
-          onClick={() => command({ operation: "back" })}
-        >
-          <ToolIcon kind="left" />
-        </button>
-        <button class="workspace-browser-icon-button"
-          aria-label="Go forward"
-          disabled={busy || !current || !props.connected}
-          onClick={() => command({ operation: "forward" })}
-        >
-          <ToolIcon kind="right" />
-        </button>
-        <span class="workspace-browser-toolbar-caption">{current ? current.title || current.url : "No page open"}</span>
       </div>
       {notice ? (
         <p role={failed ? "alert" : "status"} class={failed ? "is-error" : ""}>
@@ -391,6 +408,7 @@ export default function WorkspaceBrowser(props: {
                 onClick={() => {
                   setMode(tool);
                   setPoints([]);
+                  setInspectorOpen(true);
                 }}
               >
                 {tool === "interact"
@@ -410,104 +428,38 @@ export default function WorkspaceBrowser(props: {
       ) : (
         <p class="workspace-browser-empty">Open your development URL. AI and manual pages appear here together.</p>
       )}
-      <div class="workspace-browser-toolbar workspace-browser-interaction">
-        <input
-          aria-label="Type into focused browser field"
-          value={input}
-          onInput={(e) => setInput(e.currentTarget.value)}
-        />
-        <button class="workspace-browser-icon-button"
-          aria-label="Type into focused browser field"
-          title="Type into focused browser field"
-          disabled={busy || !current || !props.connected}
-          onClick={() => command({ operation: "type", text: input })}
-        >
-          <ToolIcon kind="edit" />
-        </button>
-        <button class="workspace-browser-icon-button"
-          aria-label="Press Enter"
-          title="Press Enter"
-          disabled={busy || !current || !props.connected}
-          onClick={() => command({ operation: "press", key: "Enter" })}
-        >
-          <ToolIcon kind="play" />
-        </button>
-        <button class="workspace-browser-icon-button"
-          aria-label="Scroll down"
-          title="Scroll down"
-          disabled={busy || !current || !props.connected}
-          onClick={() => command({ operation: "scroll", y: 500 })}
-        >
-          <ToolIcon kind="down" />
-        </button>
-        <button class="workspace-browser-icon-button"
-          disabled={busy || !current || !props.connected}
-          aria-label="Scroll up"
-          title="Scroll up"
-          onClick={() => command({ operation: "scroll", y: -500 })}
-        >
-          <ToolIcon kind="up" />
-        </button>
-      </div>
-      {mode !== "interact" ? (
-        <div class="workspace-browser-feedback">
-          <textarea
-            aria-label="Area instruction or design feedback"
-            placeholder="Select an area, then describe the change…"
-            value={text}
-            onInput={(e) => setText(e.currentTarget.value)}
-          />
-          <input
-            type="url"
-            aria-label="Design or inspiration reference URL"
-            placeholder="Design / inspiration URL (optional)"
-            value={reference}
-            onInput={(e) => setReference(e.currentTarget.value)}
-          />
-          <button disabled={busy || !points.length || !current || !props.connected} onClick={() => void addFeedback()}>
-            Save feedback
-          </button>
-          <button
-            onClick={() => {
-              setPoints([]);
-              setText("");
-            }}
-          >
-            Cancel mark
-          </button>
+      <aside class={`workspace-browser-inspector ${inspectorOpen ? "is-open" : ""}`} aria-label="Browser inspector" aria-hidden={!inspectorOpen}>
+        <header class="workspace-browser-inspector-header">
+          <span><strong>Inspector</strong><small>Interact, annotate, and inspect this page</small></span>
+          <button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button>
+        </header>
+        <div class="workspace-browser-inspector-body">
+          <div class="workspace-browser-toolbar workspace-browser-interaction">
+            <input aria-label="Type into focused browser field" value={input} onInput={(e) => setInput(e.currentTarget.value)} />
+            <button class="workspace-browser-icon-button" aria-label="Type into focused browser field" title="Type into focused browser field" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "type", text: input })}><ToolIcon kind="edit" /></button>
+            <button class="workspace-browser-icon-button" aria-label="Press Enter" title="Press Enter" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "press", key: "Enter" })}><ToolIcon kind="play" /></button>
+            <button class="workspace-browser-icon-button" aria-label="Scroll down" title="Scroll down" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "scroll", y: 500 })}><ToolIcon kind="down" /></button>
+            <button class="workspace-browser-icon-button" disabled={busy || !current || !props.connected} aria-label="Scroll up" title="Scroll up" onClick={() => command({ operation: "scroll", y: -500 })}><ToolIcon kind="up" /></button>
+          </div>
+          {mode !== "interact" ? (
+            <div class="workspace-browser-feedback">
+              <textarea aria-label="Area instruction or design feedback" placeholder="Select an area, then describe the change…" value={text} onInput={(e) => setText(e.currentTarget.value)} />
+              <input type="url" aria-label="Design or inspiration reference URL" placeholder="Design / inspiration URL (optional)" value={reference} onInput={(e) => setReference(e.currentTarget.value)} />
+              <div class="workspace-browser-feedback-actions">
+                <button disabled={busy || !points.length || !current || !props.connected} onClick={() => void addFeedback()}>Save feedback</button>
+                <button onClick={() => { setPoints([]); setText(""); }}>Cancel mark</button>
+              </div>
+            </div>
+          ) : null}
+          <details>
+            <summary>Saved feedback ({state.feedback.length})</summary>
+            {state.feedback.map((f) => (
+              <article key={f.id}><small>{f.kind} · {f.url}</small><p>{f.text || "Visual mark"}{" "}{f.referenceUrl ? <a href={f.referenceUrl} target="_blank" rel="noreferrer">Reference ↗</a> : null}</p><button disabled={busy || !props.connected} onClick={() => void addInstruction(f)}>Add to instruction</button><button disabled={busy || !props.connected} onClick={() => command({ operation: "deleteFeedback", feedbackId: f.id })}>Delete</button></article>
+            ))}
+          </details>
+          <details><summary>Console and network ({state.logs?.length ?? 0})</summary><pre>{state.logs?.join("\n") || "No events captured."}</pre></details>
         </div>
-      ) : null}
-      <details>
-        <summary>Saved feedback ({state.feedback.length})</summary>
-        {state.feedback.map((f) => (
-          <article key={f.id}>
-            <small>
-              {f.kind} · {f.url}
-            </small>
-            <p>
-              {f.text || "Visual mark"}{" "}
-              {f.referenceUrl ? (
-                <a href={f.referenceUrl} target="_blank" rel="noreferrer">
-                  Reference ↗
-                </a>
-              ) : null}
-            </p>
-            <button disabled={busy || !props.connected} onClick={() => void addInstruction(f)}>
-              Add to instruction
-            </button>
-            <button
-              disabled={busy || !props.connected}
-              onClick={() => command({ operation: "deleteFeedback", feedbackId: f.id })}
-            >
-              Delete
-            </button>
-          </article>
-        ))}
-      </details>
-      <details>
-        <summary>Console and network ({state.logs?.length ?? 0})</summary>
-        <pre>{state.logs?.join("\n") || "No events captured."}</pre>
-      </details>
+      </aside>
     </section>
   );
 }

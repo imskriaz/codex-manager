@@ -31,7 +31,9 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const url = `http://127.0.0.1:${server.address().port}`;
   const opened = await workspaceBrowser(root, { operation: 'open', operationId: randomUUID(), url });
-  assert.equal(opened.pages.length, 1);
+  const secondPage = await workspaceBrowser(root, { operation: 'open', operationId: randomUUID(), url });
+  assert.equal(secondPage.pages.length, 2);
+  assert.notEqual(opened.pageId, secondPage.pageId);
   assert.ok(opened.image.startsWith('data:image/jpeg;base64,'));
   const changed = await workspaceBrowser(root, { operation: 'click', operationId: randomUUID(), pageId: opened.pageId, revision: opened.revision, selector: 'button' });
   const snapshot = await workspaceBrowser(root, { operation: 'snapshot', pageId: opened.pageId });
@@ -99,7 +101,10 @@ try {
   await ui.getByRole('menu', { name: 'Browser actions', exact: true }).waitFor();
   await ui.keyboard.press('Escape');
   assert.equal(await ui.getByRole('menu', { name: 'Browser actions', exact: true }).count(), 0);
-  await ui.getByRole('combobox', { name: 'Open browser pages' }).selectOption(opened.pageId);
+  const browserTab = ui.locator('.workspace-browser-page-tabs > button').first();
+  await browserTab.waitFor();
+  assert.equal(await ui.getByRole('tablist', { name: 'Browser pages' }).getByRole('tab').count(), 2);
+  await browserTab.click();
   await ui.locator('.workspace-browser-preview img').waitFor();
   await ui.getByRole('button', { name: 'area', exact: true }).click();
   const preview = ui.locator('.workspace-browser-preview svg');
