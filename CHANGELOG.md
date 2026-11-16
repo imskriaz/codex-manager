@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.9
+
+- Include recent verified native-running sessions during VS Code startup recovery, even when a plain reload did not finish persisting its recovery list.
+
 ## 2.0.6-pre.8
 
 - Join an Auto Resume already in progress for the same VS Code session instead of opening or continuing it again.

@@ -704,7 +704,12 @@ export function resumePersistedCodexSessions(
           }
         }
       };
-      const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+      const persistedIds = [...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)];
+      const recentRunningIds = readRecentRunningCodexSessionIds(recoveryHome) ?? [];
+      const savedIds = normalizeIds([...persistedIds, ...recentRunningIds]);
+      if (recentRunningIds.length) {
+        recordPersistentEvent("info", "auto-resume", "Startup recovery included recent native-running sessions", { count: recentRunningIds.length });
+      }
       recordPersistentEvent("info", "auto-resume", "Startup recovery loaded", { savedCount: savedIds.length, goalOnly });
       recordPersistentEvent("debug", "auto-resume", "Startup recovery session IDs", { ids: savedIds });
       const savedTitles = readSavedMetadata(context);
