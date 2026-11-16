@@ -410,36 +410,43 @@ export default function WorkspaceBrowser(props: {
       ) : (
         <p class="workspace-browser-empty">Open your development URL. AI and manual pages appear here together.</p>
       )}
-      <div class="workspace-browser-toolbar">
+      <div class="workspace-browser-toolbar workspace-browser-interaction">
         <input
           aria-label="Type into focused browser field"
           value={input}
           onInput={(e) => setInput(e.currentTarget.value)}
         />
-        <button
+        <button class="workspace-browser-icon-button"
+          aria-label="Type into focused browser field"
+          title="Type into focused browser field"
           disabled={busy || !current || !props.connected}
           onClick={() => command({ operation: "type", text: input })}
         >
-          Type
+          <ToolIcon kind="edit" />
         </button>
-        <button
+        <button class="workspace-browser-icon-button"
+          aria-label="Press Enter"
+          title="Press Enter"
           disabled={busy || !current || !props.connected}
           onClick={() => command({ operation: "press", key: "Enter" })}
         >
-          Enter
+          <ToolIcon kind="play" />
         </button>
-        <button
+        <button class="workspace-browser-icon-button"
+          aria-label="Scroll down"
+          title="Scroll down"
           disabled={busy || !current || !props.connected}
           onClick={() => command({ operation: "scroll", y: 500 })}
         >
-          Scroll ↓
+          <ToolIcon kind="down" />
         </button>
-        <button
+        <button class="workspace-browser-icon-button"
           disabled={busy || !current || !props.connected}
           aria-label="Scroll up"
+          title="Scroll up"
           onClick={() => command({ operation: "scroll", y: -500 })}
         >
-          ↑
+          <ToolIcon kind="up" />
         </button>
       </div>
       {mode !== "interact" ? (

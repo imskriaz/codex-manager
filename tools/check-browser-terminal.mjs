@@ -95,6 +95,10 @@ try {
   await ui.addStyleTag({ content: await readFile('media/webview/shared.css', 'utf8') });
   await ui.addStyleTag({ content: await readFile('media/webview/quotaSummary.css', 'utf8') });
   await ui.addScriptTag({ content: frontend.outputFiles[0].text });
+  await ui.getByRole('button', { name: 'Browser actions', exact: true }).click();
+  await ui.getByRole('menu', { name: 'Browser actions', exact: true }).waitFor();
+  await ui.keyboard.press('Escape');
+  assert.equal(await ui.getByRole('menu', { name: 'Browser actions', exact: true }).count(), 0);
   await ui.getByRole('combobox', { name: 'Open browser pages' }).selectOption(opened.pageId);
   await ui.locator('.workspace-browser-preview img').waitFor();
   await ui.getByRole('button', { name: 'area', exact: true }).click();
