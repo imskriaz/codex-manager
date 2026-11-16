@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.13
+
+- Refresh native session status before sending workspace prompts.
+
 ## 2.0.6-pre.12
 
 - Verify native Codex status freshly before reporting running sessions or resuming work.

@@ -757,6 +757,22 @@ describe("executeDashboardActionMessage", () => {
     }
   });
 
+  it("refreshes native status before sending from the workspace composer", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    const session = { id: sessionId, title: "Idle after stale cache", status: "idle", locked: false, archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    readCodexCliSessionMessagesMock.mockResolvedValueOnce([]);
+    const result = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "fresh-send", payload: { sessionId, text: "Continue" }
+    });
+    expect(result.status).toBe("completed");
+    expect(readCodexCliSessionSummaryMock).toHaveBeenCalledWith(sessionId, undefined, true);
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
+  });
+
   it.each(['completed', 'failed'] as const)('accepts a follow-up while the matching %s Manager turn releases its writer', async status => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({ get: (key: string, fallback?: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as unknown as vscode.WorkspaceConfiguration);
     const sessionId = '01a04882-d037-7a42-ad24-9afb61901188';

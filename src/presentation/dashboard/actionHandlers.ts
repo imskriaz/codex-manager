@@ -2036,7 +2036,7 @@ async function canonicalProjectPath(projectPath: string): Promise<string> {
 async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload | undefined) {
   ensureCliIntegrationEnabled();
   if (!payload?.sessionId) throw new Error("Choose a session first.");
-  const currentSession = await ensureCliSessionIsActive(payload.sessionId);
+  const currentSession = await ensureCliSessionIsActive(payload.sessionId, true);
   const live = getCodexSessionLiveState(payload.sessionId);
   const settling = live?.status === "cancelled" || currentSession.runningBy === "Codex Manager" && live &&
     ["completed", "failed"].includes(live.status) && (!currentSession.steerTurnId || currentSession.steerTurnId === live.turnId);
@@ -2304,8 +2304,11 @@ async function findCliSession(sessionId: string) {
   return session;
 }
 
-async function ensureCliSessionIsActive(sessionId: string) {
-  const session = await findCliSession(sessionId);
+async function ensureCliSessionIsActive(sessionId: string, freshStatus = false) {
+  const session = freshStatus
+    ? await readCodexCliSessionSummary(sessionId, undefined, true)
+    : await findCliSession(sessionId);
+  if (!session) throw new Error("This Codex session was not found. Refresh the session list and try again.");
   if (session.archived) throw new Error("Restore this archived session before opening or continuing it.");
   if (session.status === "unknown") throw new Error(`Session running state could not be verified. Refresh before retrying. ${session.statusError ?? ""}`.trim());
   return session;
