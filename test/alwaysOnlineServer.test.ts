@@ -42,7 +42,7 @@ describe("always-online WebSocket relay handoff", () => {
     expect(verify).toHaveBeenCalledOnce();
   });
 
-  it.each(['webSocketServerEnabled', 'webDashboardEnabled', 'cloudflaredDomain'])('stops without probing when %s is disabled or missing', async key => {
+  it.each(['webDashboardEnabled', 'cloudflaredDomain'])('stops without probing when %s is disabled or missing', async key => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (name: string, fallback: unknown) => name === key ? (key === 'cloudflaredDomain' ? '' : false) : name === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
     const verify = vi.fn(async () => true);
     const server = new AlwaysOnlineServer({} as never, { getRealtimeRelayKey: async () => 'key' } as never, verify);
@@ -50,6 +50,19 @@ describe("always-online WebSocket relay handoff", () => {
     expect(await server.applyConfiguration()).toBe('stopped');
     expect(stop).toHaveBeenCalledOnce();
     expect(verify).not.toHaveBeenCalled();
+  });
+  it('prepares the local Always Active host when WS Cross System is disabled', async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      key === 'alwaysActive' ? true : key === 'webSocketServerEnabled' ? false : key === 'webDashboardEnabled' ? true : key === 'cloudflaredDomain' ? '' : fallback
+    } as never);
+    const verify = vi.fn(async () => true);
+    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => 'key' } as never, verify);
+    const stop = vi.spyOn(server, 'stop').mockResolvedValue();
+    const start = vi.spyOn(server, 'start').mockResolvedValue('started');
+    await expect(server.applyConfiguration()).resolves.toBe('started');
+    expect(verify).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledWith('key');
+    expect(stop).not.toHaveBeenCalled();
   });
   it("waits without throwing or retaining a stale relay when encrypted sync is unavailable", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

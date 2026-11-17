@@ -197,8 +197,14 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
     const alwaysActive = config.get<boolean>("alwaysActive", false);
-    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && (domain || alwaysActive)
-      ? JSON.stringify([domain || "local", alwaysActive ? "node" : "relay"]) : undefined;
+    const dashboardEnabled = config.get<boolean>("webDashboardEnabled", true);
+    const crossSystemEnabled = config.get<boolean>("webSocketServerEnabled", true);
+    // Always Active is a local standalone host. Keep it independent from the
+    // optional cross-system relay toggle so VS Code can hand off the local
+    // dashboard when WS Cross System is disabled.
+    if (dashboardEnabled && alwaysActive) return JSON.stringify(["local", "node"]);
+    return dashboardEnabled && crossSystemEnabled && domain
+      ? JSON.stringify([domain, "relay"]) : undefined;
   }
 
   private async getLocalHostKey(): Promise<string | undefined> {

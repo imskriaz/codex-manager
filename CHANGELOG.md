@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.36
+
+- Keep the local Always Active Node host running after VS Code closes even when WS Cross System is disabled.
+
 ## 2.0.6-pre.35
 
 - Replace wide endpoint tabs with a searchable picker above Operation in the API request editor.

@@ -5,7 +5,7 @@ vi.mock("undici", async original => ({ ...await original<typeof import("undici")
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 
 const secret = Buffer.alloc(32, 7);
-let settings: { cloudflaredDomain: string; webDashboardEnabled: boolean; webSocketServerEnabled: boolean };
+let settings: { cloudflaredDomain: string; webDashboardEnabled: boolean; webSocketServerEnabled: boolean; alwaysActive?: boolean };
 let server: WebDashboardServer;
 beforeEach(() => {
   settings = { cloudflaredDomain: "https://tunnel.example", webDashboardEnabled: true, webSocketServerEnabled: true };
@@ -28,6 +28,12 @@ it.each(["foreign", "offline", "malformed", "oversized", "forbidden"])("keeps th
 });
 it("honors a disabled cross-system toggle without making a network request", async () => {
   settings.webSocketServerEnabled = false; expect(await server.isConfiguredDomainLocal()).toBe(false); expect(mockFetch).not.toHaveBeenCalled();
+});
+it("keeps the local Always Active host enabled when cross-system transport is off", async () => {
+  settings.alwaysActive = true;
+  settings.webSocketServerEnabled = false;
+  expect(await server.isConfiguredDomainLocal()).toBe(true);
+  expect(mockFetch).not.toHaveBeenCalled();
 });
 it("rejects a stale successful proof after configuration changes", async () => {
   mockFetch.mockImplementation(async (url: URL) => {

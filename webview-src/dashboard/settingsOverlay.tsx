@@ -330,9 +330,9 @@ export function SettingsOverlay(props: {
                       onToggle={(enabled) => patchAndSend("alwaysActive", enabled)}
                     >
                       <div class="settings-note">
-                        {props.settings.webDashboardEnabled && props.settings.webSocketServerEnabled !== false
+                        {props.settings.webDashboardEnabled
                           ? "The standalone Node host will keep using port 39875 after VS Code closes."
-                          : "Enable Web Dashboard and WS Cross System for this host to stay active."}
+                          : "Enable Web Dashboard for this host to stay active."}
                       </div>
                       <SettingsToggleBlock
                         title="Start with system"
