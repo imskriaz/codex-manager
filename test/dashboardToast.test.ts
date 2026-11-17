@@ -169,6 +169,14 @@ describe("dashboard toast", () => {
     expect(css).toMatch(/\.dashboard-notice-stack \.dashboard-notice\s*\{[\s\S]*?position:\s*relative/);
   });
 
+  it("keeps mobile notices compact and limited to two lines", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toContain(".dashboard-notice-stack { right: 8px; width: min(300px");
+    expect(css).toContain("-webkit-line-clamp: 2");
+    expect(css).toContain(".dashboard-connection-banner { right: 8px; left: auto;");
+    expect(css).toContain(".cli-workspace .cli-composer-unavailable { width: calc(100% - 16px);");
+  });
+
   it("closes browser push notifications on replacement, timeout, and reload", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
 

@@ -5,6 +5,8 @@ import { defineConfig } from "vite";
 const rootDir = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // Dashboard modules live under /assets/ in browsers and a VS Code resource URI.
+  base: "./",
   esbuild: {
     jsx: "automatic",
     jsxImportSource: "preact"

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.6-pre.20
+
+- Show CPU, RAM, battery, network, disk, and uptime readings in the Environment panel when system information is enabled.
+
+## 2.0.6-pre.19
+
+- Keep Browser optional, close browser pages cleanly, and label page tabs with their document titles.
+- Open session links in separate tabs and download file links directly instead of routing them through Browser.
+- Keep mobile failure and connection notices compact, two-line toasts.
+
+## 2.0.6-pre.18
+
+- Resolve deferred dashboard module preloads relative to their asset location in browsers and VS Code webviews.
+- Preserve Browser, Terminal, and Editor loading errors and offer retry and dashboard reload recovery.
+- Automatically register MCP for new Codex sessions with workspace permissions, preserving user-managed entries and explicit opt-outs.
+
 ## 2.0.6-pre.17
 
 - Read native Codex protocol 13 status and canonical turn IDs for VS Code sends, steering, and reload recovery.

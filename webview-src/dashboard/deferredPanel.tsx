@@ -24,15 +24,22 @@ export function deferredPanel<P extends object>(load: () => Promise<{ default: C
     const [attempt, setAttempt] = useState(0);
     useEffect(() => {
       let active = true;
-      void resolve().then(value => { if (active) setComponent(() => value); }, () => {
-        if (active) setError(`The ${name} could not load. Reconnect and retry, or reload this dashboard after an extension update. Your other actions remain available.`);
+      void resolve().then(value => { if (active) setComponent(() => value); }, reason => {
+        if (active) setError(reason instanceof Error ? reason.message : String(reason || `The ${name} module could not be loaded.`));
       });
       return () => { active = false; };
     }, [attempt]);
     const Panel = component;
-    return Panel ? <Panel {...props} /> : <div class="cli-context-empty" role={error ? "alert" : "status"} aria-busy={!error}>
-      <span>{error || `Loading ${name}…`}</span>
-      {error ? <button type="button" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry {name}</button> : null}
+    return Panel ? <Panel {...props} /> : <div class="cli-context-empty cli-deferred-panel" role={error ? "alert" : "status"} aria-busy={!error}>
+      {error ? <>
+        <strong>Could not load {name}</strong>
+        <span>{error}</span>
+        <span>Retry loading, or reload the dashboard after an extension update. Your other actions remain available.</span>
+        <div class="cli-deferred-panel-actions">
+          <button type="button" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry {name}</button>
+          <button type="button" onClick={() => window.location.reload()}>Reload dashboard</button>
+        </div>
+      </> : <span>{`Loading ${name}…`}</span>}
     </div>;
   };
 }

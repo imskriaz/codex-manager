@@ -173,7 +173,7 @@ export default function WorkspaceBrowser(props: {
     if (!selected) {
       if (openingForDownload.current) return;
       openingForDownload.current = true;
-      void run({ operation: "open", url: "http://localhost:3000" }).finally(() => { openingForDownload.current = false; });
+      void run({ operation: "open" }).finally(() => { openingForDownload.current = false; });
       return;
     }
     downloadedRequest.current = nonce;

@@ -460,6 +460,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
   const selectedDevice = props.selectedSession?.deviceId ?? props.selectedPeerId ?? props.peers?.find(peer => peer.local)?.id;
+  const workspaceDownloadRequest = useWorkspaceRequest(props.selectedSession?.projectPath ?? newChatProject ?? projectPath, selectedDevice === 'local' ? undefined : selectedDevice, props.connected !== false);
   const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath, props.browser && window.self !== window.top);
   const currentDraftKey = useRef(draftKey);
   currentDraftKey.current = draftKey;
@@ -876,8 +877,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
+  const contextProjectPath = props.selectedSession || newChatProject !== undefined ? toolProjectPath : undefined;
   // Discovery replaces the local placeholder ID without changing this workspace.
-  const contextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(toolProjectPath ?? '__workspace__')]);
+  const contextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(contextProjectPath ?? '__workspace__')]);
   const workspacePeer = props.peers?.find(peer => peer.id === (props.selectedSession?.deviceId ?? props.selectedPeerId)) ?? props.peers?.find(peer => peer.local);
   const workspaceSystemName = getSensitiveDisplayValue(props.selectedSession?.deviceName ?? workspacePeer?.name ?? (props.selectedSession?.remote ? 'Remote PC' : 'This PC'), props.privacyMode, 'name');
   const contextProjectState = contextTabsByProject[contextProjectKey] ?? emptyWorkspaceProject();
@@ -1038,7 +1040,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     });
     if (tab === "browser" && (browserUrl || browserDownloadUrl)) setContextTabsByProject(current => ({
       ...current,
-      [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), ...(browserUrl ? { browserUrl } : {}), ...(browserDownloadUrl ? { browserDownloadUrl } : {}), browserActionNonce: (current[contextProjectKey]?.browserActionNonce ?? 0) + 1 }
+      [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), browserUrl, browserDownloadUrl, browserActionNonce: (current[contextProjectKey]?.browserActionNonce ?? 0) + 1 }
     }));
     selectContextTab(tabId);
     setContextCollapsed(false);
@@ -1048,9 +1050,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setContextTabsByProject(current => {
       const entry = current[contextProjectKey] ?? emptyWorkspaceProject();
       const pageTabs = pages.map(page => `browser:${page.id}` as const);
-      const retained = entry.tabs.filter(tab => !tab.startsWith("browser:"));
-      const tabs = [...new Set([...retained, "browser" as const, ...pageTabs])];
-      const active = tabs.includes(entry.active) ? entry.active : "browser";
+      const retained = entry.tabs.filter(tab => workspaceTabKind(tab) !== "browser");
+      const tabs = [...new Set([...retained, ...pageTabs])];
+      const active = tabs.includes(entry.active) ? entry.active : pageTabs[0] ?? "env";
       return { ...current, [contextProjectKey]: { ...entry, browserPages: pages, tabs, active } };
     });
   };
@@ -1058,13 +1060,42 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setContextTabsByProject(current => {
       const entry = current[contextProjectKey] ?? emptyWorkspaceProject();
       const active = `browser:${pageId}` as const;
-      return { ...current, [contextProjectKey]: { ...entry, tabs: [...new Set([...entry.tabs, 'browser' as const, active])], active } };
+      return { ...current, [contextProjectKey]: { ...entry, tabs: [...new Set([...entry.tabs.filter(tab => tab !== 'browser'), active])], active } };
     });
   };
+  const openSessionUrl = (url: string): void => {
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      props.onOpenExternalLink?.(url, props.selectedSession?.deviceId);
+      reportLocalFeedback({ level: "warning", message: "The link could not open in a new tab. Allow pop-ups for this dashboard and retry." });
+    }
+  };
+  const downloadSessionUrl = (url: string): void => {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "";
+    link.rel = "noopener";
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    reportLocalFeedback({ level: "info", message: "Download started." });
+  };
+  const downloadWorkspacePath = (filePath: string): void => {
+    void downloadWorkspaceFile(filePath, payload => workspaceDownloadRequest("readWorkspaceFile", payload), (blob, name) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = name; link.hidden = true;
+      document.body.append(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      reportLocalFeedback({ level: "info", message: "Download started." });
+    }).catch(error => reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : "File download failed." }));
+  };
   const sessionLinkActions = {
-    openInternal: (url: string) => openContextTab("browser", undefined, url),
-    download: (url: string) => openContextTab("browser", undefined, undefined, url),
-    external: (url: string) => props.onOpenExternalLink?.(url, props.selectedSession?.deviceId)
+    openInternal: openSessionUrl,
+    download: downloadSessionUrl,
+    downloadFile: downloadWorkspacePath,
+    external: openSessionUrl
   };
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
@@ -1552,6 +1583,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           liveState={props.liveState}
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
           connected={props.connected !== false}
+          systemInfoEnabled={props.systemInfoEnabled !== false}
+          systemStatus={workspacePeer?.systemStatus}
           projectPath={toolProjectPath}
           browserUrl={contextProjectState.browserUrl}
           browserDownloadUrl={contextProjectState.browserDownloadUrl}
@@ -1630,9 +1663,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onAddToggle={() => setContextAddOpen((open) => !open)}
           onAdd={openContextTab}
           onCloseTab={(tab) => {
-            if (tab === 'env' || tab === 'browser') return;
+            if (tab === 'env') return;
             if (tab.startsWith('browser:')) {
-              setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), browserClosePageId: workspaceTabPath(tab), active: 'browser' } }));
+              setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), browserClosePageId: workspaceTabPath(tab) } }));
               return;
             }
             const next = contextTabs.filter((item) => item !== tab); setContextTabs(next); if (activeContextTab === tab) setActiveContextTab('env');
@@ -1872,7 +1905,7 @@ const SessionAutomaticRecoveryContext = createContext(false);
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
-const SessionLinkContext = createContext<{ openInternal: (url: string) => void; download: (url: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, external: () => undefined });
+const SessionLinkContext = createContext<{ openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
 
 function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
   const seen = new Set<string>();
@@ -2076,7 +2109,9 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
     const file = (event.target as Element).closest<HTMLAnchorElement>('a[data-workspace-file]');
     if (file) {
       event.preventDefault();
-      if (onOpenFile) onOpenFile(file.dataset['workspaceFile']!);
+      const path = file.dataset['workspaceFile']!;
+      if (isWorkspaceDownloadPath(path)) links.downloadFile(path);
+      else if (onOpenFile) onOpenFile(path);
       else feedback?.({ level: 'warning', message: 'Open this conversation in its workspace to view this file.' });
       return;
     }
@@ -2119,6 +2154,10 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
     }
   };
   return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} /><span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
+}
+
+function isWorkspaceDownloadPath(path: string): boolean {
+  return /\.(?:zip|vsix|pdf|docx?|xlsx?|pptx?|csv|json|tar|gz|7z|rar|png|jpe?g|gif|webp|mp3|mp4)$/i.test(path.split(/[?#]/, 1)[0]!);
 }
 
 export function splitMessageParagraphs(text: string): string[] {
@@ -2245,6 +2284,8 @@ function WorkspaceEnvironmentView(props: {
   liveState?: DashboardCodexSessionLiveState;
   environment?: DashboardWorkspaceEnvironment; session?: DashboardCliSessionSummary; projectPath?: string;
   systemName: string;
+  systemInfoEnabled?: boolean;
+  systemStatus?: import("../../src/domain/systemStatus").SystemStatus;
   autoResumeEnabled: boolean;
   connected: boolean; loading: boolean; terminals: DashboardWorkspaceTerminalInfo[]; agents: DashboardCliSessionSummary[];
   editedFiles: number; dirtyFiles: number;
@@ -2258,6 +2299,7 @@ function WorkspaceEnvironmentView(props: {
   return <section class="cli-inspector-view" aria-label="Environment" aria-busy={props.loading}>
     <div class="cli-inspector-body">
       {environment?.warning ? <p role="status">{environment.warning}</p> : null}
+      {props.systemInfoEnabled !== false && props.systemStatus ? <section><h3>System information</h3><SystemStatusRows peer={{ id: 'environment-system', name: props.systemName, connected: props.connected, systemStatus: props.systemStatus }} connected={props.connected} /></section> : null}
       <section><h3>Project</h3><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></section>
       <section><h3>Session</h3><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', props.session?.sessionSurface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></section>
       {environment?.isGitRepository ? <section><h3>Repository</h3><dl>{detail('Branch', environment.branch)}{detail('Tracking', environment.upstream ?? 'No upstream')}{detail('Changes', environment.changes)}{detail('Ahead / behind', `${environment.ahead} / ${environment.behind}`)}</dl></section> : null}
@@ -2530,6 +2572,8 @@ function WorkspaceContextPanel(props: {
   onBrowserPageSelected: (pageId: string) => void;
   session?: DashboardCliSessionSummary;
   systemName: string;
+  systemInfoEnabled?: boolean;
+  systemStatus?: import("../../src/domain/systemStatus").SystemStatus;
   autoResumeEnabled: boolean;
   environment?: DashboardWorkspaceEnvironment;
   environmentLoading: boolean;
@@ -2625,7 +2669,7 @@ function WorkspaceContextPanel(props: {
   }, [props.activeTab, props.tabs.length]);
   const visibleTabs = props.hideTerminal ? props.tabs.filter(tab => tab !== 'terminal') : props.tabs;
   const workspaceAddTabs = (['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab));
-  const addTabs = [...workspaceAddTabs, ...(visibleTabs.includes('accounts') ? [] : ['accounts' as const])];
+  const addTabs = [...workspaceAddTabs.filter(tab => tab !== 'browser' || !visibleTabs.some(item => workspaceTabKind(item) === 'browser')), ...(visibleTabs.includes('accounts') ? [] : ['accounts' as const])];
   const activeKind = workspaceTabKind(props.activeTab);
   const activePath = workspaceTabPath(props.activeTab);
   return <aside hidden={props.collapsed} class={`cli-terminal-panel cli-context-panel-v3 ${props.collapsed ? 'is-collapsed' : ''}`} aria-hidden={props.collapsed} aria-label="Workspace tools">
@@ -2638,7 +2682,7 @@ function WorkspaceContextPanel(props: {
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {!props.collapsed && props.activeTab === 'accounts' ? <section class="workspace-accounts" aria-label="Account center">{props.renderAccounts?.()}</section> : null}
     <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}>{props.tabs.some(tab => workspaceTabKind(tab) === 'browser') ? <WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === "browser" ? activePath ?? "" : undefined} closePageId={props.browserClosePageId} initialUrl={props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /> : null}</div>
-    {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
+    {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} systemInfoEnabled={props.systemInfoEnabled} systemStatus={props.systemStatus} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
     </div>

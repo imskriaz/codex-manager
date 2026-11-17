@@ -92,6 +92,23 @@ it("validates browser URLs and untrusted feedback before execution", () => {
   expect(() => browserUrl(["https://example.com"] as any)).toThrow();
   expect(() => validateBrowserRequest({ operation: "click", x: NaN })).toThrow();
 });
+it("opens a blank download page without requiring a development server or diagnostics", async () => {
+  const request = { operation: "open", operationId: "download-page" };
+  const first = await workspaceBrowser(project, request);
+  const page = await m.contexts[0].newPage.mock.results[0].value;
+  expect(first.pages).toEqual([expect.objectContaining({ id: first.pageId, url: "about:blank" })]);
+  expect(first.revision).toBeTruthy();
+  expect(first.image).toBeUndefined();
+  expect(page.goto).not.toHaveBeenCalled();
+  expect((await workspaceBrowser(project, request)).pageId).toBe(first.pageId);
+  expect(m.contexts[0].newPage).toHaveBeenCalledTimes(1);
+  const explicit = await workspaceBrowser(project, { operation: "open", operationId: "blank-page", url: "about:blank" });
+  expect(explicit.pages.find(item => item.id === explicit.pageId)?.url).toBe("about:blank");
+  for (const url of ["file:///private", "javascript:alert(1)", "about:config", ""]) {
+    await expect(workspaceBrowser(project, { operation: "open", operationId: `invalid-${url.length}`, url })).rejects.toThrow();
+  }
+  expect(m.contexts[0].newPage).toHaveBeenCalledTimes(2);
+});
 it("shares pages, rejects stale writes, and never repeats an operation ID", async () => {
   const first = await open();
   expect(first.pages).toHaveLength(1);

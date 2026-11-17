@@ -39,6 +39,22 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("return `https://${input}`");
     expect(source).not.toContain('class="workspace-browser-page-tabs"');
   });
+  it("keeps Browser out of the default tool tabs and labels opened pages by title", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });");
+    expect(source).toContain("const retained = entry.tabs.filter(tab => workspaceTabKind(tab) !== \"browser\");");
+    expect(source).toContain("props.browserPages.find(page => page.id === path)?.title");
+    expect(source).toContain("if (tab.startsWith('browser:'))");
+    expect(source).toContain("window.open(url, \"_blank\", \"noopener,noreferrer\")");
+    expect(source).toContain('link.download = ""');
+    expect(source).not.toContain('openInternal: (url: string) => openContextTab("browser"');
+  });
+  it("shows host system information in Environment when enabled", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("System information");
+    expect(source).toContain("<SystemStatusRows peer={{ id: 'environment-system'");
+    expect(source).toContain("systemInfoEnabled={props.systemInfoEnabled}");
+  });
   it("prioritizes running status over unseen and attention dots", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('const indicator = running ? "running" : cliSessionIndicator(');

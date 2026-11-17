@@ -150,7 +150,7 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
     return state(project);
   }
   if (r.operation === "open") {
-    const url = browserUrl(r.url);
+    const url = r.url === undefined || r.url === "about:blank" ? "about:blank" : browserUrl(r.url);
     if (!session) {
       if (sessions.size >= 4) throw new Error("Four projects already have browser sessions. Close their pages first.");
       const instance = await engine();
@@ -178,15 +178,17 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
     try { page = await session.context.newPage(); }
     catch (error) { if (!session.pages.size) { sessions.delete(project); await session.context.close().catch(() => undefined); } throw error; }
     const id = [...session.pages].find(([, item]) => item.page === page)?.[0] ?? register(session, page);
-    try {
-      await debuggerFor(session.pages.get(id)!);
-      await page.goto(url, { waitUntil: "domcontentloaded" });
-    } catch (error) {
-      throw new Error(
-        `Page ${id} opened, but navigation was not confirmed: ${error instanceof Error ? error.message : String(error)}. Refresh its state before retrying.`
-      );
+    if (url !== "about:blank") {
+      try {
+        await debuggerFor(session.pages.get(id)!);
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+      } catch (error) {
+        throw new Error(
+          `Page ${id} opened, but navigation was not confirmed: ${error instanceof Error ? error.message : String(error)}. Refresh its state before retrying.`
+        );
+      }
     }
-    return state(project, id, true);
+    return state(project, id, url !== "about:blank");
   }
   const item = r.pageId ? session?.pages.get(r.pageId) : undefined;
   if (!item || item.page.isClosed())

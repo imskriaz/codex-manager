@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.6-pre.17",
+  "version": "2.0.6-pre.20",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -144,6 +144,12 @@
           "default": false,
           "scope": "machine",
           "markdownDescription": "Allow generated Bearer tokens to call the local dashboard API."
+        },
+        "codexManager.mcpAutoSetupEnabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Automatically register Codex Manager MCP for new Codex sessions. First setup enables the local dashboard API and creates a workspace-operation token. Existing user-managed or disabled MCP entries are preserved."
         },
         "codexManager.workspaceTextFileLimitMb": {
           "type": "number",
@@ -360,6 +366,10 @@
       }
     },
     "commands": [
+      {
+        "command": "codexManager.setupMcp",
+        "title": "Codex Manager: Set Up MCP"
+      },
       {
         "command": "codexManager.addAccount",
         "title": "Codex Manager: Add Account via OAuth"

@@ -28,6 +28,7 @@ import { registerCodexSessionQueue } from './services/codexSessionQueue';
 import { registerCompletedGoalCleanup } from './services/completedGoalCleanup';
 import { disposeSqliteContext, initializeSqliteContextWithRetry } from "./storage/sqliteContext";
 import { showStorageRecovery } from "./presentation/storageRecovery";
+import { registerCodexManagerMcpSetup, setupCodexManagerMcp } from './services/codexManagerMcpSetup';
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -44,6 +45,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
   registerWorkspaceTerminalMonitoring(context);
+  registerCodexManagerMcpSetup(context);
   const extensionVersion = resolveExtensionVersion(context);
   transientNotices = enableTransientVscodeNotices();
   try {
@@ -125,6 +127,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         : `Codex Manager could not finish loading: ${detail}. Run Developer: Reload Window to retry.`
     );
   }
+  void setupCodexManagerMcp(context, true).then(message => console.info('[codexManager]', message), error => {
+    void vscode.window.showWarningMessage(`Codex Manager MCP setup could not finish: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 function resolveExtensionVersion(context: vscode.ExtensionContext): string {
