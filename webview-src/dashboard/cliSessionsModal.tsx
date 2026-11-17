@@ -68,8 +68,15 @@ export function sessionQuotaWaitingMessage(session: DashboardCliSessionSummary |
   const quotaFailure = live ? (live.status === 'failed' || live.status === 'disconnected') && isCodexQuotaInterruption(live.error ?? '') : latest?.kind === 'error' && isCodexQuotaInterruption(latest.text);
   if (!quotaFailure && session.goal?.status !== 'usage_limited') return;
   if (!connected) return 'Waiting for connection to check quota and resume automatically.';
-  const available = accounts.some(account => account.enabled && !account.hasQuotaError && !account.hasPendingResetCreditAttempt && (!account.runningDeviceName || account.runningOnThisDevice) && getAccountQuotaMetrics(account).length > 0 && getAccountQuotaMetrics(account).every(metric => metric.value > 0));
-  return available ? 'Quota recovery in progress. Resuming automatically.' : 'No account quota available. Waiting for quota to reset, then resuming automatically.';
+  const eligible = accounts.filter(account => account.enabled && (!account.runningDeviceName || account.runningOnThisDevice));
+  const available = eligible.some(account => {
+    const quota = account.metrics.filter(metric => metric.visible && ['hourly', 'weekly'].includes(metric.key));
+    return !account.hasQuotaError && !account.hasPendingResetCreditAttempt &&
+      (quota.length ? quota.every(metric => typeof metric.percentage === 'number' && Number.isFinite(metric.percentage) && metric.percentage > 0 && metric.percentage <= 100) : account.creditsUnlimited || (account.creditsBalance ?? 0) > 0);
+  });
+  if (available) return 'Quota remains. Checking account switching and automatic recovery.';
+  const exhausted = eligible.length > 0 && eligible.every(account => !account.hasQuotaError && !account.hasPendingResetCreditAttempt && account.metrics.some(metric => metric.visible && ['hourly', 'weekly'].includes(metric.key) && metric.percentage === 0));
+  return exhausted ? 'No account quota available. Waiting for quota to reset, then resuming automatically.' : 'Checking account quota and automatic recovery.';
 }
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}` | `browser:${string}`;
 type WorkspaceToolTab = "accounts" | "browser" | "env" | "git" | "terminal" | "files" | "reviews" | "agents";

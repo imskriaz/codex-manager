@@ -64,9 +64,17 @@ import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/
 import { clearAutoSwitchLock, consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot, setAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
 
 describe("Auto Resume account preparation", () => {
+  beforeEach(() => {
+    clearQuotaCheckCoordination();
+    refreshQuotaMock.mockReset();
+    fetchResetCreditsMock.mockReset();
+    consumeResetCreditMock.mockReset();
+    getTokenAutomationSnapshotMock.mockReturnValue({ accounts: {} });
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     clearAutoSwitchLock();
+    setCurrentWindowRuntimeAccountId(undefined);
     Reflect.deleteProperty(vscode.env, "appHost");
   });
 
@@ -96,6 +104,65 @@ describe("Auto Resume account preparation", () => {
     await expect(prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
     expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: active.id });
     expect(next.isActive).toBe(true);
+  });
+
+  it.each(['node', 'desktop'])('keeps using positive quota below thresholds without cycling accounts in %s', async host => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback: unknown) => ({
+      autoSwitchEnabled: true, autoSwitchHourlyThreshold: 15, autoSwitchWeeklyThreshold: 13
+    } as Record<string, unknown>)[key] ?? fallback } as never);
+    const active = createAccount('usable-active', true, 81, 2);
+    const next = createAccount('usable-next', false, 100, 13);
+    setCurrentWindowRuntimeAccountId(active.id);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn() };
+    expect(await prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(await prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it.each(['node', 'desktop'])('uses updated switch settings before recovery in %s mode', async host => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
+    const settings = { autoSwitchEnabled: true, autoSwitchHourlyThreshold: 15, autoSwitchWeeklyThreshold: 13 };
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback: unknown) =>
+      (settings as Record<string, unknown>)[key] ?? fallback } as never);
+    const active = createAccount('settings-active', true, 81, 2);
+    const next = createAccount('settings-next', false, 100, 13);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => {
+      active.isActive = false;
+      next.isActive = true;
+    }) };
+    setCurrentWindowRuntimeAccountId(active.id);
+    expect(await prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    settings.autoSwitchWeeklyThreshold = 12;
+    settings.autoSwitchEnabled = false;
+    expect(await prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    settings.autoSwitchEnabled = true;
+    setCurrentWindowRuntimeAccountId(next.id);
+    expect(await prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: active.id });
+  });
+
+  it.each(['exhausted', 'rejected', 'disabled', 'foreign', 'zero', 'recovered'])('keeps configured switch thresholds during recovery: %s', async scenario => {
+    Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback: unknown) => ({
+      autoSwitchEnabled: true, autoSwitchHourlyThreshold: 15, autoSwitchWeeklyThreshold: 13
+    } as Record<string, unknown>)[key] ?? fallback } as never);
+    const active = createAccount('fallback-active', true, scenario === 'rejected' ? 90 : 0, 90);
+    const next = createAccount('fallback-next', false, 100, scenario === 'zero' ? 0 : 13);
+    next.enabled = scenario !== 'disabled';
+    let reads = 0;
+    const repo = { listAccounts: vi.fn(async () => {
+      if (++reads > 1 && scenario === 'recovered') active.quotaSummary!.hourlyPercentage = 90;
+      return [active, next];
+    }), switchAccount: vi.fn() };
+    const switched = await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, {
+      ...(scenario === 'rejected' ? { quotaRejectedAccountId: active.id } : {}),
+      canUseAccount: id => scenario !== 'foreign' || id !== next.id
+    });
+    expect(switched).toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
   });
 
   it("resets the active account before resuming saved work when reset is enabled", async () => {

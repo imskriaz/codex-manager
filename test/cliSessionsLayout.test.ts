@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import type { DashboardAccountViewModel } from '../src/domain/dashboard/types';
 import { describe, expect, it } from "vitest";
 import {
   collectSessionImages,
@@ -65,7 +66,7 @@ describe("sessions sidebar layout", () => {
     const error = { id: 'error', kind: 'error' as const, text: 'You have hit your usage limit' };
     const waiting = 'No account quota available. Waiting for quota to reset, then resuming automatically.';
     const status = (s = session, messages = [error], live = undefined, automatic = true, connected = true, running = false) => sessionQuotaWaitingMessage(s, messages, live, [], automatic, connected, running);
-    expect(status()).toBe(waiting);
+    expect(status()).toBe('Checking account quota and automatic recovery.');
     expect(status(session, [error], undefined, true, false)).toContain('Waiting for connection');
     expect(status(session, [error], undefined, false)).toBeUndefined();
     expect(status(session, [error], undefined, true, true, true)).toBeUndefined();
@@ -73,7 +74,14 @@ describe("sessions sidebar layout", () => {
     expect(sessionQuotaWaitingMessage(session, [error, { id: 'new', role: 'user', text: 'Next task' }], undefined, [], true, true, false)).toBeUndefined();
     expect(sessionQuotaWaitingMessage(session, [error], { sessionId: 'quota', streamId: 'done', status: 'completed', updatedAt: 1 }, [], true, true, false)).toBeUndefined();
     const account = { enabled: true, metrics: [{ key: 'hourly', label: '5h', visible: true, percentage: 50 }] } as never;
-    expect(sessionQuotaWaitingMessage(session, [error], undefined, [account], true, true, false)).toBe('Quota recovery in progress. Resuming automatically.');
+    expect(sessionQuotaWaitingMessage(session, [error], undefined, [account], true, true, false)).toBe('Quota remains. Checking account switching and automatic recovery.');
+    const withQuota = (percentage: number) => ({ enabled: true, metrics: [
+      { key: 'hourly', visible: true, percentage }, { key: 'weekly', visible: true, percentage: 2 },
+      { key: 'review', visible: true, percentage: 0 }
+    ] }) as DashboardAccountViewModel;
+    expect(sessionQuotaWaitingMessage(session, [error], undefined, [withQuota(0.1)], true, true, false)).toContain('Quota remains');
+    expect(sessionQuotaWaitingMessage(session, [error], undefined, [withQuota(0)], true, true, false)).toBe(waiting);
+    expect(sessionQuotaWaitingMessage(session, [error], undefined, [{ ...withQuota(0), hasQuotaError: true } as never], true, true, false)).toBe('Checking account quota and automatic recovery.');
   });
   it("marks completed sessions green and pending requests red", () => {
     const session = { id: "chat", status: "idle" as const, updatedAt: "2026-11-15T00:00:00Z" };

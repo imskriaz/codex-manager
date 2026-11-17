@@ -47,7 +47,6 @@ import { getDashboardCopy } from "../dashboard/copy";
 import { redeemAccountResetCredit, verifyAccountResetCredit } from "./resetCreditRedemption";
 import {
   isAutoQueueCandidateEligible,
-  hasAutoQueueCapability,
   isAutoQueueSnapshotFresh,
   usableAutoQueueResetCount
 } from "../../domain/autoQueuePolicy";
@@ -628,11 +627,7 @@ export async function maybeAutoSwitchForActiveQuota(
   }
 }
 
-/**
- * Prepare the active account before replaying saved work. Auto Resume must not
- * start a turn on an account that Auto Switch would immediately reject; let
- * the normal switch/reset plan settle first in both VS Code and standalone.
- */
+/** Prefer a switch/reset first, but positive quota remains usable below switch thresholds. */
 export async function prepareAccountForAutoResume(
   repo: AccountsRepository,
   view: RefreshView,
@@ -653,8 +648,7 @@ export async function prepareAccountForAutoResume(
   )
     return false;
   const policy = getAccountAutoQueuePolicy();
-  return isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), policy) &&
-    (!config.get<boolean>(AUTO_SWITCH_ENABLED, true) || hasAutoQueueCapability(toAutoQueueOrderValue(active), policy));
+  return isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), policy);
 }
 
 function needsReauthorization(account: CodexManagerAccountRecord): boolean {
@@ -945,7 +939,9 @@ async function evaluateAutoSwitchForActiveQuota(
       const message =
         unverifiedCandidates.length || failedCandidateVerification
           ? "Auto Select could not verify quota for an available account. Refresh its quota and retry."
-          : "No account to switch — no capable account has enough quota remaining.";
+          : accountQuotaAvailability(active) === 'available'
+            ? "The current account still has quota. No replacement exceeds the switch thresholds; continuing on the current account."
+            : "No account to switch — no capable account has enough quota remaining.";
       recordAutoSwitchDashboardNotice(message, "warning");
       void vscode.window.showWarningMessage(message);
     } else if (blockedKey !== lastBlockedAutoSwitchKey) {

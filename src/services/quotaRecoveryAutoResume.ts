@@ -4,7 +4,7 @@ import { accountQuotaAvailability } from "../utils/quotaWindows";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from "../application/accounts/autoQueueOrder";
-import { hasAutoQueueCapability, isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
+import { isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
 import { needsWindowReloadForAccount } from "../presentation/workbench/windowRuntimeAccount";
 import { resolveCodexHome } from "./codexSessionResume";
 import {
@@ -120,8 +120,7 @@ export function registerQuotaRecoveryAutoResume(
         availability !== "available" ||
         active.resetCreditAttempt ||
         needsWindowReloadForAccount(active.id) ||
-        !isAutoQueueSnapshotFresh(activeQueue, activePolicy) ||
-        (activePolicy.autoSwitchEnabled && !hasAutoQueueCapability(activeQueue, activePolicy))
+        !isAutoQueueSnapshotFresh(activeQueue, activePolicy)
       )
         return;
       scheduleRetry();
@@ -144,8 +143,7 @@ export function registerQuotaRecoveryAutoResume(
         needsWindowReloadForAccount(latest.id) ||
         accountQuotaAvailability(latest) !== "available" ||
         !latestPolicy || !latestQueue ||
-        !isAutoQueueSnapshotFresh(latestQueue, latestPolicy) ||
-        (latestPolicy.autoSwitchEnabled && !hasAutoQueueCapability(latestQueue, latestPolicy))
+        !isAutoQueueSnapshotFresh(latestQueue, latestPolicy)
       )
         return;
       const result = await resumePersistedCodexSessions(context);

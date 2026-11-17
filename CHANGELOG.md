@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.38
+
+- Keep verified positive quota usable below proactive switch thresholds in VS Code and standalone Auto Resume.
+- Follow configured Auto Switch and Auto Reset thresholds during recovery, without hidden fallback overrides or cycling between usable accounts.
+- Distinguish unknown quota from exhaustion in recovery messages; ignore code-review quota and preserve fractional remaining quota.
+
 ## 2.0.6-pre.37
 
 - Run Auto Switch or the configured reset plan before Auto Resume in VS Code and standalone mode, and resume only after the replacement account is verified usable.

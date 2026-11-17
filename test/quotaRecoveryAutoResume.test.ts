@@ -167,8 +167,9 @@ it('recovers immediately after a standalone account change above the exhaustion 
   expect(mocks.notice).not.toHaveBeenCalled();
 });
 
-it('does not resume a pending turn while Auto Switch still considers the active quota unsafe', async () => {
-  mocks.policy.mockReturnValue(createAutoQueuePolicy({
+it.each(['node', 'desktop'])('resumes verified positive quota below switch thresholds in %s mode', async host => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
+  mocks.policy.mockImplementation(() => createAutoQueuePolicy({
     autoSwitchEnabled: true,
     autoSwitchHourlyThreshold: 20,
     autoSwitchWeeklyThreshold: 20
@@ -178,8 +179,8 @@ it('does not resume a pending turn while Auto Switch still considers the active 
   recover();
   account.quotaSummary!.weeklyPercentage = 10;
   await tick();
-  expect(mocks.resume).not.toHaveBeenCalled();
-  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
 });
 
 it('captures a quota-failed private turn once and refreshes quota without waiting for a manual prompt', async () => {
