@@ -17734,6 +17734,54 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 .dashboard-content .accounts-section-header h2 { width: 100%; min-width: 0; max-width: 100%; }
 .dashboard-content .account-count-badges { width: 100%; max-width: 100%; min-width: 0; flex-wrap: wrap; gap: 4px; }
 .dashboard-content .account-count-badges > button { flex: none; }
+.dashboard-content .dashboard-account-toolbar {
+  --account-control-size: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 160px)) auto;
+  align-items: stretch;
+  gap: 4px;
+  margin-inline: 0;
+  overflow: visible;
+}
+.dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) {
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(0, 140px)) auto;
+}
+.dashboard-content .dashboard-account-toolbar :is(.account-search-control, .dashboard-select-control) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: var(--account-control-size);
+  min-height: var(--account-control-size);
+}
+.dashboard-content .dashboard-account-toolbar .account-search-control { grid-column: auto; }
+.dashboard-content .dashboard-account-toolbar .account-search-control input { flex: 1; width: 0; }
+.dashboard-content .dashboard-account-toolbar .dashboard-select-control select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  min-height: 100%;
+  text-overflow: ellipsis;
+}
+.dashboard-content .dashboard-account-toolbar .dashboard-view-controls {
+  display: grid;
+  grid-template-columns: auto;
+  width: auto;
+  min-width: 0;
+  height: var(--account-control-size);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.dashboard-content .dashboard-account-toolbar .dashboard-view-toggle {
+  width: var(--account-control-size);
+  min-width: var(--account-control-size);
+  height: var(--account-control-size);
+}
+@media (pointer: coarse) {
+  .dashboard-content .dashboard-account-toolbar { --account-control-size: 40px; }
+}
 @container dashboard-surface (max-width: 760px) {
   .dashboard-content .hero { flex-wrap: wrap; gap: 5px; }
   .dashboard-content .hero .brand { flex: 1 1 220px; }
@@ -17743,10 +17791,9 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .dashboard-content .overview-actions { grid-column: auto; }
   .dashboard-content .overview-account { width: 100%; padding: 6px 8px; }
   .dashboard-content .overview-account .overview-meta { grid-template-rows: auto; }
-  .dashboard-content .dashboard-account-toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-inline: 0; }
-  .dashboard-content .dashboard-account-toolbar .account-search-control { flex: 1 1 100%; min-width: 0; }
-  .dashboard-content .dashboard-account-toolbar .dashboard-select-control { flex: 1 1 100px; min-width: 0; max-width: none; }
-  .dashboard-content .dashboard-account-toolbar .dashboard-view-controls { flex: 0 0 auto; margin-left: auto; }
+  .dashboard-content .dashboard-account-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
+  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
+  .dashboard-content .dashboard-account-toolbar .account-search-control { grid-column: 1 / -1; }
   .dashboard-content .accounts-grid { grid-template-columns: 1fr; }
 }
 @container dashboard-surface (max-width: 430px) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.49
+
+- Fill the Saved Accounts toolbar width with aligned search, sort, tag, quota and view controls; adapt to narrow Dashboard panels and larger touch targets.
+
 ## 2.0.6-pre.46
 
 - Keep the running spinner visible in the session sidebar while row actions are available.
