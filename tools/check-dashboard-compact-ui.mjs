@@ -11,7 +11,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
 try {
-  for (const width of [280, 320, 390, 500, 560, 760, 768, 1024, 1440, 1920, 2560]) {
+  for (const width of [280, 320, 390, 420, 440, 480, 500, 560, 760, 768, 1024, 1440, 1920, 2560]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 760, serviceWorkers: 'block' });
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -74,11 +74,30 @@ try {
         overview: element.querySelector('.overview-shell').getBoundingClientRect().height,
         cards: [...element.querySelectorAll('.saved-card-front')].map(card => card.getBoundingClientRect().height),
         toolbar: element.querySelector('.dashboard-account-toolbar').getBoundingClientRect().height,
+        quotas: [...element.querySelectorAll('.saved-progress')].map(grid => ({
+          width: grid.clientWidth,
+          rows: [...grid.querySelectorAll(':scope > .row')].map(row => ({
+            ...row.getBoundingClientRect().toJSON(),
+            overflow: row.scrollWidth > row.clientWidth + 1,
+            percent: row.querySelector('.percent').getBoundingClientRect().toJSON(),
+          })),
+        })),
       }));
       assert.ok(layout.scroll <= layout.width + 2, `${label}: no horizontal overflow ${JSON.stringify(layout)}`);
       assert.ok(layout.overview < 510, `${label}: compact overview ${layout.overview}`);
       assert.ok(layout.cards.every(height => height < 200), `${label}: intrinsic account card heights ${layout.cards}`);
       assert.ok(layout.toolbar < 55, `${label}: controls fit within one row ${layout.toolbar}`);
+      for (const quota of layout.quotas) {
+        assert.ok(quota.rows.every(row => !row.overflow && row.percent.width > 10 && row.percent.right <= row.right + 1), `${label}: quota values fit their meters`);
+        if (quota.rows.length === 2) {
+          const [first, second] = quota.rows;
+          if (quota.width >= 408) {
+            assert.ok(Math.abs(first.y - second.y) < 2 && second.x > first.x + first.width, `${label}: two quotas share a row when the card has room (${quota.width}px)`);
+          } else {
+            assert.ok(second.y > first.y + first.height, `${label}: narrow cards stack quotas (${quota.width}px)`);
+          }
+        }
+      }
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${label}: viewport fits`);
       assert.equal(await page.locator('.hero').count(), 1, `${label}: one dashboard instance`);
       await page.screenshot({ path: path.join(output, `${label}.png`) });

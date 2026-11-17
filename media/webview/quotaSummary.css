@@ -17841,6 +17841,13 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .dashboard-content .overview-meta-item { min-height: 0; gap: 2px; padding: 4px 6px; }
 .dashboard-content .overview-account { align-self: start; }
 .dashboard-content .saved-card-front { min-height: 0; }
+.dashboard-content .saved-card-front .saved-progress {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
+}
+.dashboard-content .saved-progress > .row { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.dashboard-content .saved-progress .label-wrap { flex: none; }
+.dashboard-content .saved-progress .metric-row-summary { flex: 1; }
 .dashboard-content .overview-shell { grid-auto-rows: auto; align-items: start; }
 .dashboard-content .saved-card-container,
 .dashboard-content .saved-card-inner,
@@ -17956,4 +17963,11 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   .dashboard-content .overview-account .overview-meta { gap: 3px; }
   .dashboard-content .accounts-section-header { margin-bottom: 5px; }
   .dashboard-content .header-title-with-meta { gap: 5px; }
+}
+
+.cli-workspace .cli-conversation-title h1 { font-size: calc(14px * var(--dashboard-text-scale, 1)); line-height: 1.3; }
+.cli-workspace .cli-conversation-project { font-size: calc(10px * var(--dashboard-text-scale, 1)); line-height: 1.3; }
+@media (max-width: 760px) {
+  .cli-workspace .cli-conversation-title h1 { font-size: calc(15px * var(--dashboard-text-scale, 1)); }
+  .cli-workspace .cli-conversation-project { font-size: calc(12px * var(--dashboard-text-scale, 1)); }
 }

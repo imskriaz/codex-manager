@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.57
+
+- Show saved-account quota meters side by side when each has enough width, with stacked meters on narrow cards.
+- Increase conversation titles by 2px and project/path metadata by 1px.
+
 ## 2.0.6-pre.56
 
 - Keep Browser available for opening multiple workspace tabs and expand the URL field after removing the redundant new-page icon.
