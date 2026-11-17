@@ -397,11 +397,26 @@ export class CodexAppServerRpc {
       timer.unref(); child.once("exit", finish);
       // A Node or shell shim can own a Codex grandchild holding the writer handle.
       if (!treeStopped) {
+        let cleanupOutput = '', outputTruncated = false;
+        const capture = (chunk: Buffer | string) => {
+          cleanupOutput += chunk.toString();
+          if (cleanupOutput.length > 64 * 1024) { outputTruncated = true; cleanupOutput = cleanupOutput.slice(0, 64 * 1024); }
+        };
+        const confirmedGone = () => {
+          if (!this.childExited || outputTruncated) return false;
+          // Only inspect the first PID on each report line; parent PIDs can be ours.
+          const targets = new Set([...cleanupOutput.matchAll(/^[^\r\n]*?\bPID\s+(\d+)\b/gm)].map(match => Number(match[1])));
+          if (!targets.has(child.pid!)) return false;
+          return [...targets].every(pid => {
+            try { process.kill(pid, 0); return false; }
+            catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+          });
+        };
         const failed = () => {
           // A wrapper exit alone cannot confirm that its descendants released the writer.
           setTimeout(() => {
             treeStopped = true;
-            failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
+            if (!confirmedGone()) failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
             if (!this.childExited) {
               kill();
             }
@@ -409,7 +424,9 @@ export class CodexAppServerRpc {
           }, 50).unref();
         };
         try {
-          const killer = spawn(path.join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+          const killer = spawn(path.join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          killer.stdout?.on('data', capture);
+          killer.stderr?.on('data', capture);
           killer.once("error", failed);
           killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; kill(); finish(); } });
           killer.unref();

@@ -1051,7 +1051,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const entry = current[contextProjectKey] ?? emptyWorkspaceProject();
       const pageTabs = pages.map(page => `browser:${page.id}` as const);
       const retained = entry.tabs.filter(tab => workspaceTabKind(tab) !== "browser");
-      const tabs = [...new Set([...retained, ...pageTabs])];
+      const browserTabs = pageTabs.length ? pageTabs : entry.tabs.includes('browser') ? ['browser' as const] : [];
+      const tabs = [...new Set([...retained, ...browserTabs])];
       const active = tabs.includes(entry.active) ? entry.active : pageTabs[0] ?? "env";
       return { ...current, [contextProjectKey]: { ...entry, browserPages: pages, tabs, active } };
     });

@@ -2769,13 +2769,11 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage
-        ? createPortal(<WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} />, document.body)
-        : null}
-      {notice && notice.level !== 'info'
+      {(notice && notice.level !== 'info') || (hasBrowserWorkspaceShell(browserPath) && connectionBannerStage)
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
-              <div
+              {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage ? <WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} /> : null}
+              {notice && notice.level !== 'info' ? <div
                 key={notice.id}
                 class={`dashboard-notice is-${notice.level}`}
                 role={notice.level === "error" ? "alert" : "status"}
@@ -2791,7 +2789,7 @@ function App() {
                 >
                   ×
                 </button>
-              </div>
+              </div> : null}
             </div>,
             document.body
           )

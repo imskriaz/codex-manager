@@ -69,7 +69,7 @@ describe("app-server initialization recovery", () => {
       processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
       const rpc = await opening;
       const closing = rpc.close();
-      expect(mocks.spawn).toHaveBeenLastCalledWith(expect.stringMatching(/[\\/]System32[\\/]taskkill\.exe$/i), ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      expect(mocks.spawn).toHaveBeenLastCalledWith(expect.stringMatching(/[\\/]System32[\\/]taskkill\.exe$/i), ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       expect(processChild.kill).not.toHaveBeenCalled();
       processChild.emit("exit", 0); killer.emit("exit", 0); await closing;
       await rpc.close(); expect(mocks.spawn).toHaveBeenCalledTimes(2);
@@ -106,6 +106,35 @@ describe("app-server initialization recovery", () => {
       await expect(closing).rejects.toThrow('could not stop its private app-server process tree');
       expect(processChild.kill).not.toHaveBeenCalled();
     } finally { Object.defineProperty(process, "platform", platform); }
+  });
+  it.each(['gone', 'alive', 'unverifiable', 'truncated', 'missing-root'])("verifies every reported Windows target after taskkill races a natural exit: %s", async mode => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const processChild = Object.assign(child(), { pid: 12345 });
+    const killer = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), unref: vi.fn() });
+    mocks.spawn.mockReturnValueOnce(processChild).mockReturnValueOnce(killer);
+    const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(signal).toBe(0);
+      if (mode === 'alive' && pid === 54321) return true;
+      throw Object.assign(new Error('Process check'), { code: mode === 'unverifiable' && pid === 54321 ? 'EPERM' : 'ESRCH' });
+    });
+    try {
+      const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());
+      processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n');
+      const rpc = await opening;
+      const closing = rpc.close();
+      killer.stdout.write('SUCCESS: The process with PID 54321 (child process of PID 12345) has been terminated.\r\n');
+      if (mode !== 'missing-root') killer.stderr.write('ERROR: The process with PID 12345 (child process of PID 99999) could not be terminated.\r\nReason: There is no running instance of the task.\r\n');
+      if (mode === 'truncated') killer.stderr.write('x'.repeat(65537));
+      processChild.emit('exit', 0);
+      killer.emit('exit', 128);
+      if (mode === 'gone') {
+        await expect(closing).resolves.toBeUndefined();
+        expect(probe).toHaveBeenCalledWith(54321, 0);
+        expect(probe).toHaveBeenCalledWith(12345, 0);
+        expect(probe).not.toHaveBeenCalledWith(99999, 0);
+      } else await expect(closing).rejects.toThrow('could not stop its private app-server process tree');
+    } finally { probe.mockRestore(); Object.defineProperty(process, 'platform', platform); }
   });
   it("never targets an exited child PID for process-tree cleanup", async () => {
     const processChild = Object.assign(child(), { pid: 12345 });

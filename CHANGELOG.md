@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.24
+
+- Keep the empty Browser tab available after page discovery and background refresh, with live coverage for opening and closing pages.
+- Show connection recovery first in the top notification stack, above workspace panels, while keeping mobile feedback compact and limited to two lines.
+- Exercise real disconnect/reconnect in the responsive toast check and refresh the isolated restart fixture's account before testing recovery.
+
 ## 2.0.6-pre.23
 
 - Add Proxy and Logs tabs to the API modal with a routing diagram and recent request status, token usage, duration, and safe failure details.

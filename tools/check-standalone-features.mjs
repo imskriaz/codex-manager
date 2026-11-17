@@ -58,7 +58,11 @@ try {
     } finally { source.close(); }
   }
   await require("../out/utils/crossWindowOperations.js").configureCrossWindowOperationCoordinator(root);
-  if (!process.argv.includes("--ai-proxy")) {
+  if (process.argv.includes('--bundled-cli')) {
+    const bundled = await require('../out/services/codexCliRuntime.js').discoverBundledCodexCli();
+    assert.ok(bundled?.[0], 'An installed bundled CLI is required');
+    store.set('settings-overrides:global', 'codexCliPath', bundled[0]);
+  } else if (!process.argv.includes("--ai-proxy")) {
     const cli = await require("../out/services/codexCliRuntime.js").installManagedCodexCli();
     store.set("settings-overrides:global", "codexCliPath", cli);
   }
@@ -151,8 +155,14 @@ try {
     const visionText=await vision.text();assert.equal(vision.status,200,visionText);assert.ok(visionText.includes('PROXY_IMAGE_OK'),visionText);
     console.log('PASS live OpenAI/Responses/Claude discovery, non-streaming, streaming, client tool calls/results and image input without VS Code or CLI');
   } else if (process.argv.includes('--restart-recovery')) {
+    await action('importCurrent');
+    const imported = await (await fetch(origin + '/api/state')).json();
+    const activeAccount = imported.accounts.find(account => account.isActive);
+    assert.ok(activeAccount, 'Restart recovery needs a saved active account');
+    await action('refresh', { accountId: activeAccount.id });
     store.set('settings-overrides:global', 'autoResumeEnabled', true);
     store.set('settings-overrides:global', 'autoSwitchEnabled', true);
+    store.set('settings-overrides:global', 'autoResumeGoalOnlyEnabled', false);
     const created = await action('startCodexCliSession', { projectPath: path.join(root, 'workspace'), sandboxMode: 'danger-full-access', autoApprove: true,
       text: 'This is a disposable restart test. Run node -e "setTimeout(()=>{},30000)" exactly once. After it finishes or is interrupted, reply exactly RESTART RECOVERY OK. If you receive Continue if not completed, do not repeat the command; just reply RESTART RECOVERY OK. Do not create goals or change files.' });
     const sessionId = created.cliSession.id;
@@ -172,17 +182,20 @@ try {
     console.log('PASS graceful shutdown saved active work with an empty prior snapshot');
     ({ child: host, done: hostDone } = run('start-node.cjs', [], environment, path.join(root, 'workspace')));
     const restartDeadline = Date.now() + 120_000;
+    let lastRecoveryState;
     for (;;) {
       try {
         const history = await action('getCodexCliSessionMessages', { sessionId });
+        lastRecoveryState = { status: history.cliSession?.status, interrupted: history.cliSession?.interrupted, live: history.cliSessionLive?.status, continuationCount: history.cliSessionMessages.filter(message => message.role === 'user' && message.text.trim() === 'Continue if not completed').length };
         if (history.cliSessionLive?.status === 'completed' && history.cliSessionMessages.some(message => message.role === 'assistant' && message.text.includes('RESTART RECOVERY OK'))) {
           assert.ok(history.cliSessionMessages.filter(message => message.role === 'user' && message.text.trim() === 'Continue if not completed').length <= 1, 'Recovery sent at most one continuation');
           break;
         }
       } catch (error) { if (host.exitCode !== null) throw error; }
-      assert.ok(Date.now() < restartDeadline, 'Session did not complete after standalone restart');
+      assert.ok(Date.now() < restartDeadline, 'Session did not complete after standalone restart: ' + JSON.stringify(lastRecoveryState));
       await new Promise(resolve => setTimeout(resolve, 300));
     }
+    console.log('PASS restarted standalone completed its turn: ' + JSON.stringify(lastRecoveryState));
     await action('archiveCodexCliSession', { sessionId });
     await action('deleteCodexCliSession', { sessionId, confirmed: true });
     assert.ok(!(await action('listCodexCliSessions')).cliSessions.some(session => session.id === sessionId));
