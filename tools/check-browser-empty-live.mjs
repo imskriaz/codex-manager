@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import path from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 
 // Real dashboard reads; all Browser operations below stay in this browser fixture.
@@ -12,6 +13,7 @@ const sessions = discovered.messages?.find(message => message.action === 'listCo
 const session = sessions.find(item => !item.remote && !item.subAgent && !item.parentSessionId && !item.archived && item.projectPath?.replaceAll('\\', '/').toLowerCase() === process.cwd().replaceAll('\\', '/').toLowerCase());
 assert.ok(session, 'A local workspace conversation is required for this read-only UI check.');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
+await mkdir('output/browser-live', { recursive: true });
 try {
   for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
@@ -24,18 +26,27 @@ try {
     }
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      let pages = [];
       window.__browserOperations = [];
+      window.__fixtureBrowserPages = [];
+      let sequence = 0;
+      window.__fixtureBrowserAction = request => {
+        window.__browserOperations.push(request.operation);
+        if (request.operation === 'open') {
+          const number = ++sequence;
+          window.__fixtureBrowserPages.push({ id: `fixture-${number}`, title: `Fixture browser page ${number}`, url: 'about:blank', revision: '1' });
+        }
+        if (request.operation === 'close') window.__fixtureBrowserPages = window.__fixtureBrowserPages.filter(page => page.id !== request.pageId);
+        const pages = window.__fixtureBrowserPages;
+        const selected = pages.find(page => page.id === request.pageId) ?? pages.at(-1);
+        return { pages, feedback: [], ...(request.operation !== 'list' && selected ? { pageId: selected.id, revision: selected.revision } : {}) };
+      };
       const NativeSocket = window.WebSocket;
       window.WebSocket = class extends NativeSocket {
         send(data) {
           let message; try { message = JSON.parse(data); } catch { return super.send(data); }
           if (message.action !== 'workspaceBrowser') return super.send(data);
           const request = message.payload.browserRequest;
-          window.__browserOperations.push(request.operation);
-          if (request.operation === 'open') pages = [{ id: 'fixture-page', title: 'Fixture browser page', url: 'about:blank', revision: '1' }];
-          if (request.operation === 'close') pages = [];
-          const state = { pages, feedback: [], ...(pages.length ? { pageId: 'fixture-page', revision: '1' } : {}) };
+          const state = window.__fixtureBrowserAction(request);
           setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: message.action, requestId: message.requestId, status: 'completed', payload: { workspaceBrowser: state } } })), 0);
         }
       };
@@ -43,11 +54,7 @@ try {
     await page.route('**/api/message', async route => {
       const message = route.request().postDataJSON();
       if (message?.action !== 'workspaceBrowser') return route.fallback();
-      const state = await page.evaluate(request => {
-        window.__browserOperations.push(request.operation);
-        const pages = request.operation === 'open' ? [{ id: 'fixture-page', title: 'Fixture browser page', url: 'about:blank', revision: '1' }] : [];
-        return { pages, feedback: [], ...(pages.length ? { pageId: 'fixture-page', revision: '1' } : {}) };
-      }, message.payload.browserRequest);
+      const state = await page.evaluate(request => window.__fixtureBrowserAction(request), message.payload.browserRequest);
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ messages: [{ type: 'dashboard:action-result', action: message.action, requestId: message.requestId, status: 'completed', payload: { workspaceBrowser: state } }] }) });
     });
     await page.goto(origin + '/workspace/' + session.id);
@@ -56,24 +63,32 @@ try {
     const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
     if (await rail.isVisible()) await rail.click();
     await page.locator('.cli-account-footer').getByRole('button', { name: 'Open account center', exact: true }).click();
-    await page.locator('.workspace-accounts').waitFor();
+    await page.locator('.workspace-dashboard').waitFor();
     await page.getByRole('button', { name: 'Add workspace tool', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Browser', exact: true }).click();
-    await page.waitForFunction(() => window.__browserOperations.includes('list'), undefined, { timeout: 10000 });
-    const create = page.getByRole('button', { name: 'Open new browser page', exact: true });
-    await create.waitFor();
-    await page.waitForTimeout(2700); // Include the first background list refresh.
-    assert.ok(await create.isVisible(), 'An empty Browser remains usable after discovery and refresh.');
-    await create.click();
-    await page.getByRole('tab', { name: 'Fixture browser page', exact: true }).waitFor();
-    assert.equal(await page.getByRole('tab', { name: 'Browser', exact: true }).count(), 0, 'A real page replaces the empty Browser tab.');
-    const close = page.getByRole('button', { name: 'Close Fixture browser page', exact: true });
-    await close.click();
+    await page.getByRole('tab', { name: 'Fixture browser page 1', exact: true }).waitFor();
+    for (const number of [2, 3]) {
+      await page.getByRole('button', { name: 'Add workspace tool', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Browser', exact: true }).click();
+      await page.getByRole('tab', { name: `Fixture browser page ${number}`, exact: true }).waitFor();
+    }
+    assert.equal(await page.getByRole('button', { name: 'Open new browser page', exact: true }).count(), 0, 'The redundant new-page icon is removed.');
+    await page.waitForTimeout(2700); // Include the first background refresh.
+    assert.equal(await page.evaluate(() => window.__fixtureBrowserPages.length), 3, 'Background refresh preserves all pages.');
+    const address = await page.locator('.workspace-browser-address').boundingBox();
+    const actions = await page.locator('.workspace-browser-actions').boundingBox();
+    assert.ok(address.x + address.width - actions.x - actions.width < 10, 'URL controls fill the toolbar.');
+    assert.ok(await page.evaluate(() => { const toast = document.querySelector('.workspace-browser-toast'); return !toast || getComputedStyle(toast).position === 'absolute'; }), 'Action messages are toasts, not an extra row.');
+    await page.locator('.workspace-browser').screenshot({ path: `output/browser-live/browser-${width}.png` });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Dashboard fits the viewport.');
+    for (const number of [3, 2, 1]) {
+      await page.getByRole('button', { name: `Close Fixture browser page ${number}`, exact: true }).click();
+      await page.getByRole('tab', { name: `Fixture browser page ${number}`, exact: true }).waitFor({ state: 'detached' });
+    }
     await page.waitForFunction(() => window.__browserOperations.includes('close'));
-    await page.getByRole('tab', { name: 'Fixture browser page', exact: true }).waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('tab', { name: 'Env', exact: true }).getAttribute('aria-selected'), 'true', 'Closing the final page returns to Environment.');
     assert.deepEqual(errors, [], 'Browser lifecycle has no runtime errors.');
-    console.log(`PASS ${width}px: empty Browser, background refresh, first page, final close`);
+    console.log(`PASS ${width}px: repeated Browser adds, full URL bar, toast, background refresh, final close; load ${Math.round(await page.evaluate(() => performance.now()))}ms`);
     await context.close();
   }
 } finally { await browser.close(); }

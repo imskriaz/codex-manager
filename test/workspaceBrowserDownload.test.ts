@@ -20,15 +20,15 @@ vi.mock("preact/hooks", () => ({
   }
 }));
 vi.mock("../webview-src/dashboard/workspaceRequest", () => ({ useWorkspaceRequest: () => fixture.request }));
-import WorkspaceBrowser from "../webview-src/dashboard/workspaceBrowser";
+import WorkspaceBrowser, { normalizeBrowserInput } from "../webview-src/dashboard/workspaceBrowser";
 
 const page = { id: "download-page", url: "about:blank", title: "", revision: "download-revision" };
 const browserState = { pages: [page], pageId: page.id, revision: page.revision, feedback: [] };
 const target = "https://example.test/release/theme.zip";
 const onFeedback = vi.fn();
-function render() {
+function render(overrides: Partial<Parameters<typeof WorkspaceBrowser>[0]> = {}) {
   fixture.cursor = 0;
-  const tree = WorkspaceBrowser({ projectPath: "D:/download", connected: true, downloadUrl: target, actionNonce: 1, onFeedback });
+  const tree = WorkspaceBrowser({ projectPath: "D:/download", connected: true, downloadUrl: target, actionNonce: 1, onFeedback, ...overrides });
   fixture.effects.splice(0).forEach(effect => effect());
   return tree;
 }
@@ -65,4 +65,28 @@ it("preserves download failures in the panel and dashboard feedback without repl
   expect(JSON.stringify(render())).toContain("The remote download was not saved. Retry the link.");
   expect(fixture.click).not.toHaveBeenCalled();
   expect(fixture.request).toHaveBeenCalledTimes(2);
+});
+
+it('opens a separate blank page per add request and preserves the blank URL on submission', async () => {
+  fixture.request.mockResolvedValue({ workspaceBrowser: browserState });
+  const props = { downloadUrl: undefined, openPageNonce: 1 };
+  render(props);
+  await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledOnce());
+  render(props);
+  expect(fixture.request.mock.calls[0][1].browserRequest).toMatchObject({ operation: 'open', url: 'about:blank' });
+  props.openPageNonce = 2;
+  render(props);
+  await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledTimes(2));
+  const first = fixture.request.mock.calls[0][1].browserRequest;
+  const second = fixture.request.mock.calls[1][1].browserRequest;
+  expect(second.pageId).toBeUndefined();
+  expect(second.operationId).not.toBe(first.operationId);
+  expect(normalizeBrowserInput('about:blank')).toBe('about:blank');
+});
+
+it('reports an offline add immediately and does not replay it on reconnect', () => {
+  render({ downloadUrl: undefined, openPageNonce: 1, connected: false });
+  expect(JSON.stringify(render({ downloadUrl: undefined, openPageNonce: 1, connected: false }))).toContain('Offline. The new browser page was not opened.');
+  render({ downloadUrl: undefined, openPageNonce: 1, connected: true });
+  expect(fixture.request.mock.calls.every(([, payload]) => payload.browserRequest.operation === 'list')).toBe(true);
 });

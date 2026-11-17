@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { WorkspaceMenu } from "./workspaceMenu";
 import { ToolIcon } from "./icons";
+import { scheduleDashboardToastDismiss } from './toast';
 import type { DashboardNotice } from "../../src/domain/dashboard/types";
 import type {
   BrowserFeedback,
@@ -17,6 +18,7 @@ export default function WorkspaceBrowser(props: {
   initialUrl?: string;
   downloadUrl?: string;
   actionNonce?: number;
+  openPageNonce?: number;
   initialPageId?: string;
   closePageId?: string;
   onClosePageHandled?: (pageId: string) => void;
@@ -40,6 +42,11 @@ export default function WorkspaceBrowser(props: {
     [reference, setReference] = useState("");
   const [input, setInput] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [dock, setDock] = useState<'left' | 'right' | 'bottom'>('right');
+  const [responsive, setResponsive] = useState(false);
+  const [viewport, setViewport] = useState({ width: 390, height: 844 });
+  const [viewportPreset, setViewportPreset] = useState('responsive');
+  const [consoleOutcome, setConsoleOutcome] = useState<{ pageId: string; value?: unknown; message: string; failed: boolean }>();
   const [inspectorTab, setInspectorTab] = useState<"elements" | "console" | "sources" | "network" | "feedback">("elements");
   const [size, setSize] = useState({ width: 1280, height: 800 });
   const [cursor, setCursor] = useState<BrowserPoint>({ x: 20, y: 20 });
@@ -49,6 +56,7 @@ export default function WorkspaceBrowser(props: {
   const savedId = useRef<string>();
   const openedRequest = useRef<number>();
   const downloadedRequest = useRef<number>();
+  const openedPageRequest = useRef<number>();
   const openingForDownload = useRef(false);
   const reading = useRef(false), operationGeneration = useRef(0), draftPoints = useRef(points);
   draftPoints.current = points;
@@ -59,6 +67,10 @@ export default function WorkspaceBrowser(props: {
   const revision = state.pageId === selected ? state.revision : undefined;
   const current = state.pages.find((page) => page.id === selected);
   const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
+  useEffect(() => {
+    if (!notice || failed) return;
+    return scheduleDashboardToastDismiss(() => setNotice(''), 3000);
+  }, [notice, failed]);
   const copyUrl = async (): Promise<void> => {
     try { await navigator.clipboard.writeText(current?.url ?? url); noticeAction("URL copied."); }
     catch { setFailed(true); setNotice("Clipboard access was unavailable. Select the URL and copy it manually."); }
@@ -95,7 +107,7 @@ export default function WorkspaceBrowser(props: {
       return;
     }
     if (quiet) reading.current = true;
-    else { locked.current = true; setBusy(true); operationGeneration.current++; }
+    else { locked.current = true; setBusy(true); setNotice(''); operationGeneration.current++; }
     const version = generation.current;
     const operationVersion = operationGeneration.current;
     try {
@@ -112,6 +124,7 @@ export default function WorkspaceBrowser(props: {
           (response.workspaceBrowser!.pageId === previous.pageId ? previous.image : undefined)
       }));
       const next = response.workspaceBrowser;
+      if (value.operation === 'evaluate') setConsoleOutcome({ pageId: value.pageId ?? '', value: next.value, message: next.warning ?? 'Script completed.', failed: false });
       latest.current.onPagesChange?.(next.pages);
       if (next.fileDownload) {
         const link = document.createElement("a");
@@ -136,6 +149,7 @@ export default function WorkspaceBrowser(props: {
       const detail = error instanceof Error ? error.message : String(error);
       const message = detail.includes('Unsupported dashboard action: workspaceBrowser') ? 'This host is running an older Manager. Restart that host with the installed version, then reconnect.' : detail;
       if (!quiet) { setNotice(message); setFailed(true); props.onFeedback({ level: "error", message }); }
+      if (value.operation === 'evaluate') setConsoleOutcome({ pageId: value.pageId ?? '', message, failed: true });
     } finally {
       if (quiet) reading.current = false;
       else if (version === generation.current) {
@@ -148,7 +162,8 @@ export default function WorkspaceBrowser(props: {
     if (props.initialPageId === undefined || props.initialPageId === selected || busy) return;
     setSelected(props.initialPageId);
     operationGeneration.current++;
-    if (props.initialPageId && props.connected) void run({ operation: 'screenshot', pageId: props.initialPageId });
+    const openingPage = props.openPageNonce && props.openPageNonce !== openedPageRequest.current;
+    if (props.initialPageId && props.connected && !openingPage) void run({ operation: 'screenshot', pageId: props.initialPageId });
   }, [props.initialPageId, props.connected, busy]);
   useEffect(() => {
     if (!props.closePageId || busy || !props.connected) return;
@@ -166,6 +181,14 @@ export default function WorkspaceBrowser(props: {
     setUrl(target);
     void run({ operation: selected ? "navigate" : "open", pageId: selected || undefined, revision: selected ? revision : undefined, url: target });
   }, [props.initialUrl, props.actionNonce, props.connected, selected, revision]);
+  useEffect(() => {
+    const nonce = props.openPageNonce ?? 0;
+    if (!nonce || nonce === openedPageRequest.current) return;
+    openedPageRequest.current = nonce;
+    if (!props.connected) { setFailed(true); setNotice('Offline. The new browser page was not opened. Reconnect and choose Browser again.'); return; }
+    setUrl("about:blank");
+    void run({ operation: "open", url: "about:blank" });
+  }, [props.openPageNonce]);
   useEffect(() => {
     const target = props.downloadUrl?.trim();
     const nonce = props.actionNonce ?? 0;
@@ -313,10 +336,9 @@ export default function WorkspaceBrowser(props: {
         <button class="workspace-browser-icon-button" aria-label="Reload page" title="Reload page" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" /></button>
         <input aria-label="Browser URL" type="text" inputMode="url" placeholder="Search or enter a URL" value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
       <div class="workspace-browser-actions">
-        <button class="workspace-browser-icon-button" type="button" aria-label="Open new browser page" title="New page" disabled={busy || !props.connected} onClick={() => { const nextUrl = normalizeBrowserInput(url) || "about:blank"; setUrl(nextUrl); command({ operation: "open", url: nextUrl }); }}><ToolIcon kind="plus" /></button>
-        <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "resize", width: size.width === 1280 ? 390 : 1280, height: 800 })}><ToolIcon kind="split" /></button>
+        <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" aria-pressed={responsive} onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" /></button>
         <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><ToolIcon kind="comment" /></button>
-        <WorkspaceMenu label="Browser actions" icon={<ToolIcon kind="more" />}>
+        <WorkspaceMenu label="Browser actions" icon={<BrowserMenuIcon />}>
           <button type="button" disabled={!current} onClick={() => current && window.open(current.url, "_blank", "noopener,noreferrer")}><ToolIcon kind="external" />Open externally</button>
           <button type="button" disabled={!current} onClick={() => void copyUrl()}><ToolIcon kind="copy" />Copy URL</button>
           <button type="button" disabled={!state.image} onClick={saveScreenshot}><ToolIcon kind="download" />Save screenshot</button>
@@ -333,15 +355,28 @@ export default function WorkspaceBrowser(props: {
         </WorkspaceMenu>
       </div>
       </form>
-      {notice ? (
-        <p role={failed ? "alert" : "status"} class={`workspace-browser-notice ${failed ? "is-error" : ""}`}>
-          {notice}
-        </p>
-      ) : null}
+      {notice ? <div class={`workspace-browser-toast dashboard-notice ${failed ? 'is-error' : ''}`} role={failed ? 'alert' : 'status'}><span>{notice}</span><button type="button" aria-label="Dismiss browser message" onClick={() => setNotice('')}>×</button></div> : null}
       {!props.connected ? (
         <p role="status">Offline. Reconnect to control the browser. Unsaved feedback stays in this panel.</p>
       ) : null}
-      <div class="workspace-browser-stage">
+      <div class={`workspace-browser-content dock-${dock}`}>
+      <div class="workspace-browser-page">
+      {responsive ? <form class="workspace-browser-viewport" aria-label="Responsive viewport" onSubmit={event => { event.preventDefault(); command({ operation: 'resize', ...viewport }); }}>
+        <span>Dimensions:</span>
+        <select aria-label="Viewport preset" value={viewportPreset} disabled={busy || !current || !props.connected} onChange={event => {
+          const preset = event.currentTarget.value;
+          setViewportPreset(preset);
+          const next = preset === 'phone' ? { width: 390, height: 844 } : preset === 'tablet' ? { width: 768, height: 1024 } : preset === 'desktop' ? { width: 1280, height: 800 } : viewport;
+          setViewport(next);
+          command({ operation: 'resize', ...next });
+        }}><option value="responsive">Responsive</option><option value="phone">Phone</option><option value="tablet">Tablet</option><option value="desktop">Desktop</option></select>
+        <input type="number" aria-label="Viewport width" min={320} max={3840} required value={viewport.width} onInput={event => { setViewportPreset('responsive'); setViewport(value => ({ ...value, width: event.currentTarget.valueAsNumber })); }} />
+        <span aria-hidden="true">×</span>
+        <input type="number" aria-label="Viewport height" min={240} max={2160} required value={viewport.height} onInput={event => { setViewportPreset('responsive'); setViewport(value => ({ ...value, height: event.currentTarget.valueAsNumber })); }} />
+        <button type="submit" disabled={busy || !current || !props.connected}>Apply</button>
+        <button class="workspace-browser-icon-button" type="button" aria-label="Rotate viewport" title="Rotate viewport" disabled={busy || !current || !props.connected || viewport.height < 320 || viewport.width > 2160} onClick={() => { const next = { width: viewport.height, height: viewport.width }; setViewport(next); command({ operation: 'resize', ...next }); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 3-6 6 12 12 6-6zM3 3v5h5M21 21v-5h-5" /></svg></button>
+      </form> : null}
+      <div class="workspace-browser-stage" style={{ '--browser-viewport-width': `${size.width}px`, '--browser-preview-ratio': String(size.width / size.height) }}>
       {state.image && current && state.pageId === selected ? (
         <div class="workspace-browser-preview">
           <img
@@ -457,16 +492,32 @@ export default function WorkspaceBrowser(props: {
         <p class="workspace-browser-empty">Open your development URL. AI and manual pages appear here together.</p>
       )}
       </div>
+      </div>
       <aside class={`workspace-browser-inspector ${inspectorOpen ? "is-open" : ""}`} aria-label="Browser inspector" aria-hidden={!inspectorOpen}>
         <header class="workspace-browser-inspector-header">
-          <span><strong>Inspector</strong></span>
-          <button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button>
+          <div class="workspace-browser-devtools-controls">
+            <button class="workspace-browser-icon-button" type="button" aria-label="Inspect page elements" title="Inspect page elements" onClick={() => setInspectorTab('elements')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6M8 8l11 5-5 1-1 5z" /></svg></button>
+            <button class="workspace-browser-icon-button" type="button" aria-label="Toggle device toolbar" title="Toggle device toolbar" aria-pressed={responsive} onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" /></button>
+          </div>
+          <nav class="workspace-browser-inspector-tabs" role="tablist" aria-label="Browser inspector panels">
+            {(["elements", "console", "sources", "network", "feedback"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
+          </nav>
+          <div class="workspace-browser-inspector-actions">
+            <WorkspaceMenu label="Inspector options" icon={<BrowserMenuIcon />}>
+              <div class="workspace-browser-dock" role="group" aria-label="Dock side">
+                <span>Dock side</span>
+                {(['left', 'bottom', 'right'] as const).map(side => <button type="button" aria-label={`Dock inspector ${side}`} title={`Dock inspector ${side}`} aria-pressed={dock === side} onClick={() => setDock(side)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1" /><path d={side === 'bottom' ? 'M3 14h18' : side === 'left' ? 'M10 4v16' : 'M14 4v16'} /></svg></button>)}
+              </div>
+              <div class="workspace-browser-menu-divider" />
+              <button type="button" onClick={() => setInspectorTab("console")}><ToolIcon kind="comment" />Show Console</button>
+              <button type="button" onClick={() => setInspectorTab("elements")}><ToolIcon kind="eye" />Inspect page</button>
+              <button type="button" onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" />Responsive viewport</button>
+            </WorkspaceMenu>
+            <button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button>
+          </div>
         </header>
-        <nav class="workspace-browser-inspector-tabs" role="tablist" aria-label="Browser inspector panels">
-          {(["elements", "console", "sources", "network", "feedback"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
-        </nav>
         <div class="workspace-browser-inspector-body">
-          <div class="workspace-browser-toolbar workspace-browser-interaction">
+          <div class="workspace-browser-toolbar workspace-browser-interaction" hidden={inspectorTab !== 'feedback'}>
             <input aria-label="Type into focused browser field" value={input} onInput={(e) => setInput(e.currentTarget.value)} />
             <button class="workspace-browser-icon-button" aria-label="Type into focused browser field" title="Type into focused browser field" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "type", text: input })}><ToolIcon kind="edit" /></button>
             <button class="workspace-browser-icon-button" aria-label="Press Enter" title="Press Enter" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "press", key: "Enter" })}><ToolIcon kind="play" /></button>
@@ -489,10 +540,11 @@ export default function WorkspaceBrowser(props: {
               <article key={f.id}><small>{f.kind} · {f.url}</small><p>{f.text || "Visual mark"}{" "}{f.referenceUrl ? <a href={f.referenceUrl} target="_blank" rel="noreferrer">Reference ↗</a> : null}</p><button disabled={busy || !props.connected} onClick={() => void addInstruction(f)}>Add to instruction</button><button disabled={busy || !props.connected} onClick={() => command({ operation: "deleteFeedback", feedbackId: f.id })}>Delete</button></article>
             ))}
           </details>
-          {inspectorTab !== 'feedback' ? <BrowserInspectorContent panel={inspectorTab} pageId={selected} revision={revision} connected={props.connected} request={request} /> : null}
+          {inspectorOpen && inspectorTab !== 'feedback' ? <BrowserInspectorContent key={selected} panel={inspectorTab} pageId={selected} revision={revision} connected={props.connected} request={request} busy={busy} outcome={consoleOutcome?.pageId === selected ? consoleOutcome : undefined} onClearConsole={() => setConsoleOutcome(undefined)} onEvaluate={text => command({ operation: 'evaluate', confirmed: true, text })} /> : null}
 
         </div>
       </aside>
+      </div>
     </section>
   );
 }
@@ -500,20 +552,32 @@ export default function WorkspaceBrowser(props: {
 export function normalizeBrowserInput(value: string): string {
   const input = value.trim();
   if (!input) return "";
+  if (input === 'about:blank') return input;
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(input)) return input;
   if (/^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(input)) return `http://${input}`;
   return `https://${input}`;
+}
+
+function BrowserMenuIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>;
 }
 
 function BrowserInspectorContent(props: {
   panel: "elements" | "console" | "sources" | "network";
   pageId: string; revision?: string; connected: boolean;
   request: ReturnType<typeof useWorkspaceRequest>;
+  busy: boolean;
+  outcome?: { value?: unknown; message: string; failed: boolean };
+  onClearConsole: () => void;
+  onEvaluate: (text: string) => void;
 }) {
   const [result, setResult] = useState<WorkspaceBrowserState>();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [script, setScript] = useState('');
+  const [filter, setFilter] = useState('');
+  const [clearedThrough, setClearedThrough] = useState(0);
   useEffect(() => {
     let disposed = false;
     setResult(undefined); setError('');
@@ -527,25 +591,91 @@ function BrowserInspectorContent(props: {
   if (!props.pageId) return <p class="workspace-empty-inline">Open a page to inspect it.</p>;
   if (!props.connected) return <p role="status" class="workspace-empty-inline">Reconnect to inspect this page.</p>;
   if (error) return <div class="workspace-tool-notice" role="alert">{error} <button onClick={() => setRetry(value => value + 1)}>Retry</button></div>;
-  if (loading) return <p role="status" class="workspace-empty-inline">Loading...</p>;
-  if (props.panel === 'sources') return <pre class="workspace-browser-source" aria-label="Page HTML">{(typeof result?.value === 'string' ? result.value : JSON.stringify(result?.value ?? '', null, 2))}</pre>;
-  if (props.panel === 'elements') {
-    const document = new DOMParser().parseFromString((typeof result?.value === 'string' ? result.value : JSON.stringify(result?.value ?? '', null, 2)), 'text/html');
-    const rows: Array<{ label: string; depth: number }> = [];
-    const visit = (element: Element, depth: number) => {
-      if (rows.length >= 200 || depth > 12) return;
-      rows.push({ depth, label: `<${element.tagName.toLowerCase()}${element.id ? ` #${element.id}` : ''}${element.getAttribute('class') ? ` .${element.getAttribute('class')!.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}>` });
-      for (const child of element.children) visit(child, depth + 1);
-    };
-    visit(document.documentElement, 0);
-    return <div class="workspace-browser-dom" aria-label="Page elements">{rows.map((row, index) => <div key={index} style={{ paddingLeft: `${8 + row.depth * 12}px` }}>{row.label}</div>)}</div>;
-  }
+  if (loading && props.panel !== 'console') return <p role="status" class="workspace-empty-inline">Loading...</p>;
   const events = result?.events ?? [];
   const rows = events.filter(event => props.panel === 'network' ? event.method === 'Network.responseReceived' || event.method === 'Network.loadingFailed' : event.method === 'Runtime.consoleAPICalled' || event.method === 'Runtime.exceptionThrown');
+  if (props.panel === 'sources') return <pre class="workspace-browser-source" aria-label="Page HTML">{(typeof result?.value === 'string' ? result.value : JSON.stringify(result?.value ?? '', null, 2))}</pre>;
+  if (props.panel === 'elements') {
+    return <BrowserElements html={typeof result?.value === 'string' ? result.value : ''} pageId={props.pageId} revision={props.revision} request={props.request} />;
+  }
+  if (props.panel === 'console') return <div class="workspace-browser-console">
+    <div class="workspace-browser-console-toolbar">
+      <button type="button" aria-label="Clear console" title="Clear console" onClick={() => { setClearedThrough(result?.eventSequence ?? Math.max(0, ...events.map(event => event.sequence))); props.onClearConsole(); }}><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="10" cy="10" r="6" /><path d="m6 14 8-8" /></svg></button>
+      <span class="workspace-browser-console-context">top</span>
+      <input aria-label="Filter console" placeholder="Filter" value={filter} onInput={event => setFilter(event.currentTarget.value)} />
+      <select aria-label="Console starter script" value="" onChange={(event) => { if (event.currentTarget.value) setScript(event.currentTarget.value); }}>
+        <option value="">Starter scripts</option>
+        <option value="document.title">Read page title</option>
+        <option value="document.body.innerText.slice(0, 2000)">Read visible text</option>
+        <option value="Object.keys(localStorage)">List local storage keys</option>
+      </select>
+      <button type="button" disabled={props.busy || loading} aria-label="Refresh console" title="Refresh console" onClick={() => setRetry(value => value + 1)}><ToolIcon kind="refresh" /></button>
+    </div>
+    <div class="workspace-browser-log-list" aria-label="Console messages">{result?.warning ? <p role="status">{result.warning}</p> : null}{rows.filter(event => event.sequence > clearedThrough && JSON.stringify(event.params).toLowerCase().includes(filter.toLowerCase())).map(event => {
+      const params = event.params as { type?: string; args?: Array<{ value?: unknown; description?: string }>; exceptionDetails?: { text?: string } };
+      return <div class={params.exceptionDetails || params.type === 'error' ? 'is-error' : params.type === 'warning' ? 'is-warning' : ''} key={event.sequence}><span class="workspace-browser-event-type">{params.exceptionDetails || params.type === 'error' ? '⊗' : params.type === 'warning' ? '⚠' : ''}</span><span>{params.args?.map(arg => typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value) ?? arg.description ?? '').join(' ') ?? params.exceptionDetails?.text}</span></div>;
+    })}</div>
+    {props.outcome?.failed ? <div class="workspace-browser-console-error" role="alert">⊗ {props.outcome.message}</div> : null}
+    {props.outcome && !props.outcome.failed ? <pre class="workspace-browser-console-result" aria-label="Console result"><span aria-hidden="true">‹ </span>{typeof props.outcome.value === 'string' ? props.outcome.value : JSON.stringify(props.outcome.value, null, 2) ?? 'undefined'}</pre> : null}
+    <form class="workspace-browser-console-prompt" onSubmit={event => { event.preventDefault(); if (script.trim() && !props.busy) props.onEvaluate(script); }}>
+      <span aria-hidden="true">›</span><textarea rows={1} aria-label="Console JavaScript" spellcheck={false} maxLength={16000} value={script} onInput={event => setScript(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (script.trim() && !props.busy) props.onEvaluate(script); } }} />
+      <button type="submit" disabled={props.busy || !script.trim()} title="Run JavaScript">{props.busy ? 'Running…' : 'Run'}</button>
+    </form>
+  </div>;
   return <div class="workspace-browser-log-list" aria-label={props.panel === 'network' ? 'Network requests' : 'Console messages'}>{result?.warning ? <p role="status">{result.warning}</p> : null}{rows.length ? rows.map(event => {
     const params = event.params as { response?: { status?: number; url?: string; mimeType?: string }; errorText?: string; type?: string; args?: Array<{ value?: unknown; description?: string }>; exceptionDetails?: { text?: string } };
     return <div key={event.sequence}><span class="workspace-browser-event-type">{props.panel === 'network' ? params.response?.status ?? 'Failed' : params.type ?? 'Error'}</span><span>{props.panel === 'network' ? params.response?.url ?? params.errorText : params.args?.map(arg => typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value) ?? arg.description ?? '').join(' ') ?? params.exceptionDetails?.text}</span></div>;
   }) : <p>No captured activity.</p>}</div>;
+}
+
+function BrowserElements(props: { html: string; pageId: string; revision?: string; request: ReturnType<typeof useWorkspaceRequest> }) {
+  const [selector, setSelector] = useState('body');
+  const [styles, setStyles] = useState<{ html: string; styles: Record<string, string> }>();
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [tab, setTab] = useState<'styles' | 'computed'>('styles');
+  const rows = useMemo(() => {
+    const parsed = new DOMParser().parseFromString(props.html, 'text/html');
+    const result: Array<{ element: Element; selector: string; depth: number; closing: boolean }> = [];
+    const visit = (element: Element, depth: number, path: string) => {
+      if (result.length >= 400 || depth > 12) return;
+      result.push({ element, selector: path, depth, closing: false });
+      for (const child of element.children) {
+        const tag = child.tagName.toLowerCase();
+        const index = [...element.children].filter(sibling => sibling.tagName === child.tagName).indexOf(child) + 1;
+        visit(child, depth + 1, `${path} > ${tag}:nth-of-type(${index})`);
+      }
+      if (element.children.length) result.push({ element, selector: path, depth, closing: true });
+    };
+    visit(parsed.documentElement, 0, 'html');
+    return result;
+  }, [props.html]);
+  useEffect(() => {
+    let disposed = false;
+    setStyles(undefined); setError('');
+    void props.request('workspaceBrowser', { browserRequest: { operation: 'styles', pageId: props.pageId, selector } }).then(response => {
+      if (!disposed) {
+        const value = response.workspaceBrowser?.value as typeof styles;
+        if (!value?.styles) throw new Error('Page styles were not returned. Select the element again to retry.');
+        setStyles(value);
+      }
+    }).catch(error => { if (!disposed) setError(error instanceof Error ? error.message : String(error)); });
+    return () => { disposed = true; };
+  }, [selector, props.pageId, props.revision, props.request]);
+  const selected = rows.find(row => row.selector === selector || selector === 'body' && row.element.tagName === 'BODY');
+  return <div class="workspace-browser-elements">
+    <div class="workspace-browser-dom" aria-label="Page elements" role="tree">
+      <div class="workspace-browser-doctype">&lt;!DOCTYPE html&gt;</div>
+      {rows.map((row, index) => <button type="button" role="treeitem" aria-selected={!row.closing && row === selected} class={row === selected ? 'is-selected' : ''} key={index} style={{ paddingLeft: `${6 + row.depth * 12}px` }} onClick={() => setSelector(row.selector)}>
+        <span class="workspace-browser-dom-arrow">{row.closing || !row.element.children.length ? '' : '▾'}</span><span class="workspace-browser-dom-tag">&lt;{row.closing ? '/' : ''}{row.element.tagName.toLowerCase()}</span>{!row.closing ? [...row.element.attributes].map(attribute => <span key={attribute.name}> <span class="workspace-browser-dom-attribute">{attribute.name}</span>=<span class="workspace-browser-dom-value">"{attribute.value}"</span></span>) : null}<span class="workspace-browser-dom-tag">&gt;</span>{!row.closing && !row.element.children.length ? <><span class="workspace-browser-dom-text">{row.element.textContent?.slice(0, 160)}</span><span class="workspace-browser-dom-tag">&lt;/{row.element.tagName.toLowerCase()}&gt;</span></> : null}
+      </button>)}
+    </div>
+    <aside class="workspace-browser-styles" aria-label="Element styles">
+      <nav aria-label="Element style views">{(['styles', 'computed'] as const).map(value => <button type="button" class={tab === value ? 'is-active' : ''} onClick={() => setTab(value)}>{value === 'styles' ? 'Styles' : 'Computed'}</button>)}</nav>
+      <input aria-label="Filter styles" placeholder="Filter" value={filter} onInput={event => setFilter(event.currentTarget.value)} />
+      {error ? <p role="alert">{error}</p> : tab === 'styles' ? <div class="workspace-browser-style-rule"><span>element.style {'{'}</span><pre>{selected?.element.getAttribute('style') || ''}</pre><span>{'}'}</span><small>Select Computed to view all resolved properties.</small></div> : <dl>{Object.entries(styles?.styles ?? {}).filter(([name, value]) => `${name} ${value}`.includes(filter)).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>}
+    </aside>
+  </div>;
 }
 
 async function annotateScreenshot(source: string, feedback: BrowserFeedback): Promise<string> {

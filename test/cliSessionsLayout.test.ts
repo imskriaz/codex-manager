@@ -32,7 +32,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('import { WorkspaceMenu } from "./workspaceMenu";');
     expect(source).toContain('label="Browser actions"');
     expect(source).toContain('class="workspace-browser-icon-button"');
-    expect(source).toContain('<ToolIcon kind="more" />');
+    expect(source).toContain('<BrowserMenuIcon />');
   });
   it("normalizes browser addresses before native navigation", () => {
     const source = readFileSync("webview-src/dashboard/workspaceBrowser.tsx", "utf8");
@@ -529,7 +529,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-review-detail");
     expect(source).toContain('props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"');
     expect(source).toContain("const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));");
-    expect(source).toContain(".filter(tab => !(props.hideTerminal && tab === 'terminal') && !visibleTabs.includes(tab))");
+    expect(source).toContain(".filter(tab => !(props.hideTerminal && tab === 'terminal') && (tab === 'browser' || !visibleTabs.includes(tab)))");
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
     expect(css).toContain('width: min(var(--cli-terminal-width), 92vw)');

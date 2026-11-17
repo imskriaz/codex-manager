@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.6-pre.56
+
+- Keep Browser available for opening multiple workspace tabs and expand the URL field after removing the redundant new-page icon.
+- Match the inspector's DevTools styling, docking menu, Elements and Console layout, and responsive viewport controls.
+- Align inspector tabs with centered viewport controls and add phone, tablet and desktop presets.
+- Show browser action results as dismissible toasts without adding a status row.
+
 ## 2.0.6-pre.55
 
 - Keep Saved Accounts search, filters and view controls on one row; use separate sort, quota and tag icons in narrow dashboards while keeping the search input visible.

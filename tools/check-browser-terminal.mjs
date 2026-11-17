@@ -78,21 +78,24 @@ try {
     import { SystemPicker, SystemStatusRows } from './webview-src/dashboard/systemPicker';
     const peers = [{id:'local',name:'Development PC',connected:true,local:true,sessionCount:5,systemStatus:{observedAt:Date.now(),battery:{percent:72,charging:true},networkConnected:true,cpuPercent:18,memoryUsed:8*1024**3,memoryTotal:16*1024**3,diskFree:128*1024**3,diskTotal:512*1024**3,uptimeSeconds:12500}},{id:'remote',name:'Build host',connected:false,sessionCount:2,systemStatus:{observedAt:Date.now()-120000,networkConnected:false,cpuPercent:40,memoryUsed:4*1024**3,memoryTotal:8*1024**3,uptimeSeconds:8000}}];
     function Systems(){const anchor=useRef(null);const [open,setOpen]=useState(false),[selected,setSelected]=useState('local'),[enabled,setEnabled]=useState(true);return <><label><input type='checkbox' checked={enabled} onChange={e=>setEnabled(e.currentTarget.checked)}/>System Info</label><button ref={anchor} onClick={()=>setOpen(value=>!value)}>Choose system</button><output aria-label='Chosen system'>{selected}</output>{enabled?<SystemStatusRows peer={peers.find(p=>p.id===selected)} connected={selected==='local'}/>:null}{open?<SystemPicker anchor={anchor} peers={peers} selectedId={selected} connected={true} privacyMode={false} systemInfoEnabled={enabled} accountCount={()=>3} onSelect={setSelected} onClose={()=>setOpen(false)}/>:null}</>};render(<Systems/>,document.querySelector('#systems'));
-    render(<Browser projectPath={${JSON.stringify(root)}} connected={true} onFeedback={()=>{}} onInstruction={(text,image)=>{document.querySelector('#instruction').value=text;document.querySelector('#instruction-image').src=image||'';}} />,document.querySelector('#app'));
+    function BrowserHarness(){const [nonce,setNonce]=useState(0),[active,setActive]=useState(${JSON.stringify(opened.pageId)});return <><button id="add-browser" onClick={()=>setNonce(n=>n+1)}>Add Browser</button><Browser projectPath={${JSON.stringify(root)}} openPageNonce={nonce} initialPageId={active} connected={true} onPagesChange={pages=>{document.querySelector('#page-count').textContent=String(pages.length)}} onPageSelected={setActive} onFeedback={()=>{}} onInstruction={(text,image)=>{document.querySelector('#instruction').value=text;document.querySelector('#instruction-image').src=image||'';}} /></>};render(<BrowserHarness/>,document.querySelector('#app'));
   `, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   uiBrowser = await chromium.launch({ channel: 'msedge', headless: true });
   const errors = [];
-  const ui = await uiBrowser.newPage({ viewport: { width: 1000, height: 1000 } });
+  const ui = await uiBrowser.newPage({ viewport: { width: 1280, height: 1000 } });
   ui.on('pageerror', error => errors.push(error.message));
   let rejectSave = false;
+  let rejectEvaluate = false;
+  let evaluationCount = 0;
   await ui.exposeFunction('browserAction', async message => {
     try {
       if (rejectSave && message.payload.browserRequest.operation === 'feedback') throw new Error('Fixture storage full');
+      if (message.payload.browserRequest.operation === 'evaluate') { evaluationCount++; if (rejectEvaluate) throw new Error('Evaluation outcome is unknown. Check state before retrying.'); }
       return { type: 'dashboard:action-result', requestId: message.requestId, status: 'completed', payload: { workspaceBrowser: await workspaceBrowser(root, message.payload.browserRequest) } };
     } catch (error) { return { type: 'dashboard:action-result', requestId: message.requestId, status: 'failed', error: error.message }; }
   });
   await ui.addInitScript(() => { window.acquireVsCodeApi = () => ({ postMessage: message => { void window.browserAction(message).then(reply => window.postMessage(reply, '*')); } }); });
-  await ui.route('http://127.0.0.1:39875/__browser-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><main id="app" style="width:600px;height:900px"></main><section id="systems"></section><textarea id="instruction" aria-label="Instruction"></textarea><img id="instruction-image" alt="Marked instruction" />' }));
+  await ui.route('http://127.0.0.1:39875/__browser-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><main id="app" style="width:1200px;height:900px;display:flex;flex-direction:column"></main><output id="page-count"></output><section id="systems"></section><textarea id="instruction" aria-label="Instruction"></textarea><img id="instruction-image" alt="Marked instruction" />' }));
   await ui.goto('http://127.0.0.1:39875/__browser-fixture');
   await ui.addStyleTag({ content: await readFile('media/webview/shared.css', 'utf8') });
   await ui.addStyleTag({ content: await readFile('media/webview/quotaSummary.css', 'utf8') });
@@ -109,12 +112,62 @@ try {
   assert.equal(await inspector.evaluate(element => getComputedStyle(element).position), 'static', 'Browser Inspector stays in the workspace layout');
   const previewBounds = await ui.locator('.workspace-browser-preview').boundingBox();
   const inspectorBounds = await inspector.boundingBox();
-  assert.ok(inspectorBounds.y >= previewBounds.y + previewBounds.height - 1, 'Browser Inspector is docked below the preview');
+  assert.ok(inspectorBounds.x >= previewBounds.x + previewBounds.width - 2, 'Browser Inspector docks beside the preview');
+  for (const side of ['left', 'bottom', 'right']) {
+    await inspector.getByRole('button', { name: 'Inspector options', exact: true }).click();
+    await ui.getByRole('button', { name: `Dock inspector ${side}`, exact: true }).click();
+    const bounds = await inspector.boundingBox();
+    const stage = await ui.locator('.workspace-browser-stage').boundingBox();
+    if (side === 'left') assert.ok(bounds.x + bounds.width <= stage.x + 2);
+    if (side === 'bottom') assert.ok(bounds.y >= stage.y + stage.height - 2);
+    if (side === 'right') assert.ok(bounds.x >= stage.x + stage.width - 2);
+  }
   for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Feedback']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
   }
+  await inspector.getByRole('tab', { name: 'Console', exact: true }).click();
+  await inspector.getByLabel('Console starter script', { exact: true }).selectOption('document.title');
+  await inspector.getByRole('button', { name: 'Run', exact: true }).click();
+  await inspector.getByLabel('Console result', { exact: true }).filter({ hasText: 'Browser fixture' }).waitFor();
+  assert.equal(evaluationCount, 1, 'Console runs once through the shared mutation path');
+  await inspector.getByLabel('Console JavaScript', { exact: true }).fill('throw new Error("Console fixture failure")');
+  await inspector.getByRole('button', { name: 'Run', exact: true }).click();
+  await inspector.getByRole('alert').filter({ hasText: 'Console fixture failure' }).waitFor();
+  assert.equal(await inspector.getByLabel('Console JavaScript', { exact: true }).inputValue(), 'throw new Error("Console fixture failure")');
+  rejectEvaluate = true;
+  await inspector.getByRole('button', { name: 'Run', exact: true }).click();
+  await inspector.getByRole('alert').filter({ hasText: 'Evaluation outcome is unknown' }).waitFor();
+  assert.equal(evaluationCount, 3, 'Inconclusive evaluation is never replayed automatically');
+  rejectEvaluate = false;
+  await ui.getByRole('button', { name: 'Browser actions', exact: true }).click();
+  await ui.getByRole('menu', { name: 'Browser actions', exact: true }).getByRole('button', { name: 'Refresh preview', exact: true }).click();
+  await ui.getByRole('status').filter({ hasText: 'Done.' }).waitFor();
+  await ui.getByRole('button', { name: 'Toggle responsive viewport', exact: true }).click();
+  for (const [preset, width, height] of [['phone', 390, 844], ['tablet', 768, 1024], ['desktop', 1280, 800]]) {
+    await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).selectOption(preset);
+    await ui.waitForFunction(({ width, height }) => { const image = document.querySelector('.workspace-browser-preview img'); return image.naturalWidth === width && image.naturalHeight === height; }, { width, height });
+  }
+  await ui.getByRole('spinbutton', { name: 'Viewport width', exact: true }).fill('400');
+  await ui.getByRole('spinbutton', { name: 'Viewport height', exact: true }).fill('832');
+  await ui.getByRole('button', { name: 'Apply', exact: true }).click();
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser-preview img').naturalWidth === 400);
+  const viewportBounds = await ui.getByRole('form', { name: 'Responsive viewport', exact: true }).boundingBox();
+  const headerBounds = await inspector.locator('.workspace-browser-inspector-header').boundingBox();
+  assert.ok(Math.abs(viewportBounds.y - headerBounds.y) <= 1, 'Inspector tabs align with the top viewport toolbar');
+  assert.equal(await ui.getByText(/Fit to window/).count(), 0, 'The crossed viewport caption is removed');
+  const firstControl = await ui.getByText('Dimensions:', { exact: true }).boundingBox();
+  const lastControl = await ui.getByRole('button', { name: 'Rotate viewport', exact: true }).boundingBox();
+  assert.ok(Math.abs((firstControl.x + lastControl.x + lastControl.width) / 2 - viewportBounds.x - viewportBounds.width / 2) <= 2, 'Viewport controls are centered above the page');
+  console.log('Inspector docking, responsive dimensions, console execution/failures and no timeout replay passed.');
+  await ui.getByRole('button', { name: 'Dismiss browser message', exact: true }).click();
+  await inspector.getByRole('tab', { name: 'Elements', exact: true }).click();
+  await inspector.getByRole('tree', { name: 'Page elements', exact: true }).waitFor();
+  await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-desktop.png') });
+  await inspector.getByRole('button', { name: 'Inspector options', exact: true }).click();
+  await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-menu.png') });
+  await ui.keyboard.press('Escape');
   await ui.getByRole('button', { name: 'area', exact: true }).click();
   const preview = ui.locator('.workspace-browser-preview svg');
   await preview.focus();
@@ -136,13 +189,25 @@ try {
   await note.getByRole('button', { name: 'Add to instruction' }).click();
   await ui.waitForFunction(() => document.querySelector('#instruction').value.includes('Improve this layout') && document.querySelector('#instruction-image').src.startsWith('data:image/jpeg'));
   console.log('Marked feedback screenshot added to the instruction composer.');
+  await ui.locator('#add-browser').click();
+  await ui.waitForFunction(() => document.querySelector('#page-count').textContent === '3');
+  await ui.locator('#add-browser').click();
+  await ui.waitForFunction(() => document.querySelector('#page-count').textContent === '4');
+  assert.equal((await workspaceBrowser(root, { operation: 'list' })).pages.filter(page => page.url === 'about:blank').length, 2, 'Repeated Browser actions open separate blank pages');
+  console.log('Repeated Browser add actions create separate pages.');
   assert.deepEqual(errors, []);
   const artifacts = path.resolve('output/browser-check'); await mkdir(artifacts, { recursive: true });
-  await ui.screenshot({ path: path.join(artifacts, 'feedback-desktop.png') });
+  await ui.locator('.workspace-browser').screenshot({ path: path.join(artifacts, 'feedback-desktop.png') });
   await ui.setViewportSize({ width: 390, height: 844 });
   await ui.locator('#app').evaluate(element => { element.style.width = '100%'; });
   await ui.locator('#instruction-image').evaluate(element => { element.style.maxWidth = '100%'; });
-  await ui.screenshot({ path: path.join(artifacts, 'feedback-mobile.png') });
+  const mobileStage = await ui.locator('.workspace-browser-stage').boundingBox();
+  assert.ok((await inspector.boundingBox()).y >= mobileStage.y + mobileStage.height - 2, 'Narrow panels stack the inspector below the page');
+  const address = await ui.locator('.workspace-browser-address').boundingBox();
+  const actions = await ui.locator('.workspace-browser-actions').boundingBox();
+  assert.ok(address.x + address.width - actions.x - actions.width < 10, 'Browser actions reach the right edge');
+  assert.ok((await ui.getByRole('textbox', { name: 'Browser URL', exact: true }).boundingBox()).width > 100, 'Address field uses remaining width');
+  await ui.locator('.workspace-browser').screenshot({ path: path.join(artifacts, 'feedback-mobile.png') });
   const layout = await ui.evaluate(() => ({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+2).map(element=>({tag:element.tagName,className:element.className,width:element.getBoundingClientRect().width,right:element.getBoundingClientRect().right})).slice(0,12)}));
   assert.ok(layout.scrollWidth <= layout.width + 2, JSON.stringify(layout));
   await ui.getByRole('button', { name: 'Choose system', exact: true }).click();
