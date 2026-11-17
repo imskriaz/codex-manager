@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.21
+
+- Keep owner-only task column controls and success feedback out of shared project boards.
+
 ## 2.0.6-pre.20
 
 - Show CPU, RAM, battery, network, disk, and uptime readings in the Environment panel when system information is enabled.

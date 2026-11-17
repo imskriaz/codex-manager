@@ -56,7 +56,7 @@ it('keeps routine results quiet while showing task form failures inline', () => 
   expect(source).not.toContain('>{props.feedback.message}');
   expect(source).toContain('onClick={props.onRetryFeedback}>Retry</button>');
   expect(tasks).not.toContain('task-inline-feedback');
-  expect(tasks).toContain("status && statusLevel !== 'info' && (props.shared || !props.onActionFeedback) ? createPortal");
+  expect(tasks).toContain("status && (statusLevel !== 'info' || props.shared) && (props.shared || !props.onActionFeedback) ? createPortal");
   expect(tasks).toContain("status && statusLevel !== 'info' ? <p class=\"settings-note\" role=\"alert\">{status}</p>");
 });
 
