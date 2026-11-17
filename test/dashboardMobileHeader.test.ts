@@ -21,18 +21,19 @@ describe("mobile dashboard header", () => {
     expect(css).toMatch(/\.saved-credit-summary \.saved-subscription-remaining,\s*\.saved-credit-summary \.saved-reset-badge\s*\{[^}]*flex:\s*none;/);
   });
 
-  it("keeps one row and exposes secondary actions through overflow", () => {
+  it("keeps one row and exposes header actions directly", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8").replace(/\r\n/g, "\n");
-    expect(source).toContain("function DashboardMobileActions");
-    expect(source).toContain('class="dashboard-mobile-actions"');
-    expect(source).toContain('aria-label={menuLabel}');
-    expect(source).toContain('closeMenu(event); props.onDonate()');
-    expect(source).toContain('Donate');
+    expect(source).not.toContain("DashboardMobileActions");
+    expect(source).toContain('id="privacyToggleButton"');
+    expect(source).toContain('id="settingsOpenButton"');
+    expect(source).toContain('id="aboutOpenButton"');
+    expect(source).toContain('id="donateButton"');
     expect(css).toContain(".dashboard-density-compact .hero");
     expect(css).toContain("flex-direction: row;");
-    expect(css).toContain(".dashboard-mobile-actions-menu");
-    expect(css).toMatch(/@media \(min-width: 601px\)\s*\{\s*\.dashboard-mobile-actions\s*\{ display: none;/);
+    expect(css).not.toContain("dashboard-mobile-actions");
+    expect(css).toContain(".dashboard-density-compact .hero-settings .settings-btn");
+    expect(css).toContain(".dashboard-content .hero { flex-wrap: nowrap;");
   });
 
   it("keeps session rows compact while transcript actions overlay on hover", () => {

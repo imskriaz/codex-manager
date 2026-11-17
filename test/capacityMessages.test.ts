@@ -86,7 +86,8 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).toContain('queue.steerNow(item.id)');
   expect(source).not.toContain('class="cli-queued-steer is-sending"');
   expect(source).not.toContain('class="cli-queued-sending-status"');
-  expect(source).toContain('<ApiIcon />API');
+  expect(source).toContain('<ApiIcon />');
+  expect(source).toContain('aria-label="API access"');
   expect(source).toContain('<SignOutIcon />Sign out');
   expect(source).not.toContain('Turn off queueing');
   expect(css).toContain('.cli-queued-message-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis;');

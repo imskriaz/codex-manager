@@ -1,4 +1,5 @@
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "./dashboard/types";
+import { isCodexCapacityInterruption } from "./codexSessionState";
 import { coalesceSessionQuestionMessages } from './sessionQuestions';
 import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_TEXT_ATTACHMENT_BYTES } from './chatAttachments';
 
@@ -12,6 +13,22 @@ const terminal = (status: DashboardCodexSessionLiveState["status"]) => status !=
 const record = (value: unknown): Record<string, unknown> | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const string = (value: unknown, max = MAX_TEXT) => typeof value === "string" ? value.slice(0, max) : undefined;
 const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+/** Turn errors sometimes carry only a provider code, or a generic message plus
+ * a structured capacity code. Keep a stable human message in live state so
+ * recovery and the dashboard can classify the failure before history reloads. */
+function errorMessage(value: unknown): string | undefined {
+  const item = record(value);
+  if (!item) return string(value);
+  const serialized = (() => { try { return JSON.stringify(value); } catch { return ""; } })();
+  const directMessage = ["message", "error", "text", "detail"].map(key => string(item[key])).find(message => message?.trim());
+  if (isCodexCapacityInterruption(serialized) && (!directMessage || !isCodexCapacityInterruption(directMessage))) return "Selected model is at capacity. Please try a different model.";
+  for (const key of ["message", "error", "text", "detail"]) {
+    const message = string(item[key]);
+    if (message?.trim()) return message.trim();
+  }
+  return undefined;
+}
 
 export function parseCodexTokenUsage(value: unknown): DashboardCodexSessionLiveState['tokenUsage'] {
   const usage = record(value);
@@ -232,7 +249,7 @@ export class CodexSessionLiveReducer {
 
   private setError(value: unknown, retrying: boolean): boolean {
     const error = record(value);
-    const message = string(error?.["message"]);
+    const message = errorMessage(value);
     if (!message?.trim()) return false;
     this.state.error = retrying ? undefined : message;
     this.errorItem = { id: retrying ? `retry-${this.state.streamId}` : `${(this.state.turnId ?? this.state.streamId).slice(0, 250)}-error`, type: "error", error: bounded(error, 0, () => { this.state.truncated = true; }), willRetry: retrying, status: retrying ? "inProgress" : "failed" };

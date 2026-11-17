@@ -5235,8 +5235,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-workspace .cli-dashboard-nav { min-width: 0; }
 .cli-workspace .cli-new-chat-icon { flex: 0 0 auto; }
 
-/* Keep the dashboard header on one mobile row. Secondary actions remain
-   available from the compact overflow control instead of pushing content down. */
+/* Keep the dashboard header on one mobile row while retaining direct actions. */
 @media (max-width: 600px) {
   .dashboard-density-compact .hero {
     flex-direction: row;
@@ -5255,44 +5254,6 @@ html[data-theme="dark"] .cli-terminal-panel {
     overflow: visible;
     padding: 0;
   }
-  .dashboard-density-compact .hero-settings > .settings-btn,
-  .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
-  .dashboard-mobile-actions { position: relative; display: block; }
-  .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }
-  .dashboard-mobile-actions > summary::-webkit-details-marker { display: none; }
-  .dashboard-mobile-actions[open] > summary { border-color: var(--border-accent); background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-elevated)); }
-  .dashboard-mobile-actions-menu {
-    position: absolute;
-    z-index: 30;
-    top: calc(100% + 6px);
-    right: 0;
-    display: grid;
-    min-width: 214px;
-    padding: 7px;
-    border: 1px solid color-mix(in srgb, var(--border-accent) 58%, var(--border-default));
-    border-radius: 12px;
-    background: var(--bg-elevated);
-    box-shadow: 0 16px 34px rgb(0 0 0 / 28%);
-  }
-  .dashboard-mobile-actions-menu button {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    min-height: 38px;
-    padding: 8px 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--bg-surface) 48%, transparent);
-    color: var(--text);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: border-color .15s ease, background .15s ease;
-  }
-  .dashboard-mobile-actions-menu button:hover,
-  .dashboard-mobile-actions-menu button:focus-visible { border-color: var(--border-accent); background: var(--surface-hover); outline: none; }
-  .dashboard-mobile-actions-menu button > span { display: inline-flex; width: 18px; justify-content: center; }
 }
 
 /* Hover actions are overlays, so session rows keep their two-line height and
@@ -14906,19 +14867,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .dashboard-density-compact .hero { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 8px; }
   .dashboard-density-compact .brand { width: auto; flex: 1 1 auto; min-width: 0; }
   .dashboard-density-compact .hero-settings { width: auto; flex: 0 0 auto; overflow: visible; padding: 0; }
-  .dashboard-density-compact .hero-settings > .settings-btn,
-  .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
-  .dashboard-mobile-actions { display: block; position: relative; }
-  .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }
-  .dashboard-mobile-actions > summary::-webkit-details-marker { display: none; }
-}
-
-/* Desktop already exposes these actions individually. */
-@media (max-width: 600px) {
-  .dashboard-density-compact .hero-settings > #privacyToggleButton { display: inline-flex; }
-}
-@media (min-width: 601px) {
-  .dashboard-mobile-actions { display: none; }
 }
 
 /* Keep running state in the right-side status column. */
@@ -15302,7 +15250,8 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-workspace .cli-sidebar-toolbar > .cli-dashboard-nav span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cli-workspace .cli-sidebar-actions { gap:1px; }
 .cli-workspace .cli-primary-nav .cli-sidebar-actions > button { width:25px; min-width:25px; height:25px; min-height:25px; padding:4px; }
-.cli-workspace .cli-sidebar-toolbar svg { width:14px; height:14px; flex:none; }
+.cli-workspace .cli-sidebar-toolbar button svg { width:18px; height:18px; flex:none; }
+.cli-workspace .cli-rail-header .cli-icon-button.cli-settings-shortcut svg { width:16px; height:16px; flex:none; }
 .cli-workspace .cli-dashboard-nav[aria-current="page"] { color:var(--accent-blue); background:var(--cyan-soft); }
 .cli-session-row[draggable="true"], .task-board-card[draggable="true"] { cursor:grab; }
 .cli-session-row[draggable="true"]:active, .task-board-card[draggable="true"]:active { cursor:grabbing; }
@@ -16846,7 +16795,7 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .dashboard-density-compact .brand-logo { display: block; flex: none; width: 24px; height: 24px; }
   body.is-dashboard-workspace-route .hero .brand-logo { display: block; }
   .dashboard-density-compact .hero-settings { flex: none; gap: 3px; }
-  .dashboard-density-compact .hero-settings :is(.settings-btn,.dashboard-mobile-actions > summary) { width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 4px; }
+  .dashboard-density-compact .hero-settings .settings-btn { width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 4px; }
   .content-sidebar-slot,.cli-workspace .content-sidebar-slot { flex-basis: 32px; width: 32px; height: 32px; }
   .content-sidebar-slot > .cli-rail-toggle,.cli-workspace .content-sidebar-slot > .cli-rail-toggle,
   .cli-workspace .cli-rail-header > .cli-rail-toggle { flex-basis: 32px; width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
@@ -17910,9 +17859,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   .dashboard-content .dashboard-account-toolbar { --account-control-size: 40px; }
 }
 @container dashboard-surface (max-width: 760px) {
-  .dashboard-content .hero { flex-wrap: wrap; gap: 5px; }
-  .dashboard-content .hero .brand { flex: 1 1 220px; }
-  .dashboard-content .hero-settings { flex: 0 0 auto; }
+  .dashboard-content .hero { flex-wrap: nowrap; gap: 5px; }
+  .dashboard-content .hero .brand { flex: 1 1 0; min-width: 0; }
+  .dashboard-content .hero-settings { flex: 0 0 auto; min-width: 0; flex-wrap: nowrap; }
   .dashboard-content .overview-shell { grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 5px; }
   .dashboard-content .overview-main,
   .dashboard-content .overview-actions { grid-column: auto; }
@@ -17943,7 +17892,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
     padding: 0;
     border: 0;
     cursor: pointer;
-    font-size: 16px;
+    font-size: calc(16px * var(--dashboard-text-scale, 1));
   }
   .dashboard-content .dashboard-account-toolbar .dashboard-select-control:focus-within { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 }
@@ -17956,9 +17905,6 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   .dashboard-content .hero .brand h1 { flex-wrap: wrap; font-size: calc(13px * var(--dashboard-text-scale, 1)); gap: 3px; }
   .dashboard-content .hero .brand p { display: none; }
   .dashboard-content .hero-settings { width: auto; gap: 3px; }
-  .dashboard-content .hero-settings > .settings-btn { display: none; }
-  .dashboard-content .hero-settings > #privacyToggleButton { display: inline-flex; }
-  .dashboard-content .dashboard-mobile-actions { display: block; }
   .dashboard-content .overview-meta-item { padding: 3px 5px; }
   .dashboard-content .overview-account .overview-meta { gap: 3px; }
   .dashboard-content .accounts-section-header { margin-bottom: 5px; }

@@ -234,7 +234,7 @@ try {
     assert.equal(await connection.getByRole('textbox',{name:'Claude host URL',exact:true}).inputValue(),origin);
     await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
     const claudeConfig=JSON.parse(await page.evaluate(()=>window.copiedFixture));
-    assert.deepEqual(claudeConfig.env,{ANTHROPIC_BASE_URL:origin,ANTHROPIC_AUTH_TOKEN:'YOUR_MANAGER_API_KEY',ANTHROPIC_MODEL:'MODEL_FROM_CATALOGUE'});
+    assert.deepEqual(claudeConfig.env,{ANTHROPIC_BASE_URL:origin,ANTHROPIC_AUTH_TOKEN:'YOUR_MANAGER_API_KEY',ANTHROPIC_MODEL:'MODEL_FROM_CATALOGUE',ANTHROPIC_DEFAULT_OPUS_MODEL:'MODEL_FROM_CATALOGUE',ANTHROPIC_DEFAULT_SONNET_MODEL:'MODEL_FROM_CATALOGUE',ANTHROPIC_DEFAULT_HAIKU_MODEL:'MODEL_FROM_CATALOGUE',ANTHROPIC_DEFAULT_FABLE_MODEL:'MODEL_FROM_CATALOGUE'});
     await page.evaluate(()=>window.onlyScopedKeys());
     assert.equal(await connection.getByRole('combobox',{name:'Proxy API key',exact:true}).count(),0,'Project-scoped and reader keys cannot be picked for proxy calls');
     await page.evaluate(()=>{window.failCreate=true;});

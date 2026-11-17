@@ -524,3 +524,31 @@ it("translates function calls, results, image inputs and provider-reported usage
     expect(wire).toContain(protocol === "chat" ? "tool_calls" : "tool_use");
   }
 });
+
+it("accepts Claude Code gateway controls and maps its effort setting", () => {
+  const request = normalizeAiRequest({
+    model: "codex-test",
+    max_tokens: 32000,
+    messages: [{ role: "user", content: [{ type: "text", text: "Reply exactly OK.", cache_control: { type: "ephemeral" } }] }],
+    system: [{ type: "text", text: "System", cache_control: { type: "ephemeral" } }],
+    thinking: { type: "adaptive", display: "omitted" },
+    context_management: { edits: [{ type: "clear_thinking_20251015", keep: "all" }] },
+    output_config: { effort: "high" },
+    metadata: { user_id: "fixture" },
+    stream: true
+  }, "claude");
+  expect(request.body).toMatchObject({ model: "codex-test", max_output_tokens: 32000, reasoning: { effort: "high" }, stream: true });
+  expect(request.body).not.toHaveProperty("context_management");
+});
+
+it("keeps Claude tool result images and ignores prior thinking blocks", () => {
+  const request = normalizeAiRequest({
+    model: "codex-test",
+    max_tokens: 100,
+    messages: [
+      { role: "assistant", content: [{ type: "thinking", thinking: "prior plan", signature: "sig" }, { type: "tool_use", id: "call-1", name: "screenshot", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: [{ type: "text", text: "Screenshot" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "YQ==" } }] }] }
+    ]
+  }, "claude");
+  expect(request.body.input).toMatchObject([{ type: "function_call", call_id: "call-1" }, { type: "function_call_output", output: [{ type: "input_text", text: "Screenshot" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }] }]);
+});

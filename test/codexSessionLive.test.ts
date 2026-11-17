@@ -123,6 +123,13 @@ describe("Codex live current turn", () => {
     expect(saved[0]?.debug).toContain("Keep diagnostics");
   });
 
+  it("promotes structured model-capacity turn errors into live recovery state", () => {
+    const live = reducer(); live.started("turn-1");
+    const error = { codex_error_info: "model_at_capacity", request_id: "keep-me" };
+    expect(live.accept("turn/completed", params({ turn: { id: "turn-1", status: "failed", error } }))).toBe(true);
+    expect(live.snapshot()).toMatchObject({ status: "failed", error: "Selected model is at capacity. Please try a different model.", messages: [{ kind: "error", status: "failed", text: "Codex reported an error." }] });
+  });
+
   it("updates one native retry notice without failing the turn and removes it on recovery", () => {
     const live = reducer(); live.started("turn-1");
     for (const attempt of [1, 2, 2]) {

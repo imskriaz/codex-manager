@@ -128,6 +128,21 @@ try {
     const catalogue=await discovery.json(); assert.equal(discovery.status,200,JSON.stringify(catalogue));
     const model=catalogue.data[0]?.id;assert.ok(model);
     console.log(JSON.stringify({check:'model discovery',ms:Math.round(performance.now()-started),count:catalogue.data.length}));
+    if (process.argv.includes('--claude-cli')) {
+      const claudePath = process.platform === 'win32' ? path.join(process.env.APPDATA ?? '', 'npm', 'claude.cmd') : 'claude';
+      const cliEnv = { ...environment, ANTHROPIC_BASE_URL: origin, ANTHROPIC_AUTH_TOKEN: token, ANTHROPIC_MODEL: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: model };
+      const cli = spawn(claudePath, ['--bare', '--no-session-persistence', '-p', 'Reply exactly CLAUDE_PROXY_OK. Do not use tools.', '--output-format', 'text'],
+        { env: cliEnv, cwd: path.join(root, 'workspace'), windowsHide: true, shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      let cliOutput = '', cliError = '';
+      cli.stdout.on('data', chunk => { cliOutput += chunk; process.stdout.write(chunk); });
+      cli.stderr.on('data', chunk => { cliError += chunk; process.stderr.write(chunk); });
+      const cliCode = await new Promise((resolve, reject) => { cli.once('error', reject); cli.once('exit', resolve); });
+      assert.equal(cliCode, 0, `Claude CLI failed: ${cliError || cliOutput}`);
+      assert.ok(cliOutput.trim(), 'Claude CLI returned an empty response');
+      console.log('PASS Claude Code CLI discovery and message request through Manager API');
+    }
     const claudeModels=await fetch(origin+'/v1/models?limit=1',{headers:{'x-api-key':token,'anthropic-version':'2023-06-01'},signal:AbortSignal.timeout(30000)}).then(r=>r.json());
     assert.equal(claudeModels.data[0].type,'model');
     for(const [endpoint,body] of [

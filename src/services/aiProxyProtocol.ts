@@ -137,6 +137,7 @@ export function normalizeAiRequest(
             "stop_sequences",
             "metadata",
             "thinking",
+            "context_management",
             "output_config"
           ];
   for (const key of Object.keys(request))
@@ -147,9 +148,26 @@ export function normalizeAiRequest(
   if (request["stream"] !== undefined && typeof request["stream"] !== "boolean")
     throw new AiProxyError(400, "stream must be a boolean.");
   if (request["n"] !== undefined && request["n"] !== 1) throw new AiProxyError(400, "Only n=1 is supported.");
-  for (const key of ["temperature", "top_p", "stop", "stop_sequences", "thinking", "output_config"])
+  for (const key of ["temperature", "top_p", "stop", "stop_sequences"])
     if (request[key] !== undefined)
       throw new AiProxyError(400, `${key} is not supported by the saved-account Codex backend.`);
+  if (protocol === "claude") {
+    // Claude Code sends gateway controls alongside every request. Validate their shape and omit them.
+    if (request["thinking"] !== undefined) object(request["thinking"], "thinking");
+    if (request["context_management"] !== undefined) object(request["context_management"], "context_management");
+    if (request["output_config"] !== undefined) {
+      const outputConfig = object(request["output_config"], "output_config");
+      if (outputConfig["effort"] !== undefined) {
+        const effort = string(outputConfig["effort"], "output_config.effort");
+        if (!["low", "medium", "high", "xhigh", "max"].includes(effort))
+          throw new AiProxyError(400, "output_config.effort must be low, medium, high, xhigh, or max.");
+      }
+    }
+  } else {
+    for (const key of ["thinking", "output_config"])
+      if (request[key] !== undefined)
+        throw new AiProxyError(400, `${key} is not supported by the saved-account Codex backend.`);
+  }
   if (request["store"] !== undefined && request["store"] !== false)
     throw new AiProxyError(400, "The saved-account backend requires store=false.");
   const input: Json[] = [],
@@ -238,20 +256,26 @@ export function normalizeAiRequest(
           } else if (part["type"] === "tool_result") {
             flush();
             if (role !== "user") throw new AiProxyError(400, "tool_result requires a user message.");
+            const resultParts =
+              typeof part["content"] === "string"
+                ? undefined
+                : content(part["content"], false, true).map((p) => {
+                    if (p["type"] !== "input_text" && p["type"] !== "input_image")
+                      throw new AiProxyError(400, "Tool results require text or images.");
+                    return p;
+                  });
+            const firstResultPart = resultParts?.[0];
             input.push({
               type: "function_call_output",
               call_id: string(part["tool_use_id"], "tool_use_id"),
               output:
-                typeof part["content"] === "string"
-                  ? part["content"]
-                  : content(part["content"], false, true)
-                      .map((p) => {
-                        if (p["type"] !== "input_text") throw new AiProxyError(400, "Tool results require text.");
-                        return p["text"];
-                      })
-                      .join("\n")
+                resultParts === undefined
+                  ? string(part["content"], "tool content")
+                  : resultParts.length === 1 && firstResultPart?.["type"] === "input_text"
+                    ? firstResultPart["text"] ?? ""
+                    : resultParts
             });
-          } else parts.push(part);
+          } else if (part["type"] !== "thinking" && part["type"] !== "redacted_thinking") parts.push(part);
         }
         flush();
       } else if (message["content"] !== null && message["content"] !== undefined)
@@ -299,6 +323,13 @@ export function normalizeAiRequest(
   if (request["reasoning_effort"] !== undefined)
     body["reasoning"] = { effort: string(request["reasoning_effort"], "reasoning_effort") };
   else if (request["reasoning"] !== undefined) body["reasoning"] = object(request["reasoning"], "reasoning");
+  else if (protocol === "claude" && request["output_config"] !== undefined) {
+    const effort = object(request["output_config"], "output_config")["effort"];
+    if (effort !== undefined) body["reasoning"] = { effort: string(effort, "output_config.effort") };
+  } else if (protocol === "claude" && request["thinking"] !== undefined) {
+    const thinkingType = object(request["thinking"], "thinking")["type"];
+    if (thinkingType === "adaptive" || thinkingType === "enabled") body["reasoning"] = { effort: "high" };
+  }
   if (request["text"] !== undefined) body["text"] = object(request["text"], "text");
   if (request["response_format"] !== undefined) {
     const format = object(request["response_format"], "response_format");

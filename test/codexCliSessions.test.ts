@@ -486,6 +486,14 @@ describe("Codex session integration", () => {
     expect(completed).toMatchObject([{ id: "call-2", kind: "image", title: "Generated image", images: [{ src: "data:image/png;base64,AA==" }] }]);
   });
 
+  it("unwraps serialized tool envelopes into readable output", () => {
+    const output = JSON.stringify({ chunk_id: "chunk-1", exit_code: 0, output: "# Project instructions\nDone." });
+    const items = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "completed", items: [{ type: "customToolCall", id: "exec-1", toolName: "functions.exec", output }] }] }
+    });
+    expect(items).toMatchObject([{ id: "exec-1", kind: "tool-call", title: "Used functions.exec", result: "# Project instructions\nDone." }]);
+  });
+
   it("decodes raw MCP image content and preserves tool failures", () => {
     const image = parseCodexAppServerThreadItems({
       thread: { turns: [{ status: "completed", items: [{ type: "customToolCall", id: "image-call", name: "image", output: { type: "image", mimeType: "image/png", data: "AA==" } }] }] }

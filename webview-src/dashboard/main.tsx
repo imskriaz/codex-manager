@@ -2883,17 +2883,6 @@ function App() {
                   </span>
                 </span>
               </button>
-              <DashboardMobileActions
-                lang={snapshot.lang}
-                syncPending={syncPending}
-                settingsTitle={snapshot.copy.settingsTitle}
-                passwordRequired={snapshot.encryptedSyncNeedsConfiguration === true}
-                aboutTitle={resolveAboutTitle(snapshot.lang)}
-                onSync={handleSyncNow}
-                onSettings={() => dispatch({ type: "open-settings" })}
-                onAbout={() => setAboutOpen(true)}
-                onDonate={() => setDonationOpen(true)}
-              />
             </div>
           </div>
           <OverviewSection
@@ -3499,48 +3488,6 @@ function App() {
         onDownloadJson={modals.handleDownloadShareJson}
       />
     </>
-  );
-}
-
-function DashboardMobileActions(props: {
-  lang: string;
-  syncPending: boolean;
-  settingsTitle: string;
-  passwordRequired: boolean;
-  aboutTitle: string;
-  onSync: () => void;
-  onSettings: () => void;
-  onAbout: () => void;
-  onDonate: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLElement>(null), panel = useRef<HTMLDivElement>(null);
-  useAnchoredPopover(open, anchor, panel);
-  const closeMenu = (event: MouseEvent): void => {
-    (event.currentTarget as HTMLElement).closest("details")?.removeAttribute("open");
-  };
-  const menuLabel = props.lang === "zh" ? "更多操作" : props.lang === "zh-hant" ? "更多操作" : "More actions";
-  return (
-    <details class="dashboard-mobile-actions" onToggle={event => setOpen(event.currentTarget.open)}>
-      <summary ref={anchor} class="settings-btn action-btn icon-only settings-alert-trigger" aria-label={menuLabel} title={menuLabel} aria-description={props.passwordRequired ? "Password required" : undefined}>
-        <span class="button-face"><span class="button-icon" aria-hidden="true">•••</span></span>
-        {props.passwordRequired ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
-      </summary>
-      <div ref={panel} class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSync(); }} disabled={props.syncPending}>
-          <span aria-hidden="true">↻</span>Sync now
-        </button>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSettings(); }}>
-          <span aria-hidden="true">⚙</span>{props.settingsTitle}
-        </button>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onAbout(); }}>
-          <span aria-hidden="true"><InfoIcon /></span>{props.aboutTitle}
-        </button>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onDonate(); }}>
-          <span aria-hidden="true">♡</span>Donate
-        </button>
-      </div>
-    </details>
   );
 }
 

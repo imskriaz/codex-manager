@@ -2356,7 +2356,7 @@ function parseAppServerThreadItem(
     };
   }
   if (type === "customToolCall" || type === "custom_tool_call") {
-    const name = typeof item["name"] === "string" ? item["name"] : "tool";
+    const name = readToolName(item);
     const input = typeof item["input"] === "string" ? item["input"].trim() : safeDisplayJson(item["input"]);
     const images = readImageSources(item);
     const error = readHumanError(item["error"]);
@@ -2370,7 +2370,7 @@ function parseAppServerThreadItem(
         status: error ? "failed" : status,
         timestamp
       };
-    const result = readHumanText(item["result"] ?? item["output"]) ?? safeDisplayJson(item["result"] ?? item["output"]);
+    const result = readToolResult(item["result"] ?? item["output"]) ?? safeDisplayJson(item["result"] ?? item["output"]);
     const failed = Boolean(error) || status === "failed";
     return {
       id,
@@ -2394,7 +2394,7 @@ function parseAppServerThreadItem(
           : typeof item["source"] === "string"
             ? item["source"]
             : "Tool";
-    const tool = typeof item["tool"] === "string" ? item["tool"] : typeof item["name"] === "string" ? item["name"] : "call";
+    const tool = readToolName(item) === "tool" ? "call" : readToolName(item);
     const rawArguments = item["arguments"] ?? item["input"];
     const error = readHumanError(item["error"]);
     const debug = safeDisplayJson({
@@ -2410,7 +2410,7 @@ function parseAppServerThreadItem(
       subtitle: server,
       text: error ?? (typeof item["progress"] === "string" ? item["progress"] : `${server} used ${tool}.`),
       arguments: safeDisplayJson(rawArguments),
-      result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]) ?? safeDisplayJson(item["result"] ?? item["contentItems"] ?? item["success"]),
+      result: error ?? readToolResult(item["result"] ?? item["contentItems"] ?? item["success"]) ?? safeDisplayJson(item["result"] ?? item["contentItems"] ?? item["success"]),
       debug,
       durationMs,
       status: failed ? "failed" : status,
@@ -2701,6 +2701,40 @@ function safeDisplayJson(value: unknown): string | undefined {
   } catch {
     return "[Unserializable value]";
   }
+}
+
+function readToolName(item: Record<string, unknown>): string {
+  for (const key of ["name", "toolName", "function", "tool", "operation"]) {
+    const value = item[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 160);
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const nested = value as Record<string, unknown>;
+      for (const nestedKey of ["name", "id", "type"]) {
+        if (typeof nested[nestedKey] === "string" && nested[nestedKey].trim()) return nested[nestedKey].trim().slice(0, 160);
+      }
+    }
+  }
+  return "tool";
+}
+
+/** Provider wrappers often serialize an exec result as a JSON envelope. Show
+ * its useful output in the activity while retaining the original envelope in
+ * debug details for copying and diagnosis. */
+function readToolResult(value: unknown): string | undefined {
+  const text = readHumanText(value);
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return text;
+    const envelope = parsed as Record<string, unknown>;
+    for (const key of ["output", "stdout", "result", "content"]) {
+      const nested = readHumanText(envelope[key]);
+      if (nested && nested !== text) return nested;
+    }
+  } catch {
+    // Plain tool output is already displayable.
+  }
+  return text;
 }
 
 function readHumanError(value: unknown): string | undefined {
@@ -4142,7 +4176,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
           : typeof payload["id"] === "string"
             ? payload["id"]
             : `${sequence}-tool`;
-      const name = typeof payload["name"] === "string" ? payload["name"] : "tool";
+      const name = readToolName(payload as Record<string, unknown>);
       const rawInput = payload["input"] ?? payload["arguments"];
       const input = typeof rawInput === "string" ? rawInput.trim() : safeDisplayJson(rawInput);
       return {
@@ -4183,7 +4217,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
           timestamp
         };
       }
-      const result = readHumanText(output) ?? safeDisplayJson(output) ?? "Tool completed.";
+      const result = readToolResult(output) ?? safeDisplayJson(output) ?? "Tool completed.";
       return {
         id: callId,
         kind: "tool-call",
