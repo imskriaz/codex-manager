@@ -3300,7 +3300,6 @@ async function inspectCliSessionRunning(
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
       ownsSessionTurn(codexHome, sessionId)) return true;
   const cachedNative = getNativeCodexSessionRunning(codexHome, sessionId);
-  if (cachedNative !== undefined) return cachedNative;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
@@ -3309,7 +3308,15 @@ async function inspectCliSessionRunning(
   const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId, signal);
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
-  if (turnState === "terminal" || turnState === "stopped" || turnState === "failed" || turnState === "quota-paused") return false;
+  if (turnState === "terminal" || turnState === "stopped" || turnState === "failed" || turnState === "quota-paused") {
+    // A cached native `running` result can outlive the terminal transcript
+    // event. Refresh only that ambiguous case so a genuinely restarted native
+    // turn still wins without making every historical check pay the IPC cost.
+    if (cachedNative !== true) return false;
+    const refreshedNative = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
+    return refreshedNative ?? cachedNative;
+  }
+  if (cachedNative !== undefined) return cachedNative;
   const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
   signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;

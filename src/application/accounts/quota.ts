@@ -47,6 +47,7 @@ import { getDashboardCopy } from "../dashboard/copy";
 import { redeemAccountResetCredit, verifyAccountResetCredit } from "./resetCreditRedemption";
 import {
   isAutoQueueCandidateEligible,
+  hasAutoQueueCapability,
   isAutoQueueSnapshotFresh,
   usableAutoQueueResetCount
 } from "../../domain/autoQueuePolicy";
@@ -64,6 +65,7 @@ import {
   handleCodexAppRestartPreference,
   promptWindowReloadForAccount
 } from "./switchEffects";
+import { accountQuotaAvailability } from "../../utils/quotaWindows";
 
 const AUTO_SWITCH_ENABLED = "autoSwitchEnabled";
 const AUTO_SWITCH_RELOAD_WINDOW_ENABLED = "autoSwitchReloadWindowEnabled";
@@ -624,6 +626,35 @@ export async function maybeAutoSwitchForActiveQuota(
       if (autoSwitchManualOverride === override) autoSwitchManualOverride = undefined;
     }
   }
+}
+
+/**
+ * Prepare the active account before replaying saved work. Auto Resume must not
+ * start a turn on an account that Auto Switch would immediately reject; let
+ * the normal switch/reset plan settle first in both VS Code and standalone.
+ */
+export async function prepareAccountForAutoResume(
+  repo: AccountsRepository,
+  view: RefreshView,
+  canUseAccount?: (accountId: string) => boolean
+): Promise<boolean> {
+  const config = getCodexManagerConfiguration();
+  if (config.get<boolean>(AUTO_SWITCH_ENABLED, true)) {
+    await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount });
+  }
+  const active = (await repo.listAccounts()).find(account => account.isActive);
+  if (
+    !active ||
+    active.enabled === false ||
+    !(canUseAccount?.(active.id) ?? true) ||
+    active.resetCreditAttempt ||
+    needsWindowReloadForAccount(active.id) ||
+    accountQuotaAvailability(active) !== "available"
+  )
+    return false;
+  const policy = getAccountAutoQueuePolicy();
+  return isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), policy) &&
+    (!config.get<boolean>(AUTO_SWITCH_ENABLED, true) || hasAutoQueueCapability(toAutoQueueOrderValue(active), policy));
 }
 
 function needsReauthorization(account: CodexManagerAccountRecord): boolean {
@@ -1295,7 +1326,7 @@ async function finishAutoSwitchReload(
   if (!needsWindowReloadForAccount(account.id)) return;
   if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
     // A dismissed or unanswered prompt must not hold the automation lock.
-    void promptWindowReloadForAccount(account, { message: `${message} Reload VS Code?` })
+    void Promise.resolve(promptWindowReloadForAccount(account, { message: `${message} Reload VS Code?` }))
       .catch((error: unknown) => showAutoSwitchFailure(new Error(`${message} Reload failed: ${error instanceof Error ? error.message : String(error)}`), userInitiated));
     return;
   }

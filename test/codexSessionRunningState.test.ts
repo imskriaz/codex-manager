@@ -191,6 +191,15 @@ describe("shared running-session detection and auto resume", () => {
       expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "running", runningSince: undefined });
     } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
+  it("refreshes a cached native running result after a terminal transcript event", async () => {
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+    try {
+      await appendFile(transcript, event("task_complete"));
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+      expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(home, id, expect.anything(), true);
+    } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
+  });
   it("retains recent verified checks for recovery while safety checks remain fresh", async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
     const checked = vi.fn();

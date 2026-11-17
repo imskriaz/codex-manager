@@ -99,7 +99,7 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
-import { isCodexSessionInspectionNotice, filterCliSessionsBySection, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { isCodexSessionInspectionNotice, filterCliSessionsBySection, isCodexSessionRunningForDisplay, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -1937,7 +1937,7 @@ function App() {
 
   const cliListLoading = state.pendingActions.some(request => request.action === 'listCodexCliSessions' && request.requestId === latestCliListRequests.current.get(cliListViewTarget.current ?? 'local'));
   const runningCliSessions = filterCliSessionsBySection(cliSessions, "active").filter((session) =>
-    (selectedPeer?.local ? !session.remote : session.deviceId === selectedPeer?.id) && ((session.status === "running" && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true)
+    (selectedPeer?.local ? !session.remote : session.deviceId === selectedPeer?.id) && ((isCodexSessionRunningForDisplay(session) && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true)
   );
   const displayedAccounts =
     selectedPeer && !selectedPeer.local ? (snapshot.peerAccounts?.[selectedPeer.id] ?? []) : snapshot.accounts;
@@ -2878,7 +2878,7 @@ function App() {
                   onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 3 })}
                   sessions={runningCliSessions}
                   peers={pcOptions}
-                  ready={liveSessionListReceived.current || runningCliSessions.some(session => session.status === 'running' || session.interrupted === true)}
+                  ready={liveSessionListReceived.current || runningCliSessions.some(session => isCodexSessionRunningForDisplay(session) || session.interrupted === true)}
                   error={cliSessionsError}
                   connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
                   loading={cliListLoading}
@@ -3654,7 +3654,7 @@ function CliSessionsMenu(props: {
   const isHant = props.lang === "zh-hant";
   const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
   const manageLabel = isZh ? "会话面板" : isHant ? "工作階段面板" : "Session dashboard";
-  const runningCount = props.sessions.filter(session => session.status === "running" && (!session.remote || props.peers.some(peer => peer.id === session.deviceId && peer.connected))).length;
+  const runningCount = props.sessions.filter(session => isCodexSessionRunningForDisplay(session) && (!session.remote || props.peers.some(peer => peer.id === session.deviceId && peer.connected))).length;
   const serverStatus = !props.connected ? "offline" : props.error ? "error" : props.ready ? "ready" : props.loading ? "starting" : "checking";
   const serverLabel = serverStatus === "ready" ? "Ready" : serverStatus === "starting" ? "Starting" : serverStatus === "checking" ? "Checking" : serverStatus === "offline" ? "Offline" : "Needs attention";
 
@@ -3728,7 +3728,7 @@ function CliSessionsMenu(props: {
                   const project = projectDisplayName(session.projectPath?.trim() || "Workspace");
                   const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
                   const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
-                  const running = session.status === "running";
+                  const running = isCodexSessionRunningForDisplay(session);
                   const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
                   const actionPending = props.isSessionPending(session);
                   const destination = props.browser ? "browser" : "VS Code";

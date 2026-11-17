@@ -4,7 +4,7 @@ import { accountQuotaAvailability } from "../utils/quotaWindows";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from "../application/accounts/autoQueueOrder";
-import { isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
+import { hasAutoQueueCapability, isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
 import { needsWindowReloadForAccount } from "../presentation/workbench/windowRuntimeAccount";
 import { resolveCodexHome } from "./codexSessionResume";
 import {
@@ -101,6 +101,8 @@ export function registerQuotaRecoveryAutoResume(
         pending = true;
       }
       const availability = accountQuotaAvailability(active);
+      const activePolicy = getAccountAutoQueuePolicy();
+      const activeQueue = toAutoQueueOrderValue(active);
       // A failed refresh does not erase previously confirmed exhaustion.
       if (availability === "exhausted" || accountQuotaAvailability({ ...active, quotaError: undefined }) === "exhausted") {
         if (!pending)
@@ -118,7 +120,8 @@ export function registerQuotaRecoveryAutoResume(
         availability !== "available" ||
         active.resetCreditAttempt ||
         needsWindowReloadForAccount(active.id) ||
-        !isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy())
+        !isAutoQueueSnapshotFresh(activeQueue, activePolicy) ||
+        (activePolicy.autoSwitchEnabled && !hasAutoQueueCapability(activeQueue, activePolicy))
       )
         return;
       scheduleRetry();
@@ -126,6 +129,8 @@ export function registerQuotaRecoveryAutoResume(
       const latest = (
         await waitWithin(repo.listAccounts(), 5_000, "Quota recovery could not verify the active account.")
       ).find((account) => account.isActive);
+      const latestPolicy = latest ? getAccountAutoQueuePolicy() : undefined;
+      const latestQueue = latest ? toAutoQueueOrderValue(latest) : undefined;
       if (
         disposed ||
         home !== resolveCodexHome() ||
@@ -138,7 +143,9 @@ export function registerQuotaRecoveryAutoResume(
         latest.resetCreditAttempt ||
         needsWindowReloadForAccount(latest.id) ||
         accountQuotaAvailability(latest) !== "available" ||
-        !isAutoQueueSnapshotFresh(toAutoQueueOrderValue(latest), getAccountAutoQueuePolicy())
+        !latestPolicy || !latestQueue ||
+        !isAutoQueueSnapshotFresh(latestQueue, latestPolicy) ||
+        (latestPolicy.autoSwitchEnabled && !hasAutoQueueCapability(latestQueue, latestPolicy))
       )
         return;
       const result = await resumePersistedCodexSessions(context);

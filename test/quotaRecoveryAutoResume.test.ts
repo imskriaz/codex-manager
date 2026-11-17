@@ -3,9 +3,11 @@ import type { ExtensionContext } from "vscode";
 import type { AccountsRepository } from "../src/storage";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import * as vscode from 'vscode';
+import { createAutoQueuePolicy } from '../src/domain/autoQueuePolicy';
 
 const mocks = vi.hoisted(() => ({
   enabled: vi.fn(),
+  policy: vi.fn(),
   home: vi.fn(),
   capture: vi.fn(),
   resume: vi.fn(),
@@ -29,12 +31,15 @@ vi.mock("../src/presentation/workbench/windowRuntimeAccount", () => ({
 }));
 vi.mock("../src/services/dashboardRealtime", () => ({ publishDashboardRealtime: mocks.notice, subscribeDashboardRealtime: (listener: typeof mocks.liveListener) => { mocks.liveListener = listener; return () => { mocks.liveListener = undefined; }; } }));
 vi.mock("../src/application/accounts/autoQueueOrder", async () => {
-  const { createAutoQueuePolicy } = await import("../src/domain/autoQueuePolicy");
   return {
-    getAccountAutoQueuePolicy: () => createAutoQueuePolicy(),
+    getAccountAutoQueuePolicy: mocks.policy,
     toAutoQueueOrderValue: (account: CodexManagerAccountRecord) => ({
       lastQuotaAt: account.lastQuotaAt,
-      sessionStartedAt: account.sessionStartedAt
+      sessionStartedAt: account.sessionStartedAt,
+      windows: [
+        { percentage: account.quotaSummary?.hourlyPercentage },
+        { percentage: account.quotaSummary?.weeklyPercentage }
+      ]
     })
   };
 });
@@ -76,6 +81,7 @@ beforeEach(() => {
   saved = new Map();
   for (const mock of Object.values(mocks)) if (vi.isMockFunction(mock)) mock.mockReset();
   mocks.enabled.mockReturnValue(true);
+  mocks.policy.mockImplementation(() => createAutoQueuePolicy());
   mocks.home.mockReturnValue("test-home");
   mocks.needsReload.mockReturnValue(false);
   mocks.capture.mockResolvedValue([]);
@@ -159,6 +165,21 @@ it('recovers immediately after a standalone account change above the exhaustion 
   await tick(); expect(mocks.resume).toHaveBeenCalledOnce();
   expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
   expect(mocks.notice).not.toHaveBeenCalled();
+});
+
+it('does not resume a pending turn while Auto Switch still considers the active quota unsafe', async () => {
+  mocks.policy.mockReturnValue(createAutoQueuePolicy({
+    autoSwitchEnabled: true,
+    autoSwitchHourlyThreshold: 20,
+    autoSwitchWeeklyThreshold: 20
+  }));
+  start();
+  await tick();
+  recover();
+  account.quotaSummary!.weeklyPercentage = 10;
+  await tick();
+  expect(mocks.resume).not.toHaveBeenCalled();
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
 });
 
 it('captures a quota-failed private turn once and refreshes quota without waiting for a manual prompt', async () => {

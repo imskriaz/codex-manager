@@ -23,7 +23,7 @@ import {
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
-import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
+import { isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
   it("uses the shared workspace icon toolbar and anchored Browser actions flyout", () => {
@@ -146,6 +146,9 @@ describe("sessions sidebar layout", () => {
 
   it("blocks unverified session actions and labels the status without claiming readiness", () => {
     expect(isCodexSessionRunning({ status: "unknown" })).toBe(true);
+    expect(isCodexSessionRunningForDisplay({ status: "running" })).toBe(true);
+    expect(isCodexSessionRunningForDisplay({ status: "running", statusError: "Session status is stale." })).toBe(false);
+    expect(isCodexSessionRunningForDisplay({ status: "unknown" })).toBe(false);
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Checking running state");

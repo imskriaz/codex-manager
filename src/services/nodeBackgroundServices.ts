@@ -13,12 +13,9 @@ import { registerModelCapacitySwitch } from "./modelCapacitySwitch";
 import { registerQuotaRecoveryAutoResume } from "./quotaRecoveryAutoResume";
 import { registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions, scheduleCodexSessionAutoResume } from "./codexSessionAutoResume";
 import { AccountsCommandService } from "../application/accounts/commandService";
-import { accountQuotaAvailability } from '../utils/quotaWindows';
 import { waitWithin } from '../utils/concurrency';
 import { resolveCodexHome } from './codexSessionResume';
-import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from '../application/accounts/autoQueueOrder';
-import { isAutoQueueSnapshotFresh } from '../domain/autoQueuePolicy';
-import { maybeAutoSwitchForActiveQuota } from '../application/accounts/quota';
+import { maybeAutoSwitchForActiveQuota, prepareAccountForAutoResume } from '../application/accounts/quota';
 
 /** Start only after this host owns the port, so a rejected competing host cannot automate accounts. */
 export function registerNodeBackgroundServices(context: vscode.ExtensionContext, repo: AccountsRepository, dashboard: WebDashboardServer,
@@ -28,8 +25,7 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   const view = { refresh };
   const commands = new AccountsCommandService(context, repo, view, canUseAccount, undefined, canUseAccount);
   const canResume = async () => {
-    const active = (await waitWithin(repo.listAccounts(), 5000, 'Startup recovery could not verify accounts.')).find(account => account.isActive);
-    if (active && active.enabled !== false && canUseAccount(active.id) && !active.resetCreditAttempt && accountQuotaAvailability(active) === 'available' && isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy())) return true;
+    if (await prepareAccountForAutoResume(repo, view, canUseAccount)) return true;
     await waitWithin(Promise.resolve(context.workspaceState.update(`codexManager.quotaRecovery:${resolveCodexHome()}`, true)), 5000, 'Startup recovery could not save deferred work.');
     return false;
   };

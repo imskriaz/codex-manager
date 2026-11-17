@@ -78,7 +78,7 @@ type BrowserWorkspacePage = { id: string; url: string; title: string; revision: 
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; browserPages?: BrowserWorkspacePage[]; browserClosePageId?: string; browserUrl?: string; browserDownloadUrl?: string; browserActionNonce?: number; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
-import { isCodexQuotaInterruption, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { isCodexQuotaInterruption, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, isCodexSessionRunningForDisplay, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 async function copyWorkspaceText(text: string): Promise<void> {
@@ -1402,7 +1402,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   {projectGroups.map(({ project, sessions }) => {
                     const groupId = `project:${pc.id}:${project.id}`;
                     const projectCollapsed = collapsedGroups[groupId] ?? true;
-                    const runningSessions = sessions.filter((session) => !session.archived && session.status === "running").length;
+                    const runningSessions = sessions.filter((session) => isCodexSessionRunningForDisplay(session)).length;
                     return <section class="cli-project-group" key={groupId}>
                        <div class={`cli-project-row ${newChatProject === project.path ? "is-selected" : ""}`}>
                          <button type="button" class="cli-project-select" aria-label={`${projectCollapsed ? "Expand" : "Collapse"} ${project.label}`} title={project.path || undefined} aria-expanded={!projectCollapsed} onClick={() => toggleGroup(groupId, true)}>

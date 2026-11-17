@@ -16,7 +16,16 @@ vi.mock('../src/services/standaloneCapacityRetry', () => ({ registerStandaloneCa
 vi.mock("../src/services/workspaceTools", () => ({ registerWorkspaceTerminalMonitoring: () => disposable("terminals") }));
 vi.mock("../src/services/modelCapacitySwitch", () => ({ registerModelCapacitySwitch: () => disposable("capacity") }));
 vi.mock("../src/services/quotaRecoveryAutoResume", () => ({ registerQuotaRecoveryAutoResume: () => disposable("quota-recovery") }));
-vi.mock('../src/application/accounts/quota', () => ({ maybeAutoSwitchForActiveQuota: vi.fn().mockResolvedValue(true) }));
+vi.mock('../src/application/accounts/quota', () => ({
+  maybeAutoSwitchForActiveQuota: vi.fn().mockResolvedValue(true),
+  prepareAccountForAutoResume: vi.fn(async (repo: { listAccounts: () => Promise<any[]> }, _view: unknown, canUse?: (id: string) => boolean) => {
+    const account = (await repo.listAccounts()).find(item => item.isActive);
+    return Boolean(account && account.enabled !== false &&
+      (canUse?.(account.id) ?? true) && !account.resetCreditAttempt && !account.quotaError &&
+      account.quotaSummary && (account.quotaSummary.hourlyPercentage ?? 0) > 0 &&
+      (account.lastQuotaAt ?? 0) > Date.now() - 30 * 60_000);
+  })
+}));
 vi.mock("../src/services/codexSessionAutoResume", () => ({
   registerCodexSessionAutoResumeTracking: () => disposable("tracking"), resumePersistedCodexSessions: fixture.resume,
   scheduleCodexSessionAutoResume: (start: () => Promise<boolean>) => { fixture.recovery = start; return disposable("recovery"); },

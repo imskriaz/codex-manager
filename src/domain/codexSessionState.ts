@@ -46,6 +46,13 @@ export function isCodexSessionRunning(
   return Boolean(session && !session.archived && (session.status === "running" || session.status === "unknown" || session.locked));
 }
 
+/** Dashboard counts should include only a running state that was actually verified. */
+export function isCodexSessionRunningForDisplay(
+  session: Pick<DashboardCliSessionSummary, "status" | "statusError" | "archived"> | undefined
+): boolean {
+  return Boolean(session && !session.archived && session.status === "running" && !session.statusError);
+}
+
 export function canResumeCodexSession(session: DashboardCliSessionSummary | undefined): boolean {
   return Boolean(session && session.status === 'idle' && !session.statusError && !session.locked && !session.archived && (session.interrupted || session.goal && ['active','usage_limited'].includes(session.goal.status)) &&
     !session.subAgent && !session.parentSessionId && (!session.goal || ['active','paused','usage_limited'].includes(session.goal.status)));

@@ -54,6 +54,7 @@ vi.mock("../src/application/accounts/switchEffects", () => ({
 
 import {
   maybeAutoSwitchForActiveQuota,
+  prepareAccountForAutoResume,
   maybeWarnForAccount,
   refreshImportedAccountQuota,
   refreshSingleQuota,
@@ -61,6 +62,65 @@ import {
 } from "../src/application/accounts/quota";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
 import { clearAutoSwitchLock, consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot, setAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
+
+describe("Auto Resume account preparation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearAutoSwitchLock();
+    Reflect.deleteProperty(vscode.env, "appHost");
+  });
+
+  it.each(["node", "desktop"])("switches before resuming saved work in %s mode", async host => {
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: host });
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string, fallback?: unknown) => ({
+        autoSwitchEnabled: true,
+        autoSwitchHourlyThreshold: 20,
+        autoSwitchWeeklyThreshold: 20,
+        autoSwitchReloadWindowEnabled: false
+      } as Record<string, unknown>)[key] ?? fallback
+    } as never);
+    const active = createAccount("resume-active", true, 90, 5);
+    const next = createAccount("resume-next", false, 90, 90);
+    if (host === "desktop") setCurrentWindowRuntimeAccountId(next.id);
+    const accounts = [active, next];
+    const repo = {
+      listAccounts: vi.fn(async () => accounts),
+      getAccount: vi.fn(async (id: string) => accounts.find(account => account.id === id)),
+      switchAccount: vi.fn(async (id: string) => {
+        active.isActive = false;
+        next.isActive = id === next.id;
+      })
+    };
+
+    await expect(prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: active.id });
+    expect(next.isActive).toBe(true);
+  });
+
+  it("resets the active account before resuming saved work when reset is enabled", async () => {
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string, fallback?: unknown) => ({
+        autoSwitchEnabled: true,
+        autoSwitchHourlyThreshold: 20,
+        autoSwitchWeeklyThreshold: 20,
+        autoResetEnabled: true,
+        autoResetWeeklyThreshold: 10
+      } as Record<string, unknown>)[key] ?? fallback
+    } as never);
+    const active = createAccount("resume-reset", true, 0, 0);
+    active.autoResetAllowed = true;
+    active.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active], { idToken: "id", accessToken: "access" });
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 90, weekly: 90 }), error: undefined });
+
+    await expect(prepareAccountForAutoResume(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
+    expect(consumeResetCreditMock).toHaveBeenCalled();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+});
 
 type QuotaRefreshRepo = Pick<
   AccountsRepository,

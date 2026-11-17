@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.37
+
+- Run Auto Switch or the configured reset plan before Auto Resume in VS Code and standalone mode, and resume only after the replacement account is verified usable.
+
 ## 2.0.6-pre.36
 
 - Keep the local Always Active Node host running after VS Code closes even when WS Cross System is disabled.

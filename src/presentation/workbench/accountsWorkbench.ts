@@ -1,5 +1,5 @@
 import { registerModelCapacitySwitch } from '../../services/modelCapacitySwitch';
-import { maybeAutoSwitchForActiveQuota } from '../../application/accounts/quota';
+import { maybeAutoSwitchForActiveQuota, prepareAccountForAutoResume } from '../../application/accounts/quota';
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { registerCommands, runRegisteredCommand } from "../../commands";
@@ -288,6 +288,9 @@ export class AccountsWorkbench {
       if (this.disposed) return;
       return measureStep("autoResumeCodexSessions", async () => {
         try {
+          if (!(await prepareAccountForAutoResume(this.repo, refreshers, id => this.encryptedSync.canAutomateAccount(id)))) {
+            return true;
+          }
           const result = await resumePersistedCodexSessions(this.context);
           const message = formatAutoResumeResult(result);
           if (!message) {
