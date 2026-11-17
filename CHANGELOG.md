@@ -2,13 +2,13 @@
 
 ## 2.0.6-pre.45
 
-- Reuse the full dashboard in the workspace Dashboard tab with the shared Dashboard icon and compact responsive layout from 320px phones through wide panels.
+- Reuse the full dashboard in the Workspace Dashboard tab with the shared Dashboard icon and compact responsive layout from 320px phones through wide panels.
+- Keep project folder icons visible, show the edit pencil on hover/focus, and drag idle session rows between projects without a separate drag icon. List view has no drag controls.
 
 ## 2.0.6-pre.44
 
 - Compact empty project rows and open project rename/removal from the folder's hover edit icon.
-- Show drag handles only in folder view; move idle conversations to another project's working folder with native confirmation and visible failures. Keep list view free of drag controls.
-
+- Drag idle session rows in folder view to move their working folder with native confirmation and visible failures; list view has no drag controls.
 ## 2.0.6-pre.43
 
 - Order sidebar sessions by running, interrupted, stopped or incomplete, then completed, preserving order within each group.
