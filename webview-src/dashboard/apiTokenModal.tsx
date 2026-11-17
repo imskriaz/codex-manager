@@ -14,7 +14,7 @@ export function ApiTokenModal(props: {
   onGenerate: (name: string, projectPaths: string[] | undefined, permissions: string[]) => void; onRevoke: (id: string) => void;
 }) {
   const [projectInput,setProjectInput]=useState('');
-  const [tab, setTab] = useState<'explorer' | 'proxy' | 'logs'>('explorer');
+  const [tab, setTab] = useState<'keys' | 'explorer' | 'proxy' | 'logs'>('keys');
   const [createOpen, setCreateOpen] = useState(false), [name, setName] = useState('');
   const [keysOpen,setKeysOpen] = useState(false), [detailsOpen,setDetailsOpen] = useState(false);
   const [allProjects, setAllProjects] = useState(true), [selectedProjects, setSelectedProjects] = useState<string[]>([]);
@@ -115,12 +115,12 @@ export function ApiTokenModal(props: {
   let requestPreview = '';
   try { const request = buildApiTestRequest(endpoint,payload,operation,checked?.projects.length ? testProject : '', 'unique-request-id'); requestPreview = JSON.stringify({...request,...(request.body ? {body:JSON.parse(request.body) as unknown} : {})},null,2); } catch { requestPreview = 'Enter a valid request payload to see the complete request.'; }
   return <>
-  <ModalShell open={props.open && !createOpen && !keysOpen && !detailsOpen} title="API access" closeLabel="Close" closeDisabled={props.pending || testing} onClose={() => { setCreateOpen(false); props.onClose(); }} className="dashboard-api-modal api-workspace-modal" headerActions={<button type="button" class="api-key-button" aria-label="Manage API keys" aria-haspopup="dialog" title="Manage API keys" disabled={props.pending || testing} onClick={()=>{setKeysOpen(true);if(props.connected && !props.loading) props.onRefresh();}}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m12 12 9 9m-4-4 3-3m-6 0 3-3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>API keys</span></button>}>
+  <ModalShell open={props.open && !createOpen && !keysOpen && !detailsOpen} title="API access" closeLabel="Close" closeDisabled={props.pending || testing} onClose={() => { setCreateOpen(false); props.onClose(); }} className="dashboard-api-modal api-workspace-modal" headerActions={null}>
     {!props.enabled ? <p role="status">Enable Dashboard API in Settings to create and use tokens.</p> : null}
     {!props.connected ? <p role="status">Offline. Reconnect before managing API tokens.</p> : null}
     {props.error ? <p class="share-outcome is-error" role="alert">{props.error}</p> : null}
     {props.uncertain ? <p role="status">Refresh the list to verify the previous request before creating another token.</p> : null}
-    <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>{(['explorer', 'proxy', 'logs'] as const).map(item => <button type="button" role="tab" id={`api-tab-${item}`} aria-controls={`api-panel-${item}`} aria-selected={tab === item} tabIndex={tab === item ? 0 : -1} key={item} disabled={testing} onClick={() => { setTab(item); if (item !== 'explorer' && props.connected && !props.loading) props.onRefresh(); }}>{item === 'explorer' ? 'Explorer & test' : item === 'proxy' ? 'Proxy' : 'Logs'}</button>)}</div>
+    <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>{(['keys', 'explorer', 'proxy', 'logs'] as const).map(item => <button type="button" role="tab" id={`api-tab-${item}`} aria-controls={`api-panel-${item}`} aria-selected={tab === item} tabIndex={tab === item ? 0 : -1} key={item} disabled={testing} onClick={() => { if (item === 'keys') { setKeysOpen(true); if (props.connected && !props.loading) props.onRefresh(); return; } setTab(item); if (props.connected && !props.loading) props.onRefresh(); }}>{item === 'keys' ? 'API keys' : item === 'explorer' ? 'Explorer & test' : item === 'proxy' ? 'Proxy' : 'Logs'}</button>)}</div>
     {tab !== 'explorer' ? <div role="tabpanel" id={`api-panel-${tab}`} aria-labelledby={`api-tab-${tab}`}><ApiProxyPanel snapshot={props.proxy} logs={tab === 'logs'} enabled={props.enabled} connected={props.connected} loading={props.loading} baseUrl={baseUrl} onRefresh={props.onRefresh}/></div> : null}
     <div class="api-playground" aria-label="Explorer and Test" role="tabpanel" id="api-panel-explorer" aria-labelledby="api-tab-explorer" hidden={tab !== 'explorer'}>
       <div class="api-auth-bar">
@@ -148,7 +148,7 @@ export function ApiTokenModal(props: {
     </div>
   </ModalShell>
   <ModalShell open={props.open && detailsOpen} title="Request details" closeLabel="Close request details" onClose={()=>setDetailsOpen(false)} className="dashboard-api-modal api-details-modal"><p>{selectedEndpoint.description}</p><p>Authorization: Bearer &lt;token&gt;. Proxy calls need host-wide aiProxy permission and create no local session.</p><pre>{requestPreview}</pre><button type="button" onClick={()=>copy(requestPreview)}>Copy request</button>{requestCopy ? <small role="status">{requestCopy}</small> : null}</ModalShell>
-  <ModalShell open={props.open && keysOpen && !createOpen} title="API keys" closeLabel="Close key management" closeDisabled={props.pending} onClose={()=>setKeysOpen(false)} className="dashboard-api-modal api-create-modal">
+  <ModalShell open={props.open && keysOpen && !createOpen} title="API keys" closeLabel="Close key management" closeDisabled={props.pending} onClose={()=>setKeysOpen(false)} className="dashboard-api-modal api-workspace-modal api-create-modal">
     {props.error ? <p role="alert">{props.error}</p> : null}
     {!props.connected ? <p role="status">Offline. Reconnect to manage keys.</p> : null}
     <div class="api-key-actions"><button type="button" disabled={!canUse} onClick={()=>{setCreatedToken(undefined);setCopyStatus('');setCreateOpen(true);}}>+ Create token</button></div>

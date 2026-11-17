@@ -189,10 +189,11 @@ export function ModalShell(props: {
 }) {
   const accessibility = useModalAccessibility(props.open, () => { if (!props.closeDisabled) props.onClose(); });
   if (!props.open) return null;
+  const workspaceSurface = props.className?.includes("api-workspace-modal") === true;
 
   return createPortal(
     <div
-      class={`overlay ${props.open ? "open" : ""}`}
+      class={`overlay ${props.open ? "open" : ""} ${workspaceSurface ? "api-workspace-overlay" : ""}`}
       aria-hidden={!props.open}
       onPointerDown={accessibility.onBackdropPointerDown}
       onMouseDown={accessibility.onBackdropMouseDown}
