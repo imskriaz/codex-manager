@@ -67,15 +67,25 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     });
     assert.deepEqual(await list.getByRole('tab').allTextContents(), ['API keys', 'API Explorer', 'Proxy'], 'API workspace has three tabs');
     await list.getByRole('tab', {name:'API Explorer', exact:true}).click();
-    assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+'/api/message','Absolute endpoint is visible in a copyable field');
-    if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,3);assert.ok(Math.abs(panels[1]-panels[2])<3,'Request and response panels are balanced');}
+    assert.equal(await list.getByLabel('Request URL',{exact:true}).inputValue(),origin+'/api/message','Absolute endpoint is visible in a copyable field');
+    if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,2);assert.ok(Math.abs(panels[0]-panels[1])<3,'Request and response panels are balanced');}
     const tokenInput = list.getByLabel('Bearer token', { exact: true });
-    const operations = list.getByLabel('Operation', { exact: true });
+    const operations = list.getByRole('button', {name:'Operation',exact:true});
+    const checkOperations = async expected=>{
+      await operations.click();
+      assert.deepEqual(await page.getByRole('listbox',{name:'Operation choices',exact:true}).locator('small').allTextContents(),expected);
+      await page.getByRole('combobox',{name:'Search operation',exact:true}).press('Escape');
+    };
+    const chooseEndpoint = async path=>{
+      await list.getByRole('button',{name:'Endpoint',exact:true}).click();
+      const search=page.getByRole('combobox',{name:'Search endpoint',exact:true});
+      await search.fill(path);await search.press('Enter');
+    };
     const send = list.getByRole('button', { name: 'Send request once', exact: true });
     assert.equal(await list.locator('.api-test-form > .api-section-heading').getByRole('button',{name:'Send request once',exact:true}).count(),1,'Send stays in the compact Request header');
     await tokenInput.fill('  cm_quota_fixture  ');
-    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'refreshAll');
-    assert.deepEqual(await operations.locator('option').allTextContents(), ['refreshAll'], await operations.evaluate(element=>element.outerHTML));
+    await operations.filter({hasText:'refreshAll'}).waitFor();
+    await checkOperations(['refreshAll']);
     await send.click();
     await list.locator('.api-test-result').filter({ hasText: 'HTTP 200' }).waitFor();
     assert.ok((await list.locator('.api-test-result').innerText()).includes('\n  "messages": [\n'), 'JSON responses are readable');
@@ -86,8 +96,8 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.ok((await list.locator('.api-test-result').innerText()).includes('revoked after inspection'), 'Permission changes preserve the server error');
     await tokenInput.fill('cm_project_fixture');
     assert.equal(await send.isDisabled(), true, 'Changing a token immediately invalidates old grants');
-    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'getProjectBoard');
-    assert.deepEqual(await operations.locator('option').allTextContents(), ['getProjectBoard']);
+    await operations.filter({hasText:'getProjectBoard'}).waitFor();
+    await checkOperations(['getProjectBoard']);
     assert.equal(await list.getByLabel('Host project', { exact: true }).inputValue(), 'D:/demo');
     failure = false; await send.click();
     await list.locator('.api-test-result').filter({ hasText: 'HTTP 200' }).waitFor();
@@ -103,18 +113,18 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
       await route.fulfill({status:proxyFailure ? 429 : 200,contentType:'application/json',body:JSON.stringify(proxyFailure ? {error:{message:'Quota exhausted'}} : request.url().endsWith('/models') ? {data:[{id:'fixture-model'}]} : {output_text:'OK',choices:[{message:{content:'OK'}}],content:[{type:'text',text:'OK'}]})});
     });
     await tokenInput.fill('cm_project_fixture');
-    await operations.locator('option').filter({hasText:'getProjectBoard'}).waitFor({state:'attached'});
-    await list.locator('.api-endpoints button').filter({hasText:'/v1/models'}).click();
+    await operations.filter({hasText:'getProjectBoard'}).waitFor();
+    await chooseEndpoint('/v1/models');
     assert.equal(await send.isDisabled(),true,'Project-scoped keys cannot test the proxy');
     await tokenInput.fill('cm_quota_fixture');
     await page.waitForFunction(()=>!document.querySelector('.api-send-row .modal-primary-btn')?.disabled);
     await send.click();
     await list.locator('.api-test-result').filter({hasText:'fixture-model'}).waitFor();
     for (const endpoint of ['/v1/chat/completions','/v1/responses','/v1/messages']) {
-      await list.locator('.api-endpoints button').filter({hasText:endpoint}).click();
+      await chooseEndpoint(endpoint);
       await list.getByRole('button',{name:'Load example',exact:true}).click();
-      assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+endpoint);
-      const modelBounds=await list.getByLabel('Model ID',{exact:true}).boundingBox(),endpointBounds=await list.getByLabel('Endpoint',{exact:true}).boundingBox();assert.ok(endpointBounds.y>=modelBounds.y+modelBounds.height,'Endpoint sits below Model ID');
+      assert.equal(await list.getByLabel('Request URL',{exact:true}).inputValue(),origin+endpoint);
+      const modelBounds=await list.getByLabel('Model ID',{exact:true}).boundingBox(),endpointBounds=await list.getByLabel('Request URL',{exact:true}).boundingBox();assert.ok(endpointBounds.y>=modelBounds.y+modelBounds.height,'Endpoint sits below Model ID');
       await list.getByLabel('Model ID',{exact:true}).fill('other-model');
       assert.equal(JSON.parse(await list.getByLabel('Payload (JSON)',{exact:true}).inputValue()).model,'other-model','Model control updates the outgoing JSON');
       await list.getByLabel('Model ID',{exact:true}).fill('fixture-model');

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.35
+
+- Replace wide endpoint tabs with a searchable picker above Operation in the API request editor.
+- Add a searchable operation picker with readable names, full identifiers, keyboard navigation, and permission-aware choices.
+
 ## 2.0.6-pre.34
 
 - Keep the API workspace within the viewport, with scrolling inside keys, forms, requests, responses, and proxy logs.

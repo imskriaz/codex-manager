@@ -83,7 +83,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.route(origin + '/__api-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html data-theme="${theme}"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="app"></div><script type="module" src="/__api-fixture.js"></script></body></html>` }));
     await page.route(origin + '/__api-fixture.js', route => route.fulfill({ contentType: 'text/javascript', body: compiled.outputFiles[0].text }));
-    await page.route('**/api/schema', route=>route.fulfill({contentType:'application/json',body:JSON.stringify({actions:['getProjectBoard'],token:{name:'Fixture',projectPaths:[],permissions:['state','aiProxy']}})}));
+    await page.route('**/api/schema', route=>route.fulfill({contentType:'application/json',body:JSON.stringify({actions:['getProjectBoard','getProjectTaskDetails'],token:{name:'Fixture',projectPaths:[],permissions:['state','aiProxy']}})}));
     await page.route('**/api/message',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({rows:Array.from({length:200},(_,index)=>({index,result:'Fixture response'}))})}));
     await page.goto(origin + '/__api-fixture');
     for (const file of ['shared.css', 'quotaSummary.css']) await page.addStyleTag({ content: await readFile('media/webview/' + file, 'utf8') });
@@ -118,12 +118,9 @@ try {
     await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();
     assert.equal(await screen.getByRole('status').filter({hasText:'API key revoked'}).count(),0,'Key feedback stays with the Keys tab');
     const editor=screen.getByRole('region',{name:'Request editor',exact:true});
-    if(width<=390) {
-      const picker=screen.getByRole('navigation',{name:'API endpoints',exact:true});
-      assert.ok(await picker.evaluate(element=>element.scrollWidth>element.clientWidth),'Endpoint picker scrolls horizontally');
-      const rows=await picker.locator('button').evaluateAll(elements=>new Set(elements.map(element=>Math.round(element.getBoundingClientRect().y))).size);
-      assert.equal(rows,2,'Compact endpoints use two rows');
-    }
+    assert.equal(await screen.locator('.api-endpoints').count(),0,'No endpoint strip outside the request editor');
+    const endpointPicker=editor.getByRole('button',{name:'Endpoint',exact:true});
+    await endpointPicker.waitFor();
     assert.equal(await editor.getByLabel('Bearer token',{exact:true}).count(),1,'Credentials belong to the request editor');
     assert.equal(await editor.locator('.api-section-heading').getByRole('button',{name:'Request details',exact:true}).count(),1,'Details stays beside Send');
     await editor.getByLabel('Bearer token',{exact:true}).fill('cm_fixture_only');
@@ -131,6 +128,20 @@ try {
     const credentialBounds=await editor.getByLabel('Bearer token',{exact:true}).boundingBox(),checkBounds=await editor.getByRole('button',{name:'Recheck token',exact:true}).boundingBox();
     assert.ok(credentialBounds && checkBounds && checkBounds.x>=credentialBounds.x+credentialBounds.width-1,'Token and Recheck do not overlap');
     assert.ok(Math.abs(credentialBounds.y-checkBounds.y)<2,'Token and Recheck align');
+    const operationPicker=editor.getByRole('button',{name:'Operation',exact:true});
+    const pickerBounds=await endpointPicker.boundingBox(),operationBounds=await operationPicker.boundingBox();
+    assert.ok(operationBounds.y>=pickerBounds.y+pickerBounds.height,'Endpoint picker sits above Operation');
+    await operationPicker.click();
+    const operationSearch=page.getByRole('combobox',{name:'Search operation',exact:true});
+    await operationSearch.fill('no such operation');
+    await page.getByRole('status').filter({hasText:'No matching operation.'}).waitFor();
+    await operationSearch.fill('project');await operationSearch.press('ArrowDown');
+    await page.screenshot({path:path.join(output,`api-operation-picker-${theme}-${width}.png`)});
+    await operationSearch.press('Enter');
+    assert.ok((await operationPicker.innerText()).includes('getProjectTaskDetails'),'Keyboard selects a different permitted operation');
+    await operationPicker.click();
+    await operationSearch.fill('board');await operationSearch.press('ArrowDown');await operationSearch.press('Enter');
+    assert.ok((await operationPicker.innerText()).includes('getProjectBoard'));
     await editor.getByRole('button',{name:'Send request once',exact:true}).click();
     const response=screen.locator('.api-test-result');
     await response.filter({hasText:'HTTP 200'}).waitFor();
@@ -140,7 +151,16 @@ try {
     await assertViewport(page,screen);
     await page.screenshot({path:path.join(output,`api-explorer-${theme}-${width}.png`)});
     for(const endpoint of ['/api/message','/api/state','/api/schema','/v1/models','/v1/chat/completions','/v1/responses','/v1/messages']) {
-      await screen.locator('.api-endpoints button').filter({has:page.locator('code',{hasText:new RegExp('^'+endpoint.replaceAll('/','\\/')+'$')})}).click();
+      await endpointPicker.click();
+      const endpointSearch=page.getByRole('combobox',{name:'Search endpoint',exact:true});
+      await endpointSearch.fill(endpoint);
+      await page.getByRole('listbox',{name:'Endpoint choices',exact:true}).getByRole('option').waitFor();
+      const flyout=await page.locator('.api-choice-popover').boundingBox();
+      assert.ok(flyout.x>=0 && flyout.x+flyout.width<=width+1 && flyout.y>=0 && flyout.y+flyout.height<=height+1,'Picker stays inside the viewport');
+      if(endpoint==='/v1/responses')await page.screenshot({path:path.join(output,`api-endpoint-picker-${theme}-${width}.png`)});
+      await endpointSearch.press('Enter');
+      await page.getByRole('listbox',{name:'Endpoint choices',exact:true}).waitFor({state:'detached'});
+      assert.ok((await endpointPicker.innerText()).includes(endpoint));
       const docsButton=editor.getByRole('button',{name:'Endpoint documentation',exact:true});
       await docsButton.click();
       const docs=page.getByRole('dialog',{name:/ guide$/});

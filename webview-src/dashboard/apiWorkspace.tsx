@@ -14,6 +14,7 @@ import {
 import { handleTabKeyDown } from "./primitives";
 import { ApiProxyPanel } from "./apiProxyPanel";
 import { ApiDocsModal } from "./apiDocs";
+import { ApiChoicePicker } from "./apiChoicePicker";
 export function ApiWorkspace(props: {
   open: boolean;
   token?: string;
@@ -686,35 +687,6 @@ export function ApiWorkspace(props: {
           hidden={tab !== "explorer"}
         >
           <div class="api-playground-layout">
-            <nav class="api-endpoints" aria-label="API endpoints">
-              {["Manager", "AI proxy"].map((group) => (
-                <div key={group}>
-                  <h4>{group}</h4>
-                  {API_ENDPOINTS.filter((item) => item.group === group).map((item) => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      title={`${item.method} ${item.path}`}
-                      aria-pressed={endpoint === item.id}
-                      disabled={testing}
-                      onClick={() => {
-                        setEndpoint(item.id);
-                        setResult("");
-                        setRequestMeta(undefined);
-                        setRequestCopy("");
-                      }}
-                    >
-                      <span class={item.method === "GET" ? "api-method is-get" : "api-method"}>{item.method}</span>
-                      <span>
-                        <strong>{item.label}</strong>
-                        <code>{item.path}</code>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </nav>
-
             <section class="api-test-form" aria-label="Request editor" tabIndex={0}>
               <div class="api-section-heading">
                 <h4>Request</h4>
@@ -808,27 +780,37 @@ export function ApiWorkspace(props: {
                 {!browser ? <p role="status">Open the browser dashboard to test HTTP API requests.</p> : null}
               </div>
 
+              <ApiChoicePicker
+                label="Endpoint"
+                value={endpoint}
+                choices={API_ENDPOINTS.map((item) => ({
+                  id: item.id,
+                  label: item.label,
+                  detail: item.method + " " + item.path,
+                  group: item.group
+                }))}
+                disabled={testing}
+                onChange={(value) => {
+                  setEndpoint(value as ApiEndpointId);
+                  setResult("");
+                  setRequestMeta(undefined);
+                  setRequestCopy("");
+                }}
+              />
               {endpoint === "action" ? (
                 <>
-                  <label>
-                    Operation
-                    <select
-                      aria-label="Operation"
-                      value={checked ? operation : ""}
-                      disabled={!checked?.actions.length || testing}
-                      onChange={(event) => setOperation(event.currentTarget.value)}
-                    >
-                      {!checked?.actions.length ? (
-                        <option value="">Check a token to see permitted operations</option>
-                      ) : (
-                        checked.actions.map((action) => (
-                          <option key={action} value={action}>
-                            {action}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
+                  <ApiChoicePicker
+                    label="Operation"
+                    value={checked ? operation : ""}
+                    choices={(checked?.actions ?? []).map((action) => ({
+                      id: action,
+                      label: action.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
+                      detail: action
+                    }))}
+                    disabled={!checked?.actions.length || testing}
+                    placeholder="Check a token to see permitted operations"
+                    onChange={setOperation}
+                  />
                   {checked?.projects.length ? (
                     <label>
                       Host project
@@ -877,13 +859,13 @@ export function ApiWorkspace(props: {
                 </div>
               ) : null}
               <label>
-                Endpoint
+                Request URL
                 <div class="api-endpoint-field">
                   <span class={selectedEndpoint.method === "GET" ? "api-method is-get" : "api-method"}>
                     {selectedEndpoint.method}
                   </span>
                   <input
-                    aria-label="Endpoint"
+                    aria-label="Request URL"
                     readOnly
                     value={(baseUrl ?? "<host>") + selectedEndpoint.path}
                     onFocus={(event) => event.currentTarget.select()}
