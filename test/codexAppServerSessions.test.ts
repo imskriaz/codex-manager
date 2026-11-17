@@ -751,6 +751,61 @@ describe("native App Server new sessions", () => {
     expect(accepted).toHaveBeenCalledOnce();
     expect(mocks.open).not.toHaveBeenCalled();
   });
+  it('refreshes stale running state on send and starts the message exactly once', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' + JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'orphaned' } }) + '\n');
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+    const rpc = { request: vi.fn(async () => ({ thread: { id } })), close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined, startAndWaitForTurn: vi.fn(async (_id, _params, _timeout, started) => started('recovered-turn')) };
+    mocks.open.mockResolvedValue(rpc);
+    const accepted = vi.fn();
+    const notices: unknown[] = [];
+    const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === 'dashboard:notice') notices.push(event); });
+    try {
+      await sendCodexCliSessionMessage({ sessionId: id, text: 'Continue', onStarted: accepted });
+      expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(root, id, expect.any(AbortSignal), true);
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+      expect(accepted).toHaveBeenCalledOnce();
+      expect(notices).toContainEqual(expect.objectContaining({ level: 'warning', message: expect.stringContaining('Stale session state') }));
+      expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
+    } finally { unsubscribe(); }
+  });
+  it('keeps a live native writer without a verified turn locked and reports the conflict', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('already working');
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+    expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
+  it('preserves ownership inspection errors without attempting a turn', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockRejectedValue(new Error('Writer inspection failed'));
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('Writer inspection failed');
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
+  it('bounds stalled ownership checks and never sends after a late response', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    let release!: (running: boolean) => void;
+    vi.mocked(readNativeCodexSessionRunning).mockReturnValue(new Promise(resolve => { release = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const send = sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' });
+      const failed = expect(send).rejects.toThrow('Session ownership could not be verified. Your message was not sent.');
+      await vi.waitFor(() => expect(readNativeCodexSessionRunning).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(25_001);
+      await failed;
+      expect(vi.mocked(readNativeCodexSessionRunning).mock.calls[0]?.[2]?.aborted).toBe(true);
+      release(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mocks.open).not.toHaveBeenCalled();
+      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
   it.each(["active", "usage_limited", "paused"])("continues a native-owned %s goal once and reactivates interrupted paused work", async status => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);

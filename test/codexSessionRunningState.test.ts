@@ -25,7 +25,7 @@ vi.mock("child_process", async (original) => {
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessages, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessages, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, sendCodexCliSessionMessage } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
@@ -61,6 +61,22 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it.skipIf(process.platform !== 'win32').each([false, true])('rechecks a cached writer on send without deleting its lock (still held: %s)', async held => {
+    mocks.nativeHeldLocks.add(lock);
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: 'running', locked: true });
+    if (!held) { mocks.nativeHeldLocks.clear(); mocks.heldLocks.clear(); }
+    const rpc = { request: vi.fn(async () => ({ thread: { id } })), close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined, startAndWaitForTurn: vi.fn(async () => undefined) };
+    mocks.openRpc.mockResolvedValue(rpc);
+    const send = sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' });
+    if (held) {
+      await expect(send).rejects.toThrow('already working');
+      expect(mocks.openRpc).not.toHaveBeenCalled();
+    } else {
+      await expect(send).resolves.toBeUndefined();
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+    }
+    await expect((await import('node:fs/promises')).stat(lock)).resolves.toMatchObject({ size: 0 });
+  });
   it.each([false, true])('recognizes terminal sandbox failures while leaving provider retries active (%s)', async willRetry => {
     await appendFile(transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'error', turn_id: 'turn-1', error: { message: 'Windows sandbox setup failed' }, will_retry: willRetry } }) + '\n');
     expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: willRetry ? 'running' : 'idle' });

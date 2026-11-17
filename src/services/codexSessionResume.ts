@@ -1253,7 +1253,17 @@ async function sendAppServerSessionMessage(options: {
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   await waitForCancelledTurnRelease(resolveCodexHome(), options.sessionId);
   const activeHome = resolveCodexHome();
-  if (await isCliSessionRunning(activeHome, options.sessionId)) {
+  const wasRunning = getNativeCodexSessionRunning(activeHome, options.sessionId);
+  // A manual send must recheck ownership instead of inheriting a stale running/lock probe.
+  writerLockProbes.delete(path.join(activeHome, SESSION_LOCK_DIRECTORY));
+  const inspection = new AbortController();
+  const inspectionSignal = options.signal ? AbortSignal.any([inspection.signal, options.signal]) : inspection.signal;
+  let running: boolean;
+  try { running = await waitWithin(inspectCliSessionRunning(activeHome, options.sessionId, undefined, false, inspectionSignal, true), 25_000, 'Session ownership could not be verified. Your message was not sent.', inspectionSignal); }
+  finally { inspection.abort(); }
+  options.signal?.throwIfAborted();
+  if (resolveCodexHome() !== activeHome) throw new Error('The Codex home changed. Your message was not sent.');
+  if (running) {
     const nativeRunning = await readNativeCodexSessionRunning(activeHome, options.sessionId, options.signal, true).catch(() => undefined);
     const activeTurnId = activeAppServerTurns.get(options.sessionId)?.turnId ?? getNativeCodexSessionTurnId(activeHome, options.sessionId);
     if (activeTurnId && (nativeRunning === true || activeAppServerTurns.has(options.sessionId))) {
@@ -1263,6 +1273,7 @@ async function sendAppServerSessionMessage(options: {
     }
     throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   }
+  if (wasRunning === true) publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Stale session state was cleared. Sending your message.' });
   const savedAccess = standalone ? readSavedCodexSessionAccess(resolveCodexHome(), options.sessionId)?.access : undefined;
   const standaloneApproval = savedAccess?.mode === 'danger-full-access' ? savedAccess.approvalPolicy ?? 'never' : 'never';
   const params = {
@@ -3322,12 +3333,13 @@ async function inspectCliSessionRunning(
   sessionId: string,
   knownTranscriptPath?: string,
   liveRunning = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  refreshNative = false
 ): Promise<boolean> {
   signal?.throwIfAborted();
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
       ownsSessionTurn(codexHome, sessionId)) return true;
-  const cachedNative = getNativeCodexSessionRunning(codexHome, sessionId);
+  const cachedNative = refreshNative ? await readNativeCodexSessionRunning(codexHome, sessionId, signal, true) : getNativeCodexSessionRunning(codexHome, sessionId);
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
@@ -3341,11 +3353,12 @@ async function inspectCliSessionRunning(
     // event. Refresh only that ambiguous case so a genuinely restarted native
     // turn still wins without making every historical check pay the IPC cost.
     if (cachedNative !== true) return false;
+    if (refreshNative) return cachedNative;
     const refreshedNative = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
     return refreshedNative ?? cachedNative;
   }
   if (cachedNative !== undefined) return cachedNative;
-  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
+  const nativeRunning = refreshNative ? undefined : await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
   signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;
   if (liveRunning) return true;
