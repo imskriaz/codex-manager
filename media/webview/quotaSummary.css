@@ -15372,8 +15372,8 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .dashboard-api-modal { width: min(1080px, calc(var(--dashboard-viewport-width, 100vw) - 28px)); max-width: none; }
 .api-workspace-modal { width: min(1440px, calc(var(--dashboard-viewport-width, 100vw) - 32px)); height: min(900px, calc(var(--dashboard-viewport-height, 100dvh) - 32px)); max-height: none; }
 .api-workspace-modal .dashboard-modal-body { min-height: 0; overflow: auto; }
-.cli-account-api-shortcut { position: relative; }
-.cli-account-api-shortcut svg { width: 16px; height: 16px; }
+.cli-context-api-button { color: var(--accent-red, #ef6a73); }
+.cli-context-api-button:hover:not(:disabled) { color: var(--accent-red, #ef6a73); }
 .api-console-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 0 6px; }
 .api-console-heading code { min-width: 0; overflow-wrap: anywhere; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
 .api-service-state { flex: none; padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 20px; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }

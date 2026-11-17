@@ -1420,7 +1420,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
 
           </div>
-          <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} apiEnabled={props.apiEnabled} onFeedback={props.onActionFeedback} onOpenPanel={() => openContextTab("accounts")} connected={props.connected}
+          <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} onOpenPanel={() => openContextTab("accounts")} connected={props.connected}
             onApi={props.onApi}
             account={props.account}
             privacyMode={props.privacyMode}
@@ -1584,6 +1584,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <WorkspaceContextPanel
           liveState={props.liveState}
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
+          apiEnabled={props.apiEnabled}
+          onApi={props.onApi}
           connected={props.connected !== false}
           systemInfoEnabled={props.systemInfoEnabled !== false}
           systemStatus={workspacePeer?.systemStatus}
@@ -2600,6 +2602,8 @@ function WorkspaceContextPanel(props: {
   stopping: boolean;
   collapsed: boolean;
   onCollapse: () => void;
+  apiEnabled?: boolean;
+  onApi?: () => void;
   tabs: WorkspaceTab[];
   activeTab: WorkspaceTab;
   addOpen: boolean;
@@ -2680,7 +2684,7 @@ function WorkspaceContextPanel(props: {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'accounts' ? 'Accounts' : kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'browser' && path ? props.browserPages.find(page => page.id === path)?.title || props.browserPages.find(page => page.id === path)?.url || 'Browser' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'browser' ? <BrowserIcon /> : kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' && !(kind === 'browser' && !path) ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
-    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{addTabs.map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'accounts' ? <WorkspaceToolIcon kind="agents" /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{!addTabs.length ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
+    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{addTabs.map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'accounts' ? <WorkspaceToolIcon kind="agents" /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{!addTabs.length ? <span>All tools are open</span> : null}</div> : null}</span></div>{props.apiEnabled ? <IconButton className="cli-context-api-button" label="API access" onClick={() => props.onApi?.()}><ApiIcon /></IconButton> : null}<IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {!props.collapsed && props.activeTab === 'accounts' ? <section class="workspace-accounts" aria-label="Account center">{props.renderAccounts?.()}</section> : null}
     <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}>{props.tabs.some(tab => workspaceTabKind(tab) === 'browser') ? <WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === "browser" ? activePath ?? "" : undefined} closePageId={props.browserClosePageId} initialUrl={props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /> : null}</div>
@@ -3331,7 +3335,7 @@ function ReviewIcon() { return <Icon><path d="M4 5h16v12H8l-4 4V5Zm4 4h8m-8 4h5"
 function WarningIcon() { return <Icon><path d="M12 3 2.8 20h18.4L12 3Zm0 6v5m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function CheckIcon() { return <Icon><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function ChevronIcon() { return <Icon><path d="m8 10 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
-function ApiIcon() { return <Icon><path d="m8 5-4 7 4 7M16 5l4 7-4 7M14 3l-4 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon>; }
+function ApiIcon() { return <Icon><circle cx="6" cy="6" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="18" cy="6" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7" /><circle cx="12" cy="18" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7" /><path d="M8.2 6h7.6M7.4 7.8l3.2 7.8m6-7.8-3.2 7.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>; }
 function SignOutIcon() { return <Icon><path d="M14 5h5v14h-5M4 12h11m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon>; }
 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }

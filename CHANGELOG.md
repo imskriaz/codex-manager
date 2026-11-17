@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.27
+
+- Keep the enabled API shortcut in the persistent Workspace Tools header after opening task pages, and remove it from the account footer.
+
 ## 2.0.6-pre.26
 
 - Move API access out of the primary dashboard actions and expose it as an enabled-only icon in the secondary account tools.
