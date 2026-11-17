@@ -22,15 +22,17 @@ export function ApiProxyPanel(props: { snapshot?: ApiProxySnapshot; logs: boolea
       <span class={`api-service-state${props.enabled && props.connected ? ' is-ready' : ''}`}>{!props.connected ? 'Offline' : props.enabled ? 'Enabled' : 'Disabled'}</span>
       <button type="button" disabled={!props.connected || props.loading} onClick={props.onRefresh}>{props.loading ? 'Refreshing…' : 'Refresh proxy'}</button></div>
     <p class="settings-note" role="status">{props.loading ? 'Loading proxy activity…' : props.snapshot ? `Updated ${new Date(props.snapshot.capturedAt).toLocaleTimeString()}.` : 'Proxy activity unavailable. Refresh to retry; the host may need an update.'}</p>
-    {!props.logs ? <>
-      <div class="api-proxy-metrics"><div><strong>{requests.length}</strong><span>Retained requests</span></div><div><strong>{completed}</strong><span>Completed</span></div><div><strong>{requests.filter(row => ['failed', 'cancelled', 'incomplete'].includes(row.status)).length}</strong><span>Failed / incomplete / cancelled</span></div><div><strong>{requests.filter(row => row.status === 'running').length}</strong><span>In progress</span></div></div>
-      <div class="api-proxy-flow" role="img" aria-label="API clients connect to Codex Manager, which forwards requests to the active saved-account Codex backend">
-        <div class="api-proxy-node"><strong>API clients</strong><small>OpenAI / Claude compatible</small></div><span class="api-proxy-edge" aria-hidden="true">↓</span>
-        <div class="api-proxy-node is-router"><strong>Codex Manager</strong><small>API proxy · /v1</small></div><span class="api-proxy-edge" aria-hidden="true">↓</span>
-        <div class="api-proxy-node"><strong>Codex backend</strong><small>Active saved account</small></div>
-      </div><h4>Recent requests</h4>
-    </> : null}
-    {props.snapshot ? <RequestTable requests={props.logs ? requests : requests.slice(0, 8)} detailed={props.logs}/> : null}
+    {!props.logs ? <div class="api-proxy-split">
+      <section class="api-proxy-diagram-pane" aria-label="Proxy route">
+        <div class="api-proxy-metrics"><div><strong>{requests.length}</strong><span>Retained requests</span></div><div><strong>{completed}</strong><span>Completed</span></div><div><strong>{requests.filter(row => ['failed', 'cancelled', 'incomplete'].includes(row.status)).length}</strong><span>Failed / incomplete / cancelled</span></div><div><strong>{requests.filter(row => row.status === 'running').length}</strong><span>In progress</span></div></div>
+        <div class="api-proxy-flow" role="img" aria-label="API clients connect to Codex Manager, which forwards requests to the active saved-account Codex backend">
+          <div class="api-proxy-node"><strong>API clients</strong><small>OpenAI / Claude compatible</small></div><span class="api-proxy-edge" aria-hidden="true">v</span>
+          <div class="api-proxy-node is-router"><strong>Codex Manager</strong><small>API proxy /v1</small></div><span class="api-proxy-edge" aria-hidden="true">v</span>
+          <div class="api-proxy-node"><strong>Codex backend</strong><small>Active saved account</small></div>
+        </div>
+      </section>
+      <section class="api-proxy-log-pane" aria-label="Recent proxy logs"><div class="api-section-heading"><h4>Recent logs</h4><small>{requests.length ? Math.min(requests.length, 8) + ' of ' + requests.length : 'No requests'}</small></div>{props.snapshot ? <RequestTable requests={requests.slice(0, 8)} detailed={false}/> : null}</section>
+    </div> : props.snapshot ? <RequestTable requests={requests} detailed/> : null}
     <p class="settings-note">External /v1 API calls only. Latest 100 requests in this host process; reset on host restart. Token counts appear when the backend reports usage. Prompts, responses, and credentials are not logged. Refresh to update.</p>
   </section>;
 }

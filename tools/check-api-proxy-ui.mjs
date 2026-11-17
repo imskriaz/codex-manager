@@ -74,6 +74,14 @@ try {
     await keys.waitFor();
     await modal.getByRole('tab', { name: 'Proxy', exact: true }).click();
     await page.getByRole('img', { name: /API clients connect/ }).waitFor();
+    await modal.locator('.api-proxy-split').waitFor();
+    assert.equal(await modal.locator('.api-proxy-diagram-pane').count(), 1);
+    assert.equal(await modal.locator('.api-proxy-log-pane').count(), 1);
+    if (width > 900) {
+      const split = await modal.locator('.api-proxy-split').evaluate(element => [...element.children].map(child => child.getBoundingClientRect().width));
+      assert.equal(split.length, 2);
+      assert.ok(split[0] > 0 && split[1] > 0 && split[1] > split[0], 'Diagram and recent logs share the Proxy tab');
+    }
     assert.equal(await page.locator('.api-playground').isVisible(), false);
     await page.getByText('56,511 ↑', { exact: true }).first().waitFor();
     await page.screenshot({ path: path.join(output, `proxy-${width}.png`) });

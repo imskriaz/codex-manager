@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.25
+
+- Split the API Proxy tab into a route diagram and recent external API logs side by side; the Logs tab keeps the full request table.
+
 ## 2.0.6-pre.24
 
 - Keep the empty Browser tab available after page discovery and background refresh, with live coverage for opening and closing pages.
