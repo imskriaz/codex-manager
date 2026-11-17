@@ -580,7 +580,7 @@ export async function readCodexCliSessionSummary(
   const transcriptPath = (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
   const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
-  const nativeRunning = requireNativeRuntime === true && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId) : getNativeCodexSessionRunning(codexHome, sessionId);
+  const nativeRunning = requireNativeRuntime === true && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId, undefined, true) : getNativeCodexSessionRunning(codexHome, sessionId);
   const store = requireNativeRuntime === "display" ? getSqliteStateStore() : undefined;
   let recordedStatus: string | undefined;
   try { recordedStatus = store ? readSessionStatuses(store, codexHome).get(sessionId) : undefined; }
@@ -1026,7 +1026,7 @@ export async function sendCodexCliSessionMessage(options: {
   clearManualStop?: boolean;
   interruptedOnly?: boolean;
   preferPrivate?: boolean;
-}): Promise<void> {
+}): Promise<'steered' | void> {
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
   newSessionFailures.delete(options.sessionId);
@@ -1051,7 +1051,7 @@ export async function sendCodexCliSessionMessage(options: {
   if (resolveCodexHome() !== attachmentHome) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   options.signal?.throwIfAborted();
   if (options.clearManualStop) clearCodexSessionManualStop(resolveCodexHome(), options.sessionId);
-  await sendCodexQuestionReply(attachmentHome, options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId, attachmentHome), onAttempt => sendAppServerSessionMessage(options, cwd, onAttempt));
+  return sendCodexQuestionReply(attachmentHome, options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId, attachmentHome), onAttempt => sendAppServerSessionMessage(options, cwd, onAttempt, attachmentHome));
 }
 
 async function readLiveCliModels(codexHome: string, identity: string): Promise<DashboardCliComposerConfig["models"]> {
@@ -1244,15 +1244,16 @@ async function sendAppServerSessionMessage(options: {
   preferPrivate?: boolean;
   goalContinuation?: boolean;
   clearManualStop?: boolean;
-}, cwd: string, onAttempt?: (attempted: boolean) => void): Promise<void> {
+}, cwd: string, onAttempt?: (attempted: boolean) => void, home = resolveCodexHome()): Promise<'steered' | void> {
   const standalone = vscode.env.appHost === 'node';
   if (standalone) options = { ...options, sandboxMode: 'danger-full-access', preferPrivate: true };
-  return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
+  return runCliSessionMutation(options.sessionId, "Codex turn", async (): Promise<'steered' | void> => {
   options.signal?.throwIfAborted();
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
     throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   await waitForCancelledTurnRelease(resolveCodexHome(), options.sessionId);
-  const activeHome = resolveCodexHome();
+  if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Your message was not sent.');
+  const activeHome = home;
   const wasRunning = getNativeCodexSessionRunning(activeHome, options.sessionId);
   // A manual send must recheck ownership instead of inheriting a stale running/lock probe.
   writerLockProbes.delete(path.join(activeHome, SESSION_LOCK_DIRECTORY));
@@ -1264,12 +1265,17 @@ async function sendAppServerSessionMessage(options: {
   options.signal?.throwIfAborted();
   if (resolveCodexHome() !== activeHome) throw new Error('The Codex home changed. Your message was not sent.');
   if (running) {
-    const nativeRunning = await readNativeCodexSessionRunning(activeHome, options.sessionId, options.signal, true).catch(() => undefined);
+    const nativeRunning = await readNativeCodexSessionRunning(activeHome, options.sessionId, options.signal, true);
+    options.signal?.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Your message was not sent.');
+    if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
+      throw new Error('This session was explicitly stopped. Your message was not sent.');
     const activeTurnId = activeAppServerTurns.get(options.sessionId)?.turnId ?? getNativeCodexSessionTurnId(activeHome, options.sessionId);
     if (activeTurnId && (nativeRunning === true || activeAppServerTurns.has(options.sessionId))) {
-      await steerCodexCliSessionTurnOnce({ sessionId: options.sessionId, text: options.text, expectedTurnId: activeTurnId, projectPath: cwd }, onAttempt ?? (() => undefined));
+      // Text and document uploads are already included in the prepared message.
+      await steerCodexCliSessionTurnOnce({ sessionId: options.sessionId, text: options.text, attachments: options.attachments?.filter(file => file.kind === 'image'), expectedTurnId: activeTurnId, projectPath: cwd }, onAttempt ?? (() => undefined), options.signal);
       options.onStarted?.();
-      return;
+      return 'steered' as const;
     }
     throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   }
@@ -1285,7 +1291,6 @@ async function sendAppServerSessionMessage(options: {
   const transcript = await findCliSessionTranscript(resolveCodexHome(), options.sessionId, options.signal);
   await readRecentTranscriptTurnState(transcript);
   const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
-  const home = resolveCodexHome();
   const needsContinuation = async (): Promise<boolean> => {
     options.signal?.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error("The active account home changed. No continuation was sent.");
@@ -1592,7 +1597,8 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   return sendCodexQuestionReply(resolveCodexHome(), options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId), onAttempt => steerCodexCliSessionTurnOnce(options, onAttempt));
 }
 
-async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCodexCliSessionTurn>[0], onAttempt: (attempted: boolean) => void): Promise<void> {
+async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCodexCliSessionTurn>[0], onAttempt: (attempted: boolean) => void, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   validateSessionId(options.sessionId);
   const sessionId = options.sessionId.toLowerCase(), home = resolveCodexHome();
   const prepared = prepareChatInput(options.text, options.attachments);
@@ -1600,8 +1606,10 @@ async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCode
   if (active) {
     if (active.home !== path.resolve(home) || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
     if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
-    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal) : prepared.text;
+    signal?.throwIfAborted();
     if (resolveCodexHome() !== home || active.cancelRequested || active.turnId !== options.expectedTurnId) throw new Error("The active Codex turn changed. Refresh before sending guidance.");
+    if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop) throw new Error('This session was explicitly stopped. Your follow-up was not sent.');
     onAttempt(true);
     const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
       threadId: sessionId, expectedTurnId: options.expectedTurnId,
@@ -1611,14 +1619,18 @@ async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCode
     return;
   }
   const native = ownedNativeTurn(home, sessionId);
-  await readNativeCodexSessionRunning(home, sessionId);
+  await readNativeCodexSessionRunning(home, sessionId, signal);
+  signal?.throwIfAborted();
+  if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Your follow-up was not sent.');
+  if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop) throw new Error('This session was explicitly stopped. Your follow-up was not sent.');
   const nativeTurnId = getNativeCodexSessionTurnId(home, sessionId);
   if (nativeTurnId) {
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
-    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath)) : prepared.text;
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal) : prepared.text;
+    signal?.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Refresh before sending guidance.");
     onAttempt(true);
-    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(text, prepared.attachments), resolveCliProjectPath(options.projectPath))) {
+    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(text, prepared.attachments), resolveCliProjectPath(options.projectPath), ...(signal ? [signal] as const : []))) {
       onAttempt(false);
       throw new Error('The native Codex owner is unavailable. Your follow-up was not sent; refresh before retrying.');
     }

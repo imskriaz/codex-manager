@@ -367,9 +367,10 @@ export async function cancelNativeCodexSessionTurn(home: string, id: string, exp
   return true;
 }
 
-export async function steerNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, input: unknown[], cwd: string): Promise<boolean> {
+export async function steerNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, input: unknown[], cwd: string, signal?: AbortSignal): Promise<boolean> {
   if (!expectedTurnId.trim() || expectedTurnId.length > 256) throw new Error('The active turn could not be verified. Refresh before steering.');
-  await readNativeCodexSessionRunning(home, id);
+  await readNativeCodexSessionRunning(home, id, signal);
+  signal?.throwIfAborted();
   const key = `${path.resolve(home)}:${id}`, entry = observations.get(key), owner = entry?.owner, revision = connectionRevision;
   if (!entry?.ready || !entry.running) throw new Error('The active Codex turn finished or is unavailable. Your follow-up was not sent; refresh before retrying.');
   if (getNativeCodexSessionTurnId(home, id) !== expectedTurnId) throw new Error('The active Codex turn changed or could not be verified. Your follow-up was not sent; refresh before retrying.');
@@ -377,7 +378,7 @@ export async function steerNativeCodexSessionTurn(home: string, id: string, expe
   const reply = await requestNativeOwner(home, id, 'thread-follower-steer-turn', {
     conversationId: id, input, clientUserMessageId: messageId,
     restoreMessage: { id: messageId, cwd, context: { workspaceRoots: [cwd] } }
-  }, undefined, () => observations.get(key) === entry && connectionRevision === revision && entry.owner === owner && getNativeCodexSessionTurnId(home, id) === expectedTurnId);
+  }, signal, () => observations.get(key) === entry && connectionRevision === revision && entry.owner === owner && getNativeCodexSessionTurnId(home, id) === expectedTurnId);
   if (!reply) return false;
   // Native follower v1 may hand guidance to a newer turn; a valid acceptance must not be replayed.
   const acceptedTurnId = reply.result?.result?.turnId;

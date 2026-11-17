@@ -10,6 +10,7 @@ import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import * as sessionEditors from "../src/services/codexSessionResume";
 import * as sessionRecovery from "../src/services/codexSessionRecovery";
+import { readNativeCodexSessionRunning } from '../src/services/codexNativeSessionStatus';
 import * as workspaceTools from "../src/services/workspaceTools";
 import * as autoResume from "../src/services/codexSessionAutoResume";
 
@@ -360,6 +361,37 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it.each(['browser', 'webview'] as const)('reports a raced send as guidance in the initiating %s without marking the turn complete', async hostKind => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as never);
+    const session = { id: '01a04882-d037-7a42-ad24-9afb61901188', title: 'Chat', status: 'idle', archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    sendCodexCliSessionMessageMock.mockResolvedValueOnce('steered');
+    readCodexCliSessionMessagesMock.mockClear();
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind }, { type: 'dashboard:action', action: 'sendCodexCliSessionMessage', requestId: `raced-guidance-${hostKind}`, payload: { sessionId: session.id, text: 'Follow up' } });
+    expect(result).toMatchObject({ status: 'completed', payload: { cliSession: { status: 'running', locked: true }, notice: { level: 'info', message: 'Follow-up sent to the active Codex turn.' } } });
+    expect(readCodexCliSessionMessagesMock).not.toHaveBeenCalled();
+  });
+  it.each(['browser', 'webview'] as const)('recovers stale native running state before the %s send guard', async hostKind => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as never);
+    const home = await fs.mkdtemp(path.join(operationDirectory, 'stale-send-'));
+    const previousHome = process.env['CODEX_HOME'];
+    process.env['CODEX_HOME'] = home;
+    const sessionId = '01a04882-d037-7a42-ad24-9afb61901188';
+    try {
+      await fs.writeFile(path.join(home, 'session_index.jsonl'), JSON.stringify({ id: sessionId, thread_name: 'Stale chat' }) + '\n');
+      const actual = await vi.importActual<typeof import('../src/services/codexSessionResume')>('../src/services/codexSessionResume');
+      readCodexCliSessionSummaryMock.mockImplementationOnce(actual.readCodexCliSessionSummary);
+      vi.mocked(readNativeCodexSessionRunning).mockImplementation(async (_home, _id, _signal, fresh) => fresh ? false : true);
+      readCodexCliSessionMessagesMock.mockResolvedValueOnce([]);
+      const result = await executeDashboardActionMessage({ ...createContext(), hostKind }, { type: 'dashboard:action', action: 'sendCodexCliSessionMessage', requestId: `stale-send-${hostKind}`, payload: { sessionId, text: 'Continue' } });
+      expect(result).toMatchObject({ status: 'completed', payload: { notice: { level: 'info' }, cliSession: { status: 'idle', locked: false } } });
+      expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
+      expect(steerCodexCliSessionTurnMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousHome === undefined) delete process.env['CODEX_HOME']; else process.env['CODEX_HOME'] = previousHome;
+      vi.mocked(readNativeCodexSessionRunning).mockReset().mockResolvedValue(undefined);
+    }
+  });
   it.each(["browser", "webview"] as const)("returns partial file lists and their warning to the initiating %s", async hostKind => {
     const files = [{ path: "root.txt", name: "root.txt", type: "file" as const, depth: 0 }];
     vi.spyOn(workspaceTools, "listWorkspaceFiles").mockResolvedValue({ files, warning: "Some folders are unavailable. Refresh to retry." });

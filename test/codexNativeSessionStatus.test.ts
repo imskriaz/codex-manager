@@ -38,6 +38,21 @@ it('refuses native steering after a turn finishes without sending another messag
   expect(socket.sent.some(value=>value.method==='thread-follower-steer-turn')).toBe(false);
 });
 
+it.each(['before', 'after'] as const)('honors cancellation %s native guidance dispatch without replaying', async phase => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot('active')); await reading;
+  const controller = new AbortController();
+  if (phase === 'before') controller.abort(new Error('Guidance cancelled'));
+  const pending = steerNativeCodexSessionTurn(home, id, 'native-turn', [{ type: 'text', text: 'Follow up' }], home, controller.signal);
+  const failed = expect(pending).rejects.toThrow(phase === 'before' ? 'cancelled' : 'unconfirmed');
+  for (let i = 0; i < 70; i++) await Promise.resolve();
+  const sent = socket.sent.filter(value => value.method === 'thread-follower-steer-turn');
+  expect(sent).toHaveLength(phase === 'before' ? 0 : 1);
+  if (phase === 'after') controller.abort();
+  await failed;
+  if (sent[0]) message({ type: 'response', requestId: sent[0].requestId, resultType: 'success', result: { result: { turnId: 'native-turn' } } });
+  expect(socket.sent.filter(value => value.method === 'thread-follower-steer-turn')).toHaveLength(sent.length);
+});
+
 it("uses the verified native owner to accept Continue once in its recorded project", async () => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("idle")); await reading;
   const params = { threadId: id, cwd: home, input: [{ type: "text", text: "Continue", text_elements: [] }], model: "gpt-5", effort: "high" };

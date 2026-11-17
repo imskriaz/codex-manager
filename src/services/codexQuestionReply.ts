@@ -7,7 +7,7 @@ import * as path from 'path';
 const attempts = new Map<string, string[]>();
 
 /** Fence question IDs across push, queued replies, windows and uncertain delivery. */
-export async function sendCodexQuestionReply(home: string, sessionId: string, text: string, readMessages: () => Promise<DashboardCliSessionMessage[]>, send: (onAttempt: (attempted: boolean) => void) => Promise<void>): Promise<void> {
+export async function sendCodexQuestionReply<T>(home: string, sessionId: string, text: string, readMessages: () => Promise<DashboardCliSessionMessage[]>, send: (onAttempt: (attempted: boolean) => void) => Promise<T>): Promise<T> {
   const ids = [...answeredSessionQuestionIds([{ id: 'reply', role: 'user', text }])];
   if (!ids.length) return send(() => undefined);
   const resolvedHome = path.resolve(home);
@@ -22,7 +22,7 @@ export async function sendCodexQuestionReply(home: string, sessionId: string, te
     if (store) store.set('question-replies', key, next);
     else { attempts.set(key, next); while (attempts.size > 128) attempts.delete(attempts.keys().next().value!); }
     let attempted = false;
-    try { await send(value => { attempted = value; }); }
+    try { return await send(value => { attempted = value; }); }
     catch (error) {
       if (!attempted) {
         const remaining = next.filter(id => !ids.includes(id));

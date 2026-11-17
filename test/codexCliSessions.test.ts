@@ -1133,7 +1133,9 @@ describe("Codex session integration", () => {
       }],
       defaultModel: "gpt-demo",
       defaultReasoningEffort: "medium",
-      defaultSandboxMode: "danger-full-access"
+      defaultSandboxMode: "danger-full-access",
+      projects: [],
+      hiddenProjectPaths: []
     });
   });
 

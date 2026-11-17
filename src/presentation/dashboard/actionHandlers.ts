@@ -2074,7 +2074,7 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(currentSession.projectPath)
   ) throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
   const sessionProjectPath = currentSession.projectPath ?? payload.projectPath;
-  await sendCodexCliSessionMessage({
+  const outcome = await sendCodexCliSessionMessage({
     sessionId: payload.sessionId,
     text: payload.text ?? "",
     attachments: payload.attachments,
@@ -2084,6 +2084,11 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     projectPath: sessionProjectPath,
     clearManualStop: true
   });
+  if (outcome === 'steered') return {
+    cliSession: { ...currentSession, status: 'running' as const, locked: true },
+    cliSessionLive: getCodexSessionLiveState(payload.sessionId),
+    notice: { level: 'info' as const, message: 'Follow-up sent to the active Codex turn.' }
+  };
   let cliSessionMessages;
   let notice: DashboardNotice = { level: "info", message: "Codex completed the turn." };
   try {

@@ -49,7 +49,7 @@ export function syncAsyncCodexQuestions(home: string, sessionId: string, message
     } else {
       await waitWithin(new Promise<void>((resolve, reject) => {
         let started = false;
-        void sendCodexCliSessionMessage({ sessionId, text, projectPath: summary.projectPath, onStarted: () => { started = true; resolve(); } }).then(resolve, error => {
+        void sendCodexCliSessionMessage({ sessionId, text, projectPath: summary.projectPath, onStarted: () => { started = true; resolve(); } }).then(() => resolve(), error => {
           if (!started) reject(error instanceof Error ? error : new Error(String(error)));
           else publishDashboardRealtime({ type: 'dashboard:notice', level: 'error', message: error instanceof Error ? error.message : 'The question reply turn failed. Open the related session to review it.' });
         });

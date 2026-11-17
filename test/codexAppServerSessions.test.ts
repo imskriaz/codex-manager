@@ -19,6 +19,7 @@ import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodex
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 import { moveCodexCliSession, resolveRecordedSessionProject } from '../src/services/codexSessionResume';
+import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -751,6 +752,69 @@ describe("native App Server new sessions", () => {
     expect(accepted).toHaveBeenCalledOnce();
     expect(mocks.open).not.toHaveBeenCalled();
   });
+  it('refreshes the native summary used by dashboard send guards', async () => {
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Chat' }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(async (_home, _id, _signal, fresh) => fresh ? false : true);
+    await expect(readCodexCliSessionSummary(id, root, true)).resolves.toMatchObject({ status: 'idle', locked: false });
+    expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(root, id, undefined, true);
+  });
+  it.each([false, true])('preserves uploads once when a send becomes guidance for an active native turn (mixed: %s)', async mixed => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    vi.mocked(getNativeCodexSessionTurnId).mockReturnValue('native-active-turn');
+    vi.mocked(steerNativeCodexSessionTurn).mockResolvedValue(true);
+    const image = { id: 'image', name: 'image.png', kind: 'image' as const, mimeType: 'image/png', data: 'data:image/png;base64,iVBORw0KGgo=', size: 8 };
+    const attachments = [image, ...(mixed ? [
+      { id: 'notes', name: 'notes.txt', kind: 'text' as const, mimeType: 'text/plain', data: 'Notes', size: 5 },
+      { id: 'report', name: 'report.pdf', kind: 'file' as const, mimeType: 'application/pdf', data: 'data:application/pdf;base64,JVBERi0=', size: 5 }
+    ] : [])];
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Review this', attachments })).resolves.toBe('steered');
+    expect(steerNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, 'native-active-turn', expect.arrayContaining([{ type: 'image', url: image.data }]), root);
+    if (mixed) {
+      const input = vi.mocked(steerNativeCodexSessionTurn).mock.calls[0]![3] as Array<{ type: string; text?: string }>;
+      const text = input.find(item => item.type === 'text')!.text!;
+      expect(text.match(/<attached_file name="notes.txt"/g)).toHaveLength(1);
+      expect(text.match(/<attachment_paths>/g)).toHaveLength(1);
+    }
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+  it('pins the account home while saving the question-reply fence', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const save = preferenceStore.set.bind(preferenceStore);
+    const spy = vi.spyOn(preferenceStore, 'set').mockImplementation((namespace, key, value) => {
+      save(namespace, key, value);
+      if (namespace === 'question-replies') process.env['CODEX_HOME'] = path.join(root, 'other-home');
+    });
+    try {
+      const text = sessionQuestionReply({ id: 'ask', text: '', questions: [{ title: 'Continue?' }] }, { '0': 'Yes' });
+      await expect(sendCodexCliSessionMessage({ sessionId: id, text })).rejects.toThrow('home changed');
+      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+      expect(mocks.open).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+  });
+  it.each([['cancelled', 2], ['cancelled', 3], ['home-changed', 2], ['home-changed', 3], ['stopped', 2], ['stopped', 3]] as const)('does not steer when %s during ownership check %s', async (scenario, boundary) => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const controller = new AbortController();
+    let reads = 0;
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(async () => {
+      if (++reads === boundary) {
+        if (scenario === 'cancelled') controller.abort(new Error('Send cancelled'));
+        if (scenario === 'home-changed') process.env['CODEX_HOME'] = path.join(root, 'other-home');
+        if (scenario === 'stopped') writeCodexSessionPreference(root, id, { manualStop: true });
+      }
+      return true;
+    });
+    vi.mocked(getNativeCodexSessionTurnId).mockReturnValue('native-active-turn');
+    vi.mocked(steerNativeCodexSessionTurn).mockResolvedValue(true);
+    const accepted = vi.fn();
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Follow up', signal: controller.signal, onStarted: accepted })).rejects.toThrow(scenario === 'cancelled' ? 'cancelled' : scenario === 'home-changed' ? 'home changed' : 'stopped');
+    expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(accepted).not.toHaveBeenCalled();
+  });
   it('refreshes stale running state on send and starts the message exactly once', async () => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' + JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'orphaned' } }) + '\n');
@@ -786,6 +850,14 @@ describe("native App Server new sessions", () => {
     await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('Writer inspection failed');
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
+  it('preserves a failed native ownership recheck instead of replacing it with a busy error', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('Native owner disconnected during refresh'));
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('Native owner disconnected during refresh');
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
   });
   it('bounds stalled ownership checks and never sends after a late response', async () => {
     await mkdir(path.join(root, 'sessions'));
