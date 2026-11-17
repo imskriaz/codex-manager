@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.6-pre.34
+
+- Keep the API workspace within the viewport, with scrolling inside keys, forms, requests, responses, and proxy logs.
+- Remove duplicate header rows and place key, Explorer, and proxy actions alongside their content.
+- Tighten spacing while preserving readable text, keyboard access, and mobile layouts.
+- Reuse workspace tab styling and add selected-endpoint Docs guides beside the payload examples.
+- Use a two-row horizontally scrollable endpoint picker and keep base URLs, authentication guidance, and client examples behind the Proxy connection icon.
+- Separate Codex and Claude connection guides with copyable client-specific configuration and base URLs.
+- Pick eligible proxy keys in the connection guide, or create and select an aiProxy-only key when none exist; fill client examples from a new or pasted key without storing its secret.
+- Show account emails and API key names in proxy routes and logs, with live activity refresh and animated running connections.
+
 ## 2.0.6-pre.33
 
 - Switch away from accounts rejected by quota or expired authentication immediately in VS Code mode, using the same ownership and account verification rules as standalone.

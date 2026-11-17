@@ -15,21 +15,27 @@ const compiled = await build({ stdin: { contents: `
   import { useState } from 'preact/hooks';
   import { ApiWorkspace } from './webview-src/dashboard/apiWorkspace';
   const now=Date.now();
-  const requests=Array.from({length:10},(_,index)=>({id:'request-'+index,startedAt:now-index*1000,method:'POST',path:'/v1/responses',model:'fixture-model',status:['completed','failed','cancelled','incomplete','running'][index%5],httpStatus:index===1?502:200,durationMs:123,inputTokens:56511,outputTokens:6500,error:index===1?'Backend unavailable <script>unsafe</script>':undefined}));
+  const requests=Array.from({length:10},(_,index)=>({id:'request-'+index,startedAt:now-index*1000,method:'POST',path:'/v1/responses',model:'fixture-model',apiKeyId:'key-'+index%3,apiKeyName:['Build pipeline','Claude Code','Team tools'][index%3],accountId:'account-'+index%2,accountEmail:['primary@example.test','secondary@example.test'][index%2],status:['completed','failed','cancelled','incomplete','running'][index%5],httpStatus:index===1?502:200,durationMs:123,inputTokens:56511,outputTokens:6500,error:index===1?'Backend unavailable <script>unsafe</script>':undefined}));
   function App(){
     const [snapshot,setSnapshot]=useState({capturedAt:now,requests});
     const [error,setError]=useState();
     const [loading,setLoading]=useState(false);
     const [connected,setConnected]=useState(true);
-    const [tokens,setTokens]=useState([]),[token,setToken]=useState(),[notice,setNotice]=useState();
+    const [tokens,setTokens]=useState([]),[token,setToken]=useState(),[notice,setNotice]=useState(),[tokenId,setTokenId]=useState(),[pending,setPending]=useState(false),[uncertain,setUncertain]=useState(false);
+    window.onlyScopedKeys=()=>{setToken(undefined);setTokenId(undefined);setTokens([{id:'reader',name:'Reader',permissions:['state'],createdAt:now},{id:'scoped',name:'Scoped',projectPath:'D:/demo',permissions:['*'],createdAt:now}]);};
+    window.existingProxyKeys=()=>{setToken(undefined);setTokenId(undefined);setTokens([{id:'reader',name:'Reader',permissions:['state'],createdAt:now},{id:'scoped',name:'Scoped',projectPath:'D:/demo',permissions:['*'],createdAt:now},{id:'proxy',name:'Existing proxy',permissions:['aiProxy'],createdAt:now},{id:'all',name:'All access',permissions:['*'],createdAt:now}]);};
+    const [privacyMode,setPrivacyMode]=useState(false);
+    window.privacy=()=>setPrivacyMode(true);
+    window.stopFlows=()=>setSnapshot(current=>({...current,requests:current.requests.map(row=>({...row,status:'completed'}))}));
+    window.manyKeys=()=>setTokens(Array.from({length:80},(_,index)=>({id:'fixture-'+index,name:'Fixture key '+index,createdAt:now,permissions:['state'],projectPaths:[]})));
     window.failRefresh=()=>{setError('Proxy refresh failed. Retry after reconnecting.');setLoading(false)};
     window.offline=()=>setConnected(false);
     window.missing=()=>setSnapshot(undefined);
     window.empty=()=>setSnapshot({capturedAt:Date.now(),requests:[]});
-    return <ApiWorkspace open token={token} tokens={tokens} proxy={snapshot} enabled connected={connected} pending={false} loading={loading} error={error} notice={notice} onClose={()=>{}}
-      onGenerate={name=>{setToken('cm_fixture_only');setTokens([{id:'fixture-key',name,createdAt:now,permissions:['state'],projectPaths:[]}]);setNotice('API key created. Copy it now.')}}
-      onRevoke={()=>{setTokens([]);setToken(undefined);setNotice('API key revoked.')}}
-      onRefresh={()=>{setLoading(true);setTimeout(()=>{setLoading(false);setSnapshot(current=>current?{...current,capturedAt:Date.now()}:current);setError(undefined)},50)}}/>;
+    return <ApiWorkspace open token={token} tokenId={tokenId} tokens={tokens} proxy={snapshot} privacyMode={privacyMode} enabled connected={connected} pending={pending} uncertain={uncertain} loading={loading} error={error} notice={notice}
+      onGenerate={(name,projects,permissions)=>{window.generated={name,projects,permissions};setPending(true);setTimeout(()=>{setPending(false);if(window.failCreate){window.failCreate=false;setError('Creation outcome unknown. Refresh keys before retrying.');setUncertain(true);return;}setToken('cm_fixture_only');setTokenId('fixture-key');setTokens(current=>[...current,{id:'fixture-key',name,createdAt:now,permissions,projectPaths:[]}]);setNotice('API key created. Copy it now.')},50)}}
+      onRevoke={()=>{setTokens([]);setToken(undefined);setTokenId(undefined);setNotice('API key revoked.')}}
+      onRefresh={()=>{setLoading(true);setTimeout(()=>{setLoading(false);setSnapshot(current=>current?{...current,capturedAt:Date.now()}:current);setError(undefined);setUncertain(false)},50)}}/>;
   }
   render(<App/>,document.getElementById('app'));
 `, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
@@ -69,7 +75,8 @@ try {
   results.push({ mode: 'live-host-workspace-assets', loadAndNavigateMs: Date.now() - started, status: 'passed' });
   await live.close();
   for (const theme of ['light','dark']) for (const width of [1440, 390, 320]) {
-    const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
+    const height=width===320?667:width===390?844:1000;
+    const context = await browser.newContext({ viewport: { width, height }, serviceWorkers: 'block' });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     const errors = [];
@@ -77,10 +84,18 @@ try {
     await page.route(origin + '/__api-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html data-theme="${theme}"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="app"></div><script type="module" src="/__api-fixture.js"></script></body></html>` }));
     await page.route(origin + '/__api-fixture.js', route => route.fulfill({ contentType: 'text/javascript', body: compiled.outputFiles[0].text }));
     await page.route('**/api/schema', route=>route.fulfill({contentType:'application/json',body:JSON.stringify({actions:['getProjectBoard'],token:{name:'Fixture',projectPaths:[],permissions:['state','aiProxy']}})}));
+    await page.route('**/api/message',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({rows:Array.from({length:200},(_,index)=>({index,result:'Fixture response'}))})}));
     await page.goto(origin + '/__api-fixture');
     for (const file of ['shared.css', 'quotaSummary.css']) await page.addStyleTag({ content: await readFile('media/webview/' + file, 'utf8') });
     const screen = page.getByRole('region', {name:'API access',exact:true});
+    await page.evaluate(()=>{const reference=document.createElement('div');reference.className='cli-workspace';reference.setAttribute('aria-hidden','true');reference.style.cssText='position:fixed;left:-9999px;visibility:hidden!important;pointer-events:none!important';reference.innerHTML='<div class="cli-context-tab-scroll"><span class="is-active"><button role="tab" aria-selected="true">API keys</button></span></div>';document.body.append(reference);});
+    const tabStyle=await screen.getByRole('tab',{name:'API keys',exact:true}).evaluate(element=>{const s=getComputedStyle(element);return [s.fontSize,s.fontWeight,s.minHeight,s.padding,s.borderRadius];});
+    assert.deepEqual(tabStyle,await page.locator('.cli-context-tab-scroll button').evaluate(element=>{const s=getComputedStyle(element);return [s.fontSize,s.fontWeight,s.minHeight,s.padding,s.borderRadius];}),'API tabs share workspace tab metrics');
+    await page.locator('.cli-workspace').evaluate(element=>element.remove());
     assert.deepEqual(await screen.getByRole('tab').allTextContents(), ['API keys','API Explorer','Proxy']);
+    assert.equal(await screen.locator('.api-base-address,.api-key-toolbar').count(),0,'No duplicate header rows');
+    assert.equal(await screen.locator('.api-pane-heading').getByRole('button',{name:'Create API key',exact:true}).count(),1,'Key actions share the list header');
+    assert.equal(await screen.locator('.api-token-table').count(),0,'Empty keys do not show unused table headers');
     await screen.getByRole('button', {name:'Create API key',exact:true}).click();
     const form = page.getByRole('region', {name:'Create API key',exact:true});
     await form.getByLabel('Token name',{exact:true}).fill('Fixture key');
@@ -96,27 +111,138 @@ try {
     await form.getByRole('status').filter({hasText:'Token copied.'}).waitFor();
     assert.equal(await page.evaluate(()=>window.copiedFixture),'cm_fixture_only');
     await page.screenshot({path:path.join(output,`api-keys-${theme}-${width}.png`)});
+    await assertViewport(page,screen);
     await form.getByRole('button',{name:'Done',exact:true}).click();
     await screen.getByRole('button',{name:'Revoke',exact:true}).click();
     await screen.getByRole('status').filter({hasText:'API key revoked'}).waitFor();
     await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();
+    assert.equal(await screen.getByRole('status').filter({hasText:'API key revoked'}).count(),0,'Key feedback stays with the Keys tab');
+    const editor=screen.getByRole('region',{name:'Request editor',exact:true});
+    if(width<=390) {
+      const picker=screen.getByRole('navigation',{name:'API endpoints',exact:true});
+      assert.ok(await picker.evaluate(element=>element.scrollWidth>element.clientWidth),'Endpoint picker scrolls horizontally');
+      const rows=await picker.locator('button').evaluateAll(elements=>new Set(elements.map(element=>Math.round(element.getBoundingClientRect().y))).size);
+      assert.equal(rows,2,'Compact endpoints use two rows');
+    }
+    assert.equal(await editor.getByLabel('Bearer token',{exact:true}).count(),1,'Credentials belong to the request editor');
+    assert.equal(await editor.locator('.api-section-heading').getByRole('button',{name:'Request details',exact:true}).count(),1,'Details stays beside Send');
+    await editor.getByLabel('Bearer token',{exact:true}).fill('cm_fixture_only');
+    await page.waitForFunction(()=>!document.querySelector('.api-send-row .modal-primary-btn')?.disabled);
+    const credentialBounds=await editor.getByLabel('Bearer token',{exact:true}).boundingBox(),checkBounds=await editor.getByRole('button',{name:'Recheck token',exact:true}).boundingBox();
+    assert.ok(credentialBounds && checkBounds && checkBounds.x>=credentialBounds.x+credentialBounds.width-1,'Token and Recheck do not overlap');
+    assert.ok(Math.abs(credentialBounds.y-checkBounds.y)<2,'Token and Recheck align');
+    await editor.getByRole('button',{name:'Send request once',exact:true}).click();
+    const response=screen.locator('.api-test-result');
+    await response.filter({hasText:'HTTP 200'}).waitFor();
+    assert.ok(await response.evaluate(element=>element.scrollHeight>element.clientHeight),'Long responses scroll inside their panel');
+    await response.focus();await response.press('End');
+    assert.ok(await response.evaluate(element=>element.scrollTop>0),'Response scrolling works with the keyboard');
+    await assertViewport(page,screen);
     await page.screenshot({path:path.join(output,`api-explorer-${theme}-${width}.png`)});
+    for(const endpoint of ['/api/message','/api/state','/api/schema','/v1/models','/v1/chat/completions','/v1/responses','/v1/messages']) {
+      await screen.locator('.api-endpoints button').filter({has:page.locator('code',{hasText:new RegExp('^'+endpoint.replaceAll('/','\\/')+'$')})}).click();
+      const docsButton=editor.getByRole('button',{name:'Endpoint documentation',exact:true});
+      await docsButton.click();
+      const docs=page.getByRole('dialog',{name:/ guide$/});
+      await docs.waitFor();
+      assert.ok((await docs.getByLabel('Request example',{exact:true}).innerText()).includes(endpoint),'Guide follows the selected endpoint');
+      assert.ok((await docs.innerText()).includes('YOUR_API_KEY'));
+      if(endpoint==='/v1/messages')await page.screenshot({path:path.join(output,`api-docs-${theme}-${width}.png`)});
+      await docs.press('Escape');
+      await docs.waitFor({state:'detached'});
+      await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Endpoint documentation');
+    }
     await screen.getByRole('tab',{name:'Proxy',exact:true}).click();
-    await page.getByRole('img', { name: /API clients connect/ }).waitFor();
+    const diagram=page.getByRole('img', { name: 'Proxy routes from saved accounts to API keys' });
+    await diagram.waitFor();
+    assert.equal(await diagram.locator('.is-account').count(),2);
+    assert.equal(await diagram.locator('.is-key').count(),3);
+    assert.equal(await diagram.locator('.api-route-edge').count(),6,'One account can connect to multiple keys');
+    assert.ok(await diagram.locator('.api-route-edge.is-running').count()>0);
+    const animated=diagram.locator('.api-route-edge.is-running').first();
+    assert.equal(await animated.evaluate(element=>getComputedStyle(element).animationName),'api-route-flow');
+    await page.emulateMedia({reducedMotion:'reduce'});
+    assert.equal(await animated.evaluate(element=>getComputedStyle(element).animationName),'none');
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    assert.equal(await screen.locator('.api-proxy-log-pane').getByRole('button',{name:'Refresh proxy',exact:true}).count(),1,'Refresh belongs to the request logs');
     const panes = await screen.locator('.api-proxy-split > section').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width};}));
     assert.equal(panes.length, 2);
     if (width>900) assert.ok(panes[1].x>panes[0].x && Math.abs(panes[0].y-panes[1].y)<2);
     else assert.ok(panes[1].y>panes[0].y, 'Mobile stacks route and logs');
     assert.equal(await screen.locator('.api-proxy-table tbody tr').count(), 8);
+    assert.ok((await screen.locator('.api-proxy-table').innerText()).includes('primary@example.test'));
+    assert.ok((await screen.locator('.api-proxy-table').innerText()).includes('Build pipeline'));
     await page.screenshot({path:path.join(output,`api-proxy-${theme}-${width}.png`)});
+    await page.evaluate(()=>window.privacy());
+    assert.ok(!(await diagram.evaluate(element=>element.innerHTML)).includes('primary@example.test'),'Privacy mode masks labels and tooltips');
+    assert.ok(!(await screen.locator('.api-proxy-table').innerText()).includes('primary@example.test'));
+    await screen.getByRole('button',{name:'Proxy connection settings',exact:true}).click();
+    const connection=page.getByRole('dialog',{name:'Proxy connection',exact:true});
+    await connection.waitFor();
+    assert.deepEqual(await connection.getByRole('tab').allTextContents(),['Codex','Claude']);
+    assert.equal(await connection.getByRole('tab',{name:'Codex',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await connection.getByRole('textbox',{name:'Proxy base URL',exact:true}).inputValue(),origin+'/v1');
+    await connection.getByRole('button',{name:'Copy proxy base URL',exact:true}).click();
+    await connection.getByRole('status').filter({hasText:'Copied.'}).waitFor();
+    assert.equal(await page.evaluate(()=>window.copiedFixture),origin+'/v1');
+    await connection.getByRole('button',{name:'Copy Codex configuration',exact:true}).click();
+    const codexConfig=await page.evaluate(()=>window.copiedFixture);
+    assert.ok(codexConfig.includes('base_url = "'+origin+'/v1"') && codexConfig.includes('wire_api = "responses"'));
+    assert.ok(codexConfig.includes('env_key = "MANAGER_API_KEY"'));
+    await connection.getByRole('tab',{name:'Codex',exact:true}).press('ArrowRight');
+    assert.equal(await connection.getByRole('tab',{name:'Claude',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await connection.getByRole('textbox',{name:'Claude host URL',exact:true}).inputValue(),origin);
+    await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
+    const claudeConfig=JSON.parse(await page.evaluate(()=>window.copiedFixture));
+    assert.deepEqual(claudeConfig.env,{ANTHROPIC_BASE_URL:origin,ANTHROPIC_AUTH_TOKEN:'YOUR_MANAGER_API_KEY',ANTHROPIC_MODEL:'MODEL_FROM_CATALOGUE'});
+    await page.evaluate(()=>window.onlyScopedKeys());
+    assert.equal(await connection.getByRole('combobox',{name:'Proxy API key',exact:true}).count(),0,'Project-scoped and reader keys cannot be picked for proxy calls');
+    await page.evaluate(()=>{window.failCreate=true;});
+    await connection.getByRole('button',{name:'Create proxy key',exact:true}).click();
+    await connection.getByRole('alert').filter({hasText:'Creation outcome unknown'}).waitFor();
+    assert.equal(await connection.getByRole('button',{name:'Create proxy key',exact:true}).isDisabled(),true);
+    await connection.getByRole('button',{name:'Refresh keys',exact:true}).click();
+    await connection.getByRole('alert').waitFor({state:'detached'});
+    await connection.getByRole('button',{name:'Create proxy key',exact:true}).click();
+    const keyPicker=connection.getByRole('combobox',{name:'Proxy API key',exact:true});
+    await keyPicker.waitFor();
+    assert.equal(await keyPicker.inputValue(),'fixture-key','Created key is selected automatically');
+    assert.equal(await connection.getByRole('button',{name:'Create proxy key',exact:true}).count(),0,'Create appears only without eligible keys');
+    assert.deepEqual(await page.evaluate(()=>window.generated.permissions),['aiProxy']);
+    assert.equal(await page.evaluate(()=>window.generated.projects),undefined);
+    await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
+    assert.equal(JSON.parse(await page.evaluate(()=>window.copiedFixture)).env.ANTHROPIC_AUTH_TOKEN,'cm_fixture_only');
+    await connection.getByRole('tab',{name:'Codex',exact:true}).click();
+    await connection.getByRole('button',{name:'Copy Codex launch command',exact:true}).click();
+    assert.ok((await page.evaluate(()=>window.copiedFixture)).includes('cm_fixture_only'));
+    await page.evaluate(()=>window.existingProxyKeys());
+    assert.deepEqual(await keyPicker.locator('option').allTextContents(),['Existing proxy','All access']);
+    await connection.getByLabel('Proxy API key value',{exact:true}).fill('cm_pasted_fixture');
+    await connection.getByRole('tab',{name:'Claude',exact:true}).click();
+    await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
+    assert.equal(JSON.parse(await page.evaluate(()=>window.copiedFixture)).env.ANTHROPIC_AUTH_TOKEN,'cm_pasted_fixture');
+    await keyPicker.selectOption('all');
+    assert.equal(await connection.getByLabel('Proxy API key value',{exact:true}).inputValue(),'','Changing keys clears the previous secret');
+    await page.screenshot({path:path.join(output,`api-connection-${theme}-${width}.png`)});
+    await connection.press('Escape');
+    await connection.waitFor({state:'detached'});
     await screen.getByRole('button',{name:'Show all logs',exact:true}).click();
     assert.equal(await screen.locator('.api-proxy-table tbody tr').count(), 10);
+    if(width<=390) assert.ok(await screen.locator('.api-proxy-table-scroll').evaluate(element=>element.scrollHeight>element.clientHeight),'Mobile request logs scroll inside the table');
+    if(width<=390) assert.ok(await screen.locator('.api-proxy-table-scroll').evaluate(element=>element.clientHeight>100),'Mobile logs leave room for request rows');
+    await assertViewport(page,screen);
     await screen.getByRole('cell', {name:/Backend unavailable/}).waitFor();
+    await page.evaluate(()=>window.stopFlows());
+    await page.waitForFunction(()=>!document.querySelector('.api-route-edge.is-running'));
     assert.equal(await page.locator('.api-proxy-table script').count(),0);
     assert.ok(await screen.evaluate(element=>element.scrollWidth<=element.clientWidth+2));
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
     await page.evaluate(()=>window.failRefresh());
     await screen.getByRole('alert').filter({hasText:'Proxy refresh failed'}).waitFor();
+    await page.clock.install();
+    await page.clock.runFor(3100);
+    await screen.getByRole('alert').filter({hasText:'Proxy refresh failed'}).waitFor();
+    await page.clock.resume();
     await screen.getByRole('button',{name:'Refresh proxy',exact:true}).click();
     await screen.getByRole('alert').waitFor({state:'detached'});
     await page.evaluate(()=>window.missing());
@@ -125,9 +251,21 @@ try {
     await screen.getByText('No requests yet',{exact:true}).waitFor();
     await page.evaluate(()=>window.offline());
     assert.equal(await screen.getByRole('button',{name:'Refresh proxy',exact:true}).isDisabled(),true);
+    await screen.getByRole('tab',{name:'API keys',exact:true}).click();
+    await page.evaluate(()=>window.manyKeys());
+    await screen.getByRole('cell',{name:'Fixture key 79',exact:true}).waitFor({state:'attached'});
+    assert.ok(await screen.locator('.api-table-scroll').evaluate(element=>element.scrollHeight>element.clientHeight),'Long key lists scroll inside their panel');
+    await assertViewport(page,screen);
     assert.deepEqual(errors, []);
     results.push({width,theme,status:'passed'});
     await context.close();
   }
   console.log(JSON.stringify({results,screenshots:output},null,2));
 } finally { await browser.close(); }
+
+async function assertViewport(page,screen) {
+  assert.ok(await screen.evaluate(element=>element.scrollHeight<=element.clientHeight+2),'API page has no outer scrolling');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),'API fits the viewport height');
+  const tabs=await screen.getByRole('tablist').boundingBox();
+  assert.ok(tabs && tabs.y>=0 && tabs.y+tabs.height<await page.evaluate(()=>innerHeight),'Tabs stay in the viewport');
+}

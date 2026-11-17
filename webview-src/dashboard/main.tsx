@@ -222,6 +222,7 @@ function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
+  const [apiTokenId, setApiTokenId] = useState<string>();
   const [apiNotice, setApiNotice] = useState<string>();
   const [apiProxy, setApiProxy] = useState<import('../../src/domain/dashboard/apiProxy').ApiProxySnapshot>();
   const [apiError,setApiError]=useState<string>(), [apiUncertain,setApiUncertain]=useState(false);
@@ -254,7 +255,7 @@ function App() {
   const [taskTitleItem, setTaskTitleItem] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
   const apiTokenOpen = browserPath === "/api";
-  useEffect(() => { if (!apiTokenOpen) { setApiToken(undefined); setApiNotice(undefined); } }, [apiTokenOpen, apiToken, apiNotice]);
+  useEffect(() => { if (!apiTokenOpen) { setApiToken(undefined); setApiTokenId(undefined); setApiNotice(undefined); } }, [apiTokenOpen, apiToken, apiTokenId, apiNotice]);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("agreement");
   const [onboardingBusy, setOnboardingBusy] = useState(false);
@@ -947,8 +948,8 @@ function App() {
             if(message.payload?.apiProjects) setApiProjects(message.payload.apiProjects);
             if(list && apiUncertainRef.current) apiRequests.current.mutation=undefined;
             apiUncertainRef.current=false;setApiUncertain(false);setApiError(undefined);
-            if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);setApiNotice('API key created. Copy it now.');showNotice({level:'info',message:'API token created. Copy its value now.'});}
-            if(message.action==='revokeApiToken') {setApiToken(undefined);setApiNotice('API key revoked.');showNotice({level:'info',message:'API token revoked.'});}
+            if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);setApiTokenId(message.payload!.apiTokenId);setApiNotice('API key created. Copy it now.');showNotice({level:'info',message:'API token created. Copy its value now.'});}
+            if(message.action==='revokeApiToken') {setApiToken(undefined);setApiTokenId(undefined);setApiNotice('API key revoked.');showNotice({level:'info',message:'API token revoked.'});}
           } else {
             setApiError(message.error ?? 'The token request was not confirmed. Refresh the list before retrying.');
             if(!list){apiUncertainRef.current=true;setApiUncertain(true);}
@@ -2819,7 +2820,9 @@ function App() {
       <ApiWorkspace
         open={apiTokenOpen}
         baseUrl={snapshot.apiBaseUrl}
+        privacyMode={state.privacyMode}
         token={apiToken}
+        tokenId={apiTokenId}
         tokens={apiTokens}
         proxy={apiProxy}
         projects={apiProjects}
@@ -2831,7 +2834,6 @@ function App() {
         connected={!isBrowserDashboard || !connectionUnavailable}
         enabled={snapshot.settings.apiAccessEnabled === true}
         pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
-        onClose={() => navigateDashboardPath("/", setBrowserPath)}
         onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
         onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
       />

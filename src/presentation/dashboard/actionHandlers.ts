@@ -426,7 +426,7 @@ async function runDashboardAction(
       const created = await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, requestId,
         projectPaths: payload?.tokenProjectPaths ? await Promise.all(payload.tokenProjectPaths.map(project => resolveWorkspaceProjectPathAsync(project))) : undefined,
         projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined });
-      return { apiToken: created.token, apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
+      return { apiToken: created.token, apiTokenId: created.record.id, apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
     }
     case 'listApiTokens':
       return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: readApiProxyHistory(), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };

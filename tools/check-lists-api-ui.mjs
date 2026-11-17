@@ -154,7 +154,8 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
       await list.locator('.api-test-result').filter({hasText:'Request timed out'}).waitFor();
       assert.equal(held.length,2,'Timeout never retries');waiting();await page.clock.resume();
     }
-    await list.getByRole('button', { name: 'Dashboard', exact: true }).evaluate(button=>button.click());
+    if (await show.isVisible()) await show.click();
+    await page.locator('.cli-sidebar-toolbar').getByRole('button', { name: 'Dashboard', exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiCreate })));
     assert.equal(await list.count(), 0, 'Late confirmation never reopens API access');
     if (await show.isVisible()) await show.click();
@@ -165,6 +166,24 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.equal(await form.getByRole('textbox',{name:'New API token',exact:true}).count(),0,'Late key confirmation is not shown on reentry');
     await form.getByRole('button',{name:'Cancel',exact:true}).click();
     await list.getByRole('status').filter({hasText:'Key creation cancelled.'}).waitFor();
+    // Remove the fixture owner key so the proxy setup can create its minimal key.
+    const owner=list.locator('tbody tr').filter({hasText:'Owner operations'});
+    await owner.getByRole('button',{name:'Revoke',exact:true}).click();
+    await owner.waitFor({state:'detached'});
+    await list.getByRole('tab',{name:'Proxy',exact:true}).click();
+    await list.getByRole('button',{name:'Proxy connection settings',exact:true}).click();
+    const connection=page.getByRole('dialog',{name:'Proxy connection',exact:true});
+    await connection.getByRole('button',{name:'Create proxy key',exact:true}).click();
+    const proxyKeys=connection.getByRole('combobox',{name:'Proxy API key',exact:true});
+    await proxyKeys.waitFor();
+    assert.equal(await proxyKeys.locator('option:checked').innerText(),'Codex proxy');
+    const creation=await page.evaluate(()=>window.__uiActions.filter(action=>action.action==='generateApiToken').at(-1));
+    assert.deepEqual(creation.payload.tokenPermissions,['aiProxy']);
+    assert.equal(creation.payload.tokenProjectPaths,undefined);
+    assert.ok((await connection.getByLabel('Codex PowerShell setup',{exact:true}).innerText()).includes('cm_'+'c'.repeat(64)),'Real action acknowledgement fills the selected key secret');
+    await connection.getByRole('tab',{name:'Claude',exact:true}).click();
+    assert.equal(JSON.parse(await connection.getByLabel('Claude configuration',{exact:true}).innerText()).env.ANTHROPIC_AUTH_TOKEN,'cm_'+'c'.repeat(64));
+    await connection.getByRole('button',{name:'Close proxy connection',exact:true}).click();
   } else {
     await page.evaluate(() => window.__fillListFixture());
     await page.locator('.cli-compact-session-list .cli-session-row-select').first().waitFor();

@@ -13,12 +13,15 @@ import {
 } from "./apiPlayground";
 import { handleTabKeyDown } from "./primitives";
 import { ApiProxyPanel } from "./apiProxyPanel";
+import { ApiDocsModal } from "./apiDocs";
 export function ApiWorkspace(props: {
   open: boolean;
   token?: string;
+  tokenId?: string;
   tokens: DashboardApiToken[];
   projects?: DashboardCliProject[];
   baseUrl?: string;
+  privacyMode?: boolean;
   proxy?: import("../../src/domain/dashboard/apiProxy").ApiProxySnapshot;
   error?: string;
   notice?: string;
@@ -28,7 +31,6 @@ export function ApiWorkspace(props: {
   enabled: boolean;
   connected: boolean;
   pending: boolean;
-  onClose: () => void;
   onGenerate: (name: string, projectPaths: string[] | undefined, permissions: string[]) => void;
   onRevoke: (id: string) => void;
 }) {
@@ -37,6 +39,7 @@ export function ApiWorkspace(props: {
   const [createOpen, setCreateOpen] = useState(false),
     [name, setName] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [docsOpen, setDocsOpen] = useState(false);
   const [allProjects, setAllProjects] = useState(true),
     [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [permissions, setPermissions] = useState<string[]>(["state", "getProjectBoard", "getProjectTaskDetails"]);
@@ -74,6 +77,7 @@ export function ApiWorkspace(props: {
       setCreateOpen(false);
       setTab("keys");
       setDetailsOpen(false);
+      setDocsOpen(false);
       setCopyStatus("");
       setAccess(undefined);
       setInspection("");
@@ -274,31 +278,11 @@ export function ApiWorkspace(props: {
   return (
     <>
       <section class="api-workspace-screen" aria-label="API access">
-        <header class="api-page-header">
-          <span id="api-sidebar-toggle-slot" class="content-sidebar-slot" />
-          <span class="api-page-mark" aria-hidden="true">
-            &lt;/&gt;
-          </span>
-          <div>
-            <h1>API</h1>
-            <span class="api-page-subtitle">Connect your tools. Manage your access.</span>
-          </div>
-          <span class={props.enabled && props.connected ? "api-service-state is-ready" : "api-service-state"}>
-            <span aria-hidden="true" />
-            {!props.connected ? "Offline" : props.enabled ? "Enabled" : "Disabled"}
-          </span>
-          <button type="button" class="api-page-back" onClick={props.onClose}>
-            Dashboard
-          </button>
-        </header>
-        <div class="api-base-address">
-          <span>Base URL</span>
-          <code>{baseUrl ?? "Unavailable"}</code>
-          <button type="button" disabled={!baseUrl} onClick={() => copy(baseUrl!)}>
-            Copy URL
-          </button>
-          {requestCopy ? <small role="status">{requestCopy}</small> : null}
-        </div>
+        {requestCopy ? (
+          <p class="api-inline-feedback" role="status">
+            {requestCopy}
+          </p>
+        ) : null}
         {!props.enabled ? <p role="status">Enable Dashboard API in Settings to create and use tokens.</p> : null}
         {!props.connected ? <p role="status">Offline. Reconnect before managing API keys.</p> : null}
         {props.error ? (
@@ -306,92 +290,96 @@ export function ApiWorkspace(props: {
             {props.error}
           </p>
         ) : null}
-        {props.notice ? (
-          <p class="api-workspace-notice" role="status">
-            {props.notice}
-          </p>
-        ) : null}
         {props.uncertain ? (
           <p role="status">Refresh the list to verify the previous request before creating another token.</p>
         ) : null}
-        <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>
-          {(["keys", "explorer", "proxy"] as const).map((item) => (
-            <button
-              type="button"
-              role="tab"
-              id={`api-tab-${item}`}
-              aria-controls={`api-panel-${item}`}
-              aria-selected={tab === item}
-              tabIndex={tab === item ? 0 : -1}
-              key={item}
-              disabled={testing || props.pending}
-              onClick={() => {
-                setTab(item);
-                if (item !== "explorer" && props.connected && !props.loading) props.onRefresh();
-              }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                {item === "keys" ? (
-                  <>
-                    <circle cx="8" cy="9" r="4" />
-                    <path d="m11 12 9 9m-3-3 3-3m-6 0 3-3" />
-                  </>
-                ) : item === "explorer" ? (
-                  <>
-                    <path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16" />
-                  </>
-                ) : (
-                  <>
-                    <rect x="8" y="2" width="8" height="6" rx="1" />
-                    <rect x="2" y="16" width="7" height="6" rx="1" />
-                    <rect x="15" y="16" width="7" height="6" rx="1" />
-                    <path d="M12 8v4H5v4m7-4h7v4" />
-                  </>
-                )}
-              </svg>
-              {item === "keys" ? "API keys" : item === "explorer" ? "API Explorer" : "Proxy"}
-            </button>
-          ))}
+        <div class="api-topbar">
+          <span id="api-sidebar-toggle-slot" class="content-sidebar-slot" />
+          <h1 class="sr-only">API</h1>
+          <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>
+            {(["keys", "explorer", "proxy"] as const).map((item) => (
+              <span key={item} class={tab === item ? "is-active" : undefined}>
+                <button
+                  type="button"
+                  role="tab"
+                  id={`api-tab-${item}`}
+                  aria-controls={`api-panel-${item}`}
+                  aria-selected={tab === item}
+                  tabIndex={tab === item ? 0 : -1}
+                  disabled={testing || props.pending}
+                  onClick={() => {
+                    setTab(item);
+                    setRequestCopy("");
+                    if (item !== "explorer" && props.connected && !props.loading) props.onRefresh();
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    {item === "keys" ? (
+                      <>
+                        <circle cx="8" cy="9" r="4" />
+                        <path d="m11 12 9 9m-3-3 3-3m-6 0 3-3" />
+                      </>
+                    ) : item === "explorer" ? (
+                      <>
+                        <path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16" />
+                      </>
+                    ) : (
+                      <>
+                        <rect x="8" y="2" width="8" height="6" rx="1" />
+                        <rect x="2" y="16" width="7" height="6" rx="1" />
+                        <rect x="15" y="16" width="7" height="6" rx="1" />
+                        <path d="M12 8v4H5v4m7-4h7v4" />
+                      </>
+                    )}
+                  </svg>
+                  {item === "keys" ? "API keys" : item === "explorer" ? "API Explorer" : "Proxy"}
+                </button>
+              </span>
+            ))}
+          </div>
         </div>
         {tab === "proxy" ? (
           <div role="tabpanel" id="api-panel-proxy" aria-labelledby="api-tab-proxy">
             <ApiProxyPanel
               snapshot={props.proxy}
+              baseUrl={baseUrl}
+              keyAccess={{
+                tokens: props.tokens,
+                token: props.token,
+                tokenId: props.tokenId,
+                enabled: canUse,
+                pending: props.pending,
+                loading: props.loading,
+                uncertain: props.uncertain,
+                error: props.error,
+                onCreate: (name) => props.onGenerate(name, undefined, ["aiProxy"]),
+                onRefresh: props.onRefresh
+              }}
+              privacyMode={props.privacyMode}
               connected={props.connected}
               loading={props.loading}
-              baseUrl={baseUrl}
               onRefresh={props.onRefresh}
             />
           </div>
         ) : null}
 
         <div role="tabpanel" id="api-panel-keys" aria-labelledby="api-tab-keys" hidden={tab !== "keys"}>
-          <div class="api-key-toolbar">
-            <div>
-              <h2>API keys</h2>
-              <small>Copy new keys once. Revoke access at any time.</small>
-            </div>
-            <button
-              type="button"
-              class="modal-primary-btn"
-              disabled={!canUse}
-              onClick={() => {
-                setCreatedToken(undefined);
-                setCopyStatus("");
-                setName("");
-                setCreateOpen(true);
-              }}
-            >
-              Create API key
-            </button>
-          </div>
+          {props.notice ? (
+            <p class="api-workspace-notice" role="status">
+              {props.notice}
+            </p>
+          ) : null}
           <div class={createOpen ? "api-keys-layout is-creating" : "api-keys-layout"}>
             <div class="api-token-workspace">
               <section class="api-token-pane api-token-list-pane" aria-label="API keys">
                 <div class="api-pane-heading">
-                  <strong>Active keys</strong>
+                  <h2>
+                    Keys{" "}
+                    <span class="api-key-count" role="status">
+                      {props.loading ? "Loading…" : props.tokens.length}
+                    </span>
+                  </h2>
                   <span>
-                    {props.loading ? "Loading…" : `${props.tokens.length} active`}{" "}
                     <button
                       type="button"
                       disabled={!props.connected || props.loading || props.pending}
@@ -399,43 +387,58 @@ export function ApiWorkspace(props: {
                     >
                       Refresh
                     </button>
+                    <button
+                      type="button"
+                      class="modal-primary-btn"
+                      disabled={!canUse}
+                      onClick={() => {
+                        setCreatedToken(undefined);
+                        setCopyStatus("");
+                        setName("");
+                        setCreateOpen(true);
+                      }}
+                    >
+                      Create API key
+                    </button>
                   </span>
                 </div>
                 <div class="api-table-scroll" role="region" aria-label="API keys" tabIndex={0}>
-                  <table class="api-token-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Project scope</th>
-                        <th>Permissions</th>
-                        <th>Created</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {props.tokens.map((token) => (
-                        <tr key={token.id}>
-                          <td>{token.name}</td>
-                          <td title={apiTokenProjects(token).join("\n")}>
-                            {apiTokenProjects(token)
-                              .map((path) => path.split(/[\\/]/).pop())
-                              .join(", ") || "All projects"}
-                          </td>
-                          <td title={token.permissions.join(", ")}>
-                            {token.permissions.includes("*")
-                              ? "All operations"
-                              : `${token.permissions.length} operations`}
-                          </td>
-                          <td>{new Date(token.createdAt).toLocaleDateString()}</td>
-                          <td>
-                            <button type="button" disabled={!canUse} onClick={() => props.onRevoke(token.id)}>
-                              Revoke
-                            </button>
-                          </td>
+                  {props.tokens.length ? (
+                    <table class="api-token-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Project scope</th>
+                          <th>Permissions</th>
+                          <th>Created</th>
+                          <th>Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {props.tokens.map((token) => (
+                          <tr key={token.id}>
+                            <td>{token.name}</td>
+                            <td title={apiTokenProjects(token).join("\n")}>
+                              {apiTokenProjects(token)
+                                .map((path) => path.split(/[\\/]/).pop())
+                                .join(", ") || "All projects"}
+                            </td>
+                            <td title={token.permissions.join(", ")}>
+                              {token.permissions.includes("*")
+                                ? "All operations"
+                                : `${token.permissions.length} operations`}
+                            </td>
+                            <td>{new Date(token.createdAt).toLocaleDateString()}</td>
+                            <td>
+                              <button type="button" disabled={!canUse} onClick={() => props.onRevoke(token.id)}>
+                                Revoke
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : null}
                   {!props.tokens.length ? (
                     <p class="task-board-empty">
                       {props.loading
@@ -449,14 +452,18 @@ export function ApiWorkspace(props: {
               </section>
             </div>
             {createOpen ? (
-              <section class="api-key-create-panel" aria-label="Create API key">
+              <section class="api-key-create-panel" aria-label="Create API key" tabIndex={0}>
                 <header class="api-section-heading">
                   <h2>Create API key</h2>
                   <button type="button" disabled={props.pending} onClick={() => setCreateOpen(false)}>
                     {createdToken ? "Done" : "Close form"}
                   </button>
                 </header>
-                  <fieldset hidden={!!createdToken} disabled={props.pending || !!createdToken} class="api-key-form-fields">
+                <fieldset
+                  hidden={!!createdToken}
+                  disabled={props.pending || !!createdToken}
+                  class="api-key-form-fields"
+                >
                   {" "}
                   <form
                     class="api-token-create"
@@ -617,7 +624,10 @@ export function ApiWorkspace(props: {
                         type="button"
                         class="modal-secondary-btn"
                         disabled={props.pending}
-                              onClick={() => { setCreateOpen(false); setRequestCopy("Key creation cancelled."); }}
+                        onClick={() => {
+                          setCreateOpen(false);
+                          setRequestCopy("Key creation cancelled.");
+                        }}
                       >
                         Cancel
                       </button>
@@ -675,60 +685,6 @@ export function ApiWorkspace(props: {
           aria-labelledby="api-tab-explorer"
           hidden={tab !== "explorer"}
         >
-          <div class="api-auth-bar">
-            <label>
-              Bearer token
-              <input
-                type="password"
-                autoComplete="off"
-                value={credential}
-                placeholder={props.token ? "Uses the newly created token" : "Paste an API token"}
-                disabled={testing}
-                onInput={(event) => {
-                  setCredential(event.currentTarget.value);
-                  setAccess(undefined);
-                  setModels([]);
-                  setModel("");
-                  setResult("");
-                  setRequestMeta(undefined);
-                }}
-              />
-            </label>
-            <div class="api-access-check">
-              <button
-                type="button"
-                disabled={!canUse || testing}
-                onClick={() => {
-                  setCreatedToken(undefined);
-                  setCopyStatus("");
-                  setTab("keys");
-                  setCreateOpen(true);
-                }}
-              >
-                + Create token
-              </button>
-              <button
-                type="button"
-                disabled={!browser || !props.connected || !props.enabled || !bearer || testing}
-                onClick={() => setInspectRetry((current) => current + 1)}
-              >
-                Recheck token
-              </button>
-              {checked ? (
-                <small>
-                  {checked.name} · {checked.actions.length} operations ·{" "}
-                  {checked.projects.length ? checked.projects.length + " project folders" : "Host-wide"}
-                </small>
-              ) : null}
-            </div>
-            {inspection ? (
-              <p class="settings-note" role="status">
-                {inspection}
-              </p>
-            ) : null}
-            {!browser ? <p role="status">Open the browser dashboard to test HTTP API requests.</p> : null}
-          </div>
-
           <div class="api-playground-layout">
             <nav class="api-endpoints" aria-label="API endpoints">
               {["Manager", "AI proxy"].map((group) => (
@@ -738,6 +694,7 @@ export function ApiWorkspace(props: {
                     <button
                       type="button"
                       key={item.id}
+                      title={`${item.method} ${item.path}`}
                       aria-pressed={endpoint === item.id}
                       disabled={testing}
                       onClick={() => {
@@ -758,10 +715,25 @@ export function ApiWorkspace(props: {
               ))}
             </nav>
 
-            <section class="api-test-form" aria-label="Request editor">
+            <section class="api-test-form" aria-label="Request editor" tabIndex={0}>
               <div class="api-section-heading">
                 <h4>Request</h4>
                 <div class="api-send-row">
+                  {selectedEndpoint.method === "GET" ? (
+                    <button type="button" aria-label="Endpoint documentation" onClick={() => setDocsOpen(true)}>
+                      Docs
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    class="api-details-button"
+                    aria-label="Request details"
+                    aria-expanded={detailsOpen}
+                    onClick={() => setDetailsOpen((value) => !value)}
+                  >
+                    Details
+                  </button>
+
                   <button
                     type="button"
                     class="modal-primary-btn api-send-icon"
@@ -794,6 +766,48 @@ export function ApiWorkspace(props: {
                   ) : null}
                 </div>
               </div>
+              <div class="api-auth-bar">
+                <label>
+                  Bearer token
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={credential}
+                    placeholder={props.token ? "Uses the newly created token" : "Paste an API token"}
+                    disabled={testing}
+                    onInput={(event) => {
+                      setCredential(event.currentTarget.value);
+                      setAccess(undefined);
+                      setModels([]);
+                      setModel("");
+                      setResult("");
+                      setRequestMeta(undefined);
+                    }}
+                  />
+                </label>
+                <div class="api-access-check">
+                  <button
+                    type="button"
+                    disabled={!browser || !props.connected || !props.enabled || !bearer || testing}
+                    onClick={() => setInspectRetry((current) => current + 1)}
+                  >
+                    Recheck token
+                  </button>
+                  {checked ? (
+                    <small>
+                      {checked.name} · {checked.actions.length} operations ·{" "}
+                      {checked.projects.length ? checked.projects.length + " project folders" : "Host-wide"}
+                    </small>
+                  ) : null}
+                </div>
+                {inspection ? (
+                  <p class="settings-note" role="status">
+                    {inspection}
+                  </p>
+                ) : null}
+                {!browser ? <p role="status">Open the browser dashboard to test HTTP API requests.</p> : null}
+              </div>
+
               {endpoint === "action" ? (
                 <>
                   <label>
@@ -900,13 +914,18 @@ export function ApiWorkspace(props: {
                 <>
                   <div class="api-payload-heading">
                     <label for="api-request-body">Payload (JSON)</label>
-                    <button
-                      type="button"
-                      disabled={testing}
-                      onClick={() => setPayload(apiPayloadExample(endpoint, model || undefined))}
-                    >
-                      Load example
-                    </button>
+                    <span class="api-payload-actions">
+                      <button type="button" aria-label="Endpoint documentation" onClick={() => setDocsOpen(true)}>
+                        Docs
+                      </button>
+                      <button
+                        type="button"
+                        disabled={testing}
+                        onClick={() => setPayload(apiPayloadExample(endpoint, model || undefined))}
+                      >
+                        Load example
+                      </button>
+                    </span>{" "}
                   </div>
                   <textarea
                     id="api-request-body"
@@ -924,6 +943,15 @@ export function ApiWorkspace(props: {
                 <p role="status" class="settings-note">
                   This token does not grant access to this endpoint.
                 </p>
+              ) : null}
+              {detailsOpen ? (
+                <section class="api-request-reference" aria-label="Request details">
+                  <p>{selectedEndpoint.description}</p>
+                  <pre>{requestPreview}</pre>
+                  <button type="button" onClick={() => copy(requestPreview)}>
+                    Copy request
+                  </button>
+                </section>
               ) : null}
             </section>
             <section class="api-response-pane" aria-label="Response">
@@ -943,58 +971,48 @@ export function ApiWorkspace(props: {
                 ) : (
                   <small>Ready when you are</small>
                 )}
+                {result && !testing ? (
+                  <button
+                    type="button"
+                    class="api-copy-response"
+                    title="Copy response"
+                    aria-label="Copy response"
+                    onClick={() => copy(result)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect
+                        x="8"
+                        y="8"
+                        width="12"
+                        height="12"
+                        rx="2"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.7"
+                      />
+                      <path d="M15 8V4H4v11h4" fill="none" stroke="currentColor" stroke-width="1.7" />
+                    </svg>
+                  </button>
+                ) : null}
               </div>
               {result ? (
-                <pre class="api-test-result" role="status">
+                <pre class="api-test-result" role="status" tabIndex={0}>
                   {result}
                 </pre>
               ) : (
                 <div class="api-response-empty">Response appears here.</div>
               )}
-              {result && !testing ? (
-                <button
-                  type="button"
-                  class="api-copy-response"
-                  title="Copy response"
-                  aria-label="Copy response"
-                  onClick={() => copy(result)}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect
-                      x="8"
-                      y="8"
-                      width="12"
-                      height="12"
-                      rx="2"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.7"
-                    />
-                    <path d="M15 8V4H4v11h4" fill="none" stroke="currentColor" stroke-width="1.7" />
-                  </svg>
-                </button>
-              ) : null}
             </section>
           </div>
-          <button
-            type="button"
-            class="api-details-button"
-            aria-expanded={detailsOpen}
-            onClick={() => setDetailsOpen((value) => !value)}
-          >
-            Request details
-          </button>
-          {detailsOpen ? (
-            <section class="api-request-reference" aria-label="Request details">
-              <p>{selectedEndpoint.description}</p>
-              <pre>{requestPreview}</pre>
-              <button type="button" onClick={() => copy(requestPreview)}>
-                Copy request
-              </button>
-            </section>
-          ) : null}
         </div>
       </section>
+      <ApiDocsModal
+        endpoint={docsOpen ? endpoint : undefined}
+        baseUrl={baseUrl}
+        operation={operation}
+        model={model}
+        onClose={() => setDocsOpen(false)}
+      />
     </>
   );
 }

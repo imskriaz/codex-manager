@@ -1,7 +1,18 @@
 import type { ApiProxySnapshot, ApiProxyRequestLog } from "../../src/domain/dashboard/apiProxy";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { ApiProxyConnection, type ApiProxyKeyAccess } from "./apiProxyConnection";
+import { ApiProxyRoutes } from "./apiProxyRoutes";
+import { getSensitiveDisplayValue } from "./helpers";
 
-function RequestTable({ requests, detailed }: { requests: ApiProxyRequestLog[]; detailed: boolean }) {
+function RequestTable({
+  requests,
+  detailed,
+  privacyMode
+}: {
+  requests: ApiProxyRequestLog[];
+  detailed: boolean;
+  privacyMode: boolean;
+}) {
   const tokens = (value?: number) => (value === undefined ? "—" : value.toLocaleString());
   return (
     <div
@@ -14,6 +25,7 @@ function RequestTable({ requests, detailed }: { requests: ApiProxyRequestLog[]; 
         <thead>
           <tr>
             <th scope="col">Model / request</th>
+            <th scope="col">Account / API key</th>
             <th scope="col">In / Out</th>
             <th scope="col">Status</th>
             <th scope="col">Duration</th>
@@ -29,6 +41,14 @@ function RequestTable({ requests, detailed }: { requests: ApiProxyRequestLog[]; 
                 <small>
                   {row.method} {row.path}
                 </small>
+              </td>
+              <td class="api-proxy-route-cell">
+                <strong>
+                  {row.accountEmail
+                    ? getSensitiveDisplayValue(row.accountEmail, privacyMode, "email")
+                    : "Account unavailable"}
+                </strong>
+                <small>{row.apiKeyName ?? "Unknown API key"}</small>
               </td>
               <td class="api-proxy-tokens">
                 <span>{tokens(row.inputTokens)} ↑</span> <span>{tokens(row.outputTokens)} ↓</span>
@@ -64,94 +84,96 @@ function RequestTable({ requests, detailed }: { requests: ApiProxyRequestLog[]; 
 export function ApiProxyPanel(props: {
   snapshot?: ApiProxySnapshot;
   connected: boolean;
-  loading?: boolean;
   baseUrl?: string;
+  keyAccess: ApiProxyKeyAccess;
+  privacyMode?: boolean;
+  loading?: boolean;
   onRefresh: () => void;
 }) {
   const [allLogs, setAllLogs] = useState(false);
+  const [connectionOpen, setConnectionOpen] = useState(false);
   const requests = props.snapshot?.requests ?? [];
-  const completed = requests.filter((row) => row.status === "completed").length;
+  const refresh = useRef(props.onRefresh);
+  refresh.current = props.onRefresh;
+  useEffect(() => {
+    if (!props.connected || props.loading || connectionOpen || props.keyAccess.error || props.keyAccess.uncertain || props.keyAccess.pending) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) refresh.current();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [props.connected, props.loading, connectionOpen, props.keyAccess.error, props.keyAccess.uncertain, props.keyAccess.pending]);
   return (
     <section class="api-proxy-panel" aria-label="API proxy overview">
-      <div class="api-console-heading">
-        <div>
-          <h2>Proxy activity</h2>
-          <code>{props.baseUrl ? props.baseUrl + "/v1" : "Proxy base URL unavailable"}</code>
-        </div>
-
-        <button type="button" disabled={!props.connected || props.loading} onClick={props.onRefresh}>
-          {props.loading ? "Refreshing…" : "Refresh proxy"}
-        </button>
-      </div>
-      <p class="api-proxy-update" role="status">
-        {props.loading
-          ? "Loading proxy activity…"
-          : props.snapshot
-            ? `Updated ${new Date(props.snapshot.capturedAt).toLocaleTimeString()}`
-            : "Proxy activity unavailable. Refresh to retry; the host may need an update."}
-      </p>
-      <div class="api-proxy-metrics">
-        <div>
-          <span>Requests</span>
-          <strong>{requests.length}</strong>
-        </div>
-        <div>
-          <span>Completed</span>
-          <strong>{completed}</strong>
-        </div>
-        <div>
-          <span>Needs attention</span>
-          <strong>{requests.filter((row) => ["failed", "cancelled", "incomplete"].includes(row.status)).length}</strong>
-        </div>
-        <div>
-          <span>In progress</span>
-          <strong>{requests.filter((row) => row.status === "running").length}</strong>
-        </div>
-      </div>
       <div class="api-proxy-split">
-        <section class="api-proxy-diagram-pane" aria-label="Proxy route">
+        <section class="api-proxy-diagram-pane" aria-label="Proxy route" tabIndex={0}>
           <div class="api-section-heading">
             <h4>Request route</h4>
-            <small>External calls only</small>
+            <button
+              type="button"
+              aria-label="Proxy connection settings"
+              title="Proxy connection settings"
+              onClick={() => setConnectionOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path d="m9 3 6 0 1 4 4 1v7l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4Z" />
+                <circle cx="12" cy="11.5" r="3" />
+              </svg>
+            </button>
           </div>
-          <div
-            class="api-proxy-flow"
-            role="img"
-            aria-label="API clients connect to Codex Manager, which forwards requests to the active saved-account Codex backend"
-          >
-            <div class="api-proxy-node">
-              <strong>API clients</strong>
-              <small>OpenAI / Claude compatible</small>
-            </div>
-            <span class="api-proxy-edge" aria-hidden="true">
-              &#8595;
-            </span>
-            <div class="api-proxy-node is-router">
-              <strong>Codex Manager</strong>
-              <small>API proxy /v1</small>
-            </div>
-            <span class="api-proxy-edge" aria-hidden="true">
-              &#8595;
-            </span>
-            <div class="api-proxy-node">
-              <strong>Codex backend</strong>
-              <small>Active saved account</small>
-            </div>
-          </div>
+          <ApiProxyRoutes requests={requests} connected={props.connected} privacyMode={props.privacyMode ?? false} />
         </section>
         <section class="api-proxy-log-pane" aria-label="Recent proxy logs">
           <div class="api-section-heading">
-            <h4>{allLogs ? "All request logs" : "Recent logs"}</h4>
-            <button type="button" aria-pressed={allLogs} onClick={() => setAllLogs((value) => !value)}>
-              {allLogs ? "Show recent" : "Show all logs"}
-            </button>
+            <div class="api-log-title">
+              <h4 title="Latest 100 external requests. Cleared on host restart.">
+                {allLogs ? "All request logs" : "Recent logs"}
+              </h4>
+              <span class="api-proxy-update" role="status">
+                {props.loading
+                  ? "Loading proxy activity…"
+                  : props.snapshot
+                    ? `Updated ${new Date(props.snapshot.capturedAt).toLocaleTimeString()}`
+                    : "Proxy activity unavailable. Refresh to retry; the host may need an update."}
+              </span>
+            </div>
+            <div class="api-log-actions">
+              <button
+                type="button"
+                aria-label="Refresh proxy"
+                title="Refresh proxy"
+                disabled={!props.connected || props.loading}
+                onClick={props.onRefresh}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <path d="M20 7v5h-5M4 17v-5h5" />
+                  <path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                aria-label={allLogs ? "Show recent" : "Show all logs"}
+                aria-pressed={allLogs}
+                onClick={() => setAllLogs((value) => !value)}
+              >
+                {allLogs ? "Recent" : "All logs"}
+              </button>
+            </div>
           </div>
           {props.snapshot ? (
-            <RequestTable requests={allLogs ? requests : requests.slice(0, 8)} detailed={allLogs} />
+            <RequestTable
+              requests={allLogs ? requests : requests.slice(0, 8)}
+              detailed={allLogs}
+              privacyMode={props.privacyMode ?? false}
+            />
           ) : null}
         </section>
       </div>
-      <p class="api-proxy-retention">Latest 100 external requests · Cleared on host restart</p>
+      <ApiProxyConnection
+        open={connectionOpen}
+        baseUrl={props.baseUrl}
+        keyAccess={props.keyAccess}
+        onClose={() => setConnectionOpen(false)}
+      />
     </section>
   );
 }

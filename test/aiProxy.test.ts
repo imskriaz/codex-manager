@@ -28,7 +28,7 @@ let root: string,
   proxy: AiProxy,
   enabled: boolean,
   allowed: boolean;
-const active = { id: "account-a", isActive: true, enabled: true, tokenRefreshEnabled: false };
+const active = { id: "account-a", email: "fixture-account@example.test", isActive: true, enabled: true, tokenRefreshEnabled: false };
 const repo = {
   listAccounts: vi.fn(async () => [active]),
   getAccount: vi.fn(async () => active),
@@ -118,7 +118,8 @@ it('records real proxy usage and safe failure metadata without credentials or bo
   const response = await post('/v1/chat/completions', chat());
   await response.text();
   const entry = readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))!;
-  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4 });
+  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4, apiKeyName: 'AI', accountId: 'account-a', accountEmail: 'fixture-account@example.test' });
+  expect(entry.apiKeyId).toBeTruthy();
   expect(entry.durationMs).toBeGreaterThanOrEqual(0);
   expect(JSON.stringify(entry)).not.toContain('Hello');
   expect(JSON.stringify(entry)).not.toContain(key);
@@ -272,6 +273,8 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
   ).toBe("a");
   expect(upstream).toHaveBeenCalledOnce();
   expect((await fetch(origin + "/v1/models/no", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(404);
+  const cachedModelLog = readApiProxyHistory().requests[0];
+  expect(cachedModelLog).toMatchObject({accountId:'account-a',accountEmail:'fixture-account@example.test',apiKeyName:'AI'});
   repo.getTokens.mockResolvedValue({ idToken: "", accessToken: "changed", accountId: "workspace-a" });
   await fetch(origin + "/v1/models", { headers: { Authorization: `Bearer ${key}` } });
   expect(upstream).toHaveBeenCalledTimes(2);
@@ -312,7 +315,7 @@ it.each([401, 429])("checks rejected upstream status %s and retries only after a
   vi.mocked(upstream)
     .mockResolvedValueOnce(new Response("", { status }) as never)
     .mockResolvedValueOnce(generation() as never);
-  const replacement = { ...active, id: 'account-b' };
+  const replacement = { ...active, id: 'account-b', email: 'replacement@example.test' };
   vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo, view, options) => {
     expect(view.deferHostReload).toBe(true);
     expect(options?.quotaRejectedAccountId).toBe(status === 429 ? active.id : undefined);
@@ -320,7 +323,10 @@ it.each([401, 429])("checks rejected upstream status %s and retries only after a
     repo.getTokens.mockResolvedValue({ idToken: '', accessToken: 'next-access', accountId: 'workspace-b' });
     return true;
   });
-  expect((await post("/v1/chat/completions", chat())).status).toBe(200);
+  const response = await post("/v1/chat/completions", chat());
+  expect(response.status).toBe(200);
+  await response.text();
+  expect(readApiProxyHistory().requests.find(row=>row.id===response.headers.get('x-request-id'))).toMatchObject({accountId:'account-b',accountEmail:'replacement@example.test',apiKeyName:'AI'});
   expect(refreshSingleQuota).toHaveBeenCalledOnce(); expect(maybeAutoSwitchForActiveQuota).toHaveBeenCalledOnce();
   expect(upstream).toHaveBeenCalledTimes(2);
   expect(vi.mocked(upstream).mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer next-access', 'ChatGPT-Account-Id': 'workspace-b' });

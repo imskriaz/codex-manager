@@ -10,6 +10,7 @@ import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironme
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
 import { startApiProxyLog } from './aiProxyHistory';
+import type { ApiProxyRequestLog } from '../domain/dashboard/apiProxy';
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
 import { createSharedInspection, waitWithin } from "../utils/concurrency";
 import {
@@ -133,7 +134,7 @@ async function readBody(request: IncomingMessage, signal: AbortSignal): Promise<
 export class AiProxy {
   private readonly running = new Set<AbortController>();
   private stopped = false;
-  private models?: { key: string; at: number; data: Model[] };
+  private models?: { key: string; at: number; data: Model[]; accountId?: string; accountEmail?: string };
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository,
@@ -183,6 +184,8 @@ export class AiProxy {
       const candidate = bearer ?? apiKey;
       const token = await readDashboardApiToken(this.context, candidate);
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
+      log.apiKeyId = token.id;
+      log.apiKeyName = token.name;
       if (apiTokenProjects(token).length || !hasApiPermission(token, "aiProxy"))
         throw new AiProxyError(
           403,
@@ -201,7 +204,7 @@ export class AiProxy {
       );
       const path = url.pathname;
       if (request.method === "GET" && (path === "/v1/models" || path.startsWith("/v1/models/"))) {
-        const models = await this.listModels(signal);
+        const models = await this.listModels(signal, log);
         const format = (model: Model): Json =>
           protocol === "claude"
             ? { id: model.id, type: "model", display_name: model.name, created_at: "1970-01-01T00:00:00Z" }
@@ -248,7 +251,7 @@ export class AiProxy {
       const normalized = normalizeAiRequest(body, generationProtocol);
       log.model = String(normalized.body['model']);
       signal.throwIfAborted();
-      const upstream = await this.fetchBackend("/responses", normalized.body, signal);
+      const upstream = await this.fetchBackend("/responses", normalized.body, signal, log);
       acceptedGeneration = true;
       const contentType = upstream.headers.get("content-type");
       if (!upstream.body || (contentType && !contentType.includes("text/event-stream"))) {
@@ -356,7 +359,8 @@ export class AiProxy {
   private async fetchBackend(
     path: string,
     body: Json | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    route?: Pick<ApiProxyRequestLog, 'accountId' | 'accountEmail'>
   ): Promise<Awaited<ReturnType<typeof upstreamFetch>>> {
     const tried = new Set<string>();
     const view = { refresh: this.refresh, deferHostReload: true };
@@ -395,6 +399,7 @@ export class AiProxy {
         const latest = await waitWithin(this.repo.getAccount(account.id), 5000, 'The active account could not be verified.', signal);
         if (!latest?.isActive || latest.enabled === false || !this.canUseAccount(account.id))
           throw new AiProxyError(409, "The active account changed. Retry the request.", "api_error");
+        if (route) { route.accountId = latest.id; route.accountEmail = latest.email?.slice(0, 254); }
         const dispatcher = getCodexProxyDispatcher();
         const result = await upstreamFetch(`${CODEX_API_BASE}/backend-api/codex${path}`, {
           method: body ? "POST" : "GET",
@@ -474,7 +479,7 @@ export class AiProxy {
     throw new AiProxyError(503, "No account could complete this request.", "api_error");
   }
 
-  private async listModels(signal: AbortSignal): Promise<Model[]> {
+  private async listModels(signal: AbortSignal, log: ApiProxyRequestLog): Promise<Model[]> {
     const account = (await this.repo.listAccounts()).find((item) => item.isActive);
     if (!account || account.enabled === false || !this.canUseAccount(account.id))
       throw new AiProxyError(503, "Select an enabled account available on this device in Account Center.", "api_error");
@@ -482,14 +487,19 @@ export class AiProxy {
     const key = `${account.id}:${createHash("sha256")
       .update(tokens?.accessToken ?? "")
       .digest("hex")}`;
-    if (this.models?.key === key && Date.now() - this.models.at < 60_000) return this.models.data;
-    return createSharedInspection(
+    if (this.models?.key === key && Date.now() - this.models.at < 60_000) {
+      Object.assign(log, { accountId: this.models.accountId, accountEmail: this.models.accountEmail });
+      return this.models.data;
+    }
+    const result = await createSharedInspection(
       `ai-models:${key}`,
       async (discoverySignal) => {
+        const route: Pick<ApiProxyRequestLog, 'accountId' | 'accountEmail'> = {};
         const response = await this.fetchBackend(
           `/models?client_version=${CODEX_WIRE_VERSION}`,
           undefined,
-          discoverySignal
+          discoverySignal,
+          route
         );
         let text = "",
           bytes = 0;
@@ -526,11 +536,13 @@ export class AiProxy {
         if (!data.length)
           throw new AiProxyError(503, "No API models are available for the active account.", "api_error");
         const current = (await this.repo.listAccounts()).find((item) => item.isActive);
-        if (current?.id === account.id) this.models = { key, at: Date.now(), data };
-        return data;
+        if (current?.id === account.id) this.models = { key, at: Date.now(), data, ...route };
+        return { data, ...route };
       },
       signal,
       15_000
     );
+    Object.assign(log, { accountId: result.accountId, accountEmail: result.accountEmail });
+    return result.data;
   }
 }

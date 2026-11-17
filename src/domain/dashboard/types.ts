@@ -1158,6 +1158,7 @@ export interface DashboardActionResultPayload {
   fileDownload?: { filename: string; text: string };
   sharedJson?: string;
   apiToken?: string;
+  apiTokenId?: string;
   apiEndpoint?: string;
   apiProjects?: DashboardCliProject[];
   apiTokens?: import('./apiActions').DashboardApiToken[];
