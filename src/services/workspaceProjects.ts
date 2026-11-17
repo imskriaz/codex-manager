@@ -8,6 +8,41 @@ import { runCrossWindowExclusive, sharedPathKey } from "../utils/crossWindowOper
 import { waitWithin } from "../utils/concurrency";
 
 const NAMESPACE = "workspace-projects";
+const HIDDEN_NAMESPACE = "hidden-workspace-projects";
+
+export function hiddenWorkspaceProjectPaths(): string[] {
+  return getSqliteStateStore()?.keys(HIDDEN_NAMESPACE) ?? [];
+}
+
+export function workspaceProjectLabels(projects: DashboardCliProject[]): DashboardCliProject[] {
+  const hidden = new Set(hiddenWorkspaceProjectPaths());
+  return [...new Map([...projects, ...readWorkspaceProjects()].map(project => [projectStorageKey(project.path), project])).values()]
+    .filter(project => !hidden.has(projectStorageKey(project.path)));
+}
+
+function validateProjectName(name: unknown): string {
+  if (
+    typeof name !== "string" ||
+    name !== name.trim() ||
+    name.length > 120 ||
+    !name.length ||
+    /[<>:"/\\|?*]/.test(name) ||
+    [...name].some((char) => char.charCodeAt(0) < 32) ||
+    /[. ]$/.test(name) ||
+    /^\.{1,2}$/.test(name) ||
+    /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(name)
+  )
+    throw new Error("Enter a project name of up to 120 characters without path separators or reserved filename characters.");
+  return name;
+}
+
+function projectStorageKey(projectPath: unknown): string {
+  if (typeof projectPath !== "string" || projectPath.length > 4096 || projectPath.includes("\0"))
+    throw new Error("Choose a saved project before editing it.");
+  const normalized = normalizeNativePath(projectPath.trim());
+  if (!path.isAbsolute(normalized)) throw new Error("Choose an absolute project folder path.");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
 
 /** Authenticated dashboard users browse folders on the selected host, never browser-local paths. */
 export async function browseWorkspaceFolders(folder?: unknown) {
@@ -47,22 +82,31 @@ export function readWorkspaceProjects(): DashboardCliProject[] {
     : [];
 }
 
+export function renameWorkspaceProject(projectPath: unknown, name: unknown): DashboardCliProject {
+  const key = projectStorageKey(projectPath);
+  const label = validateProjectName(name);
+  const store = getSqliteStateStore();
+  if (!store) throw new Error("Project storage is unavailable. The project was not renamed.");
+  const project = store.get<DashboardCliProject>(NAMESPACE, key);
+  if (!project) throw new Error("This project is not saved on the selected system. Refresh the project list and try again.");
+  const updated = { ...project, label };
+  store.set(NAMESPACE, key, updated);
+  return updated;
+}
+
+export function removeWorkspaceProject(projectPath: unknown): void {
+  const key = projectStorageKey(projectPath);
+  const store = getSqliteStateStore();
+  if (!store) throw new Error("Project storage is unavailable. The project was not removed.");
+  store.transaction(() => {
+    store.set(NAMESPACE, key, undefined);
+    store.set(HIDDEN_NAMESPACE, key, true);
+  });
+}
+
 /** Register the selected folder, creating a named child only when needed. */
 export async function createWorkspaceProject(name: unknown, folder: unknown): Promise<DashboardCliProject> {
-  if (name === undefined) name = "";
-  if (
-    typeof name !== "string" ||
-    name !== name.trim() ||
-    name.length > 120 ||
-    /[<>:"/\\|?*]/.test(name) ||
-    [...name].some((char) => char.charCodeAt(0) < 32) ||
-    /[. ]$/.test(name) ||
-    /^\.{1,2}$/.test(name) ||
-    /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(name)
-  )
-    throw new Error(
-      "Enter a project name of up to 120 characters without path separators or reserved filename characters."
-    );
+  const label = name === undefined || name === "" ? "" : validateProjectName(name);
   if (
     typeof folder !== "string" ||
     folder.length > 4096 ||
@@ -77,7 +121,7 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
   );
   if (!(await waitWithin(fs.stat(parent), 5_000, "The parent folder did not respond.")).isDirectory())
     throw new Error("The parent path must be an existing folder.");
-  const destination = path.join(parent, name);
+  const destination = path.join(parent, label);
   const target = await waitWithin(fs.realpath(destination), 5_000, "The project folder did not respond.").catch(error => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return destination;
     throw error;
@@ -91,7 +135,7 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
       throw new Error("The saved project list is full (200 projects). No folder was created.");
     let created = false;
     try {
-      if (name) {
+      if (label) {
         await waitWithin(fs.mkdir(target), 5_000, `Project creation was not confirmed. Check ${target} before retrying.`);
         created = true;
       }
@@ -100,10 +144,11 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
     }
     if (!(await waitWithin(fs.stat(target), 5_000, "The project folder did not respond.")).isDirectory())
       throw new Error("A file already exists at the project path. Choose a folder or another name.");
-    if (saved) return saved;
-    const project = { id: target, label: name || path.basename(target) || target, path: target };
+    if (saved) { store.set(HIDDEN_NAMESPACE, key, undefined); return saved; }
+    const project: DashboardCliProject = { id: target, label: label || path.basename(target) || target, path: target };
     try {
       store.set(NAMESPACE, key, project);
+      store.set(HIDDEN_NAMESPACE, key, undefined);
     } catch (error) {
       throw new Error(
         `The ${created ? 'folder was created at' : 'existing folder is unchanged at'} ${target}, but the project list could not be saved. Add this existing folder after storage recovers. ${error instanceof Error ? error.message : String(error)}`

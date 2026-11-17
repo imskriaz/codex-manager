@@ -231,6 +231,7 @@ function App() {
   const apiUncertainRef=useRef(false);
 
   const [apiTokens, setApiTokens] = useState<import('../../src/domain/dashboard/apiActions').DashboardApiToken[]>([]);
+  const [dashboardTarget, setDashboardTarget] = useState<HTMLElement | null>(null);
   const [accountCenterView, setAccountCenterView] = useState<'cards' | 'list'>('cards');
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
@@ -555,6 +556,7 @@ function App() {
           : current);
       }
       if (action === 'setAccountTags' || action === 'manageAccountTag') recordSubmissionResult(requestId, 'failed', 'The tag action timed out and may have completed. Your draft is kept; check the accounts before retrying.');
+      if (action === 'moveCodexCliSession') showNotice({ level: 'warning', message: 'The session move timed out and may have completed. Refresh sessions before retrying.' });
       if (action === "getUsageGraph" && usageGraphRequestRef.current === requestId) {
         usageGraphRequestRef.current = undefined;
         setUsageGraphError("Loading saved graph data timed out. Retry to query the database again.");
@@ -1541,6 +1543,7 @@ function App() {
           "setCodexSessionQueue",
           "openCodexCliSession",
           "renameCodexCliSession",
+          "moveCodexCliSession",
           "forkCodexCliSession",
           "archiveCodexCliSession",
           "unarchiveCodexCliSession",
@@ -1575,7 +1578,7 @@ function App() {
             return updated ? [mergeConfirmedCliSession(updated, current.find(session => sameCliSessionTarget(session, updated)), message.action), ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
           });
         }
-        if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue"].includes(message.action) && message.payload?.cliSession)
+        if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "moveCodexCliSession", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue"].includes(message.action) && message.payload?.cliSession)
           setSelectedCliSession(reconcileCliSessionStatus(mergeConfirmedCliSession(message.payload.cliSession, selectedCliSession, message.action), cliLiveStatesRef.current));
         if (
           isBrowserDashboard &&
@@ -2773,83 +2776,7 @@ function App() {
     );
   };
 
-  return (
-    <>
-      <a class="skip-link" href="#dashboard-main">
-        Skip to main content
-      </a>
-      {(notice && notice.level !== 'info') || (hasBrowserWorkspaceShell(browserPath) && connectionBannerStage)
-        ? createPortal(
-            <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
-              {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage ? <WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} /> : null}
-              {notice && notice.level !== 'info' ? <div
-                key={notice.id}
-                class={`dashboard-notice is-${notice.level}`}
-                role={notice.level === "error" ? "alert" : "status"}
-              >
-                <span>{notice.message}</span>
-                <button
-                  type="button"
-                  aria-label="Dismiss notification"
-                  onClick={() => {
-                    noticeControllerRef.current?.dismiss(notice.id);
-                    closeBrowserPush();
-                  }}
-                >
-                  ×
-                </button>
-              </div> : null}
-            </div>,
-            document.body
-          )
-        : null}
-      {isCliSessionsPath(browserPath) && backgroundCodexRequest && (backgroundCodexRequest.kind === 'question' || !activeCodexRequest)
-        ? createPortal(
-            <div class="codex-request-background" role="alert">
-              <span>{sameCliSessionTarget({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }, currentSessionTarget()) ? 'Codex has a question in this session.' : 'Codex is waiting for input in another session.'}</span>
-              <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
-              <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => { if (questionNotifications.active) { codexPrompts.dismiss(codexPromptKey(questionNotifications.active)); questionNotifications.dismiss(questionNotifications.active); } else codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest)); }}>×</button>
-            </div>,
-            document.body
-          )
-        : null}
-      <main
-        id="dashboard-main"
-        class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
-      >
-        {!hasBrowserWorkspaceShell(browserPath) ? recovery : null}
-        <fieldset class="dashboard-action-scope" aria-label="Dashboard actions">
-        <div hidden={!apiTokenOpen} class="api-page-container">
-      <ApiWorkspace
-        open={apiTokenOpen}
-        baseUrl={snapshot.apiBaseUrl}
-        privacyMode={state.privacyMode}
-        token={apiToken}
-        tokenId={apiTokenId}
-        tokens={apiTokens}
-        proxy={apiProxy}
-        projects={apiProjects}
-        error={apiError}
-        notice={apiNotice}
-        uncertain={apiUncertain}
-        loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
-        onRefresh={() => sendApiRequest("listApiTokens")}
-        connected={!isBrowserDashboard || !connectionUnavailable}
-        enabled={snapshot.settings.apiAccessEnabled === true}
-        pending={isActionPending("generateApiToken") || isActionPending("editApiToken") || isActionPending("copyApiToken") || isActionPending("revokeApiToken")}
-        onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
-        onEdit={(token, name, projectPaths, permissions) => sendApiRequest('editApiToken', { tokenId: token.id, expectedApiToken: token, tokenName: name, tokenProjectPaths: projectPaths, tokenPermissions: permissions })}
-        onCopy={tokenId => { setApiToken(undefined); setApiTokenId(undefined); sendApiRequest('copyApiToken', {tokenId}); }}
-        onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
-      />
-        </div>
-        <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
-          sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
-          selectedSystem={selectedPeer?.id}
-          connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
-          targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
-          sendAction={sendAction} onOpenSession={selectCliSession}
-        /></div>
+  const dashboardContent = (<>
         {snapshot.indexHealth.status !== "healthy" ? (
           <section class="section">
             <RecoveryPanel
@@ -2864,7 +2791,7 @@ function App() {
             />
           </section>
         ) : null}
-        <section class="section" hidden={browserPath === '/tasks' || browserPath === '/api'}>
+        <section class="section">
           <div class="hero">
             <div class="brand">
               <span id="dashboard-sidebar-toggle-slot" class="content-sidebar-slot" />
@@ -2986,7 +2913,7 @@ function App() {
             usageGraphPending={isActionPending("getUsageGraph")}
             usageGraphRevision={`${snapshot.usageSummary?.revision ?? 0}:${usageGraphVersion}:${snapshot.settings.tokenHistoryRetentionDays ?? 30}`}
             usageGraphSource={selectedPeerId}
-            usageGraphPaused={isBrowserDashboard && isCliSessionsPath(browserPath)}
+            usageGraphPaused={isBrowserDashboard && isCliSessionsPath(browserPath) && !dashboardTarget}
             onLoadUsageGraph={(query) => {
               setUsageGraphError(undefined);
               usageGraphSourceRef.current = selectedPeerId;
@@ -3039,11 +2966,93 @@ function App() {
           />
 
         </section>
-        {displayedAccounts.length > 0 && browserPath !== '/tasks' && browserPath !== '/api' ? (
+        {displayedAccounts.length > 0 ? (
           renderAccountSection()
         ) : null}
+  </>);
+
+  return (
+    <>
+      <a class="skip-link" href="#dashboard-main">
+        Skip to main content
+      </a>
+      {(notice && notice.level !== 'info') || (hasBrowserWorkspaceShell(browserPath) && connectionBannerStage)
+        ? createPortal(
+            <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
+              {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage ? <WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} /> : null}
+              {notice && notice.level !== 'info' ? <div
+                key={notice.id}
+                class={`dashboard-notice is-${notice.level}`}
+                role={notice.level === "error" ? "alert" : "status"}
+              >
+                <span>{notice.message}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss notification"
+                  onClick={() => {
+                    noticeControllerRef.current?.dismiss(notice.id);
+                    closeBrowserPush();
+                  }}
+                >
+                  ×
+                </button>
+              </div> : null}
+            </div>,
+            document.body
+          )
+        : null}
+      {isCliSessionsPath(browserPath) && backgroundCodexRequest && (backgroundCodexRequest.kind === 'question' || !activeCodexRequest)
+        ? createPortal(
+            <div class="codex-request-background" role="alert">
+              <span>{sameCliSessionTarget({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }, currentSessionTarget()) ? 'Codex has a question in this session.' : 'Codex is waiting for input in another session.'}</span>
+              <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
+              <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => { if (questionNotifications.active) { codexPrompts.dismiss(codexPromptKey(questionNotifications.active)); questionNotifications.dismiss(questionNotifications.active); } else codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest)); }}>×</button>
+            </div>,
+            document.body
+          )
+        : null}
+      <main
+        id="dashboard-main"
+        class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
+      >
+        {!hasBrowserWorkspaceShell(browserPath) ? recovery : null}
+        <fieldset class="dashboard-action-scope dashboard-content" aria-label="Dashboard actions">
+        <div hidden={!apiTokenOpen} class="api-page-container">
+      <ApiWorkspace
+        open={apiTokenOpen}
+        baseUrl={snapshot.apiBaseUrl}
+        privacyMode={state.privacyMode}
+        token={apiToken}
+        tokenId={apiTokenId}
+        tokens={apiTokens}
+        proxy={apiProxy}
+        projects={apiProjects}
+        error={apiError}
+        notice={apiNotice}
+        uncertain={apiUncertain}
+        loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
+        onRefresh={() => sendApiRequest("listApiTokens")}
+        connected={!isBrowserDashboard || !connectionUnavailable}
+        enabled={snapshot.settings.apiAccessEnabled === true}
+        pending={isActionPending("generateApiToken") || isActionPending("editApiToken") || isActionPending("copyApiToken") || isActionPending("revokeApiToken")}
+        onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
+        onEdit={(token, name, projectPaths, permissions) => sendApiRequest('editApiToken', { tokenId: token.id, expectedApiToken: token, tokenName: name, tokenProjectPaths: projectPaths, tokenPermissions: permissions })}
+        onCopy={tokenId => { setApiToken(undefined); setApiTokenId(undefined); sendApiRequest('copyApiToken', {tokenId}); }}
+        onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
+      />
+        </div>
+        <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
+          sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
+          selectedSystem={selectedPeer?.id}
+          connected={(!isBrowserDashboard || !connectionUnavailable) && selectedPeer?.connected !== false}
+          targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
+          sendAction={sendAction} onOpenSession={selectCliSession}
+        /></div>
+        {!dashboardTarget && browserPath !== '/tasks' && browserPath !== '/api' ? dashboardContent : null}
         </fieldset>
       </main>
+
+      {dashboardTarget ? createPortal(<div class={`panel dashboard-density-compact workspace-dashboard-content ${state.privacyMode ? "privacy-hidden" : ""}`}><fieldset class="dashboard-action-scope dashboard-content" aria-label="Dashboard actions">{dashboardContent}</fieldset></div>, dashboardTarget) : null}
 
       <SettingsOverlay
         connected={!isBrowserDashboard || !connectionUnavailable}
@@ -3267,6 +3276,7 @@ function App() {
               account={overviewAccount}
               localAccounts={snapshot.accounts}
               onSwitchAccount={openBrowserSwitchPicker}
+              onDashboardTarget={setDashboardTarget}
               renderAccounts={() => renderAccountSection(true)}
               onSettings={() => dispatch({ type: "open-settings" })}
               switchingAccount={state.pendingActions.some(request => request.action === "switch")}
@@ -3286,6 +3296,10 @@ function App() {
               onRefresh={() => {
                 requestCliSessions(true, true);
               }}
+              onProjectChanged={() => {
+                requestCliSessions(true, true);
+              }}
+              onMoveSession={(session, destinationProjectPath) => requestSessionAction('moveCodexCliSession', session, { projectPath: session.projectPath, destinationProjectPath })}
               onSelect={selectCliSession}
               onBackToList={() => {
                 navigateDashboardPath("/workspace", setBrowserPath);

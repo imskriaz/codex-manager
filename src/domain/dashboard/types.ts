@@ -536,6 +536,9 @@ export type DashboardActionName =
   | "workspaceBrowser"
   | "browseWorkspaceFolders"
   | "createWorkspaceProject"
+  | "renameWorkspaceProject"
+  | "removeWorkspaceProject"
+  | "moveCodexCliSession"
   | "addAccount"
   | "setPrivacyMode"
   | "setCrossPcSyncEnabled"
@@ -735,6 +738,7 @@ export interface DashboardActionPayload {
   fileDownloadRevision?: string;
   fileDownloadNative?: boolean;
   projectName?: string;
+  destinationProjectPath?: string;
   parentFolder?: string;
   includeBranchDiff?: boolean;
   gitHistory?: DashboardWorkspaceGitRequest;
@@ -786,6 +790,8 @@ export interface DashboardCliSessionSummary {
   runningSince?: number;
   /** A recorded unfinished turn or retained reload recovery can be reopened. */
   interrupted?: boolean;
+  /** The latest turn was stopped before finishing. Display ordering only. */
+  stopped?: boolean;
   updatedAt?: string;
   status: "running" | "idle" | "unknown";
   /** Inspection failure retained while read-only history remains available. */
@@ -903,6 +909,7 @@ export interface DashboardCliComposerConfig {
   models: DashboardCliModelOption[];
   /** Workspace folders available as the Codex project working directory. */
   projects?: DashboardCliProject[];
+  hiddenProjectPaths?: string[];
   defaultModel?: string;
   defaultReasoningEffort?: string;
   defaultSandboxMode: DashboardCliSandboxMode;

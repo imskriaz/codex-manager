@@ -18,6 +18,7 @@ import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
+import { moveCodexCliSession, resolveRecordedSessionProject } from '../src/services/codexSessionResume';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -54,6 +55,41 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it.each(['confirmed', 'unconfirmed', 'running', 'unknown', 'queued', 'stale'] as const)('changes the native working folder only after an idle verified move (%s)', async scenario => {
+    const destination = path.join(root, 'destination');
+    await mkdir(destination);
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Move me' }) + '\n');
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'));
+    db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,cwd TEXT,archived INTEGER)');
+    db.prepare('INSERT INTO threads VALUES(?,?,0)').run(id, root);
+    db.close();
+    if (scenario === 'running') vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    if (scenario === 'unknown') vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
+    if (scenario === 'queued') writeCodexSessionPreference(root, id, { queue: true });
+    const rpc = { request: vi.fn(async () => {
+      if (scenario === 'confirmed') {
+        const db = new DatabaseSync(path.join(root, 'state_5.sqlite'));
+        try { db.prepare('UPDATE threads SET cwd=? WHERE id=?').run(destination, id); } finally { db.close(); }
+      }
+      return { thread: { id, cwd: destination } };
+    }), close: vi.fn(), startAndWaitForTurn: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    const move = moveCodexCliSession(id, destination, scenario === 'stale' ? destination : root);
+    if (scenario === 'confirmed') {
+      expect(await move).toMatchObject({ id, projectPath: destination });
+      expect(rpc.request).toHaveBeenCalledWith('thread/resume', { threadId: id, cwd: destination, excludeTurns: true }, 15_000);
+      expect(await resolveRecordedSessionProject(id)).toBe(destination);
+      expect(await readCodexCliSessionSummary(id)).toMatchObject({ projectPath: destination });
+      expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+      expect(rpc.close).toHaveBeenCalledOnce();
+    } else {
+      await expect(move).rejects.toThrow(scenario === 'unconfirmed' ? 'did not confirm' : scenario === 'queued' ? 'queue' : scenario === 'stale' ? 'different project' : 'idle');
+      if (scenario !== 'unconfirmed') expect(rpc.request).not.toHaveBeenCalled();
+      expect(await resolveRecordedSessionProject(id)).toBe(root);
+    }
+  });
   it('starts an independent native session while another startup is waiting and another turn is running', async () => {
     const ids = [id, '01a04882-d037-7a42-ad24-9afb61901200', '01a04882-d037-7a42-ad24-9afb61901201'];
     let acceptFirst!: () => void, finish!: () => void;

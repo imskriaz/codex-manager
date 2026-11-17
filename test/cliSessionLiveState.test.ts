@@ -49,9 +49,10 @@ describe("shared browser/native live turn reconciliation", () => {
   it("keeps failed turns resumable and clears recovery when running or completed", () => {
     const row = { id: "chat", title: "Task", status: "idle" as const, interrupted: true, runningSince: 10 };
     const reconcile = (status: DashboardCodexSessionLiveState["status"]) => reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status }) });
-    expect(reconcile("running")).toMatchObject({ status: "running", interrupted: false });
-    expect(reconcile("completed")).toMatchObject({ status: "idle", interrupted: false, runningSince: undefined });
+    expect(reconcile("running")).toMatchObject({ status: "running", interrupted: false, stopped: false });
+    expect(reconcile("completed")).toMatchObject({ status: "idle", interrupted: false, stopped: false, runningSince: undefined });
     expect(reconcile("cancelled").interrupted).toBe(false);
+    expect(reconcile("cancelled").stopped).toBe(true);
     expect(reconcile("failed")).toMatchObject({ status: "idle", interrupted: true, runningSince: undefined });
     expect(reconcile("disconnected")).toMatchObject({ status: "unknown", interrupted: true, canStop: false, steerTurnId: undefined });
   });

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects } from '../src/services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from '../src/services/workspaceProjects';
 import { removeTestDirectory } from './testFilesystem';
 
 let root: string, store: SqliteStateStore;
@@ -22,6 +22,31 @@ it('creates and remembers a named folder across storage reopen without changing 
   configureSqliteStateStore(undefined); store.close(); store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
   expect(readWorkspaceProjects()).toEqual([project]);
   expect(await fs.readFile(path.join(root, 'keep.txt'), 'utf8')).toBe('kept');
+});
+it('renames a saved project label and removes only its registry entry', async () => {
+  const project = await createWorkspaceProject('Project', root);
+  expect(renameWorkspaceProject(project.path, 'Renamed')).toEqual({ ...project, label: 'Renamed' });
+  expect(readWorkspaceProjects()).toEqual([{ ...project, label: 'Renamed' }]);
+  removeWorkspaceProject(project.path);
+  expect(readWorkspaceProjects()).toEqual([]);
+  expect((await fs.stat(project.path)).isDirectory()).toBe(true);
+});
+it('overrides discovered labels, keeps removals hidden after refresh, and supports adding the folder again', async () => {
+  const project = await createWorkspaceProject('Existing', root);
+  renameWorkspaceProject(project.path, 'My label');
+  expect(workspaceProjectLabels([project])[0]?.label).toBe('My label');
+  removeWorkspaceProject(project.path);
+  expect(workspaceProjectLabels([project])).toEqual([]);
+  expect(hiddenWorkspaceProjectPaths()).toHaveLength(1);
+  await createWorkspaceProject(undefined, project.path);
+  expect(hiddenWorkspaceProjectPaths()).toEqual([]);
+  expect(workspaceProjectLabels([project])).toHaveLength(1);
+});
+it('rejects edits to unknown projects and invalid labels', async () => {
+  expect(() => renameWorkspaceProject(root, 'Renamed')).toThrow('not saved');
+  const project = await createWorkspaceProject('Project', root);
+  expect(() => renameWorkspaceProject(project.path, 'bad/name')).toThrow('project name');
+  expect(() => removeWorkspaceProject('relative/path')).toThrow('absolute');
 });
 it.each(['.', '..', '../escape', 'a/b', 'a\\b', 'CON', 'nul.txt', 'trailing.', ' space', 'bad:name', 'x'.repeat(121), null, 10])('rejects invalid names: %s', async name => {
   await expect(createWorkspaceProject(name, root)).rejects.toThrow('project name');

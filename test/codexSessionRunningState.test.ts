@@ -116,11 +116,11 @@ describe("shared running-session detection and auto resume", () => {
   });
   it("retains an explicitly stopped conversation for non-goal recovery without calling it running", async () => {
     await appendFile(transcript, event("turn_aborted"));
-    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true, stopped: true });
     expect(await readQuotaInterruptedCodexSessionIds(home, [id], undefined, [], true)).toEqual([id]);
     expect(await readQuotaInterruptedCodexSessionIds(home, [id], undefined, [], false)).toEqual([]);
     await appendFile(transcript, event("task_started", "next-turn") + event("task_complete", "next-turn"));
-    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: false });
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: false, stopped: false });
   });
   it("reads the recorded model and thinking from native turn context across partial appends", async () => {
     const context = (model: unknown, effort: unknown) => JSON.stringify({ type: "turn_context", payload: { model, effort } });

@@ -54,6 +54,7 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
     case "getCodexSubAgentMessages":
       return 90_000;
     case "renameCodexCliSession":
+    case "moveCodexCliSession":
     case "forkCodexCliSession":
     case "archiveCodexCliSession":
     case "unarchiveCodexCliSession":

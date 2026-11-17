@@ -122,5 +122,13 @@ export function stabilizeCliSessionOrder(sessions: DashboardCliSessionSummary[],
   if (running) for (const session of sessions) {
     if (session.status !== 'unknown') running.set(key(session), session.status === 'running' && !session.archived);
   }
-  return [...sessions].sort((a, b) => (running ? Number(running.get(key(b)) ?? false) - Number(running.get(key(a)) ?? false) : 0) || order.get(key(a))! - order.get(key(b))!);
+  const statusRank = (session: DashboardCliSessionSummary): number => {
+    if (running?.get(key(session)) === true) return 0;
+    if (session.archived) return 3;
+    if (session.stopped) return 2;
+    if (session.interrupted) return 1;
+    if (session.status === 'unknown' || session.queueEnabled || session.queueError || session.goal && session.goal.status !== 'complete') return 2;
+    return 3;
+  };
+  return [...sessions].sort((a, b) => (running ? statusRank(a) - statusRank(b) : 0) || order.get(key(a))! - order.get(key(b))!);
 }

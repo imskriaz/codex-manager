@@ -31,6 +31,14 @@ it('clears removed queue and global recovery settings from cached rows without r
   expect(result.queueEnabled).toBeUndefined(); expect(result.queuePriority).toBeUndefined(); expect(result.queueError).toBeUndefined(); expect(result.autoResumeEnabled).not.toBe(true);
   expect(scan).not.toHaveBeenCalled();
 });
+it('marks cached manual stops for ordering and clears the display flag when running', async () => {
+  const generation = invalidateSessionCatalogue(store, root);
+  saveSessionCatalogue(store, root, generation, [row], Date.now());
+  writeCodexSessionPreference(root, row.id, { manualStop: true });
+  expect((await readCodexCliSessions(root))[0]?.stopped).toBe(true);
+  saveSessionStatus(store, root, row.id, 'running');
+  expect((await readCodexCliSessions(root))[0]?.stopped).toBe(false);
+});
 it('preserves a per-session Disable while global Auto Resume is enabled', async () => {
   vi.spyOn(settings, 'isAutoResumeEnabled').mockReturnValue(true);
   const generation = invalidateSessionCatalogue(store, root);

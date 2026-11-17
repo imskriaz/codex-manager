@@ -113,6 +113,7 @@ export function mergeConfirmedCliSession(incoming: DashboardCliSessionSummary, p
     queuePriority: incoming.queuePriority, queueError: incoming.queueError
   };
   if (action === 'renameCodexCliSession') return { ...merged, title: incoming.title };
+  if (action === 'moveCodexCliSession') return { ...merged, projectPath: incoming.projectPath };
   if (action === 'setCodexSessionGoalStatus') return { ...merged, goal: incoming.goal };
   return merged;
 }

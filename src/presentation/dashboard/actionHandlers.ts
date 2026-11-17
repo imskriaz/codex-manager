@@ -1,6 +1,6 @@
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
-import { browseWorkspaceFolders, createWorkspaceProject } from '../../services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
@@ -43,6 +43,7 @@ import {
   getCodexSessionReadNotice,
   readCodexCliSessionMessages,
   renameCodexCliSession,
+  moveCodexCliSession,
   setCodexSessionGoalStatus,
   clearCodexSessionGoal,
   resumeCodexSessionGoal,
@@ -1101,6 +1102,20 @@ async function runDashboardAction(
     case "createWorkspaceProject": {
       const workspaceProject = await createWorkspaceProject(payload?.projectName, payload?.parentFolder);
       return { workspaceProject, notice: { level: 'info' as const, message: `Project ready: ${workspaceProject.label}.` } };
+    }
+    case "renameWorkspaceProject": {
+      if (!readWorkspaceProjects().some(project => project.path === payload?.projectPath)) await createWorkspaceProject(undefined, await resolveWorkspaceProjectPathAsync(payload?.projectPath));
+      const workspaceProject = renameWorkspaceProject(payload?.projectPath, payload?.projectName);
+      return { workspaceProject, notice: { level: 'info' as const, message: `Project renamed to ${workspaceProject.label}.` } };
+    }
+    case "removeWorkspaceProject":
+      if (payload?.confirmed !== true) throw new Error('Confirm removing the saved project first.');
+      removeWorkspaceProject(payload?.projectPath);
+      return { notice: { level: 'info' as const, message: "Project removed from the list. Files and conversations were kept." } };
+    case "moveCodexCliSession": {
+      if (!payload?.sessionId || !payload.projectPath || !payload.destinationProjectPath) throw new Error('Choose a session and destination project.');
+      const cliSession = await moveCodexCliSession(payload.sessionId, payload.destinationProjectPath, payload.projectPath);
+      return { cliSession, notice: { level: 'info' as const, message: 'Session moved. Future work will use the destination project folder.' } };
     }
     case 'workspaceTerminal':
       return { ...await workspaceTerminal(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.terminalId, payload?.terminalRequest, payload?.terminalProfile, payload?.terminalName), workspaceTerminals: listWorkspaceTerminals() };

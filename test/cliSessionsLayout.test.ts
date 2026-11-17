@@ -613,10 +613,10 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("content-visibility: auto");
     expect(css).toContain("contain-intrinsic-size");
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll");
-    expect(css).toContain(".cli-workspace .cli-context-tab-scroll > span.is-active::after");
-    expect(css).toContain(".cli-workspace .cli-context-tab-scroll > span > button[aria-selected=\"true\"]");
+    expect(css).toContain('> span.is-active::after');
+    expect(css).toContain('> span > button[aria-selected="true"]');
     expect(css).toContain("flex: 0 0 auto; min-width: 0; border-radius: 6px;");
-    expect(css).toContain(".cli-context-tab-scroll::-webkit-scrollbar");
+    expect(css).toContain('.api-token-tabs)::-webkit-scrollbar');
     expect(source).toContain("WorkspaceCodeEditor");
     expect(editor).toContain("EditorView.lineWrapping");
     expect(source).toContain("parseUnifiedDiff");
@@ -679,7 +679,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('document.body.classList.toggle("is-cli-workspace-route", workspaceRoute)');
     expect(main).toContain('document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute)');
     expect(main).toContain("hasBrowserWorkspaceShell(browserPath)");
-    expect(main).toContain('dashboardMode={browserPath === "/" || browserPath === "/tasks"}');
+    expect(main).toContain('dashboardMode={browserPath === "/" || browserPath === "/tasks" || apiTokenOpen}');
     expect(main).toContain("is-dashboard-workspace-route");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain(
       'props.dashboardMode ? "is-dashboard-mode"'
@@ -853,7 +853,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
     expect(source).toContain('if (!isBrowserDashboard || connectionUnavailable) return;');
-    expect(source).toContain('return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);');
+    expect(source).toContain('const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || browserPath === "/api");');
     expect(source).toContain("if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("(sessionId || hasBrowserWorkspaceShell(path))) requestCliSessions(true);");
     expect(source).toContain('setSelectedPeerId(deviceId);');
@@ -1074,7 +1074,10 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="cli-compact-session-list"');
     expect(source).toContain('sessionView: parsed.sessionView === "projects" ? "projects" : "compact"');
     expect(source).not.toContain("PCs · Projects");
-    expect(source).toContain("No sessions yet. Start a new chat in this project.");
+    expect(source).toContain('class="cli-project-empty" role="status"');
+    expect(source).toContain("No sessions yet");
+    expect(source).toContain("draggable={canDrag}");
+    expect(source).not.toContain("cli-session-drag");
   });
 
   it("routes session discovery and its cache to the selected system", () => {

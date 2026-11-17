@@ -56,7 +56,7 @@ export function scopeApiResults(token: DashboardApiToken, messages: DashboardHos
     if (input.cliSessions) payload.cliSessions = input.cliSessions.filter(owns);
     if (owns(input.cliSession)) payload.cliSession = input.cliSession;
     if (owns(input.cliSubAgentSession)) { payload.cliSubAgentSession = input.cliSubAgentSession; payload.cliSubAgentMessages = input.cliSubAgentMessages; }
-    if (input.cliComposerConfig) payload.cliComposerConfig = { ...input.cliComposerConfig, projects: input.cliComposerConfig.projects?.filter(project => owns({ projectPath: project.path })) };
+    if (input.cliComposerConfig) payload.cliComposerConfig = { ...input.cliComposerConfig, projects: input.cliComposerConfig.projects?.filter(project => owns({ projectPath: project.path })), hiddenProjectPaths: input.cliComposerConfig.hiddenProjectPaths?.filter(projectPath => owns({ projectPath })) };
     return { ...message, payload };
   });
 }

@@ -1,11 +1,29 @@
 # Changelog
 
+## 2.0.6-pre.45
+
+- Reuse the full dashboard in the workspace Dashboard tab with the shared Dashboard icon and compact responsive layout from 320px phones through wide panels.
+
+## 2.0.6-pre.44
+
+- Compact empty project rows and open project rename/removal from the folder's hover edit icon.
+- Show drag handles only in folder view; move idle conversations to another project's working folder with native confirmation and visible failures. Keep list view free of drag controls.
+
+## 2.0.6-pre.43
+
+- Order sidebar sessions by running, interrupted, stopped or incomplete, then completed, preserving order within each group.
+- Use semibold session titles and bold only the selected session title in compact and project lists.
+
+## 2.0.6-pre.42
+
+- Reuse the full dashboard in the workspace Dashboard tab with compact responsive layout and the shared Dashboard icon.
+
 ## 2.0.6-pre.41
 
 - Add edit and copy icons to API keys, preserve key values when editing, and reject stale edits. Save new key values in the existing local credential store for copying; explain recovery limits for older hash-only keys.
 - Show separate Requests, In, Out, Cached, Errors, and Last used columns for the latest 100 host proxy requests, with unavailable usage distinguished from zero.
 
-## 2.0.6-pre.38
+## 2.0.6-pre.39
 
 - Keep verified positive quota usable below proactive switch thresholds in VS Code and standalone Auto Resume.
 - Follow configured Auto Switch and Auto Reset thresholds during recovery, without hidden fallback overrides or cycling between usable accounts.

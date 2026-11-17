@@ -1,6 +1,6 @@
 import { hydrateSessionImages } from './codexSessionImages';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
-import { readWorkspaceProjects } from './workspaceProjects';
+import { readWorkspaceProjects, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from './workspaceProjects';
 import { syncCodexSessionAccess } from './codexSessionAccessSync';
 import { deleteCodexSessionFromStorage } from './codexSessionStorageDelete';
 import { readSavedCodexSessionAccess, saveCodexSessionAccess } from './codexSessionAccessState';
@@ -302,7 +302,8 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
   const autoResume = isAutoResumeEnabled();
   return rows.map(row => {
     const preference = preferences.get(row.id);
-    const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
+    const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title,
+      ...(row.stopped === true || preference?.manualStop === true ? { stopped: true } : {}) };
     delete decorated.steerTurnId;
     delete decorated.autoResumeEnabled; delete decorated.queueEnabled; delete decorated.queuePriority; delete decorated.queueError;
     if (autoResume || preference?.autoResume !== undefined) decorated.autoResumeEnabled = (autoResume || preference?.autoResume === true) && preference?.autoResume !== false;
@@ -323,7 +324,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
       statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
       runningBy:status === "running" ? ownsSessionTurn(home, row.id) ? "Codex Manager" : "another Codex process" : undefined,
       runningSince:status === "running" ? row.runningSince : undefined,
-      interrupted:status === "running" ? false : row.interrupted };
+      interrupted:status === "running" ? false : row.interrupted, stopped: status === 'running' ? false : decorated.stopped };
   });
 }
 
@@ -398,7 +399,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
     const turnState = cliTranscriptTurnStateCache.get(transcriptPaths.get(entry.id) ?? "")?.state;
     summaries[index] = { ...withStoredSessionAccess(codexHome, summary, record?.access), model: summary.model ?? record?.model, reasoningEffort: summary.reasoningEffort ?? record?.reasoningEffort,
       interrupted: turnState && turnState !== "unknown" ? summary.status !== "running" && (["active", "failed", "quota-paused"].includes(turnState) || cliTranscriptTurnStateCache.get(transcriptPaths.get(entry.id) ?? "")?.cancelled === true) : undefined,
-      ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
+      ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(record?.cwd ? { projectPath: record.cwd } : {}) };
   });
   const store = getSqliteStateStore();
   if (!statusError && store && generation && deleted.length) {
@@ -411,6 +412,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   return summaries.filter(Boolean).map((summary) => {
     const preference = preferences.get(summary.id);
     return { ...summary, title: titleOverrides.get(summary.id) ?? summary.title,
+      stopped: summary.status !== 'running' && (summary.stopped === true || preference?.manualStop === true),
       ...(autoResume || preference?.autoResume !== undefined ? { autoResumeEnabled: (autoResume || preference?.autoResume === true) && preference?.autoResume !== false } : {}),
       ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3, queueError: preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined) } : {}),
     };
@@ -594,7 +596,7 @@ export async function readCodexCliSessionSummary(
   const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath, runtimeStatus, requireNativeRuntime !== "display");
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   const title = reconcileCodexSessionTitles(codexHome, [summary]).get(sessionId) ?? summary.title;
-  return { ...withStoredSessionAccess(codexHome, summary, state?.access), title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
+  return { ...withStoredSessionAccess(codexHome, summary, state?.access), title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
 /** Archived cleanup must work even when the native renderer cannot answer IPC. */
@@ -809,6 +811,7 @@ async function toCliSessionSummary(
     runningSince,
     steerTurnId: running ? steerableSessionTurn(codexHome, entry.id) : undefined,
     interrupted: turnState && turnState !== "unknown" ? !running && (["active", "failed", "quota-paused"].includes(turnState) || turnMetadata?.cancelled === true) : undefined,
+    stopped: !running && (turnState === 'stopped' || turnMetadata?.cancelled === true),
     updatedAt,
     ...state,
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
@@ -941,7 +944,7 @@ async function readKnownProjectRoots(home: string, force = false): Promise<strin
 export function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
   const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
   return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome))
-    .then(config => vscode.env.appHost === "node" ? { ...config, terminalSupported: false } : config);
+    .then(config => ({ ...config, projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), ...(vscode.env.appHost === 'node' ? { terminalSupported: false } : {}) }));
 }
 
 async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {
@@ -1944,6 +1947,31 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
       // The native rename is already committed; its transcript can restore the optional cache.
       recordPersistentEvent("warning", "session-list", "Native title changed but the local title cache is unavailable", { sessionRef: toSessionLogRef(sessionId) }, error);
     }
+  });
+}
+
+/** Resume with a new cwd without starting a turn; native storage must confirm it. */
+export async function moveCodexCliSession(sessionId: string, destination: string, source: string): Promise<DashboardCliSessionSummary> {
+  validateSessionId(sessionId);
+  if (typeof destination !== 'string' || destination.length > 4096 || destination.includes('\0') || !path.isAbsolute(normalizeNativePath(destination))) throw new Error('Choose an absolute destination project folder.');
+  const home = resolveCodexHome();
+  return runCliSessionMutation(sessionId, 'Move Codex session', async () => {
+    const session = await readCodexCliSessionSummary(sessionId, home, true);
+    if (!session || session.archived || session.subAgent || session.parentSessionId) throw new Error('Only active top-level sessions can move between projects.');
+    if (session.status !== 'idle' || session.locked || ownsSessionTurn(home, sessionId)) throw new Error('Stop the session and verify it is idle before moving it.');
+    const preference = readCodexSessionPreferences(home, [sessionId]).get(sessionId);
+    if (preference?.queue || preference?.queueClaimId || preference?.queueClaimedAt) throw new Error('Remove this session from the queue before moving it.');
+    await resolveRecordedSessionProject(sessionId, source);
+    const cwd = await fs.realpath(resolveCliProjectPath(destination));
+    await assertUsableCliProjectPath(cwd);
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. The session was not moved.');
+    await runCodexAppServerRequest('thread/resume', { threadId: sessionId, cwd, excludeTurns: true }, 15_000);
+    const recorded = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0]?.cwd;
+    const projectKey = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (!recorded || projectKey(recorded) !== projectKey(cwd)) throw new Error('Codex did not confirm the new working folder in storage. Refresh before retrying the move.');
+    const recent = getRecentNewSession(sessionId);
+    if (recent) recent.summary = { ...recent.summary, projectPath: cwd };
+    return { ...session, projectPath: cwd };
   });
 }
 

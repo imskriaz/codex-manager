@@ -9,6 +9,18 @@ it('keeps running rows in place across uncertain refreshes, then applies confirm
   expect(stabilizeCliSessionOrder(initial.map(row=>({...row,status:'unknown' as const})),order,running).map(row=>row.id)).toEqual(['busy','idle']);
   expect(stabilizeCliSessionOrder([row('busy'),row('idle')],order,running).map(row=>row.id)).toEqual(['idle','busy']);
 });
+it('groups running, interrupted, unfinished, and completed sessions in that order', () => {
+  const order = new Map<string, number>(), running = new Map<string, boolean>();
+  const sessions: DashboardCliSessionSummary[] = [
+    row('completed'),
+    { ...row('unfinished'), goal: { objective: 'Keep going', status: 'active' } },
+    { ...row('stopped'), stopped: true, interrupted: true },
+    { ...row('interrupted'), interrupted: true },
+    { ...row('running'), status: 'running' as const },
+  ];
+  expect(stabilizeCliSessionOrder(sessions, order, running).map(session => session.id)).toEqual(['running', 'interrupted', 'unfinished', 'stopped', 'completed']);
+  expect(stabilizeCliSessionOrder([...sessions].reverse(), order, running).map(session => session.id)).toEqual(['running', 'interrupted', 'unfinished', 'stopped', 'completed']);
+});
 it("preserves initial positions as timestamps and running states change", () => {
   const order = new Map<string, number>();
   expect(stabilizeCliSessionOrder([row("a"), row("b")], order).map(row => row.id)).toEqual(["a", "b"]);

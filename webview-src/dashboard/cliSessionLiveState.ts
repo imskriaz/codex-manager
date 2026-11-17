@@ -38,8 +38,8 @@ export function reconcileCliSessionStatus(
   const live = liveStates[cliSessionTargetKey(session)];
   // A later index update can describe a new turn started outside this host.
   if (!live || !isCliLiveStateCurrent(session, live)) return session;
-  const patch: Partial<DashboardCliSessionSummary> = isCliTurnActive(live) ? { status: "running", interrupted: false }
-    : ["completed", "cancelled", "failed"].includes(live.status) ? { status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed" }
+  const patch: Partial<DashboardCliSessionSummary> = isCliTurnActive(live) ? { status: "running", interrupted: false, stopped: false }
+    : ["completed", "cancelled", "failed"].includes(live.status) ? { status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed", stopped: live.status === 'cancelled' }
     : live.status === 'disconnected' ? { status: 'unknown', canStop: false, steerTurnId: undefined, interrupted: true } : {};
   return Object.keys(patch).some(key => session[key as keyof DashboardCliSessionSummary] !== patch[key as keyof DashboardCliSessionSummary]) ? { ...session, ...patch } : session;
 }
