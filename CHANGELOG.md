@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.32
+
+- Open API access at `/api` from the sidebar icon immediately after Tasks, with the task workspace preserved.
+- Redesign API keys, API Explorer, and Proxy as full-page tabs with inline key management and request details.
+- Balance the Explorer fields and response panels; show the proxy route beside recent or full external request logs, with responsive light and dark layouts.
+
 ## 2.0.6-pre.27
 
 - Keep the enabled API shortcut in the persistent Workspace Tools header after opening task pages, and remove it from the account footer.

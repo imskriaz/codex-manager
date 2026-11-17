@@ -81,7 +81,7 @@ import {
   resolveAccountModalTitle,
   SettingsOverlay,
   ShareTokenModal,
-  ApiTokenModal
+  ApiWorkspace
 } from "./panels";
 import { SavedAccountCard } from "./savedAccountCard";
 import { createInitialState, reducer, visibleDashboardSnapshot } from "./state";
@@ -150,7 +150,7 @@ function isCliSessionsPath(pathname: string): boolean {
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);
+  return pathname === "/" || pathname === "/tasks" || pathname === "/api" || isCliSessionsPath(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -221,8 +221,8 @@ function App() {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
-  const [apiTokenOpen, setApiTokenOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
+  const [apiNotice, setApiNotice] = useState<string>();
   const [apiProxy, setApiProxy] = useState<import('../../src/domain/dashboard/apiProxy').ApiProxySnapshot>();
   const [apiError,setApiError]=useState<string>(), [apiUncertain,setApiUncertain]=useState(false);
   const [apiProjects,setApiProjects]=useState<import('../../src/domain/dashboard/types').DashboardCliProject[]>([]);
@@ -253,6 +253,8 @@ function App() {
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
   const [taskTitleItem, setTaskTitleItem] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
+  const apiTokenOpen = browserPath === "/api";
+  useEffect(() => { if (!apiTokenOpen) { setApiToken(undefined); setApiNotice(undefined); } }, [apiTokenOpen, apiToken, apiNotice]);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("agreement");
   const [onboardingBusy, setOnboardingBusy] = useState(false);
@@ -602,6 +604,7 @@ function App() {
     const mutation=action!=='listApiTokens';
     if (mutation && (apiRequests.current.mutation || apiUncertainRef.current)) return;
     setApiError(undefined);
+    setApiNotice(undefined);
     if (mutation) apiRequests.current.list=undefined;
     const id=sendAction(action,undefined,{...payload,targetDeviceId:undefined,automatic:true});
     if(mutation) apiRequests.current.mutation=id; else apiRequests.current.list=id;
@@ -944,8 +947,8 @@ function App() {
             if(message.payload?.apiProjects) setApiProjects(message.payload.apiProjects);
             if(list && apiUncertainRef.current) apiRequests.current.mutation=undefined;
             apiUncertainRef.current=false;setApiUncertain(false);setApiError(undefined);
-            if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);showNotice({level:'info',message:'API token created. Copy its value now.'});}
-            if(message.action==='revokeApiToken') {setApiToken(undefined);showNotice({level:'info',message:'API token revoked.'});}
+            if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);setApiNotice('API key created. Copy it now.');showNotice({level:'info',message:'API token created. Copy its value now.'});}
+            if(message.action==='revokeApiToken') {setApiToken(undefined);setApiNotice('API key revoked.');showNotice({level:'info',message:'API token revoked.'});}
           } else {
             setApiError(message.error ?? 'The token request was not confirmed. Refresh the list before retrying.');
             if(!list){apiUncertainRef.current=true;setApiUncertain(true);}
@@ -1810,12 +1813,14 @@ function App() {
 
   useEffect(() => {
     const workspaceRoute = isBrowserDashboard && isCliSessionsPath(browserPath);
-    const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks");
+    const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || browserPath === "/api");
+    document.body.classList.toggle("is-api-workspace-route", browserPath === "/api");
     document.body.classList.toggle("is-cli-workspace-route", workspaceRoute);
     document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute);
     return () => {
       document.body.classList.remove("is-cli-workspace-route");
       document.body.classList.remove("is-dashboard-workspace-route");
+      document.body.classList.remove("is-api-workspace-route");
     };
   }, [browserPath, isBrowserDashboard]);
 
@@ -2810,6 +2815,27 @@ function App() {
       >
         {!hasBrowserWorkspaceShell(browserPath) ? recovery : null}
         <fieldset class="dashboard-action-scope" aria-label="Dashboard actions">
+        <div hidden={!apiTokenOpen} class="api-page-container">
+      <ApiWorkspace
+        open={apiTokenOpen}
+        baseUrl={snapshot.apiBaseUrl}
+        token={apiToken}
+        tokens={apiTokens}
+        proxy={apiProxy}
+        projects={apiProjects}
+        error={apiError}
+        notice={apiNotice}
+        uncertain={apiUncertain}
+        loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
+        onRefresh={() => sendApiRequest("listApiTokens")}
+        connected={!isBrowserDashboard || !connectionUnavailable}
+        enabled={snapshot.settings.apiAccessEnabled === true}
+        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
+        onClose={() => navigateDashboardPath("/", setBrowserPath)}
+        onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
+        onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
+      />
+        </div>
         <div hidden={browserPath !== '/tasks'}><TaskBoard onTitleItemChange={setTaskTitleItem} onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} composerConfig={cliComposerConfig} liveStates={cliLiveStates} peers={pcOptions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
@@ -2831,7 +2857,7 @@ function App() {
             />
           </section>
         ) : null}
-        <section class="section" hidden={browserPath === '/tasks'}>
+        <section class="section" hidden={browserPath === '/tasks' || browserPath === '/api'}>
           <div class="hero">
             <div class="brand">
               <span id="dashboard-sidebar-toggle-slot" class="content-sidebar-slot" />
@@ -3006,7 +3032,7 @@ function App() {
           />
 
         </section>
-        {displayedAccounts.length > 0 && browserPath !== '/tasks' ? (
+        {displayedAccounts.length > 0 && browserPath !== '/tasks' && browserPath !== '/api' ? (
           renderAccountSection()
         ) : null}
         </fieldset>
@@ -3107,25 +3133,6 @@ function App() {
         onOpenExternal={openExternalLink}
       />
 
-      <ApiTokenModal
-        open={apiTokenOpen}
-        baseUrl={snapshot.apiBaseUrl}
-        token={apiToken}
-        tokens={apiTokens}
-        proxy={apiProxy}
-        projects={apiProjects}
-        error={apiError}
-        uncertain={apiUncertain}
-        loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
-        onRefresh={() => sendApiRequest("listApiTokens")}
-        connected={!isBrowserDashboard || !connectionUnavailable}
-        enabled={snapshot.settings.apiAccessEnabled === true}
-        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
-        onClose={() => { setApiTokenOpen(false); setApiToken(undefined); }}
-        onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
-        onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
-      />
-
       {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} initialTags={tagEditor.initialTags} privacyMode={state.privacyMode}
         connected={(!isBrowserDashboard || !connectionUnavailable) && (!tagEditor.targetDeviceId || snapshot.connectedPeers?.some(peer => peer.id === tagEditor.targetDeviceId && peer.connected) === true)}
         results={submissionResults} onClose={() => setTagEditor(undefined)} onSave={(tags, expectedTags) => {
@@ -3184,11 +3191,12 @@ function App() {
               connectionStatus={null}
               browser={isBrowserDashboard}
               standalone={cliComposerConfig?.terminalSupported === false}
-              dashboardMode={browserPath === "/" || browserPath === "/tasks"}
+              dashboardMode={browserPath === "/" || browserPath === "/tasks" || apiTokenOpen}
               taskBoardActive={browserPath === '/tasks'}
+              apiActive={apiTokenOpen}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
               apiEnabled={snapshot?.settings.apiAccessEnabled === true}
-              onApi={() => setApiTokenOpen(true)}
+              onApi={() => navigateDashboardPath("/api", setBrowserPath)}
               showLogout={isBrowserDashboard}
               privacyMode={state.privacyMode}
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}

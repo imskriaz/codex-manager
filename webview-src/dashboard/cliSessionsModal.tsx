@@ -195,6 +195,7 @@ export type CliSessionsPageProps = {
   onTasks?: () => void;
   onApi?: () => void;
   apiEnabled?: boolean;
+  apiActive?: boolean;
   /** Show the remote dashboard sign-out action in the avatar menu. */
   showLogout?: boolean;
   systemInfoEnabled?: boolean;
@@ -518,8 +519,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [sidebarToggleTarget, setSidebarToggleTarget] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    setSidebarToggleTarget(railCollapsed ? document.getElementById(props.dashboardMode ? props.taskBoardActive ? 'task-sidebar-toggle-slot' : 'dashboard-sidebar-toggle-slot' : 'session-sidebar-toggle-slot') : null);
-  }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, activeNewRequest]);
+    setSidebarToggleTarget(railCollapsed ? document.getElementById(props.dashboardMode ? props.apiActive ? 'api-sidebar-toggle-slot' : props.taskBoardActive ? 'task-sidebar-toggle-slot' : 'dashboard-sidebar-toggle-slot' : 'session-sidebar-toggle-slot') : null);
+  }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.apiActive, props.selectedSession?.id, activeNewRequest]);
 
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
   const touchedFileDrafts = useRef(new Set<string>());
@@ -1361,9 +1362,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
-                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
-                <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => { selectNewRequest(); props.onTasks?.(); }} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>
-                <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button>{props.apiEnabled ? <button type="button" class="cli-icon-button cli-api-shortcut" aria-label="API access" title="API access" onClick={() => props.onApi?.()}><ApiIcon /></button> : null}</div>
+                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive && !props.apiActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
+                <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => { selectNewRequest(); props.onTasks?.(); }} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>{props.apiEnabled ? <button type="button" class="cli-icon-button cli-api-shortcut" aria-current={props.apiActive ? "page" : undefined} aria-label="API access" title="API access" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onApi?.(); }}><ApiIcon /></button> : null}
+                <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav>
           <div class="cli-session-filters">
@@ -1421,7 +1422,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
           </div>
           <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} onOpenPanel={() => openContextTab("accounts")} connected={props.connected}
-            onApi={props.onApi}
+
             account={props.account}
             privacyMode={props.privacyMode}
             showLogout={props.showLogout}
@@ -1438,7 +1439,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
-        {accountCenterOpen ? <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} apiEnabled={props.apiEnabled} onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
+        {accountCenterOpen ? <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)}  account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
         <PanelResizeHandle
           label="Resize sessions sidebar"
           value={layout.railWidth}
@@ -1584,8 +1585,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <WorkspaceContextPanel
           liveState={props.liveState}
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
-          apiEnabled={props.apiEnabled}
-          onApi={props.onApi}
+
+
           connected={props.connected !== false}
           systemInfoEnabled={props.systemInfoEnabled !== false}
           systemStatus={workspacePeer?.systemStatus}
@@ -2602,8 +2603,6 @@ function WorkspaceContextPanel(props: {
   stopping: boolean;
   collapsed: boolean;
   onCollapse: () => void;
-  apiEnabled?: boolean;
-  onApi?: () => void;
   tabs: WorkspaceTab[];
   activeTab: WorkspaceTab;
   addOpen: boolean;
@@ -2944,8 +2943,6 @@ function SessionAccountFooter(props: {
   hostConnected?: boolean;
   connected?: boolean;
   onFeedback: (notice: DashboardNotice) => void;
-  onApi?: () => void;
-  apiEnabled?: boolean;
   account?: DashboardAccountViewModel;
   privacyMode: boolean;
   showLogout?: boolean;

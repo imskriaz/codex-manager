@@ -102,7 +102,7 @@ self.addEventListener("fetch", (event) => {
       if (response.status >= 500) throw new Error("Host restarting");
       return response;
     }).catch(async () => {
-      if (url.pathname === '/' || url.pathname === '/tasks' || url.pathname === '/workspace' || /^\/workspace\/[a-f0-9-]{36}$/.test(url.pathname)) {
+      if (url.pathname === '/' || url.pathname === '/tasks' || url.pathname === '/api' || url.pathname === '/workspace' || /^\/workspace\/[a-f0-9-]{36}$/.test(url.pathname)) {
         const shell = await caches.match('/offline-dashboard.html', { cacheName }).catch(() => undefined);
         if (shell) return shell;
       }

@@ -1,0 +1,133 @@
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+import { chromium } from 'playwright';
+import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
+
+const origin = 'http://127.0.0.1:39875';
+const output = path.join(tmpdir(), 'codex-manager-api-workspace-ui');
+await mkdir(output, { recursive: true });
+// All fixture mutations stay in memory. Live host actions only read state.
+const compiled = await build({ stdin: { contents: `
+  import { render } from 'preact';
+  import { useState } from 'preact/hooks';
+  import { ApiWorkspace } from './webview-src/dashboard/apiWorkspace';
+  const now=Date.now();
+  const requests=Array.from({length:10},(_,index)=>({id:'request-'+index,startedAt:now-index*1000,method:'POST',path:'/v1/responses',model:'fixture-model',status:['completed','failed','cancelled','incomplete','running'][index%5],httpStatus:index===1?502:200,durationMs:123,inputTokens:56511,outputTokens:6500,error:index===1?'Backend unavailable <script>unsafe</script>':undefined}));
+  function App(){
+    const [snapshot,setSnapshot]=useState({capturedAt:now,requests});
+    const [error,setError]=useState();
+    const [loading,setLoading]=useState(false);
+    const [connected,setConnected]=useState(true);
+    const [tokens,setTokens]=useState([]),[token,setToken]=useState(),[notice,setNotice]=useState();
+    window.failRefresh=()=>{setError('Proxy refresh failed. Retry after reconnecting.');setLoading(false)};
+    window.offline=()=>setConnected(false);
+    window.missing=()=>setSnapshot(undefined);
+    window.empty=()=>setSnapshot({capturedAt:Date.now(),requests:[]});
+    return <ApiWorkspace open token={token} tokens={tokens} proxy={snapshot} enabled connected={connected} pending={false} loading={loading} error={error} notice={notice} onClose={()=>{}}
+      onGenerate={name=>{setToken('cm_fixture_only');setTokens([{id:'fixture-key',name,createdAt:now,permissions:['state'],projectPaths:[]}]);setNotice('API key created. Copy it now.')}}
+      onRevoke={()=>{setTokens([]);setToken(undefined);setNotice('API key revoked.')}}
+      onRefresh={()=>{setLoading(true);setTimeout(()=>{setLoading(false);setSnapshot(current=>current?{...current,capturedAt:Date.now()}:current);setError(undefined)},50)}}/>;
+  }
+  render(<App/>,document.getElementById('app'));
+`, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const results = [];
+try {
+  const live = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
+  await useWorkspaceDashboardAssets(live, origin);
+  const errors = [];
+  live.on('pageerror', error => errors.push(error.message));
+  const started = Date.now();
+  await live.goto(origin + '/tasks', { waitUntil: 'domcontentloaded' });
+  const show = live.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+  if (await show.isVisible()) await show.click();
+  const task = live.getByRole('button', { name: 'Project task board', exact: true });
+  const shortcut = live.getByRole('button', { name: 'API access', exact: true });
+  await shortcut.waitFor();
+  assert.equal(await shortcut.count(), 1);
+  assert.equal(await task.evaluate(element=>element.nextElementSibling?.getAttribute('aria-label')), 'API access');
+  await live.getByRole('tab', {name:'List',exact:true}).click();
+  await shortcut.click();
+  await live.waitForURL(origin + '/api');
+  const screen = live.getByRole('region', { name: 'API access', exact: true });
+  await screen.waitFor();
+  assert.equal(await live.getByRole('dialog').count(), 0);
+  assert.equal(await screen.getByRole('tab', { name: 'API keys', exact: true }).getAttribute('aria-selected'), 'true');
+  await live.screenshot({ path: path.join(output, 'api-live-keys.png') });
+  await screen.getByRole('tab', {name:'API Explorer',exact:true}).click();
+  await live.screenshot({ path: path.join(output, 'api-live-explorer.png') });
+  await screen.getByRole('tab', {name:'Proxy',exact:true}).click();
+  await live.screenshot({ path: path.join(output, 'api-live-proxy.png') });
+  await task.click();
+  await live.waitForURL(origin + '/tasks');
+  assert.equal(await live.getByRole('tab', {name:'List',exact:true}).getAttribute('aria-selected'), 'true', 'Task view survives API navigation');
+  assert.equal(await screen.count(), 0);
+  assert.deepEqual(errors, []);
+  results.push({ mode: 'live-host-workspace-assets', loadAndNavigateMs: Date.now() - started, status: 'passed' });
+  await live.close();
+  for (const theme of ['light','dark']) for (const width of [1440, 390, 320]) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(origin + '/__api-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html data-theme="${theme}"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="app"></div><script type="module" src="/__api-fixture.js"></script></body></html>` }));
+    await page.route(origin + '/__api-fixture.js', route => route.fulfill({ contentType: 'text/javascript', body: compiled.outputFiles[0].text }));
+    await page.route('**/api/schema', route=>route.fulfill({contentType:'application/json',body:JSON.stringify({actions:['getProjectBoard'],token:{name:'Fixture',projectPaths:[],permissions:['state','aiProxy']}})}));
+    await page.goto(origin + '/__api-fixture');
+    for (const file of ['shared.css', 'quotaSummary.css']) await page.addStyleTag({ content: await readFile('media/webview/' + file, 'utf8') });
+    const screen = page.getByRole('region', {name:'API access',exact:true});
+    assert.deepEqual(await screen.getByRole('tab').allTextContents(), ['API keys','API Explorer','Proxy']);
+    await screen.getByRole('button', {name:'Create API key',exact:true}).click();
+    const form = page.getByRole('region', {name:'Create API key',exact:true});
+    await form.getByLabel('Token name',{exact:true}).fill('Fixture key');
+    await form.getByRole('button',{name:'Create token',exact:true}).click();
+    await form.getByRole('textbox',{name:'New API token',exact:true}).waitFor();
+    assert.equal(await form.locator('button[type=submit]').isDisabled(), true);
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Clipboard blocked');}}}));
+    await form.getByRole('button',{name:'Copy token',exact:true}).click();
+    await form.getByRole('status').filter({hasText:'Copy blocked'}).waitFor();
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.copiedFixture=value;}}}));
+    await form.getByRole('button',{name:'Copy token',exact:true}).click();
+    await form.getByRole('status').filter({hasText:'Token copied.'}).waitFor();
+    assert.equal(await page.evaluate(()=>window.copiedFixture),'cm_fixture_only');
+    await page.screenshot({path:path.join(output,`api-keys-${theme}-${width}.png`)});
+    await form.getByRole('button',{name:'Done',exact:true}).click();
+    await screen.getByRole('button',{name:'Revoke',exact:true}).click();
+    await screen.getByRole('status').filter({hasText:'API key revoked'}).waitFor();
+    await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();
+    await page.screenshot({path:path.join(output,`api-explorer-${theme}-${width}.png`)});
+    await screen.getByRole('tab',{name:'Proxy',exact:true}).click();
+    await page.getByRole('img', { name: /API clients connect/ }).waitFor();
+    const panes = await screen.locator('.api-proxy-split > section').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width};}));
+    assert.equal(panes.length, 2);
+    if (width>900) assert.ok(panes[1].x>panes[0].x && Math.abs(panes[0].y-panes[1].y)<2);
+    else assert.ok(panes[1].y>panes[0].y, 'Mobile stacks route and logs');
+    assert.equal(await screen.locator('.api-proxy-table tbody tr').count(), 8);
+    await page.screenshot({path:path.join(output,`api-proxy-${theme}-${width}.png`)});
+    await screen.getByRole('button',{name:'Show all logs',exact:true}).click();
+    assert.equal(await screen.locator('.api-proxy-table tbody tr').count(), 10);
+    await screen.getByRole('cell', {name:/Backend unavailable/}).waitFor();
+    assert.equal(await page.locator('.api-proxy-table script').count(),0);
+    assert.ok(await screen.evaluate(element=>element.scrollWidth<=element.clientWidth+2));
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+    await page.evaluate(()=>window.failRefresh());
+    await screen.getByRole('alert').filter({hasText:'Proxy refresh failed'}).waitFor();
+    await screen.getByRole('button',{name:'Refresh proxy',exact:true}).click();
+    await screen.getByRole('alert').waitFor({state:'detached'});
+    await page.evaluate(()=>window.missing());
+    await screen.getByRole('status').filter({hasText:'Proxy activity unavailable'}).waitFor();
+    await page.evaluate(()=>window.empty());
+    await screen.getByText('No requests yet',{exact:true}).waitFor();
+    await page.evaluate(()=>window.offline());
+    assert.equal(await screen.getByRole('button',{name:'Refresh proxy',exact:true}).isDisabled(),true);
+    assert.deepEqual(errors, []);
+    results.push({width,theme,status:'passed'});
+    await context.close();
+  }
+  console.log(JSON.stringify({results,screenshots:output},null,2));
+} finally { await browser.close(); }

@@ -9,43 +9,50 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
   if (await show.isVisible()) await show.click();
   if (api) {
     await page.evaluate(() => { window.__holdNextApiList = true; });
-    await page.getByRole('button', { name: 'Open account center', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Account center', exact: true }).getByRole('button', { name: 'API access', exact: true }).click();
-    let list = page.getByRole('dialog', { name: 'API access', exact: true });
+    const task = page.getByRole('button', { name: 'Project task board', exact: true });
+    const shortcut = page.getByRole('button', { name: 'API access', exact: true });
+    await shortcut.waitFor({state:'attached'});
+    if (await show.isVisible()) await show.click();
+    await shortcut.waitFor();
+    assert.equal(await shortcut.count(), 1, 'Only the sidebar has an API shortcut');
+    assert.equal(await task.evaluate(element => element.nextElementSibling?.getAttribute('aria-label')), 'API access');
+    await shortcut.click();
+    await page.waitForURL(origin + '/api');
+    let list = page.getByRole('region', { name: 'API access', exact: true });
     const main = list;
+    assert.equal(await page.getByRole('dialog').count(), 0, 'API is a page');
+    assert.equal(await list.getByRole('tab', {name:'API keys',exact:true}).getAttribute('aria-selected'), 'true');
     await page.waitForFunction(() => !!window.__heldApiList);
-    await list.getByRole('button', { name: '+ Create token', exact: true }).click();
-    const form = page.getByRole('dialog', { name: 'Create API token', exact: true });
-    assert.equal(await page.locator(':popover-open').count(), 0, 'Opening a modal leaves no native flyout above it');
-    assert.ok(await form.evaluate(element => { const rect = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)); }), 'Modal owns pointer input above earlier menus');
+    await list.getByRole('button', { name: 'Create API key', exact: true }).click();
+    const form = page.getByRole('region', { name: 'Create API key', exact: true });
+    assert.equal(await page.locator(':popover-open').count(), 0, 'Page leaves no native flyout above it');
+    assert.equal(await page.locator('.overlay.open').count(), 0, 'Inline creation uses the page');
     await form.getByLabel('Token name', { exact: true }).fill('First creation');
     await form.getByRole('button', { name: 'Create token', exact: true }).click();
     await form.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
-    assert.equal(await form.getByRole('button', { name: 'Token created', exact: true }).isDisabled(), true);
-    await form.getByRole('button', { name: 'Close token form', exact: true }).click();
+    assert.equal(await form.locator('button[type=submit]').isDisabled(), true);
+    await form.getByRole('button', { name: 'Done', exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiList })));
-    await main.getByRole('button',{name:'Manage API keys',exact:true}).click();
-    list=page.getByRole('dialog',{name:'API keys',exact:true});
     await list.getByRole('cell', { name: 'First creation', exact: true }).waitFor();
     assert.equal(await list.locator('tbody tr').count(), 3, 'Stale listing cannot erase confirmed creation');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'API columns never widen the page');
     if(width<=760) assert.ok(await list.locator('.api-table-scroll').evaluate(element=>element.scrollWidth>element.clientWidth), 'API columns scroll instead of squeezing');
     await list.getByRole('button', { name: 'Refresh', exact: true }).click();
     await page.waitForFunction(() => window.__uiActions.filter(action => action.action === 'listApiTokens').length >= 2);
-    await list.getByRole('button', { name: '+ Create token', exact: true }).click();
+    await list.getByRole('button', { name: 'Create API key', exact: true }).click();
     await form.getByLabel('Additional host project folder', { exact: true }).waitFor();
     await form.getByLabel('Token name', { exact: true }).fill('Unknown confirmation');
     await page.evaluate(() => { window.__holdNextApiCreate = true; });
     await form.getByRole('button', { name: 'Create token', exact: true }).click();
     await page.waitForFunction(() => !!window.__heldApiCreate);
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldApiCreate, status: 'failed', payload: undefined, error: 'The connection closed before confirmation. Outcome unknown.' } })));
-    await form.getByRole('alert').waitFor();
+    await main.getByRole('alert').waitFor();
     assert.equal(await form.getByRole('button', { name: 'Create token', exact: true }).isDisabled(), true);
-    await form.getByRole('button', { name: 'Refresh token list', exact: true }).click();
-    await form.getByRole('alert').waitFor({ state: 'detached' });
-    await form.getByRole('button', { name: 'Close token form', exact: true }).click();
+    await main.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await main.getByRole('alert').waitFor({ state: 'detached' });
+    await form.getByRole('button', { name: 'Close form', exact: true }).click();
     await list.getByRole('cell', { name: 'Unknown confirmation', exact: true }).waitFor();
-    await list.getByRole('button',{name:'Close key management',exact:true}).click();list=main;
+
     // Requests are intercepted; permission and presentation checks cannot mutate the live host.
     const sent = []; let failure = false;
     await page.route('**/api/schema', async route => {
@@ -58,9 +65,10 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
       sent.push(route.request().postDataJSON());
       await route.fulfill({ status: failure ? 403 : 200, contentType: 'application/json', body: JSON.stringify(failure ? { error: 'Token was revoked after inspection.' } : { messages: [{ status: 'completed', payload: { notice: { level: 'info', message: 'Refresh completed.' } } }] }) });
     });
-    assert.deepEqual(await list.getByRole('tab').allTextContents(), ['Explorer & test', 'Proxy', 'Logs'], 'Proxy monitoring shares the API modal');
+    assert.deepEqual(await list.getByRole('tab').allTextContents(), ['API keys', 'API Explorer', 'Proxy'], 'API workspace has three tabs');
+    await list.getByRole('tab', {name:'API Explorer', exact:true}).click();
     assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+'/api/message','Absolute endpoint is visible in a copyable field');
-    if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,3);assert.ok(Math.max(...panels)-Math.min(...panels)<3,'Three balanced panels');}
+    if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,3);assert.ok(Math.abs(panels[1]-panels[2])<3,'Request and response panels are balanced');}
     const tokenInput = list.getByLabel('Bearer token', { exact: true });
     const operations = list.getByLabel('Operation', { exact: true });
     const send = list.getByRole('button', { name: 'Send request once', exact: true });
@@ -123,10 +131,10 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await list.locator('.api-test-result').filter({hasText:'HTTP 429'}).waitFor();
     assert.equal(proxy.length,before+1,'Proxy errors are displayed without UI retries');
     await page.screenshot({path:path.join(output,`api-playground-${width}x${height}.png`)});
-    await list.getByRole('button',{name:'Details',exact:true}).click();
-    const details=page.getByRole('dialog',{name:'Request details',exact:true});
+    await list.getByRole('button',{name:'Request details',exact:true}).click();
+    const details=page.getByRole('region',{name:'Request details',exact:true});
     await details.waitFor();assert.ok((await details.locator('pre').innerText()).includes('/v1/messages'),'Details contain only the selected endpoint request');
-    await details.getByRole('button',{name:'Close request details',exact:true}).click();
+    await list.getByRole('button',{name:'Request details',exact:true}).click();
     if (width===1440) {
       let waiting;
       let arrived;
@@ -146,9 +154,17 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
       await list.locator('.api-test-result').filter({hasText:'Request timed out'}).waitFor();
       assert.equal(held.length,2,'Timeout never retries');waiting();await page.clock.resume();
     }
-    await list.getByRole('button', { name: 'Close', exact: true }).click();
+    await list.getByRole('button', { name: 'Dashboard', exact: true }).evaluate(button=>button.click());
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiCreate })));
     assert.equal(await list.count(), 0, 'Late confirmation never reopens API access');
+    if (await show.isVisible()) await show.click();
+    await shortcut.click();
+    await list.waitFor();
+    assert.equal(await list.getByRole('tab',{name:'API keys',exact:true}).getAttribute('aria-selected'),'true');
+    await list.getByRole('button',{name:'Create API key',exact:true}).click();
+    assert.equal(await form.getByRole('textbox',{name:'New API token',exact:true}).count(),0,'Late key confirmation is not shown on reentry');
+    await form.getByRole('button',{name:'Cancel',exact:true}).click();
+    await list.getByRole('status').filter({hasText:'Key creation cancelled.'}).waitFor();
   } else {
     await page.evaluate(() => window.__fillListFixture());
     await page.locator('.cli-compact-session-list .cli-session-row-select').first().waitFor();

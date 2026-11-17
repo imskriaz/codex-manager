@@ -275,6 +275,8 @@ describe("isWebDashboardPagePath", () => {
     expect(isWebDashboardPagePath("/")).toBe(true);
     expect(isWebDashboardPagePath("/dash")).toBe(true);
     expect(isWebDashboardPagePath("/workspace")).toBe(true);
+    expect(isWebDashboardPagePath("/api")).toBe(true);
+    expect(isWebDashboardPagePath("/api/not-a-page")).toBe(false);
     expect(isWebDashboardPagePath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
     expect(isWebDashboardPagePath("/workspace/not-a-session")).toBe(false);
     expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
@@ -286,6 +288,8 @@ describe("isWebDashboardPagePath", () => {
     expect(normalizeWebDashboardReturnPath("/")).toBe("/");
     expect(normalizeWebDashboardReturnPath("/dash")).toBe("/");
     expect(normalizeWebDashboardReturnPath("/workspace")).toBe("/workspace");
+    expect(normalizeWebDashboardReturnPath("/api")).toBe("/api");
+    expect(normalizeWebDashboardReturnPath("/api?tab=keys")).toBe("/api?tab=keys");
     expect(normalizeWebDashboardReturnPath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(
       "/workspace/01a04882-d037-7a42-ad24-9afb61901188"
     );
@@ -380,6 +384,11 @@ describe("browser PWA routes", () => {
       expect(worker.body).toContain("codex-manager-static-");
       const privateState = await get("/api/state", true);
       expect(privateState.status).toBe(401);
+      const lockedApiPage = await get("/api", true);
+      expect(lockedApiPage.body).toContain(encodeURIComponent("/api"));
+      const apiPage = await get("/api");
+      expect(apiPage.status).toBe(200);
+      expect(apiPage.body).toContain('id="app"');
       for (const path of ["/dash", "/dash/", "/dash?from=bookmark"]) {
         const legacy = await get(path, true);
         expect(legacy.status).toBe(302);
