@@ -11,7 +11,7 @@ export function isCodexQuotaInterruption(message: string): boolean {
 }
 
 export function isCodexCapacityInterruption(message: string): boolean {
-  return /selected model is at capacity|model(?:[_ -](?:server|provider))?[_ -]?overloaded|server[_ -]?overloaded|(?:provider|model) capacity/i.test(message);
+  return /\b(?:model|server|provider) is (?:currently )?at capacity\b|model(?:[_ -](?:server|provider))?[_ -]?overloaded|server[_ -]?overloaded|(?:provider|model) capacity/i.test(message);
 }
 
 /** Only explicit execution-policy failures qualify; cancellation and ordinary file errors do not. */

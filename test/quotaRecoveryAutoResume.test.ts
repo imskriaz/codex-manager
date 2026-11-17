@@ -121,9 +121,18 @@ it('does not reject a replacement account when a delayed failure belongs to an o
   await flush();
   expect(select).not.toHaveBeenCalled();
 });
+it.each(['Token has expired', 'You have hit your usage limit'])('selects a replacement from structured failure details: %s', async detail => {
+  recover();
+  const select = vi.fn().mockResolvedValue(true);
+  services.push(registerQuotaRecoveryAutoResume(context, { listAccounts: read } as never, allowed, select));
+  await flush();
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { sessionId: 'failed', streamId: 'structured', status: 'failed', error: 'Request failed', messages: [{ kind: 'error', text: detail }] } });
+  await flush();
+  expect(select).toHaveBeenCalledExactlyOnceWith('active');
+});
 
-it('selects a verified replacement immediately after standalone rejection despite cached healthy quota', async () => {
-  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+it.each(['node', 'desktop'])('selects a verified replacement immediately after %s rejection despite cached healthy quota', async host => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: host });
   recover();
   const select = vi.fn(async (id: string) => {
     expect(id).toBe('active');

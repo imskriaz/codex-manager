@@ -59,6 +59,13 @@ const emit = (streamId: string, status = "failed", error = "Selected model is at
 const repo = { listAccounts: vi.fn(async () => [{ id: "active", isActive: true, enabled: true }]) };
 let allowed = true;
 const start = () => registerStandaloneCapacityRetry({ subscriptions } as never, repo as never, () => allowed);
+it('retries a structured capacity error even when the top-level message is generic', async () => {
+  start();
+  m.live = { sessionId: 'session', streamId: 'structured', status: 'failed', error: 'Service unavailable', updatedAt: Date.now(), messages: [{ id: 'error', kind: 'error', text: 'Service unavailable', debug: '{"codexErrorInfo":"serverOverloaded"}' }] };
+  publishDashboardRealtime({ type: 'dashboard:codex-session-live', state: m.live });
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(m.resume).toHaveBeenCalledOnce();
+});
 beforeEach(() => {
   Object.defineProperty(vscode.env, 'appHost', { configurable: true, writable: true, value: 'node' });
   m.deleted = false;

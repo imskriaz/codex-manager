@@ -89,7 +89,7 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
     if (['running', 'starting'].includes(state.status)) { revision++; return; }
     if (!['failed', 'completed', 'cancelled', 'disconnected'].includes(state.status)) return;
     const eventId = JSON.stringify([state.sessionId, state.turnId ?? state.streamId]);
-    const capacity = state.status === 'failed' && isCodexCapacityInterruption(state.error ?? JSON.stringify(state.messages.filter(item => item.kind === 'error')));
+    const capacity = state.status === 'failed' && isCodexCapacityInterruption(JSON.stringify([state.error, state.messages.filter(item => item.kind === 'error')]));
     const policyEnabled = enabled();
     if (observed.has(eventId)) return;
     observed.add(eventId); if (observed.size > 512) observed.delete(observed.values().next().value!);

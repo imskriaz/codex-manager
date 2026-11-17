@@ -1,4 +1,5 @@
 import { registerModelCapacitySwitch } from '../../services/modelCapacitySwitch';
+import { maybeAutoSwitchForActiveQuota } from '../../application/accounts/quota';
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { registerCommands, runRegisteredCommand } from "../../commands";
@@ -227,7 +228,8 @@ export class AccountsWorkbench {
     });
     await measureStep("registerAutoRefreshScheduler", () => {
       this.context.subscriptions.push(registerModelCapacitySwitch(this.repo, refreshers, id => this.encryptedSync.canAutomateAccount(id)));
-      this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id)));
+      this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id), accountId =>
+        maybeAutoSwitchForActiveQuota(this.repo, refreshers, { quotaRejectedAccountId: accountId, canUseAccount: id => this.encryptedSync.canAutomateAccount(id) })));
       registerStandaloneCapacityRetry(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id));
       this.context.subscriptions.push(
         registerAutoRefreshScheduler({

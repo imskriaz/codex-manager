@@ -46,6 +46,14 @@ it('observes discovered native turns independently of Auto Resume and ignores an
   inspect('another-home'); expect(mocks.observe).not.toHaveBeenCalled();
   inspect(mocks.home); expect(mocks.observe).toHaveBeenCalledExactlyOnceWith({ id: 'native', title: 'native', status: 'running' });
 });
+it('uses structured capacity details when the top-level failure is generic', async () => {
+  mocks.config.modelCapacityFailureCount = 1;
+  emit(snapshot('structured', { error: 'Service unavailable', messages: [{ id: 'error', kind: 'error', text: 'Service unavailable', debug: '{"codexErrorInfo":"serverOverloaded"}', status: 'failed' }] }));
+  await flush();
+  expect(ledger()?.count).toBe(1);
+  expect(mocks.switch).toHaveBeenCalledOnce();
+  expect(tags).toContain('Capacity');
+});
 it('resets on success and other failures, and honors a configurable threshold', async () => {
   mocks.config.modelCapacityFailureCount = 2;
   emit(snapshot('one')); await flush(); emit(snapshot('ok', { status: 'completed', error: undefined })); await flush();

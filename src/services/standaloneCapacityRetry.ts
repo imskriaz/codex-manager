@@ -43,7 +43,7 @@ export function registerStandaloneCapacityRetry(
   };
   const recoverable = (message: string) => isCodexPermissionInterruption(message) ||
     isCodexCapacityInterruption(message) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true);
-  const retryableState = (state: DashboardCodexSessionLiveState) => state.status === 'disconnected' || state.status === 'failed' && recoverable(state.error ?? '');
+  const retryableState = (state: DashboardCodexSessionLiveState) => state.status === 'disconnected' || state.status === 'failed' && recoverable(JSON.stringify([state.error, state.messages?.filter(item => item.kind === 'error')]));
   const notice = (level: "info" | "warning", message: string) =>
     recordPersistentEvent(level, 'standalone-recovery', message);
   const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id}`;

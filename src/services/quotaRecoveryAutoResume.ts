@@ -180,7 +180,7 @@ export function registerQuotaRecoveryAutoResume(
   const stopLive = subscribeDashboardRealtime(message => {
     if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
         !['failed', 'disconnected'].includes(message.state.status) || (!isAutoResumeAvailable() && !selectAfterRejection)) return;
-    const detail = message.state.error ?? '';
+    const detail = JSON.stringify([message.state.error, message.state.messages?.filter(item => item.kind === 'error')]);
     if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;
     if (observedFailures.has(message.state.streamId)) return;
     observedFailures.add(message.state.streamId);

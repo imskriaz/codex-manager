@@ -131,7 +131,7 @@ it("opens the official Codex editor before requesting continuation", async () =>
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
 
-it("opens a missing VS Code tab for verified native work", async () => {
+it("leaves verified native work running without opening a missing VS Code tab", async () => {
   const observe = vi.spyOn(sessionEditor, 'observeRunningCodexSession').mockImplementation(() => undefined);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
   const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
@@ -144,7 +144,7 @@ it("opens a missing VS Code tab for verified native work", async () => {
     // Enable only the Auto Resume prerequisites.
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback } as never);
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] });
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 40_000, true);
+    expect(open).not.toHaveBeenCalled();
     expect(resume).not.toHaveBeenCalled();
     expect(observe).toHaveBeenCalledWith(expect.objectContaining({ id, status: "running" }));
     expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();

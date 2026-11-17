@@ -638,22 +638,15 @@ export function resumePersistedCodexSessions(
       // when Codex kept the turn alive, which otherwise makes every recovery
       // wait through the full editor-readiness timeout before discovering it.
       const nativeRunning = (await readNativeCodexSessionRunning(home, sessionId, signal, true) ?? getNativeCodexSessionRunning(home, sessionId)) === true;
-      // A native owner can survive an extension-host restart while its VS Code
-      // custom-editor tab is lost. Keep the fast path only when the tab still
-      // exists; otherwise open the official editor so the user can see it.
-      if (nativeRunning && readOpenCodexSessionIds(false).includes(sessionId)) {
+      // A surviving native turn needs neither an editor tab nor another start.
+      if (nativeRunning) {
         observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
-        recordPersistentEvent("info", "auto-resume", "Native session and conversation tab already running; tab left unchanged", details);
+        recordPersistentEvent("info", "auto-resume", "Native session already running; no editor opened or turn replayed", details);
         return "running";
       }
       phase = "readiness";
       recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", details);
       await openCodexSessionInVsCode(sessionId, signal, !readOpenCodexSessionIds(false).includes(sessionId), AUTO_RESUME_VSCODE_READINESS_TIMEOUT_MS, true);
-      if (nativeRunning) {
-        observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
-        recordPersistentEvent("info", "auto-resume", "Native session tab restored without replaying its turn", details);
-        return "running";
-      }
       phase = "continuation";
       const outcome = await resumeCodexSessionWork(sessionId, signal);
       recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });

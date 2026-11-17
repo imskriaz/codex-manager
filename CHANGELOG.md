@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.33
+
+- Switch away from accounts rejected by quota or expired authentication immediately in VS Code mode, using the same ownership and account verification rules as standalone.
+- Recover capacity failures reported through structured error details and recognize explicit model, server, and provider capacity messages.
+- Leave verified running native sessions alone during recovery, including sessions without an open VS Code conversation tab.
+
 ## 2.0.6-pre.32
 
 - Open API access at `/api` from the sidebar icon immediately after Tasks, with the task workspace preserved.
