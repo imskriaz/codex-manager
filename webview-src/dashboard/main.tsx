@@ -67,6 +67,10 @@ import {
   EyeOffIcon,
   GridViewIcon,
   InfoIcon,
+  SearchIcon,
+  SortIcon,
+  MetricIcon,
+  TagIcon,
   TableViewIcon,
   renderRefreshIcon
 } from "./icons";
@@ -2540,10 +2544,11 @@ function App() {
 
   const renderAccountSection = (compact = false) => {
     const view = compact ? accountCenterView : uiPreferences.view;
-    const tagFilter = availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null;
+    const tagFilter = availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={`Filter by tag: ${uiPreferences.accountTag || 'All tags'}`}><span class="account-filter-icon"><TagIcon /></span><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null;
     const displayFilters = (
       <>
-        <label class="dashboard-select-control" title={compact ? `${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}` : undefined}>
+        <label class="dashboard-select-control account-sort-control" title={`${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}`}>
+          <span class="account-filter-icon"><SortIcon /></span>
           <select
             value={accountSort}
             onChange={(event) => setAccountSort(event.currentTarget.value as AccountSort)}
@@ -2570,7 +2575,8 @@ function App() {
           </select>
         </label>
         {!compact ? tagFilter : null}
-        <label class="dashboard-select-control metric-priority-control" title={compact ? `${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}` : undefined}>
+        <label class="dashboard-select-control metric-priority-control" title={`${resolveUiText('metric', snapshot.lang)}: ${availableMetrics.find(metric => metric.key === uiPreferences.metricPriority)?.label ?? uiPreferences.metricPriority}`}>
+          <span class="account-filter-icon"><MetricIcon /></span>
           <select
             value={uiPreferences.metricPriority}
             aria-label={resolveUiText("metric", snapshot.lang)}
@@ -2734,7 +2740,7 @@ function App() {
             </div>
             <div class="dashboard-account-toolbar">
               <label class="account-search-control">
-                <span aria-hidden="true">⌕</span>
+                <SearchIcon />
                 <input
                   ref={compact ? undefined : searchInputRef}
                   name="account-search"

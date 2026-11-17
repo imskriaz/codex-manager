@@ -14,6 +14,7 @@ try {
   for (const width of [280, 320, 390, 500, 560, 760, 768, 1024, 1440, 1920, 2560]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 760, serviceWorkers: 'block' });
     const page = await context.newPage();
+    page.setDefaultTimeout(10_000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -32,12 +33,31 @@ try {
         })));
         assert.ok(controls.every(control => control.height >= 28 && control.scroll <= control.clientWidth + 1), `${label}: every control stays visible without overflow`);
         assert.ok(controls.filter(control => control.select).every(control => Math.abs(control.width - control.select.width) <= 2), `${label}: dropdowns fill their columns`);
-        const filters = controls.slice(1);
-        assert.ok(filters.every(control => Math.abs(control.y - filters[0].y) < 2 && Math.abs(control.height - filters[0].height) < 2), `${label}: filters and view toggle align`);
-        assert.ok(filters.slice(1).every((control, index) => Math.abs(control.x - filters[index].right - 4) < 2), `${label}: no empty gaps between filters`);
-        assert.ok(controls[0].y < filters[0].y - 2 ? Math.abs(controls[0].width - filters.at(-1).right + filters[0].x) < 2 : controls[0].width >= 130, `${label}: search fills its row or retains usable space`);
+        assert.ok(controls.every(control => Math.abs(control.y - controls[0].y) < 2 && Math.abs(control.height - controls[0].height) < 2), `${label}: search, filters and view toggle stay on one row`);
+        assert.ok(controls.slice(1).every((control, index) => Math.abs(control.x - controls[index].right - 4) < 2), `${label}: no empty gaps between controls`);
+        assert.ok(controls[0].width >= 55, `${label}: search retains usable space`);
+        assert.ok(await toolbar.getByRole('searchbox').isVisible(), `${label}: search stays visible`);
+        if (await toolbar.locator('.account-filter-icon').first().isVisible()) {
+          assert.ok(controls.filter(control => control.select).every(control => Math.abs(control.width - control.height) <= 2), `${label}: narrow filters are separate square icons`);
+        }
       }
       await inspectControls();
+      const search = toolbar.getByRole('searchbox');
+      const originalSearch = await search.inputValue();
+      await search.fill('zzzz-no-account-layout-fixture');
+      await scope.locator('.accounts-empty-filter').waitFor();
+      await inspectControls();
+      await toolbar.getByRole('button', { name: 'Clear search', exact: true }).click();
+      if (originalSearch) await search.fill(originalSearch);
+      const sort = toolbar.getByRole('combobox', { name: 'Sort accounts', exact: true });
+      const originalSort = await sort.inputValue();
+      await sort.selectOption('email');
+      await sort.selectOption(originalSort);
+      const metric = toolbar.getByRole('combobox', { name: 'Metric', exact: true });
+      const originalMetric = await metric.inputValue();
+      const alternativeMetric = await metric.locator('option').evaluateAll(options => options.at(-1).value);
+      await metric.selectOption(alternativeMetric);
+      await metric.selectOption(originalMetric);
       // Exercise the optional tag column without changing any real account data.
       const tagFixture = await toolbar.evaluate(element => {
         if (element.querySelector('.account-tag-filter')) return false;
@@ -58,7 +78,7 @@ try {
       assert.ok(layout.scroll <= layout.width + 2, `${label}: no horizontal overflow ${JSON.stringify(layout)}`);
       assert.ok(layout.overview < 510, `${label}: compact overview ${layout.overview}`);
       assert.ok(layout.cards.every(height => height < 200), `${label}: intrinsic account card heights ${layout.cards}`);
-      assert.ok(layout.toolbar < 110, `${label}: controls fit within two rows ${layout.toolbar}`);
+      assert.ok(layout.toolbar < 55, `${label}: controls fit within one row ${layout.toolbar}`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${label}: viewport fits`);
       assert.equal(await page.locator('.hero').count(), 1, `${label}: one dashboard instance`);
       await page.screenshot({ path: path.join(output, `${label}.png`) });

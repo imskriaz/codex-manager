@@ -1,3 +1,19 @@
+export function SearchIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>;
+}
+
+export function SortIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h6m8-7v9m-3-3 3 3 3-3" /></svg>;
+}
+
+export function MetricIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 18a9 9 0 1 1 16 0M12 13l4-5" /><circle cx="12" cy="14" r="2" /></svg>;
+}
+
+export function TagIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 9 0 9 9-9 9-9-9Z" /><circle cx="8" cy="8" r="1.5" /></svg>;
+}
+
 export function DropdownChevronIcon(props: { open: boolean }) {
   return (
     <span class={`dropdown-chevron ${props.open ? "open" : ""}`} aria-hidden="true">

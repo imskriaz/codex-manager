@@ -17756,6 +17756,8 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
 }
 .dashboard-content .dashboard-account-toolbar .account-search-control { grid-column: auto; }
 .dashboard-content .dashboard-account-toolbar .account-search-control input { flex: 1; width: 0; }
+.account-filter-icon { display: none; }
+.account-search-control > svg, .account-filter-icon > svg { width: 16px; height: 16px; flex: none; }
 .dashboard-content .dashboard-account-toolbar .dashboard-select-control select {
   width: 100%;
   min-width: 0;
@@ -17791,10 +17793,37 @@ html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboar
   .dashboard-content .overview-actions { grid-column: auto; }
   .dashboard-content .overview-account { width: 100%; padding: 6px 8px; }
   .dashboard-content .overview-account .overview-meta { grid-template-rows: auto; }
-  .dashboard-content .dashboard-account-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
-  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
-  .dashboard-content .dashboard-account-toolbar .account-search-control { grid-column: 1 / -1; }
+  .dashboard-content .dashboard-account-toolbar { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, 1fr) auto; }
+  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) { grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)) auto; }
+  .dashboard-content .dashboard-account-toolbar .dashboard-select-control select { font-size: calc(11px * var(--dashboard-text-scale, 1)); }
   .dashboard-content .accounts-grid { grid-template-columns: 1fr; }
+}
+@container dashboard-surface (max-width: 600px) {
+  .dashboard-content .dashboard-account-toolbar { grid-template-columns: minmax(0, 1fr) repeat(3, var(--account-control-size)); }
+  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) { grid-template-columns: minmax(0, 1fr) repeat(4, var(--account-control-size)); }
+  .dashboard-content .dashboard-account-toolbar .dashboard-select-control {
+    position: relative;
+    justify-content: center;
+    border: 1px solid var(--border-default);
+    border-radius: var(--dashboard-radius-control, 7px);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+  }
+  .dashboard-content .dashboard-account-toolbar .account-filter-icon { display: grid; place-items: center; pointer-events: none; }
+  .dashboard-content .dashboard-account-toolbar .dashboard-select-control select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .dashboard-content .dashboard-account-toolbar .dashboard-select-control:focus-within { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+}
+@container dashboard-surface (max-width: 330px) {
+  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter) { --account-control-size: 36px; }
 }
 @container dashboard-surface (max-width: 430px) {
   .dashboard-content .hero .brand { flex: 1 1 0; }

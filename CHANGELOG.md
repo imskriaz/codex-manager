@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.55
+
+- Keep Saved Accounts search, filters and view controls on one row; use separate sort, quota and tag icons in narrow dashboards while keeping the search input visible.
+
 ## 2.0.6-pre.50
 
 - Show codex-manager as the local standalone session surface instead of the original Codex origin.
