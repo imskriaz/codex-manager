@@ -15378,6 +15378,12 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .api-token-table td:first-child { font-weight: 600; }
 .api-token-table tbody tr:last-child td { border-bottom: 0; }
 .api-token-table td:last-child button { color: var(--accent-red); border-color: transparent; background: none; }
+.api-token-table { min-width: 1100px; }
+.api-key-actions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.api-key-actions svg { display: block; width: 16px; height: 16px; }
+.api-token-table .api-key-actions button:has(svg) { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; color: var(--text-secondary); }
+.api-key-stat { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.api-key-usage-note { flex: none; margin: 0; padding: 8px 14px; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
 .api-key-form-fields { min-width: 0; padding: 0; margin: 20px 0 0; border: 0; }
 .api-key-create-panel .api-token-create { display: grid; grid-template-columns: minmax(0,1fr); gap: 20px; }
 .api-key-create-panel .api-token-identity { display: grid; gap: 16px; }

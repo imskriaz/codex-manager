@@ -298,6 +298,9 @@ export class AiProxy {
             const value = usage?.[source];
             if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) log[target] = value;
           }
+          const details = usage?.['input_tokens_details'];
+          const cached = details && typeof details === 'object' ? (details as Record<string, unknown>)['cached_tokens'] : undefined;
+          if (typeof cached === 'number' && Number.isSafeInteger(cached) && cached >= 0) log.cachedInputTokens = cached;
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;

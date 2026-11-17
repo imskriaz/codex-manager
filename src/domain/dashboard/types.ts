@@ -568,6 +568,8 @@ export type DashboardActionName =
   | "openWebDashboard"
   | "openExternalUrl"
   | "generateApiToken"
+  | "editApiToken"
+  | "copyApiToken"
   | "listApiTokens"
   | "revokeApiToken"
   | "getProjectBoard"
@@ -668,6 +670,7 @@ export interface DashboardActionPayload {
   tagOperation?: 'rename' | 'remove' | 'enable' | 'disable';
   tagReplacement?: string;
   tokenId?: string;
+  expectedApiToken?: import('./apiActions').DashboardApiToken;
   tokenName?: string;
   tokenPermissions?: string[];
   tokenProjectPaths?: string[];

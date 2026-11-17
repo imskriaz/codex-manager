@@ -34,6 +34,8 @@ const compiled = await build({ stdin: { contents: `
     window.empty=()=>setSnapshot({capturedAt:Date.now(),requests:[]});
     return <ApiWorkspace open token={token} tokenId={tokenId} tokens={tokens} proxy={snapshot} privacyMode={privacyMode} enabled connected={connected} pending={pending} uncertain={uncertain} loading={loading} error={error} notice={notice}
       onGenerate={(name,projects,permissions)=>{window.generated={name,projects,permissions};setPending(true);setTimeout(()=>{setPending(false);if(window.failCreate){window.failCreate=false;setError('Creation outcome unknown. Refresh keys before retrying.');setUncertain(true);return;}setToken('cm_fixture_only');setTokenId('fixture-key');setTokens(current=>[...current,{id:'fixture-key',name,createdAt:now,permissions,projectPaths:[]}]);setNotice('API key created. Copy it now.')},50)}}
+      onEdit={(original,name,projects,permissions)=>{setTokens(current=>current.map(item=>item.id===original.id?{...item,name,projectPaths:projects??[],permissions}:item));setNotice('API key updated.');}}
+      onCopy={id=>{setToken(undefined);setTokenId(undefined);setTimeout(()=>{setToken('cm_fixture_only');setTokenId(id)},20)}}
       onRevoke={()=>{setTokens([]);setToken(undefined);setTokenId(undefined);setNotice('API key revoked.')}}
       onRefresh={()=>{setLoading(true);setTimeout(()=>{setLoading(false);setSnapshot(current=>current?{...current,capturedAt:Date.now()}:current);setError(undefined);setUncertain(false)},50)}}/>;
   }
@@ -113,6 +115,24 @@ try {
     await page.screenshot({path:path.join(output,`api-keys-${theme}-${width}.png`)});
     await assertViewport(page,screen);
     await form.getByRole('button',{name:'Done',exact:true}).click();
+    assert.deepEqual(await screen.locator('.api-token-table th').allTextContents(), ['Name','Project scope','Permissions','Created','Requests','In','Out','Cached','Errors','Last used','Actions']);
+    await screen.getByRole('button',{name:'Edit Fixture key',exact:true}).click();
+    const edit = page.getByRole('region',{name:'Edit API key',exact:true});
+    await edit.getByLabel('Token name',{exact:true}).fill('Updated fixture');
+    await edit.getByRole('button',{name:'Save changes',exact:true}).click();
+    await screen.getByRole('status').filter({hasText:'API key updated.'}).waitFor();
+    await screen.getByRole('cell',{name:'Updated fixture',exact:true}).waitFor();
+    await edit.getByRole('button',{name:'Close form',exact:true}).click();
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Clipboard blocked');}}}));
+    await screen.getByRole('button',{name:'Copy key for Updated fixture',exact:true}).click();
+    const manual = screen.getByLabel('API key to copy manually',{exact:true});
+    await manual.waitFor();assert.equal(await manual.inputValue(),'cm_fixture_only');
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.copiedFixture=value;}}}));
+    await screen.getByRole('button',{name:'Copy key for Updated fixture',exact:true}).click();
+    await screen.getByRole('status').filter({hasText:'API key copied.'}).waitFor();
+    assert.equal(await page.evaluate(()=>window.copiedFixture),'cm_fixture_only');
+    await page.screenshot({path:path.join(output,`api-key-actions-${theme}-${width}.png`)});
+    await assertViewport(page,screen);
     await screen.getByRole('button',{name:'Revoke',exact:true}).click();
     await screen.getByRole('status').filter({hasText:'API key revoked'}).waitFor();
     await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();

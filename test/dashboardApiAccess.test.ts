@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type * as vscode from 'vscode';
 import { configureCrossWindowOperationCoordinator } from '../src/utils/crossWindowOperations';
-import { createDashboardApiToken, listDashboardApiTokens, readDashboardApiToken, revokeDashboardApiToken, DASHBOARD_API_TOKEN_SECRET_KEY } from '../src/services/dashboardApiToken';
+import { copyDashboardApiToken, createDashboardApiToken, listDashboardApiTokens, readDashboardApiToken, revokeDashboardApiToken, DASHBOARD_API_TOKEN_SECRET_KEY } from '../src/services/dashboardApiToken';
 import { authorizeApiMessage, scopeApiResults } from '../src/services/dashboardApiScope';
 import { DASHBOARD_API_ACTIONS } from '../src/domain/dashboard/apiActions';
 import type { DashboardClientMessage, DashboardHostMessage } from '../src/domain/dashboard/types';
@@ -19,15 +19,18 @@ const message = (action: string, payload = {}): DashboardClientMessage => ({ typ
 beforeEach(async () => { secrets.clear(); root = await mkdtemp(join(tmpdir(), 'manager-api-')); await configureCrossWindowOperationCoordinator(root); });
 afterEach(async () => { vi.restoreAllMocks(); await removeTestDirectory(root); });
 
-it('stores only hashes for multiple named tokens, preserves scope and permissions, and revokes individually', async () => {
+it('keeps copyable values only in secret storage, preserves scope and permissions, and revokes individually', async () => {
   const a = await createDashboardApiToken(context, { name: 'Build', projectPath: process.cwd(), permissions: ['getProjectBoard'] });
   const b = await createDashboardApiToken(context, { name: 'Owner', permissions: ['*'] });
   const raw = secrets.get(DASHBOARD_API_TOKEN_SECRET_KEY)!;
-  expect(raw).not.toContain(a.token); expect(raw).not.toContain(b.token);
+  expect(raw).toContain(a.token); expect(raw).toContain(b.token);
+  expect(await copyDashboardApiToken(context, a.record.id)).toBe(a.token);
+  expect(JSON.stringify(await listDashboardApiTokens(context))).not.toContain(a.token);
   expect(await listDashboardApiTokens(context)).toEqual([a.record, b.record]);
   expect(await readDashboardApiToken(context, a.token)).toEqual(a.record);
   expect(await readDashboardApiToken(context, a.token.slice(0,-1) + (a.token.endsWith('0') ? '1' : '0'))).toBeUndefined();
   await revokeDashboardApiToken(context, a.record.id);
+  await expect(copyDashboardApiToken(context, a.record.id)).rejects.toThrow(/revoked/);
   expect(await readDashboardApiToken(context, a.token)).toBeUndefined();
   expect(await readDashboardApiToken(context, b.token)).toEqual(b.record);
 });
@@ -155,4 +158,27 @@ it('scopes browser and native terminal access to the granted projects and filter
   }
   const messages = scopeApiResults(record, [{ type: 'dashboard:action-result', requestId: 'tools', action: 'listWorkspaceTerminals', status: 'completed', payload: { workspaceTerminals: [ { id: 'allowed', name: 'Allowed', cwd: root, isActive: true, state: 'idle' }, { id: 'secret', name: 'Other project', cwd: process.cwd(), isActive: false, state: 'idle' } ] } }]);
   expect(messages[0]).toMatchObject({ payload: { workspaceTerminals: [{ id: 'allowed' }] } });
+});
+
+it('edits metadata without rotating a key and refuses stale edits or missing keys', async () => {
+  const created = await createDashboardApiToken(context, { name: 'Before', permissions: ['state'] });
+  const updated = await createDashboardApiToken(context, { id: created.record.id, expected: created.record, name: 'After', projectPath: root, permissions: ['getProjectBoard'] });
+  expect(updated.record).toMatchObject({ id: created.record.id, name: 'After', createdAt: created.record.createdAt, projectPath: root, permissions: ['getProjectBoard'] });
+  expect(await readDashboardApiToken(context, created.token)).toEqual(updated.record);
+  expect(await copyDashboardApiToken(context, created.record.id)).toBe(created.token);
+  await expect(createDashboardApiToken(context, { id: created.record.id, expected: created.record, name: 'Stale' })).rejects.toThrow(/another window/);
+  await expect(createDashboardApiToken(context, { id: 'missing', expected: created.record, name: 'Gone' })).rejects.toThrow(/revoked/);
+  await expect(createDashboardApiToken(context, { id: created.record.id, expected: updated.record, name: 'Invalid', projectPaths: [root], permissions: ['settings'] })).rejects.toThrow(/within that project/);
+  const saved = secrets.get(DASHBOARD_API_TOKEN_SECRET_KEY);
+  vi.spyOn(context.secrets, 'store').mockRejectedValueOnce(new Error('disk full'));
+  await expect(createDashboardApiToken(context, { id: created.record.id, expected: updated.record, name: 'Unsaved' })).rejects.toThrow(/disk full/);
+  expect(secrets.get(DASHBOARD_API_TOKEN_SECRET_KEY)).toBe(saved);
+});
+it('authenticates legacy hashed keys and explains why their values cannot be copied', async () => {
+  const created = await createDashboardApiToken(context, { name: 'Legacy' });
+  const records = JSON.parse(secrets.get(DASHBOARD_API_TOKEN_SECRET_KEY)!);
+  delete records[0].value;
+  secrets.set(DASHBOARD_API_TOKEN_SECRET_KEY, JSON.stringify(records));
+  expect(await readDashboardApiToken(context, created.token)).toEqual(created.record);
+  await expect(copyDashboardApiToken(context, created.record.id)).rejects.toThrow(/older key.*cannot be copied/);
 });

@@ -118,7 +118,7 @@ it('records real proxy usage and safe failure metadata without credentials or bo
   const response = await post('/v1/chat/completions', chat());
   await response.text();
   const entry = readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))!;
-  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4, apiKeyName: 'AI', accountId: 'account-a', accountEmail: 'fixture-account@example.test' });
+  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4, cachedInputTokens: 3, apiKeyName: 'AI', accountId: 'account-a', accountEmail: 'fixture-account@example.test' });
   expect(entry.apiKeyId).toBeTruthy();
   expect(entry.durationMs).toBeGreaterThanOrEqual(0);
   expect(JSON.stringify(entry)).not.toContain('Hello');

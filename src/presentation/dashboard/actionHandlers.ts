@@ -105,7 +105,7 @@ import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { isAutoSwitchLocked, updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
-import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
+import { copyDashboardApiToken, createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
 import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
 import { deleteProjectTask, saveProjectTaskWithAttachments, addProjectCommentWithAttachments, readProjectAttachment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
 import { resolveWorkspaceProjectPathAsync } from '../../services/workspaceTools';
@@ -120,7 +120,7 @@ import { readApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
-  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
+  "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -417,16 +417,21 @@ async function runDashboardAction(
     case "addAccount":
       await vscode.commands.executeCommand("codexManager.addAccount");
       return undefined;
+    case 'copyApiToken':
+      return { apiToken: await copyDashboardApiToken(ctx.context, payload?.tokenId), apiTokenId: payload?.tokenId, apiTokens: await listDashboardApiTokens(ctx.context) };
+    case 'editApiToken':
     case "generateApiToken": {
+      if (action === 'editApiToken' && (!payload?.tokenId || !payload.expectedApiToken)) throw new Error('Refresh and choose an API key to edit.');
       if (typeof payload?.tokenName !== 'string' || !payload.tokenName.trim() || payload.tokenName.trim().length > 80) throw new Error('Name the token using at most 80 characters.');
       if (!getCodexManagerConfiguration().get<boolean>("apiAccessEnabled", false)) {
         throw new Error("Enable API access in Settings before generating a token.");
       }
       if (payload?.tokenProjectPaths !== undefined && (!Array.isArray(payload.tokenProjectPaths) || !payload.tokenProjectPaths.length || payload.tokenProjectPaths.length > 32 || payload.tokenProjectPaths.some(item => typeof item !== 'string' || !item.trim()))) throw new Error('Choose between 1 and 32 project folders.');
       const created = await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, requestId,
+        ...(action === 'editApiToken' ? { id: payload?.tokenId, expected: payload?.expectedApiToken } : {}),
         projectPaths: payload?.tokenProjectPaths ? await Promise.all(payload.tokenProjectPaths.map(project => resolveWorkspaceProjectPathAsync(project))) : undefined,
         projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined });
-      return { apiToken: created.token, apiTokenId: created.record.id, apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
+      return { ...(action === 'generateApiToken' ? { apiToken: created.token, apiTokenId: created.record.id } : {}), apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
     }
     case 'listApiTokens':
       return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: readApiProxyHistory(), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };

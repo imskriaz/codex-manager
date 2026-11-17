@@ -495,9 +495,10 @@ function App() {
       finishOptimisticSession(requestId, true);
       sessionActionRequests.current.delete(requestId);
       if (action === "respondCodexServerRequest") codexPromptTimeoutRef.current?.(requestId);
-      if (['generateApiToken','listApiTokens','revokeApiToken'].includes(action) && [apiRequests.current.list,apiRequests.current.mutation].includes(requestId)) {
+      if (['generateApiToken','editApiToken','copyApiToken','listApiTokens','revokeApiToken'].includes(action) && [apiRequests.current.list,apiRequests.current.mutation].includes(requestId)) {
         setApiError('The host did not confirm this request. Refresh the token list before retrying.');
-        if (action !== 'listApiTokens') { apiUncertainRef.current=true; setApiUncertain(true); }
+        if (action === 'copyApiToken') apiRequests.current.mutation = undefined;
+        if (action !== 'listApiTokens' && action !== 'copyApiToken') { apiUncertainRef.current=true; setApiUncertain(true); }
       }
 
       if (action === "viewLogs" && logConsoleRequestRef.current === requestId) {
@@ -601,7 +602,7 @@ function App() {
   });
   codexPromptTimeoutRef.current = codexPrompts.timeout;
   const questionNotifications = useSessionQuestionNotifications(showNotice);
-  const sendApiRequest = (action: 'generateApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
+  const sendApiRequest = (action: 'generateApiToken'|'editApiToken'|'copyApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
     const mutation=action!=='listApiTokens';
     if (mutation && (apiRequests.current.mutation || apiUncertainRef.current)) return;
     setApiError(undefined);
@@ -937,22 +938,24 @@ function App() {
         setHostReloads(current => receiveReload(current, message));
         return;
       }
-      if (message.type === 'dashboard:action-result' && ['generateApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {
+      if (message.type === 'dashboard:action-result' && ['generateApiToken','editApiToken','copyApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {
         const list=message.action==='listApiTokens', key=list?'list':'mutation';
         if (apiRequests.current[key] === message.requestId) {
           apiRequests.current[key]=undefined;
-          const valid=message.status==='completed' && Array.isArray(message.payload?.apiTokens) && (message.action!=='generateApiToken' || /^cm_[a-f0-9]{64}$/.test(message.payload?.apiToken ?? ''));
+          const valid=message.status==='completed' && Array.isArray(message.payload?.apiTokens) && (!['generateApiToken','copyApiToken'].includes(message.action) || /^cm_[a-f0-9]{64}$/.test(message.payload?.apiToken ?? ''));
           if (valid) {
             setApiTokens(message.payload!.apiTokens!);
             if (list) setApiProxy(message.payload?.apiProxy);
             if(message.payload?.apiProjects) setApiProjects(message.payload.apiProjects);
             if(list && apiUncertainRef.current) apiRequests.current.mutation=undefined;
             apiUncertainRef.current=false;setApiUncertain(false);setApiError(undefined);
+            if(message.action==='copyApiToken') {setApiToken(message.payload!.apiToken);setApiTokenId(message.payload!.apiTokenId);setApiNotice('Key loaded for copying.');}
+            if(message.action==='editApiToken') setApiNotice('API key updated.');
             if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);setApiTokenId(message.payload!.apiTokenId);setApiNotice('API key created. Copy it now.');showNotice({level:'info',message:'API token created. Copy its value now.'});}
             if(message.action==='revokeApiToken') {setApiToken(undefined);setApiTokenId(undefined);setApiNotice('API key revoked.');showNotice({level:'info',message:'API token revoked.'});}
           } else {
             setApiError(message.error ?? 'The token request was not confirmed. Refresh the list before retrying.');
-            if(!list){apiUncertainRef.current=true;setApiUncertain(true);}
+            if(!list && message.action!=='copyApiToken'){apiUncertainRef.current=true;setApiUncertain(true);}
           }
         }
       }
@@ -2833,8 +2836,10 @@ function App() {
         onRefresh={() => sendApiRequest("listApiTokens")}
         connected={!isBrowserDashboard || !connectionUnavailable}
         enabled={snapshot.settings.apiAccessEnabled === true}
-        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
+        pending={isActionPending("generateApiToken") || isActionPending("editApiToken") || isActionPending("copyApiToken") || isActionPending("revokeApiToken")}
         onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
+        onEdit={(token, name, projectPaths, permissions) => sendApiRequest('editApiToken', { tokenId: token.id, expectedApiToken: token, tokenName: name, tokenProjectPaths: projectPaths, tokenPermissions: permissions })}
+        onCopy={tokenId => { setApiToken(undefined); setApiTokenId(undefined); sendApiRequest('copyApiToken', {tokenId}); }}
         onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
       />
         </div>

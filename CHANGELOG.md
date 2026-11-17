@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.41
+
+- Add edit and copy icons to API keys, preserve key values when editing, and reject stale edits. Save new key values in the existing local credential store for copying; explain recovery limits for older hash-only keys.
+- Show separate Requests, In, Out, Cached, Errors, and Last used columns for the latest 100 host proxy requests, with unavailable usage distinguished from zero.
+
 ## 2.0.6-pre.38
 
 - Keep verified positive quota usable below proactive switch thresholds in VS Code and standalone Auto Resume.

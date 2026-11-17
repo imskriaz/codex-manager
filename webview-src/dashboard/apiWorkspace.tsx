@@ -15,6 +15,7 @@ import { handleTabKeyDown } from "./primitives";
 import { ApiProxyPanel } from "./apiProxyPanel";
 import { ApiDocsModal } from "./apiDocs";
 import { ApiChoicePicker } from "./apiChoicePicker";
+import { apiKeyUsage } from "../../src/domain/dashboard/apiProxy";
 export function ApiWorkspace(props: {
   open: boolean;
   token?: string;
@@ -34,11 +35,16 @@ export function ApiWorkspace(props: {
   pending: boolean;
   onGenerate: (name: string, projectPaths: string[] | undefined, permissions: string[]) => void;
   onRevoke: (id: string) => void;
+  onEdit: (token: DashboardApiToken, name: string, projectPaths: string[] | undefined, permissions: string[]) => void;
+  onCopy: (id: string) => void;
 }) {
   const [projectInput, setProjectInput] = useState("");
   const [tab, setTab] = useState<"keys" | "explorer" | "proxy">("keys");
   const [createOpen, setCreateOpen] = useState(false),
     [name, setName] = useState("");
+  const [editing, setEditing] = useState<DashboardApiToken>();
+  const [copyTarget, setCopyTarget] = useState<string>();
+  const [keyCopyStatus, setKeyCopyStatus] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [docsOpen, setDocsOpen] = useState(false);
   const [allProjects, setAllProjects] = useState(true),
@@ -68,14 +74,30 @@ export function ApiWorkspace(props: {
   const [createdToken, setCreatedToken] = useState<string>(),
     [copyStatus, setCopyStatus] = useState("");
   useEffect(() => {
-    if (props.token) setCreatedToken(props.token);
+    if (props.token && createOpen && !editing && !copyTarget) setCreatedToken(props.token);
   }, [props.token]);
+  useEffect(() => {
+    if (!copyTarget || !props.token || props.tokenId !== copyTarget) return;
+    let active = true;
+    void Promise.resolve().then(() => navigator.clipboard.writeText(props.token!)).then(
+      () => { if (active) { setKeyCopyStatus('API key copied.'); setCopyTarget(undefined); } },
+      () => { if (active) setKeyCopyStatus('Copy blocked. Select the key below and copy it manually.'); }
+    );
+    return () => { active = false; };
+  }, [props.token, props.tokenId, copyTarget]);
+  useEffect(() => {
+    const saved = props.tokens.find(token => token.id === editing?.id);
+    if (saved && saved.name === name && JSON.stringify(saved.permissions) === JSON.stringify(permissions) && JSON.stringify(apiTokenProjects(saved)) === JSON.stringify(allProjects ? [] : selectedProjects)) setEditing(saved);
+  }, [props.tokens]);
   useEffect(() => {
     if (!props.open) {
       requestGeneration.current++;
       setCreatedToken(undefined);
       setCredential("");
       setCreateOpen(false);
+      setEditing(undefined);
+      setCopyTarget(undefined);
+      setKeyCopyStatus('');
       setTab("keys");
       setDetailsOpen(false);
       setDocsOpen(false);
@@ -396,6 +418,11 @@ export function ApiWorkspace(props: {
                         setCreatedToken(undefined);
                         setCopyStatus("");
                         setName("");
+                        setEditing(undefined);
+                        setProjectInput("");
+                        setAllProjects(true);
+                        setSelectedProjects([]);
+                        setPermissions(['state', 'getProjectBoard', 'getProjectTaskDetails']);
                         setCreateOpen(true);
                       }}
                     >
@@ -412,11 +439,20 @@ export function ApiWorkspace(props: {
                           <th>Project scope</th>
                           <th>Permissions</th>
                           <th>Created</th>
-                          <th>Action</th>
+                          <th title="Proxy requests in the latest 100 host requests">Requests</th>
+                          <th title="Reported input tokens, including cached input">In</th>
+                          <th title="Reported output tokens">Out</th>
+                          <th title="Reported cached input tokens (included in In)">Cached</th>
+                          <th>Errors</th>
+                          <th>Last used</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {props.tokens.map((token) => (
+                        {props.tokens.map((token) => {
+                          const usage = apiKeyUsage(props.proxy, token.id);
+                          const count = (value?: number) => value === undefined ? '—' : value.toLocaleString();
+                          return (
                           <tr key={token.id}>
                             <td>{token.name}</td>
                             <td title={apiTokenProjects(token).join("\n")}>
@@ -430,13 +466,27 @@ export function ApiWorkspace(props: {
                                 : `${token.permissions.length} operations`}
                             </td>
                             <td>{new Date(token.createdAt).toLocaleDateString()}</td>
+                            <td class="api-key-stat">{count(usage?.requests)}</td>
+                            <td class="api-key-stat">{count(usage?.input)}</td>
+                            <td class="api-key-stat">{count(usage?.output)}</td>
+                            <td class="api-key-stat">{count(usage?.cached)}</td>
+                            <td class="api-key-stat">{count(usage?.errors)}</td>
+                            <td>{usage?.lastUsed ? new Date(usage.lastUsed).toLocaleString() : '—'}</td>
                             <td>
+                              <span class="api-key-actions">
+                              <button type="button" disabled={!canUse} aria-label={`Edit ${token.name}`} title="Edit API key" onClick={() => {
+                                setEditing(token); setName(token.name); setAllProjects(!apiTokenProjects(token).length); setSelectedProjects(apiTokenProjects(token));
+                                setPermissions(token.permissions);
+                                setProjectInput(''); setCreatedToken(undefined); setCopyStatus(''); setCreateOpen(true);
+                              }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14v6Z" /></svg></button>
+                              <button type="button" disabled={!canUse} aria-label={`Copy key for ${token.name}`} title="Copy API key" onClick={() => { setKeyCopyStatus('Loading key…'); setCopyTarget(token.id); props.onCopy(token.id); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M15 8V4H4v11h4" /></svg></button>
                               <button type="button" disabled={!canUse} onClick={() => props.onRevoke(token.id)}>
                                 Revoke
                               </button>
+                              </span>
                             </td>
                           </tr>
-                        ))}
+                        );})}
                       </tbody>
                     </table>
                   ) : null}
@@ -450,12 +500,15 @@ export function ApiWorkspace(props: {
                     </p>
                   ) : null}
                 </div>
+              {props.tokens.length ? <p class="api-key-usage-note">Usage: latest 100 proxy requests on this host, cleared on restart. In includes Cached; token totals include reported usage only. — means unavailable.</p> : null}
+              {keyCopyStatus ? <p class="api-key-usage-note" role="status">{props.error && copyTarget ? 'Key was not copied. See the error above.' : keyCopyStatus}</p> : null}
+              {copyTarget && props.tokenId === copyTarget && props.token && keyCopyStatus.startsWith('Copy blocked') ? <input aria-label="API key to copy manually" type="text" readOnly autoComplete="off" value={props.token} onFocus={event => event.currentTarget.select()} /> : null}
               </section>
             </div>
             {createOpen ? (
-              <section class="api-key-create-panel" aria-label="Create API key" tabIndex={0}>
+              <section class="api-key-create-panel" aria-label={editing ? "Edit API key" : "Create API key"} tabIndex={0}>
                 <header class="api-section-heading">
-                  <h2>Create API key</h2>
+                  <h2>{editing ? "Edit API key" : "Create API key"}</h2>
                   <button type="button" disabled={props.pending} onClick={() => setCreateOpen(false)}>
                     {createdToken ? "Done" : "Close form"}
                   </button>
@@ -470,8 +523,10 @@ export function ApiWorkspace(props: {
                     class="api-token-create"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (canUse && !createdToken && (allProjects || selectedProjects.length))
-                        props.onGenerate(name, allProjects ? undefined : selectedProjects, permissions);
+                      if (canUse && !createdToken && (allProjects || selectedProjects.length)) {
+                        if (editing) props.onEdit(editing, name, allProjects ? undefined : selectedProjects, permissions);
+                        else props.onGenerate(name, allProjects ? undefined : selectedProjects, permissions);
+                      }
                     }}
                   >
                     <section class="api-token-identity">
@@ -591,7 +646,7 @@ export function ApiWorkspace(props: {
                       <label class="api-check-all">
                         <input
                           type="checkbox"
-                          checked={allowedPermissions.every((action) => permissions.includes(action))}
+                          checked={permissions.includes("*") || allowedPermissions.every((action) => permissions.includes(action))}
                           onChange={(event) =>
                             setPermissions(event.currentTarget.checked ? [...allowedPermissions] : [])
                           }
@@ -605,12 +660,12 @@ export function ApiWorkspace(props: {
                             <label key={action}>
                               <input
                                 type="checkbox"
-                                checked={permissions.includes(action)}
+                                checked={permissions.includes("*") || permissions.includes(action)}
                                 onChange={(event) =>
                                   setPermissions((current) =>
                                     event.currentTarget.checked
                                       ? [...current, action]
-                                      : current.filter((value) => value !== action)
+                                      : (current.includes("*") ? allowedPermissions : current).filter((value) => value !== action)
                                   )
                                 }
                               />
@@ -627,7 +682,7 @@ export function ApiWorkspace(props: {
                         disabled={props.pending}
                         onClick={() => {
                           setCreateOpen(false);
-                          setRequestCopy("Key creation cancelled.");
+                          setRequestCopy(editing ? "Key editing cancelled." : "Key creation cancelled.");
                         }}
                       >
                         Cancel
@@ -643,7 +698,7 @@ export function ApiWorkspace(props: {
                           (!allProjects && (!selectedProjects.length || selectedProjects.length > 32))
                         }
                       >
-                        {props.pending ? "Creating…" : createdToken ? "Token created" : "Create token"}
+                        {props.pending ? "Saving…" : editing ? "Save changes" : createdToken ? "Token created" : "Create token"}
                       </button>
                     </div>
                   </form>
