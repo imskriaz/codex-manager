@@ -13,6 +13,7 @@ import { removeTestDirectory } from "./testFilesystem";
 import { fetch as upstream } from "undici";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../src/application/accounts/quota";
 import type { AccountsRepository } from "../src/storage";
+import { readApiProxyHistory } from '../src/services/aiProxyHistory';
 
 vi.mock("undici", async (original) => ({ ...(await original<typeof import("undici")>()), fetch: vi.fn() }));
 vi.mock("../src/application/accounts/quota", () => ({
@@ -111,6 +112,31 @@ afterEach(async () => {
   });
   vi.restoreAllMocks();
   await removeTestDirectory(root);
+});
+
+it('records real proxy usage and safe failure metadata without credentials or bodies', async () => {
+  const response = await post('/v1/chat/completions', chat());
+  await response.text();
+  const entry = readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))!;
+  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4 });
+  expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+  expect(JSON.stringify(entry)).not.toContain('Hello');
+  expect(JSON.stringify(entry)).not.toContain(key);
+  const failed = await post('/v1/chat/completions', chat(), 'secret-invalid-key');
+  await failed.text();
+  expect(readApiProxyHistory().requests.find(row => row.id === failed.headers.get('x-request-id'))).toMatchObject({ status: 'failed', httpStatus: 401, error: 'Proxy request failed: authentication_error (401). Check the API response for details.' });
+  const invalid = await post('/v1/responses', { model: 'codex-test', input: 'private prompt', 'secret-body-field': 'private value' });
+  await invalid.text();
+  const invalidLog = readApiProxyHistory().requests.find(row => row.id === invalid.headers.get('x-request-id'));
+  expect(invalidLog?.status).toBe('failed');
+  expect(JSON.stringify(invalidLog)).not.toMatch(/secret-body-field|private prompt|private value/);
+});
+
+it('records incomplete streams separately from successful completion', async () => {
+  vi.mocked(upstream).mockResolvedValue(events({ type: 'response.incomplete', response: { ...completed, status: 'incomplete' } }) as never);
+  const response = await post('/v1/responses', { model: 'codex-test', input: 'private prompt', stream: true });
+  await response.text();
+  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))).toMatchObject({ status: 'incomplete', inputTokens: 11, outputTokens: 4 });
 });
 
 it("routes the shared dashboard /v1 endpoints without browser login or a second port", async () => {

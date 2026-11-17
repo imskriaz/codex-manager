@@ -4,14 +4,17 @@ import type { DashboardApiToken } from '../../src/domain/dashboard/apiActions';
 import { DASHBOARD_API_ACTIONS, PROJECT_API_ACTIONS, apiTokenProjects } from '../../src/domain/dashboard/apiActions';
 import { formatApiResponse, readApiResponse } from './apiResponse';
 import { API_ENDPOINTS, apiPayloadExample, buildApiTestRequest, canTestApiEndpoint, type ApiEndpointId, type ApiInspection } from './apiPlayground';
-import { ModalShell } from './primitives';
+import { handleTabKeyDown, ModalShell } from './primitives';
+import { ApiProxyPanel } from './apiProxyPanel';
 export function ApiTokenModal(props: {
   open: boolean; token?: string; tokens: DashboardApiToken[]; projects?: DashboardCliProject[]; baseUrl?: string;
+  proxy?: import('../../src/domain/dashboard/apiProxy').ApiProxySnapshot;
   error?: string; uncertain?: boolean; loading?: boolean; onRefresh: () => void;
   enabled: boolean; connected: boolean; pending: boolean; onClose: () => void;
   onGenerate: (name: string, projectPaths: string[] | undefined, permissions: string[]) => void; onRevoke: (id: string) => void;
 }) {
   const [projectInput,setProjectInput]=useState('');
+  const [tab, setTab] = useState<'explorer' | 'proxy' | 'logs'>('explorer');
   const [createOpen, setCreateOpen] = useState(false), [name, setName] = useState('');
   const [keysOpen,setKeysOpen] = useState(false), [detailsOpen,setDetailsOpen] = useState(false);
   const [allProjects, setAllProjects] = useState(true), [selectedProjects, setSelectedProjects] = useState<string[]>([]);
@@ -112,12 +115,14 @@ export function ApiTokenModal(props: {
   let requestPreview = '';
   try { const request = buildApiTestRequest(endpoint,payload,operation,checked?.projects.length ? testProject : '', 'unique-request-id'); requestPreview = JSON.stringify({...request,...(request.body ? {body:JSON.parse(request.body) as unknown} : {})},null,2); } catch { requestPreview = 'Enter a valid request payload to see the complete request.'; }
   return <>
-  <ModalShell open={props.open && !createOpen && !keysOpen && !detailsOpen} title="API access" closeLabel="Close" closeDisabled={props.pending || testing} onClose={() => { setCreateOpen(false); props.onClose(); }} className="dashboard-api-modal" headerActions={<button type="button" class="api-key-button" aria-label="Manage API keys" title="Manage API keys" disabled={props.pending || testing} onClick={()=>setKeysOpen(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m12 12 9 9m-4-4 3-3m-6 0 3-3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></button>}>
+  <ModalShell open={props.open && !createOpen && !keysOpen && !detailsOpen} title="API access" closeLabel="Close" closeDisabled={props.pending || testing} onClose={() => { setCreateOpen(false); props.onClose(); }} className="dashboard-api-modal" headerActions={<button type="button" class="api-key-button" aria-label="Manage API keys" aria-haspopup="dialog" title="Manage API keys" disabled={props.pending || testing} onClick={()=>{setKeysOpen(true);if(props.connected && !props.loading) props.onRefresh();}}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m12 12 9 9m-4-4 3-3m-6 0 3-3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg><span>API keys</span></button>}>
     {!props.enabled ? <p role="status">Enable Dashboard API in Settings to create and use tokens.</p> : null}
     {!props.connected ? <p role="status">Offline. Reconnect before managing API tokens.</p> : null}
     {props.error ? <p class="share-outcome is-error" role="alert">{props.error}</p> : null}
     {props.uncertain ? <p role="status">Refresh the list to verify the previous request before creating another token.</p> : null}
-    <div class="api-playground" aria-label="Explorer and Test">
+    <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>{(['explorer', 'proxy', 'logs'] as const).map(item => <button type="button" role="tab" id={`api-tab-${item}`} aria-controls={`api-panel-${item}`} aria-selected={tab === item} tabIndex={tab === item ? 0 : -1} key={item} disabled={testing} onClick={() => { setTab(item); if (item !== 'explorer' && props.connected && !props.loading) props.onRefresh(); }}>{item === 'explorer' ? 'Explorer & test' : item === 'proxy' ? 'Proxy' : 'Logs'}</button>)}</div>
+    {tab !== 'explorer' ? <div role="tabpanel" id={`api-panel-${tab}`} aria-labelledby={`api-tab-${tab}`}><ApiProxyPanel snapshot={props.proxy} logs={tab === 'logs'} enabled={props.enabled} connected={props.connected} loading={props.loading} baseUrl={baseUrl} onRefresh={props.onRefresh}/></div> : null}
+    <div class="api-playground" aria-label="Explorer and Test" role="tabpanel" id="api-panel-explorer" aria-labelledby="api-tab-explorer" hidden={tab !== 'explorer'}>
       <div class="api-auth-bar">
         <label>Bearer token<input type="password" autoComplete="off" value={credential} placeholder={props.token ? 'Uses the newly created token' : 'Paste an API token'} disabled={testing} onInput={event => { setCredential(event.currentTarget.value); setAccess(undefined); setModels([]); setModel(''); setResult(''); setRequestMeta(undefined); }} /></label>
         <div class="api-access-check"><button type="button" disabled={!canUse || testing} onClick={() => { setCreatedToken(undefined); setCopyStatus(''); setCreateOpen(true); }}>+ Create token</button><button type="button" disabled={!browser || !props.connected || !props.enabled || !bearer || testing} onClick={() => setInspectRetry(current => current + 1)}>Recheck token</button>{checked ? <small>{checked.name} · {checked.actions.length} operations · {checked.projects.length ? checked.projects.length+' project folders' : 'Host-wide'}</small> : null}</div>

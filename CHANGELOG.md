@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.23
+
+- Add Proxy and Logs tabs to the API modal with a routing diagram and recent request status, token usage, duration, and safe failure details.
+- Keep the latest 100 proxy request metadata records in host memory without prompts, responses, or credentials.
+- Make the API key manager easy to open with a labeled header button and refresh its token list on entry.
+
 ## 2.0.6-pre.22
 
 - Hide standalone Terminal controls when the host does not support terminals.

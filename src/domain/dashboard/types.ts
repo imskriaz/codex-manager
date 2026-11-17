@@ -1161,6 +1161,7 @@ export interface DashboardActionResultPayload {
   apiEndpoint?: string;
   apiProjects?: DashboardCliProject[];
   apiTokens?: import('./apiActions').DashboardApiToken[];
+  apiProxy?: import('./apiProxy').ApiProxySnapshot;
   authJson?: string;
   oauthSession?: DashboardOAuthSessionDescriptor;
   importPreview?: CodexImportPreviewSummary;

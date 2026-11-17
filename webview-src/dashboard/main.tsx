@@ -223,6 +223,7 @@ function App() {
   const [donationOpen, setDonationOpen] = useState(false);
   const [apiTokenOpen, setApiTokenOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
+  const [apiProxy, setApiProxy] = useState<import('../../src/domain/dashboard/apiProxy').ApiProxySnapshot>();
   const [apiError,setApiError]=useState<string>(), [apiUncertain,setApiUncertain]=useState(false);
   const [apiProjects,setApiProjects]=useState<import('../../src/domain/dashboard/types').DashboardCliProject[]>([]);
   const apiRequests=useRef<{list?:string;mutation?:string}>({});
@@ -939,6 +940,7 @@ function App() {
           const valid=message.status==='completed' && Array.isArray(message.payload?.apiTokens) && (message.action!=='generateApiToken' || /^cm_[a-f0-9]{64}$/.test(message.payload?.apiToken ?? ''));
           if (valid) {
             setApiTokens(message.payload!.apiTokens!);
+            if (list) setApiProxy(message.payload?.apiProxy);
             if(message.payload?.apiProjects) setApiProjects(message.payload.apiProjects);
             if(list && apiUncertainRef.current) apiRequests.current.mutation=undefined;
             apiUncertainRef.current=false;setApiUncertain(false);setApiError(undefined);
@@ -3122,6 +3124,7 @@ function App() {
         baseUrl={snapshot.apiBaseUrl}
         token={apiToken}
         tokens={apiTokens}
+        proxy={apiProxy}
         projects={apiProjects}
         error={apiError}
         uncertain={apiUncertain}

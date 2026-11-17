@@ -9,6 +9,7 @@ import { CODEX_API_BASE } from "../infrastructure/config/apiEndpoints";
 import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironment";
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
+import { startApiProxyLog } from './aiProxyHistory';
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
 import { createSharedInspection, waitWithin } from "../utils/concurrency";
 import {
@@ -160,6 +161,7 @@ export class AiProxy {
     const controller = new AbortController(),
       signal = controller.signal;
     const requestId = randomUUID();
+    const log = startApiProxyLog(request.method ?? '', url.pathname, requestId);
     response.setHeader("x-request-id", requestId);
     response.setHeader("request-id", requestId);
     response.setHeader("Cache-Control", "no-store");
@@ -244,6 +246,7 @@ export class AiProxy {
       const generationProtocol: AiProtocol =
         path === "/v1/messages" ? "claude" : path === "/v1/responses" ? "responses" : "chat";
       const normalized = normalizeAiRequest(body, generationProtocol);
+      log.model = String(normalized.body['model']);
       signal.throwIfAborted();
       const upstream = await this.fetchBackend("/responses", normalized.body, signal);
       acceptedGeneration = true;
@@ -282,6 +285,16 @@ export class AiProxy {
           }
         }
         if (type === "response.completed" || type === "response.incomplete") {
+          if (type === 'response.incomplete') {
+            log.status = 'incomplete';
+            log.httpStatus = response.statusCode;
+            log.error = 'The backend returned an incomplete response.';
+          }
+          const usage = object(event['response'], 'AI response')['usage'] as Record<string, unknown> | undefined;
+          for (const [source, target] of [['input_tokens', 'inputTokens'], ['output_tokens', 'outputTokens']] as const) {
+            const value = usage?.[source];
+            if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) log[target] = value;
+          }
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;
@@ -295,6 +308,9 @@ export class AiProxy {
         );
       if (!response.writableEnded) response.end();
     } catch (error) {
+      log.status = response.destroyed ? 'cancelled' : 'failed';
+      log.httpStatus = response.headersSent ? response.statusCode : undefined;
+      log.error = response.destroyed ? 'Client disconnected before completion.' : 'The proxy request did not complete.';
       if (!response.destroyed && !response.writableEnded) {
         const reason = signal.aborted && signal.reason instanceof AiProxyError ? signal.reason : error;
         const failure =
@@ -305,6 +321,9 @@ export class AiProxy {
                 "The AI backend is unavailable. Check the account and connection, then retry.",
                 "api_error"
               );
+        log.httpStatus = response.headersSent ? response.statusCode : failure.status;
+        // Validation messages can reflect client input; retain only the safe error category.
+        log.error = `Proxy request failed: ${failure.code} (${failure.status}). Check the API response for details.`;
         const envelope =
           protocol === "claude"
             ? { type: "error", error: { type: failure.code, message: failure.message }, request_id: requestId }
@@ -316,6 +335,8 @@ export class AiProxy {
         }
       }
     } finally {
+      if (log.status === 'running') { log.status = 'completed'; log.httpStatus = response.statusCode; }
+      log.durationMs = Math.max(0, Date.now() - log.startedAt);
       clearTimeout(timer);
       controller.abort();
       this.running.delete(controller);

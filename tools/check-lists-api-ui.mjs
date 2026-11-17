@@ -58,7 +58,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
       sent.push(route.request().postDataJSON());
       await route.fulfill({ status: failure ? 403 : 200, contentType: 'application/json', body: JSON.stringify(failure ? { error: 'Token was revoked after inspection.' } : { messages: [{ status: 'completed', payload: { notice: { level: 'info', message: 'Refresh completed.' } } }] }) });
     });
-    assert.equal(await list.getByRole('tab').count(),0,'Key creation and testing share one workspace');
+    assert.deepEqual(await list.getByRole('tab').allTextContents(), ['Explorer & test', 'Proxy', 'Logs'], 'Proxy monitoring shares the API modal');
     assert.equal(await list.getByLabel('Endpoint',{exact:true}).inputValue(),origin+'/api/message','Absolute endpoint is visible in a copyable field');
     if(width>900) {const panels=await list.locator('.api-playground-layout').evaluate(element=>[...element.children].map(child=>child.getBoundingClientRect().width));assert.equal(panels.length,3);assert.ok(Math.max(...panels)-Math.min(...panels)<3,'Three balanced panels');}
     const tokenInput = list.getByLabel('Bearer token', { exact: true });

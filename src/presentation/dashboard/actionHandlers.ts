@@ -116,6 +116,7 @@ import {
 } from "../workbench/windowRuntimeAccount";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
 import { homedir } from "node:os";
+import { readApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
@@ -428,7 +429,7 @@ async function runDashboardAction(
       return { apiToken: created.token, apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
     }
     case 'listApiTokens':
-      return { apiTokens: await listDashboardApiTokens(ctx.context), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
+      return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: readApiProxyHistory(), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
     case 'revokeApiToken':
       return { apiTokens: await revokeDashboardApiToken(ctx.context, payload?.tokenId), notice: { level:'info', message:'API token revoked.' } };
     case 'getProjectBoard':
