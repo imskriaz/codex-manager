@@ -54,6 +54,13 @@ it('uses structured capacity details when the top-level failure is generic', asy
   expect(mocks.switch).toHaveBeenCalledOnce();
   expect(tags).toContain('Capacity');
 });
+it('adds the existing Capacity tag for Codex revised capacity wording', async () => {
+  mocks.config.modelCapacityFailureCount = 1;
+  emit(snapshot('revised', { error: 'Selected model is at capacity. Please try a different model.' }));
+  await flush();
+  expect(tags).toContain('Capacity');
+  expect(mocks.switch).toHaveBeenCalledOnce();
+});
 it('resets on success and other failures, and honors a configurable threshold', async () => {
   mocks.config.modelCapacityFailureCount = 2;
   emit(snapshot('one')); await flush(); emit(snapshot('ok', { status: 'completed', error: undefined })); await flush();

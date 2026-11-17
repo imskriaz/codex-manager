@@ -11,7 +11,13 @@ export function isCodexQuotaInterruption(message: string): boolean {
 }
 
 export function isCodexCapacityInterruption(message: string): boolean {
-  return /\b(?:model|server|provider) is (?:currently )?at capacity\b|model(?:[_ -](?:server|provider))?[_ -]?overloaded|server[_ -]?overloaded|(?:provider|model) capacity/i.test(message);
+  // Codex exposes the same rejection as human text (for example, the
+  // revised "Selected model is at capacity" message) and as a structured
+  // `codex_error_info` value such as `server_overloaded` or
+  // `model_at_capacity`. Normalize camelCase first so both forms feed the
+  // existing Capacity tag and recovery pipeline.
+  const normalized = message.replace(/([a-z])([A-Z])/g, "$1_$2");
+  return /\b(?:model|server|provider)[_ -]+(?:is[_ -]+(?:currently[_ -]+)?)?at[_ -]+capacity\b|\b(?:model|server|provider)[_ -]+(?:is[_ -]+)?(?:server[_ -]+)?overloaded\b|\b(?:provider|model)[_ -]+capacity\b/i.test(normalized);
 }
 
 /** Only explicit execution-policy failures qualify; cancellation and ordinary file errors do not. */

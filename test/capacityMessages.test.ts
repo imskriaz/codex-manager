@@ -20,14 +20,14 @@ function activity(message: DashboardCliSessionMessage): VNode<any> {
 
 it.each(['error', 'tool-call', 'compaction', 'review'] as const)('shows %s capacity messages immediately with optional diagnostics', kind => {
   for (const debug of [undefined, '{"error":"server_overloaded","request_id":"keep-me"}']) {
-    const node = activity({ id: 'capacity', kind, text: 'Selected model is at capacity. Choose another model or retry later.', status: 'failed', debug });
+    const node = activity({ id: 'capacity', kind, text: 'Selected model is at capacity. Please try a different model.', status: 'failed', debug });
     expect(node.type).toBe('div');
     expect(node.props.open).not.toBe(true);
     const label = node.props.children[0];
     expect(label.props.role).toBe('status');
     expect(label.props.children).toBe('Model at capacity');
-    expect(label.props.title).toBe('Selected model is at capacity. Choose another model or retry later.');
-    expect(node.props.children[1].props.children).toBe("Selected model is at capacity. Choose another model or retry later.");
+    expect(label.props.title).toBe('Selected model is at capacity. Please try a different model.');
+    expect(node.props.children[1].props.children).toBe("Selected model is at capacity. Please try a different model.");
     if (debug) expect(node.props.children[2].props.children[1].props.text).toBe(debug);
   }
 });

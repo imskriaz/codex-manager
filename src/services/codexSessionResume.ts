@@ -4046,7 +4046,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       }
     }
     if (["error", "task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventType)) && isCodexCapacityInterruption(JSON.stringify(eventPayload ?? value))) {
-      return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: readHumanError(eventPayload?.["error"] ?? eventPayload?.["message"] ?? value.payload ?? value.error) ?? "Selected model is at capacity. Try a different model, then retry.", debug: safeDisplayJson(eventPayload ?? value), status: "failed", timestamp };
+      return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: readHumanError(eventPayload?.["error"] ?? eventPayload?.["message"] ?? value.payload ?? value.error) ?? "Selected model is at capacity. Please try a different model.", debug: safeDisplayJson(eventPayload ?? value), status: "failed", timestamp };
     }
     if (eventPayload?.["type"] === "user_message") {
       return parsePersistedUserMessage(
