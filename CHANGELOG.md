@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.26
+
+- Move API access out of the primary dashboard actions and expose it as an enabled-only icon in the secondary account tools.
+- Give the API workspace a larger task-style surface for Explorer, Proxy, Logs, and key management.
+
 ## 2.0.6-pre.25
 
 - Split the API Proxy tab into a route diagram and recent external API logs side by side; the Logs tab keeps the full request table.

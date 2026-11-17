@@ -10,7 +10,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
   if (api) {
     await page.evaluate(() => { window.__holdNextApiList = true; });
     await page.getByRole('button', { name: 'Open account center', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Account center', exact: true }).getByRole('button', { name: 'API', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Account center', exact: true }).getByRole('button', { name: 'API access', exact: true }).click();
     let list = page.getByRole('dialog', { name: 'API access', exact: true });
     const main = list;
     await page.waitForFunction(() => !!window.__heldApiList);

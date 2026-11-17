@@ -41,11 +41,10 @@ try {
   await live.locator('#dashboard-main').waitFor();
   const rail = live.getByRole('button', { name: 'Show sessions sidebar', exact: true });
   if (await rail.isVisible()) await rail.click();
-  await live.getByRole('button', { name: 'Open account center', exact: true }).click();
-  await live.locator('.workspace-accounts').waitFor();
-  // Dashboard exposes API access in its header; the workspace footer opens Accounts.
+  // API access is available from the secondary account tools area.
   await live.goto(origin + '/dash', { waitUntil: 'domcontentloaded' });
-  await live.getByRole('button', { name: 'API access', exact: true }).click();
+  await live.getByRole('button', { name: 'Open account center', exact: true }).click();
+  await live.getByRole('dialog', { name: 'Account center', exact: true }).getByRole('button', { name: 'API access', exact: true }).click();
   const modal = live.getByRole('dialog', { name: 'API access', exact: true });
   await modal.getByRole('tab', { name: 'Proxy', exact: true }).click();
   await modal.getByRole('button', { name: 'Refresh proxy', exact: true }).waitFor();

@@ -2890,16 +2890,6 @@ function App() {
               </button>
               <button id="privacyToggleButton" class="settings-btn action-btn icon-only" type="button" title={privacyToggleLabel} aria-label={privacyToggleLabel} aria-pressed={state.privacyMode} disabled={isActionPending('setPrivacyMode')} onClick={handlePrivacyToggle}><span class="button-face"><span class="button-icon">{state.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span></span></button>
               <button
-                id="apiOpenButton"
-                class="settings-btn action-btn"
-                type="button"
-                title="API access"
-                aria-label="API access"
-                onClick={() => setApiTokenOpen(true)}
-              >
-                <span class="button-face"><span class="button-label">API</span></span>
-              </button>
-              <button
                 id="settingsOpenButton"
                 class="settings-btn action-btn icon-only settings-alert-trigger"
                 type="button"
@@ -3197,6 +3187,7 @@ function App() {
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
+              apiEnabled={snapshot?.settings.apiAccessEnabled === true}
               onApi={() => setApiTokenOpen(true)}
               showLogout={isBrowserDashboard}
               privacyMode={state.privacyMode}

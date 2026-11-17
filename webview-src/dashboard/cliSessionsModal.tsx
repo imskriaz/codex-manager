@@ -194,6 +194,7 @@ export type CliSessionsPageProps = {
   taskBoardActive?: boolean;
   onTasks?: () => void;
   onApi?: () => void;
+  apiEnabled?: boolean;
   /** Show the remote dashboard sign-out action in the avatar menu. */
   showLogout?: boolean;
   systemInfoEnabled?: boolean;
@@ -1419,7 +1420,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
 
           </div>
-          <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} onOpenPanel={() => openContextTab("accounts")} connected={props.connected}
+          <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} apiEnabled={props.apiEnabled} onFeedback={props.onActionFeedback} onOpenPanel={() => openContextTab("accounts")} connected={props.connected}
             onApi={props.onApi}
             account={props.account}
             privacyMode={props.privacyMode}
@@ -1437,7 +1438,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
-        {accountCenterOpen ? <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
+        {accountCenterOpen ? <SessionAccountFooter hostConnected={props.hostConnected} systemInfoEnabled={props.systemInfoEnabled} apiEnabled={props.apiEnabled} onFeedback={props.onActionFeedback} connected={props.connected} standalone onClose={() => setAccountCenterOpen(false)} onApi={props.onApi} account={props.account} privacyMode={props.privacyMode} showLogout={props.showLogout} accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined} localAccounts={props.localAccounts} peers={props.peers} peerAccounts={props.peerAccounts} selectedPeerId={props.selectedPeerId} onPeerChange={props.onPeerChange} switching={props.switchingAccount} onDashboard={props.onDashboard} onSettings={props.onSettings} onSwitchAccount={props.onSwitchAccount} renderAccounts={props.renderAccounts} /> : null}
         <PanelResizeHandle
           label="Resize sessions sidebar"
           value={layout.railWidth}
@@ -2940,6 +2941,7 @@ function SessionAccountFooter(props: {
   connected?: boolean;
   onFeedback: (notice: DashboardNotice) => void;
   onApi?: () => void;
+  apiEnabled?: boolean;
   account?: DashboardAccountViewModel;
   privacyMode: boolean;
   showLogout?: boolean;
@@ -3091,7 +3093,7 @@ function SessionAccountFooter(props: {
       {systemPickerOpen ? <SystemPicker anchor={systemPickerTrigger} systemInfoEnabled={props.systemInfoEnabled !== false} peers={peers} selectedId={peer.id} connected={(props.hostConnected ?? props.connected) !== false} privacyMode={props.privacyMode} accountCount={item => item.local ? props.localAccounts?.length : props.peerAccounts?.[item.id]?.length} onSelect={id => props.onPeerChange?.(id)} onClose={() => setSystemPickerOpen(false)} /> : null}
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <div class="cli-account-grid">{props.renderAccounts?.()}</div>
-      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { props.onApi?.(); }}><ApiIcon />API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
+      <nav class="cli-account-navigation" aria-label="Account shortcuts">{props.apiEnabled ? <button type="button" class="cli-account-api-shortcut" aria-label="API access" title="API access" onClick={() => { closeMenu(); props.onApi?.(); }}><ApiIcon /><span class="sr-only">API</span></button> : null}<button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
       <div class="cli-account-resize-footer"><div class="cli-account-resizer" role="separator" aria-label="Resize account center" aria-valuetext={size ? `${size.width} by ${size.height}` : 'Compact default'} tabIndex={0} onPointerDown={event => {
         if (event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
