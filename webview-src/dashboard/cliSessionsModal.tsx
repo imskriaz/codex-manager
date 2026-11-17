@@ -1623,7 +1623,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onBranchReview={() => { openContextTab('reviews'); setBranchReview(true); props.onRefreshEnvironment(toolProjectPath, true); }}
           renderAccounts={props.renderAccounts}
           onBrowserInstruction={(value, image) => { if (image) { const next = validateChatAttachments([...attachments, { id: crypto.randomUUID(), name: "browser-feedback.jpg", kind: "image", mimeType: "image/jpeg", data: image, size: 0 }]); setAttachments(next); } setDraft(current => `${current}${current ? "\n\n" : ""}${value}`); props.onActionFeedback({ level: "info", message: "Browser feedback added to the composer. Review and send it when ready." }); }}
-          hideTerminal={false}
+          hideTerminal={props.composerConfig?.terminalSupported === false}
           terminalWidth={layout.terminalWidth}
           draft={terminalDraft}
           results={props.terminalResults}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.22
+
+- Hide standalone Terminal controls when the host does not support terminals.
+
 ## 2.0.6-pre.21
 
 - Keep owner-only task column controls and success feedback out of shared project boards.
