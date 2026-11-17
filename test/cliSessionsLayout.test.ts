@@ -495,6 +495,7 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('title="Open workspace"');
     expect(source).not.toContain('cli-workspace-nav');
     expect(css).toContain(".cli-session-spinner");
+    expect(css).toContain('.cli-workspace .cli-session-row.is-running .cli-session-spinner { opacity:1 !important; visibility:visible; }');
     expect(css).toContain(".cli-project-row:hover .cli-project-new");
     expect(css).toContain(".cli-project-collapse");
     expect(css).toMatch(/\.cli-session-row-main \{\s*display: grid;/);

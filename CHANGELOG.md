@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.6-pre.46
+
+- Keep the running spinner visible in the session sidebar while row actions are available.
+
+## 2.0.6-pre.47
+
+- Keep the running spinner visible in the session sidebar and show row action icons on hover.
+
 ## 2.0.6-pre.45
 
 - Reuse the full dashboard in the Workspace Dashboard tab with the shared Dashboard icon and compact responsive layout from 320px phones through wide panels.
