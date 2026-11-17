@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.6-pre.60
+
+- Preserve structured model-capacity failures for automatic recovery and map serialized tool results to readable activity output.
+- Add a standalone update command that installs, compiles, restarts, and documents running Codex Manager without VS Code.
+
+## 2.0.6-pre.59
+
+- Discover shared Browser pages while the workspace is on Env and select the visible Browser tab automatically.
+
 ## 2.0.6-pre.57
 
 - Show saved-account quota meters side by side when each has enough width, with stacked meters on narrow cards.

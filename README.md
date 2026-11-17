@@ -100,6 +100,24 @@ npm ci
 npm run compile
 ```
 
+### Standalone PC (without VS Code)
+
+Node.js 22.13 or newer can run Codex Manager directly on a PC. From the checkout:
+
+```bash
+npm install
+npm run compile
+npm start -- --background
+```
+
+Open `http://127.0.0.1:39875` in a browser. The host uses the same `.codex` storage as the extension by default; pass `--data-dir <path>` to use another storage directory. To install a newer checkout and reload the running standalone host without opening VS Code, run:
+
+```bash
+npm run standalone:update
+```
+
+That command runs `npm install`, compiles the current source, gracefully stops the old Node host, and starts the updated host in the background. Use `npm run standalone:update -- --data-dir <path>` when the host uses a custom data directory. A failed install or compile leaves the current host running.
+
 Press `F5` in VS Code to open an Extension Development Host. Use `npm test` and `npm run verify` before distributing a build. Packaging is intentionally not part of the normal setup flow; run `npm run package` only when you are preparing a VSIX.
 
 ## First run
