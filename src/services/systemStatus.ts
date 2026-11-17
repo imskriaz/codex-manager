@@ -11,7 +11,17 @@ const execute = promisify(execFile);
 let cached: SystemStatus | undefined;
 let pending = false;
 let lastAttempt = 0;
-let previousCpu: { idle: number; total: number } | undefined;
+let lastBatteryAttempt = 0;
+const SYSTEM_STATUS_REFRESH_MS = 5_000;
+const BATTERY_REFRESH_MS = 30_000;
+const CPU_SAMPLE_MS = 125;
+
+function cpuSnapshot(): { idle: number; total: number } | undefined {
+  try { return os.cpus().reduce((sum, core) => ({
+    idle: sum.idle + core.times.idle,
+    total: sum.total + Object.values(core.times).reduce((a, b) => a + b, 0)
+  }), { idle: 0, total: 0 }); } catch { return undefined; }
+}
 
 async function battery(): Promise<SystemStatus['battery']> {
   if (process.platform === 'win32') {
@@ -43,7 +53,7 @@ async function battery(): Promise<SystemStatus['battery']> {
 /** Optional telemetry never blocks dashboard snapshots or explicit account actions. */
 export function getSystemStatus(): SystemStatus | undefined {
   if (!getCodexManagerConfiguration().get<boolean>("systemInfoEnabled", true)) return undefined;
-  if (!pending && Date.now() - lastAttempt >= 30_000) {
+  if (!pending && Date.now() - lastAttempt >= SYSTEM_STATUS_REFRESH_MS) {
     pending = true;
     lastAttempt = Date.now();
     void refresh().catch(() => undefined).finally(() => { pending = false; });
@@ -52,17 +62,27 @@ export function getSystemStatus(): SystemStatus | undefined {
 }
 
 async function refresh(): Promise<void> {
-  const next: SystemStatus = { observedAt: Date.now(), memoryTotal: os.totalmem(), memoryUsed: Math.max(0, os.totalmem() - os.freemem()), uptimeSeconds: os.uptime() };
+  const beforeCpu = cpuSnapshot();
+  const next: SystemStatus = { observedAt: Date.now(), battery: cached?.battery };
   try { next.networkConnected = Object.values(os.networkInterfaces()).some(rows => rows?.some(row => !row.internal && row.address !== '0.0.0.0' && !row.address.startsWith('169.254.') && !row.address.startsWith('fe80:'))); } catch { /* Optional on restricted hosts. */ }
-  const cpu = os.cpus().reduce((sum, core) => ({ idle: sum.idle + core.times.idle, total: sum.total + Object.values(core.times).reduce((a, b) => a + b, 0) }), { idle: 0, total: 0 });
-  if (previousCpu && cpu.total > previousCpu.total) {
-    const busyFraction = 1 - (cpu.idle - previousCpu.idle) / (cpu.total - previousCpu.total);
-    next.cpuPercent = Math.round(Math.max(0, Math.min(100, busyFraction * 100)));
-  }
-  previousCpu = cpu;
-  cached = next;
+  const cpuSample = new Promise<void>(resolve => setTimeout(resolve, CPU_SAMPLE_MS)).then(() => {
+    const afterCpu = cpuSnapshot();
+    if (beforeCpu && afterCpu && afterCpu.total > beforeCpu.total) {
+      const busyFraction = 1 - (afterCpu.idle - beforeCpu.idle) / (afterCpu.total - beforeCpu.total);
+      next.cpuPercent = Math.round(Math.max(0, Math.min(100, busyFraction * 100)));
+    }
+  });
+  // Battery discovery may spawn a platform utility; keep it off the fast sampling cadence.
+  const refreshBattery = Date.now() - lastBatteryAttempt >= BATTERY_REFRESH_MS;
+  if (refreshBattery) lastBatteryAttempt = Date.now();
   await Promise.allSettled([
-    waitWithin(battery(), 3500, "Battery unavailable").then(value => { next.battery = value; }),
+    cpuSample,
+    ...(refreshBattery ? [waitWithin(battery(), 3500, "Battery unavailable").then(value => { next.battery = value; }, () => { delete next.battery; })] : []),
     waitWithin(fs.statfs(os.homedir()), 1500, "Disk unavailable").then(value => { next.diskFree = value.bavail * value.bsize; next.diskTotal = value.blocks * value.bsize; })
   ]);
+  next.memoryTotal = os.totalmem();
+  next.memoryUsed = Math.max(0, next.memoryTotal - os.freemem());
+  next.uptimeSeconds = os.uptime();
+  next.observedAt = Date.now();
+  cached = next;
 }

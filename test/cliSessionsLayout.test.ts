@@ -55,6 +55,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("System information");
     expect(source).toContain("<SystemStatusRows peer={{ id: 'environment-system'");
     expect(source).toContain("systemInfoEnabled={props.systemInfoEnabled}");
+    expect(source).toContain("const surface = props.standalone && !props.targetDeviceId ? 'codex-manager' : props.session?.sessionSurface;");
+    expect(source).toContain("standalone={props.standalone === true}");
   });
   it("prioritizes running status over unseen and attention dots", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");

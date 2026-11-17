@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.50
+
+- Show codex-manager as the local standalone session surface instead of the original Codex origin.
+- Refresh CPU, RAM, disk, network and uptime readings on a five-second cadence, including CPU in the first completed sample; keep battery discovery bounded and less frequent.
+
 ## 2.0.6-pre.49
 
 - Fill the Saved Accounts toolbar width with aligned search, sort, tag, quota and view controls; adapt to narrow Dashboard panels and larger touch targets.
