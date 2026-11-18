@@ -264,17 +264,26 @@ export function normalizeAiRequest(
                       throw new AiProxyError(400, "Tool results require text or images.");
                     return p;
                   });
-            const firstResultPart = resultParts?.[0];
+            const textParts = resultParts
+              ?.filter((p) => p["type"] === "input_text")
+              .map((p) => (typeof p["text"] === "string" ? p["text"] : ""));
+            const imageParts = resultParts?.filter((p) => p["type"] === "input_image");
+            const outputText = textParts?.join("\n") ?? string(part["content"], "tool content");
+            const output = part["is_error"] === true ? `[Tool error]\n${outputText}` : outputText;
             input.push({
               type: "function_call_output",
               call_id: string(part["tool_use_id"], "tool_use_id"),
-              output:
-                resultParts === undefined
-                  ? string(part["content"], "tool content")
-                  : resultParts.length === 1 && firstResultPart?.["type"] === "input_text"
-                    ? firstResultPart["text"] ?? ""
-                    : resultParts
+              output
             });
+            if (imageParts?.length) {
+              input.push({
+                role: "user",
+                content: [
+                  { type: "input_text", text: `Tool result ${string(part["tool_use_id"], "tool_use_id")} included an image.` },
+                  ...imageParts
+                ]
+              });
+            }
           } else if (part["type"] !== "thinking" && part["type"] !== "redacted_thinking") parts.push(part);
         }
         flush();
@@ -458,6 +467,7 @@ export class AiStream {
   private started = false;
   private blocks = new Map<number, { index: number; tool: boolean; closed: boolean }>();
   private textBlock?: { index: number; closed: boolean };
+  private thinkingBlock?: { index: number; closed: boolean };
   private nextBlock = 0;
   private toolIndex = 0;
   private tools = new Map<number, number>();
@@ -471,6 +481,11 @@ export class AiStream {
   }
   private claude(type: string, data: Json): string {
     return `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  }
+  private closeThinking(): string {
+    if (!this.thinkingBlock || this.thinkingBlock.closed || this.protocol !== "claude") return "";
+    this.thinkingBlock.closed = true;
+    return this.claude("content_block_stop", { index: this.thinkingBlock.index });
   }
   event(event: Json): string {
     if (this.protocol === "responses") return `event: ${String(event["type"])}\ndata: ${JSON.stringify(event)}\n\n`;
@@ -495,9 +510,31 @@ export class AiStream {
     }
     const type = event["type"],
       outputIndex = typeof event["output_index"] === "number" ? event["output_index"] : 0;
-    if (type === "response.output_text.delta" || type === "response.refusal.delta") {
+    const reasoningType =
+      type === "response.reasoning_summary_text.delta" ||
+      type === "response.reasoning_text.delta" ||
+      type === "response.reasoning_content.delta";
+    if (reasoningType) {
+      if (typeof event["delta"] !== "string")
+        throw new AiProxyError(502, "Invalid reasoning delta from backend.", "api_error");
+      if (this.protocol === "chat") wire += this.chat({ reasoning_content: event["delta"] });
+      else {
+        if (!this.thinkingBlock || this.thinkingBlock.closed) {
+          this.thinkingBlock = { index: this.nextBlock++, closed: false };
+          wire += this.claude("content_block_start", {
+            index: this.thinkingBlock.index,
+            content_block: { type: "thinking", thinking: "" }
+          });
+        }
+        wire += this.claude("content_block_delta", {
+          index: this.thinkingBlock.index,
+          delta: { type: "thinking_delta", thinking: event["delta"] }
+        });
+      }
+    } else if (type === "response.output_text.delta" || type === "response.refusal.delta") {
       if (typeof event["delta"] !== "string")
         throw new AiProxyError(502, "Invalid text delta from backend.", "api_error");
+      wire += this.closeThinking();
       if (this.protocol === "chat") wire += this.chat({ content: event["delta"] });
       else {
         if (!this.textBlock || this.textBlock.closed) {
@@ -514,6 +551,7 @@ export class AiStream {
       }
     } else if (type === "response.output_item.added" && object(event["item"])["type"] === "function_call") {
       const item = object(event["item"]);
+      wire += this.closeThinking();
       if (this.protocol === "chat") {
         const index = this.toolIndex++;
         this.tools.set(outputIndex, index);
@@ -533,6 +571,7 @@ export class AiStream {
     } else if (type === "response.function_call_arguments.delta") {
       if (typeof event["delta"] !== "string")
         throw new AiProxyError(502, "Invalid tool delta from backend.", "api_error");
+      wire += this.closeThinking();
       if (this.protocol === "chat") {
         const index = this.tools.get(outputIndex);
         if (index === undefined) throw new AiProxyError(502, "Tool delta arrived without a tool.", "api_error");
@@ -567,6 +606,7 @@ export class AiStream {
           wire += `data: ${JSON.stringify({ id: this.id, object: "chat.completion.chunk", created: this.created, model: this.model, choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output, total_tokens: usage.input + usage.output, prompt_tokens_details: { cached_tokens: usage.cached } } })}\n\n`;
         wire += "data: [DONE]\n\n";
       } else {
+        wire += this.closeThinking();
         if (this.textBlock && !this.textBlock.closed) {
           this.textBlock.closed = true;
           wire += this.claude("content_block_stop", { index: this.textBlock.index });

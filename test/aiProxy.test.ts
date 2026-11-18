@@ -550,5 +550,27 @@ it("keeps Claude tool result images and ignores prior thinking blocks", () => {
       { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: [{ type: "text", text: "Screenshot" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "YQ==" } }] }] }
     ]
   }, "claude");
-  expect(request.body.input).toMatchObject([{ type: "function_call", call_id: "call-1" }, { type: "function_call_output", output: [{ type: "input_text", text: "Screenshot" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }] }]);
+  expect(request.body.input).toMatchObject([
+    { type: "function_call", call_id: "call-1" },
+    { type: "function_call_output", output: "Screenshot" },
+    { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }] }
+  ]);
+  const failed = normalizeAiRequest({
+    model: "codex-test",
+    max_tokens: 100,
+    messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: true, content: "boom" }] }]
+  }, "claude");
+  expect(failed.body.input).toMatchObject([{ type: "function_call_output", output: "[Tool error]\nboom" }]);
+});
+
+it("translates Responses reasoning deltas into Claude thinking blocks", () => {
+  const stream = new AiStream("claude", "codex-test", false);
+  const thinking = stream.event({ type: "response.reasoning_summary_text.delta", delta: "Plan" });
+  const text = stream.event({ type: "response.output_text.delta", delta: "Answer" });
+  const done = stream.event({ type: "response.completed", response: { ...completed, output: [{ type: "message", content: [] }] } });
+  expect(thinking).toContain('"type":"thinking"');
+  expect(thinking).toContain('"type":"thinking_delta"');
+  expect(text).toContain('"type":"content_block_stop"');
+  expect(text).toContain('"type":"text_delta"');
+  expect(done).toContain('"type":"message_stop"');
 });
