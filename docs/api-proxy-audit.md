@@ -11,6 +11,8 @@
 | Empty or omitted tool-result content | Preserve an empty result in Claude, Chat Completions, and Responses | `test/aiProxyEdgeCases.test.ts` |
 | Claude disables parallel tool use | Translate the restriction to `parallel_tool_calls: false` | `test/aiProxyEdgeCases.test.ts` |
 | Claude requests structured JSON output | Translate `output_config.format` to Responses JSON schema | `test/aiProxyEdgeCases.test.ts` |
+| Claude thinking uses adaptive, enabled, between-tools, budgets, or update display | Validate supported thinking modes and translate supported depth to Responses reasoning effort; invalid budgets are rejected | `test/aiProxyEdgeCases.test.ts` |
+| Claude request metadata is supplied | Preserve validated metadata in the Responses request | `test/aiProxyEdgeCases.test.ts` |
 | `output_config` has a format but no effort | Keep adaptive-thinking effort fallback | `test/aiProxyEdgeCases.test.ts` |
 | Thinking display is omitted | Suppress reasoning summaries for both streaming and JSON responses | `test/aiProxyEdgeCases.test.ts` |
 | Completed response mixes text, reasoning summaries and tools | Preserve Claude output order and expose reported reasoning summaries | `test/aiProxyEdgeCases.test.ts` |
@@ -53,4 +55,5 @@
 - Token counting is a character-based estimate, not a model tokenizer. Base64/image size and non-English text can differ substantially from actual consumption. Only backend-reported generation usage contributes to token totals.
 - Request history contains the latest 100 metadata records in the current host process and clears on host restart. It is not durable billing history or a lifetime usage total.
 - Anthropic caching hints and thinking budgets cannot reproduce Anthropic execution on a Codex backend. Thinking effort is translated where supported; prior Anthropic thinking signatures cannot be replayed as Codex reasoning state.
+- `thinking.type=enabled` and `between_tools` are accepted for Claude-client compatibility and translated to Codex reasoning effort; the Codex backend has no exact Anthropic token-budget or signed-thinking equivalent.
 - Upstream model support, quota, credentials and network availability can change. The proxy reports failures and inconclusive outcomes; a compatibility audit cannot guarantee the absence of every future failure.

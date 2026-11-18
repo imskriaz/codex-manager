@@ -164,12 +164,19 @@ export function normalizeAiRequest(
   if (protocol === "claude") {
     // Claude Code sends gateway controls alongside every request. Validate their shape and omit them.
     if (request["thinking"] !== undefined) object(request["thinking"], "thinking");
-    const thinkingType = request["thinking"] && object(request["thinking"], "thinking")["type"];
-    if (thinkingType !== undefined && (typeof thinkingType !== "string" || !["adaptive", "enabled", "disabled"].includes(thinkingType)))
-      throw new AiProxyError(400, "thinking.type must be adaptive, enabled, or disabled.");
-    const display = request["thinking"] && object(request["thinking"])["display"];
-    if (display !== undefined && display !== null && display !== "omitted" && display !== "summarized")
-      throw new AiProxyError(400, "thinking.display must be omitted or summarized.");
+    const thinkingConfig = request["thinking"] === undefined ? undefined : object(request["thinking"], "thinking");
+    const thinkingType = thinkingConfig?.["type"];
+    if (thinkingType !== undefined && (typeof thinkingType !== "string" || !["adaptive", "enabled", "disabled", "between_tools"].includes(thinkingType)))
+      throw new AiProxyError(400, "thinking.type must be adaptive, enabled, disabled, or between_tools.");
+    if (thinkingType === "enabled") {
+      const budget = thinkingConfig?.["budget_tokens"], maxTokens = request["max_tokens"];
+      if (!Number.isSafeInteger(budget) || (budget as number) < 1024 || (typeof maxTokens === "number" && (budget as number) >= maxTokens))
+        throw new AiProxyError(400, "thinking.budget_tokens must be an integer >= 1024 and less than max_tokens.");
+    } else if (thinkingConfig?.["budget_tokens"] !== undefined)
+      throw new AiProxyError(400, "thinking.budget_tokens is only valid with thinking.type=enabled.");
+    const display = thinkingConfig?.["display"];
+    if (display !== undefined && display !== null && display !== "omitted" && display !== "summarized" && display !== "updates")
+      throw new AiProxyError(400, "thinking.display must be omitted, summarized, or updates.");
     if (request["context_management"] !== undefined) {
       const context = object(request["context_management"], "context_management");
       for (const key of Object.keys(context))
@@ -319,6 +326,7 @@ export function normalizeAiRequest(
   }
   if (!input.length) throw new AiProxyError(400, "Provide at least one user message or tool result.");
   const body: Json = { model, input, instructions: instructions.join("\n\n"), stream: true, store: false };
+  if (request["metadata"] !== undefined) body["metadata"] = object(request["metadata"], "metadata");
   if (request["tools"] !== undefined)
     body["tools"] = array(request["tools"], "tools").map((entry) => tool(entry, protocol === "claude"));
   if (request["tool_choice"] !== undefined) {
@@ -363,7 +371,7 @@ export function normalizeAiRequest(
   }
   if (protocol === "claude" && body["reasoning"] === undefined && request["thinking"] !== undefined) {
     const thinkingType = object(request["thinking"], "thinking")["type"];
-    if (thinkingType === "adaptive" || thinkingType === "enabled") body["reasoning"] = { effort: "high" };
+    if (thinkingType === "adaptive" || thinkingType === "enabled" || thinkingType === "between_tools") body["reasoning"] = { effort: "high" };
   }
   if (request["text"] !== undefined) body["text"] = object(request["text"], "text");
   if (request["response_format"] !== undefined) {

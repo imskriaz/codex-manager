@@ -283,7 +283,7 @@ export class AiProxy {
         const allowed = new Set(["model", "messages", "system", "tools", "tool_choice", "thinking"]);
         for (const key of Object.keys(countRequest))
           if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
-        const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1 }, "claude");
+        const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1_000_000 }, "claude");
         log.model = String(normalizedCount.body["model"]);
         log.estimatedInputTokens = estimateClaudeInputTokens(countRequest);
         response.setHeader("x-manager-token-count", "estimate");

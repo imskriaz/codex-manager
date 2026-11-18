@@ -212,6 +212,12 @@ it("counts Claude input locally without contacting the saved-account backend", a
   });
   expect(upstream).not.toHaveBeenCalled();
   expect((await fetch(origin + "/v1/messages/count_tokens", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(405);
+  const thinkingCount = await post("/v1/messages/count_tokens", {
+    model: "codex-test",
+    thinking: { type: "enabled", budget_tokens: 1024 },
+    messages: [{ role: "user", content: "Think" }]
+  });
+  expect(thinkingCount.status).toBe(200);
   const log = readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"));
   expect(log?.estimatedInputTokens).toBeGreaterThan(0);
   expect(log?.inputTokens).toBeUndefined();

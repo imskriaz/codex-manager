@@ -35,6 +35,18 @@ it('maps JSON schema output and preserves adaptive reasoning when effort is abse
   expect(result.body).toMatchObject({ text: { format: { type: 'json_schema', schema, strict: true } }, reasoning: { effort: 'high' } });
 });
 
+it('supports Claude thinking modes, budgets, update display, and metadata without dropping fields', () => {
+  const result = normalizeAiRequest(request({
+    max_tokens: 4096,
+    metadata: { user_id: 'opaque-id' },
+    thinking: { type: 'enabled', budget_tokens: 1024, display: 'updates' }
+  }), 'claude');
+  expect(result.body).toMatchObject({ metadata: { user_id: 'opaque-id' }, reasoning: { effort: 'high' } });
+  expect(() => normalizeAiRequest(request({ thinking: { type: 'enabled', budget_tokens: 100 }, max_tokens: 4096 }), 'claude')).toThrow(/budget_tokens/);
+  expect(() => normalizeAiRequest(request({ thinking: { type: 'adaptive', budget_tokens: 1024 } }), 'claude')).toThrow(/only valid/);
+  expect(normalizeAiRequest(request({ thinking: { type: 'between_tools' } }), 'claude').body).toMatchObject({ reasoning: { effort: 'high' } });
+});
+
 it('honors omitted thinking for streaming and completed messages', () => {
   expect(normalizeAiRequest(request({ thinking: { type: 'adaptive', display: 'omitted' } }), 'claude').omitThinking).toBe(true);
   const stream = new AiStream('claude', 'fixture', false, true);
