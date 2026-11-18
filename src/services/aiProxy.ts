@@ -531,9 +531,11 @@ export class AiProxy {
     const account = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be read.", signal)).find((item) => item.isActive);
     if (!account || account.enabled === false || !this.canUseAccount(account.id))
       throw new AiProxyError(503, "Select an enabled account available on this device in Account Center.", "api_error");
-    const tokens = await waitWithin(this.repo.getTokens(account.id, { bypassCache: true }), 5000, "Account credentials could not be read.", signal);
+    const [tokens, latest] = await Promise.all([
+      waitWithin(this.repo.getTokens(account.id, { bypassCache: true }), 5000, "Account credentials could not be read.", signal),
+      waitWithin(this.repo.getAccount(account.id), 5000, "The active account could not be verified.", signal)
+    ]);
     signal.throwIfAborted();
-    const latest = await waitWithin(this.repo.getAccount(account.id), 5000, "The active account could not be verified.", signal);
     if (!latest?.isActive || latest.enabled === false || !this.canUseAccount(account.id))
       throw new AiProxyError(409, "The active account changed. Retry model discovery.", "api_error");
     const key = `${account.id}:${createHash("sha256")

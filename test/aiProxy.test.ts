@@ -305,6 +305,18 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
   expect(upstream).toHaveBeenCalledTimes(2);
 });
 
+it("verifies model credentials and active ownership concurrently", async () => {
+  vi.mocked(upstream).mockResolvedValueOnce(Response.json({ models: [{ slug: "fixture-model" }] }) as never);
+  let releaseTokens!: () => void;
+  let releaseAccount!: () => void;
+  repo.getTokens.mockImplementationOnce(() => new Promise(resolve => { releaseTokens = () => resolve({ idToken: "", accessToken: "saved-access", accountId: "workspace-a" }); }));
+  repo.getAccount.mockImplementationOnce(() => new Promise(resolve => { releaseAccount = () => resolve(active); }));
+  const pending = fetch(origin + "/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  await vi.waitFor(() => { expect(repo.getTokens).toHaveBeenCalledOnce(); expect(repo.getAccount).toHaveBeenCalledOnce(); });
+  releaseTokens(); releaseAccount();
+  expect((await pending).status).toBe(200);
+});
+
 it("refreshes rejected credentials once through the shared token repository", async () => {
   active.tokenRefreshEnabled = true;
   repo.getTokens.mockResolvedValue({
