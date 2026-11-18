@@ -476,6 +476,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [pendingMessages, setPendingMessages] = useState<Array<{ requestId: string; key: string; message: DashboardCliSessionMessage; session?: CliSubmissionResult["session"]; error?: string; sent?: boolean; failed?: boolean }>>([]);
   const [activeNewRequest, setActiveNewRequest] = useState<string>();
   const activeNewRequestRef = useRef(activeNewRequest);
+  const [newChatSubmitPending, setNewChatSubmitPending] = useState(false);
+  const newChatSubmitPendingRef = useRef(false);
   const selectNewRequest = (id?: string) => { activeNewRequestRef.current = id; setActiveNewRequest(id); };
   useEffect(() => {
     if (props.selectedSession || props.dashboardMode || props.taskBoardActive) selectNewRequest();
@@ -1210,7 +1212,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       }
       return id;
     }
-    if (activeNewRequestRef.current || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
+    if (activeNewRequestRef.current || newChatSubmitPendingRef.current || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
     if (pendingMessages.filter(item => !item.sent).length >= 20) { reportLocalFeedback({ level: 'warning', message: 'Too many session starts are awaiting confirmation. Review them in the session list before starting another. Your draft is kept.' }); return; }
     const existingDraft = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
     const current = existingDraft;
@@ -1226,17 +1228,25 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     markDraftFields(['text', 'attachments']);
     composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: clearedDraft };
     setComposerDrafts(composerDraftsRef.current);
+    newChatSubmitPendingRef.current = true;
+    setNewChatSubmitPending(true);
     let requestId: string | undefined;
     try {
     requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, autoApprove, projectPath: newChatProject ?? projectPath });
     } catch (error) {
+      newChatSubmitPendingRef.current = false;
+      setNewChatSubmitPending(false);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
       reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); return;
     }
     if (!requestId) {
+      newChatSubmitPendingRef.current = false;
+      setNewChatSubmitPending(false);
       setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
       reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return;
     }
+    newChatSubmitPendingRef.current = false;
+    setNewChatSubmitPending(false);
     setPendingMessages(previous => [...previous.filter(item => !item.sent), ...previous.filter(item => item.sent).slice(-30), { requestId, key: draftKey, message: { id: `pending-${requestId}`, kind: "message" as const, role: "user" as const, text, turnId: submitted.turnId, timestamp: new Date().toISOString(), images: uploads.filter(file => file.kind === "image").map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(uploads) } }]);
     submittedDrafts.current.set(requestId, submitted);
     selectNewRequest(requestId);
@@ -1613,7 +1623,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
-              <Composer onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
+              <Composer onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
         </main>

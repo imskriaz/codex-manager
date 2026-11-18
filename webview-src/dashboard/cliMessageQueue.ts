@@ -237,6 +237,13 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
         const sent = answeredSessionQuestionIds(props.messages);
         if ([...answers].some(id => sent.has(id))) { props.feedback('This question was already answered. Refresh the conversation before replying again.'); return; }
       }
+      const duplicate = current.current.find(item => ['queued', 'sending', 'uncertain'].includes(item.state)
+        && item.draft.text === normalized.text
+        && JSON.stringify(item.draft.attachments) === JSON.stringify(normalized.attachments));
+      if (duplicate) {
+        props.feedback('This message is already queued or being sent. Review the conversation before retrying.');
+        return duplicate.id;
+      }
       if (current.current.length >= CLI_MESSAGE_QUEUE_LIMIT || JSON.stringify([...current.current, draft]).length * 2 > MAX_CLI_MESSAGE_QUEUE_BYTES - 8192) { props.feedback('The local message queue is full. Send or remove queued messages before adding another. Your draft is kept.'); return; }
       const item: CliQueuedMessage = { id: crypto.randomUUID(), draft: structuredClone(normalized), state: 'queued', createdAt: Date.now(), seenIds: [] };
       const next = [...current.current, item]; update(next);

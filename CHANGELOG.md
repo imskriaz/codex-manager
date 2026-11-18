@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.70
+
+- Prevent rapid duplicate message submissions with synchronous new-chat and queue dispatch fences, and disable the new-chat send control while a start request is being created.
+
 ## 2.0.6-pre.69
 
 - Open Xoom and copy the bKash donation number together, with a visible copied or failure toast.

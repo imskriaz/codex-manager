@@ -99,6 +99,15 @@ it('cancels the exact queued message from its recovery toast without sending it 
   render({ canDispatch: true }); await flush(); expect(send).not.toHaveBeenCalled();
 });
 
+it('returns the existing item when the same draft is submitted twice before confirmation', async () => {
+  render(); await flush();
+  const first = queue.enqueue(draft('Double tap')); const second = queue.enqueue(draft('Double tap'));
+  expect(second).toBe(first);
+  await flush();
+  expect(queue.items).toHaveLength(1);
+  expect(feedback).toHaveBeenCalledWith(expect.stringContaining('already queued'));
+});
+
 it.each(['scope', 'sending', 'storage'])('retains the cancellation fence after a %s change', async mode => {
   render({ dispatchReason: 'Reconnecting' }); await flush();
   const id = queue.enqueue(draft())!; await flush(); queue.steerNow(id);

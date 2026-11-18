@@ -195,6 +195,13 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("item.state !== 'sending' ? <button type=\"button\" class=\"cli-icon-button cli-goal-control\" aria-label=\"Edit queued message\"");
     expect(css).toContain(".cli-workspace .cli-local-queue { width: auto; max-width: none; margin: 2px 16px 0;");
   });
+  it("fences rapid new-chat submissions before the request marker renders", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const queue = readFileSync("webview-src/dashboard/cliMessageQueue.ts", "utf8");
+    expect(source).toContain("newChatSubmitPendingRef.current");
+    expect(source).toContain("newChatSubmitPending || !draftReadyKeys.has(draftKey)");
+    expect(queue).toContain("This message is already queued or being sent");
+  });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
