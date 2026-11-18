@@ -107,6 +107,10 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('connectedPeers.some(peer => peer.local) ? connectedPeers : [{ id: "local"');
     expect(source).toContain('setSelectedPeerId(session.deviceId ?? "local")');
   });
+  it('keeps usage-limit failures inside the originating conversation', () => {
+    const source = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+    expect(source).toContain('if (isCodexQuotaInterruption(feedback.message)) return;');
+  });
   it('shares task actions across every view and keeps task details docked with a single-line header', () => {
     const source = readFileSync('webview-src/dashboard/taskBoard.tsx', 'utf8');
     const primitives = readFileSync('webview-src/dashboard/primitives.tsx', 'utf8');

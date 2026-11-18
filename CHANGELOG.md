@@ -1,9 +1,33 @@
 # Changelog
 
+## 2.0.6-pre.91
+
+- Compact and polish the browser reset-usage dialog with tighter spacing and clearer reset actions.
+
+## 2.0.6-pre.90
+
+- Keep usage-limit failures in the originating chat instead of showing them as a global notification over another chat.
+
+## 2.0.6-pre.90
+
+- Keep usage-limit failures in the originating chat instead of showing them as a global notification over another chat.
+
 ## 2.0.6-pre.89
 
 - Show model-capacity errors as one compact red line, with the original error and diagnostics under Debug details.
 - Keep successful tool output mentioning capacity in its original activity instead of displaying a false capacity error.
+
+## 2.0.6-pre.88
+
+- Load proxy mapping choices from the same Codex model catalogue used by sessions, without requiring a key secret.
+- Save host-wide Claude-to-Codex model routes and expose recognized Claude IDs in discovery, configuration, and responses.
+- Report discovery timeouts and mapping conflicts in the connection dialog, with refresh and retry controls.
+
+## 2.0.6-pre.87
+
+- Hide the browser app install control when the current browser cannot offer installation.
+- Remove the floating workspace's separate install row; use the main conversation toolbar to open the browser install prompt directly.
+- Show install acceptance, cancellation, and failure beside the initiating control.
 
 ## 2.0.6-pre.86
 

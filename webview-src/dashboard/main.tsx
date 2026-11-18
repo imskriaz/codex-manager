@@ -103,7 +103,7 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
-import { isCodexSessionInspectionNotice, filterCliSessionsBySection, isCodexSessionRunningForDisplay, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
+import { isCodexSessionInspectionNotice, isCodexQuotaInterruption, filterCliSessionsBySection, isCodexSessionRunningForDisplay, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -491,6 +491,9 @@ function App() {
     [pushBrowserNotification]
   );
   const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
+    // Quota failures belong to the originating conversation. A global toast can
+    // appear over whichever chat is open when a background turn finishes.
+    if (isCodexQuotaInterruption(feedback.message)) return;
     showNotice(feedback);
   }, [showNotice]);
   const lastTerminalNoticeAtRef = useRef<number>();
