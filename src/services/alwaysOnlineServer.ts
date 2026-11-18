@@ -285,6 +285,10 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (sqliteStoreForFile(configPath)) writeSqliteStateFile(configPath, JSON.stringify(config));
     else await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
     if (this.disposed) throw new Error("Background host preparation stopped because this window closed.");
+    // Startup-task registration is optional boot automation. Record the
+    // prepared host first so a slow or unavailable scheduler cannot prevent
+    // the normal VS Code shutdown handoff.
+    this.preparedRelay = prepared;
     if (mode === "node") {
       const startWithSystem = getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false);
       try {
@@ -299,7 +303,6 @@ export class AlwaysOnlineServer implements vscode.Disposable {
         throw error;
       }
     } else await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
-    this.preparedRelay = prepared;
     return prepared;
   }
 

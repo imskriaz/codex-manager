@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.96
+
+- Keep the prepared Always Active host available for VS Code shutdown handoff when optional Windows startup-task registration is slow or unavailable.
+
 ## 2.0.6-pre.95
 
 - Commit the browser install, compact workspace monitor, inspector, and responsive UI changes together with their regression checks.

@@ -172,6 +172,7 @@ describe("always-online WebSocket relay handoff", () => {
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain('value === "--config"');
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain("PRAGMA busy_timeout = 250");
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain("process.env.CODEX_HOME = path.dirname(configPath)");
+    expect(service.indexOf("this.preparedRelay = prepared;")).toBeLessThan(service.indexOf("await installRelayStartup("));
   });
 });
 
