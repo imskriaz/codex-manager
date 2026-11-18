@@ -502,6 +502,8 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-project-collapse");
     expect(css).toMatch(/\.cli-session-row-main \{\s*display: grid;/);
     expect(css).toContain(".cli-conversation-project");
+    expect(css).toContain(".cli-workspace .cli-conversation-title h1 { font-size: calc(12px * var(--dashboard-text-scale, 1)); line-height: 14px; }");
+    expect(css).toContain(".cli-workspace .cli-conversation-header { gap: 2px; padding-block: 2px; }");
     expect(css).toContain("--cli-rail-width");
     expect(css).toContain("--cli-terminal-width");
     expect(css).toContain(".cli-panel-resizer");
