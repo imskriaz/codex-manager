@@ -18280,3 +18280,10 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .browser-action-modal .reset-credit-row-main small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(10px * var(--dashboard-text-scale, 1)); line-height:1.25; }
 .browser-action-modal .reset-credit-row-action { padding:4px 7px; border-radius:999px; background:var(--cyan-soft); font-size:calc(10px * var(--dashboard-text-scale, 1)); line-height:1; }
 .browser-action-modal .reset-credit-row:hover:not(:disabled) .reset-credit-row-action, .browser-action-modal .reset-credit-row:focus-visible .reset-credit-row-action { background:color-mix(in srgb,var(--accent-blue) 18%,var(--bg-surface)); }
+/* Workspace tabs stay compact and square in the inspector strip. */
+.cli-workspace .cli-context-tabbar { min-height:30px; padding:1px 3px; }
+.cli-workspace .cli-context-tab-scroll { gap:1px; }
+.cli-workspace .cli-context-tab-scroll > span { border-radius:0; }
+.cli-workspace .cli-context-tab-scroll > span > button { min-height:28px; padding:2px 5px; border-radius:0; }
+.cli-workspace .cli-context-tab-scroll > span > button svg { width:14px; height:14px; flex-basis:14px; }
+.cli-workspace .cli-context-tab-scroll > span.is-active::after { right:0; left:0; border-radius:0; }
