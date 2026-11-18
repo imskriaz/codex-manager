@@ -217,7 +217,7 @@ export default function WorkspaceTerminal(props: {
         >
           <ToolIcon kind="refresh" />
         </button>
-        <button type="button" title="Find in terminal" aria-label="Find in terminal" disabled={!current?.shared} onClick={() => screenActions.current?.find()}>
+        <button type="button" title="Find in terminal (Ctrl+Shift+F)" aria-label="Find in terminal" disabled={!current?.shared} onClick={() => screenActions.current?.find()}>
           <ToolIcon kind="search" />
         </button>
         <button type="button" title="Copy selection" aria-label="Copy terminal selection" disabled={!current?.shared} onClick={() => screenActions.current?.copy()}>
@@ -422,6 +422,7 @@ function TerminalScreen(props: {
       }
       const term = new Terminal({
         cursorBlink: true,
+        disableStdin: true,
         fontSize: 13,
         fontFamily:
           getComputedStyle(document.documentElement).getPropertyValue("--vscode-editor-font-family").trim() ||
@@ -463,10 +464,11 @@ function TerminalScreen(props: {
         term.open(element.current);
       }
       term.attachCustomKeyEventHandler((event) => {
+        event.stopPropagation();
         if (event.type !== "keydown" || (!event.ctrlKey && !event.metaKey) || event.altKey) {
           return true;
         }
-        if (event.key.toLowerCase() === "f") {
+        if (event.key.toLowerCase() === "f" && event.shiftKey) {
           event.preventDefault();
           setFind((value) => value ?? "");
           requestAnimationFrame(() => findInput.current?.focus());
@@ -635,6 +637,8 @@ function TerminalScreen(props: {
         return;
       }
       reading = true;
+      const focusWhenReady = take || !state;
+      const focusedBeforeLoad = document.activeElement;
       setCanClaim(false);
       failed = false;
       queue = "";
@@ -679,6 +683,12 @@ function TerminalScreen(props: {
                 ? ""
                 : "Read only · another workspace is typing."
           );
+          if (
+            focusWhenReady && state.writable && !failed &&
+            (document.activeElement === focusedBeforeLoad || document.activeElement === document.body)
+          ) {
+            term.focus();
+          }
           void resize();
         });
       } catch (error) {
@@ -835,6 +845,8 @@ function TerminalScreen(props: {
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
                 setFind(undefined);
                 terminal.current?.focus();
               }
@@ -874,7 +886,17 @@ function TerminalScreen(props: {
           ) : null}
         </div>
       ) : null}
-      <div ref={element} class="workspace-xterm" aria-label={`${props.name} terminal screen`} />
+      <div
+        ref={element}
+        class="workspace-xterm"
+        aria-label={`${props.name} terminal screen`}
+        onPointerDown={(event) => {
+          if (event.button === 0 && event.target === event.currentTarget) {
+            event.preventDefault();
+            terminal.current?.focus();
+          }
+        }}
+      />
       {claim ? (
         <ModalShell
           title="Take terminal control?"

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.98
+
+- Focus interactive terminals on open and click, route prompt keys and shell shortcuts to the terminal, and keep Escape in terminal search from closing workspace tools.
+
 ## 2.0.6-pre.96
 
 - Keep the prepared Always Active host available for VS Code shutdown handoff when optional Windows startup-task registration is slow or unavailable.

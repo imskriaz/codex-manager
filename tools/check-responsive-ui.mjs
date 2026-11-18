@@ -25,6 +25,7 @@ import assert from "node:assert/strict";
 import { Script } from "node:vm";
 import { checkAccountShortcutsUi, checkInlineCopyUi, checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
 import { checkInspectorUi, checkReviewsUi } from "./check-inspector-ui.mjs";
+import { checkTerminalInputUi } from './check-terminal-input-ui.mjs';
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { prepareDocsSnapshot, captureDocsScreenshots } from './capture-docs-ui.mjs';
@@ -1635,6 +1636,12 @@ try {
       await checkReviewsUi(page, {origin,parentId,width,height,output});
       assert.deepEqual(errors, [], 'Review browser runtime errors');
       results.push({width,height,checks:'Review list, keyboard opening, before/after comparison, file navigation, bounded layout'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--terminal-input')) {
+      await checkTerminalInputUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, [], 'Terminal browser runtime errors');
+      results.push({ width, height, checks: 'Terminal focus, prompt keys, shell shortcuts, search, paste, input acknowledgement and recovery' });
       await context.close(); continue;
     }
     if (process.argv.includes('--inspector')) {
