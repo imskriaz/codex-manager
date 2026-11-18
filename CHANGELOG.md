@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.85
+
+- Keep Claude model names in the `claude-*` namespace while mapping each one to a selectable backend model.
+
 ## 2.0.6-pre.84
 
 - Polish the Tools panel with clearer Manage data and Inspect system groups, compact cards, and unclipped action affordances.

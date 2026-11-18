@@ -386,20 +386,20 @@ export function ApiProxyConnection(props: {
                 <table class="api-model-mapping">
                   <thead>
                     <tr>
-                      <th scope="col">Claude name</th>
-                      <th scope="col">Proxy model ID</th>
+                      <th scope="col">Claude model</th>
+                      <th scope="col">Available backend model</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[
-                      ["default (claude-sonnet)", "model"],
+                      ["claude-sonnet (default)", "model"],
                       ["claude-opus", "opus"],
                       ["claude-sonnet", "sonnet"],
                       ["claude-haiku", "haiku"],
                       ["claude-fable", "fable"]
                     ].map(([label, key]) => (
                       <tr key={label}>
-                        <th scope="row">{label}</th>
+                        <th scope="row"><code>{label}</code></th>
                         <td>
                           <select
                             aria-label={`Proxy model for ${label}`}
