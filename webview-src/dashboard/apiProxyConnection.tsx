@@ -31,7 +31,6 @@ export function ApiProxyConnection(props: {
   const [notice, setNotice] = useState("");
   const [client, setClient] = useState<"codex" | "claude">("codex");
   const [selectedId, setSelectedId] = useState("");
-  const [pastedKey, setPastedKey] = useState("");
   const [waiting, setWaiting] = useState(false);
   const [models, setModels] = useState<ApiProxyModel[]>([]);
   const [claudeMapping, setClaudeMapping] = useState<ClaudeModelMapping>(() => mapClaudeModels([]));
@@ -46,7 +45,6 @@ export function ApiProxyConnection(props: {
   const selectedKey = proxyKeys.find((token) => token.id === selectedId);
   useEffect(() => {
     if (!props.open) {
-      setPastedKey("");
       setWaiting(false);
       creating.current = false;
       return;
@@ -58,13 +56,11 @@ export function ApiProxyConnection(props: {
       keyAccess.token
     ) {
       setSelectedId(keyAccess.tokenId);
-      setPastedKey("");
       setWaiting(false);
       creating.current = false;
       setNotice("Proxy key created. Copy its configuration now.");
     } else if (!proxyKeys.some((token) => token.id === selectedId)) {
       setSelectedId(proxyKeys[0]?.id ?? "");
-      setPastedKey("");
     }
     if (creating.current && !keyAccess.pending && keyAccess.token && proxyKeys.length && !keyAccess.tokenId) {
       setWaiting(false);
@@ -88,7 +84,7 @@ export function ApiProxyConnection(props: {
     selectedId
   ]);
   const freshKey = selectedKey && selectedId === keyAccess.tokenId ? keyAccess.token : undefined;
-  const keyValue = freshKey || pastedKey.trim() || "YOUR_MANAGER_API_KEY";
+  const keyValue = freshKey || "YOUR_MANAGER_API_KEY";
   const launchCommand = "$env:MANAGER_API_KEY = '" + keyValue.replaceAll("'", "''") + "'\ncodex";
   const busy = keyAccess.pending || waiting;
   useEffect(() => {
@@ -238,7 +234,6 @@ export function ApiProxyConnection(props: {
                   disabled={busy}
                   onChange={(event) => {
                     setSelectedId(event.currentTarget.value);
-                    setPastedKey("");
                     setNotice("");
                   }}
                 >
@@ -252,23 +247,7 @@ export function ApiProxyConnection(props: {
               {freshKey ? (
                 <p role="status">New key selected. Copy the configuration now; its secret is shown only once.</p>
               ) : (
-                <label>
-                  Key value
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    aria-label="Proxy API key value"
-                    value={pastedKey}
-                    placeholder="Paste the saved key to fill the configuration"
-                    onInput={(event) => {
-                      setPastedKey(event.currentTarget.value);
-                      setNotice("");
-                    }}
-                  />
-                  <small>
-                    Existing secrets cannot be retrieved. Paste the value you saved when this key was created.
-                  </small>
-                </label>
+                <p role="status">Select a newly created key to copy its one-time secret into the configuration.</p>
               )}
             </>
           ) : (
