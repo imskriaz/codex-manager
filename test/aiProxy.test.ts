@@ -13,7 +13,7 @@ import { removeTestDirectory } from "./testFilesystem";
 import { fetch as upstream } from "undici";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../src/application/accounts/quota";
 import type { AccountsRepository } from "../src/storage";
-import { readApiProxyHistory } from '../src/services/aiProxyHistory';
+import { readApiProxyHistory } from "../src/services/aiProxyHistory";
 
 vi.mock("undici", async (original) => ({ ...(await original<typeof import("undici")>()), fetch: vi.fn() }));
 vi.mock("../src/application/accounts/quota", () => ({
@@ -28,7 +28,13 @@ let root: string,
   proxy: AiProxy,
   enabled: boolean,
   allowed: boolean;
-const active = { id: "account-a", email: "fixture-account@example.test", isActive: true, enabled: true, tokenRefreshEnabled: false };
+const active = {
+  id: "account-a",
+  email: "fixture-account@example.test",
+  isActive: true,
+  enabled: true,
+  tokenRefreshEnabled: false
+};
 const repo = {
   listAccounts: vi.fn(async () => [active]),
   getAccount: vi.fn(async () => active),
@@ -114,30 +120,54 @@ afterEach(async () => {
   await removeTestDirectory(root);
 });
 
-it('records real proxy usage and safe failure metadata without credentials or bodies', async () => {
-  const response = await post('/v1/chat/completions', chat());
+it("records real proxy usage and safe failure metadata without credentials or bodies", async () => {
+  const response = await post("/v1/chat/completions", chat());
   await response.text();
-  const entry = readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))!;
-  expect(entry).toMatchObject({ status: 'completed', httpStatus: 200, model: 'codex-test', inputTokens: 11, outputTokens: 4, cachedInputTokens: 3, apiKeyName: 'AI', accountId: 'account-a', accountEmail: 'fixture-account@example.test' });
+  const entry = readApiProxyHistory().requests.find((row) => row.id === response.headers.get("x-request-id"))!;
+  expect(entry).toMatchObject({
+    status: "completed",
+    httpStatus: 200,
+    model: "codex-test",
+    inputTokens: 11,
+    outputTokens: 4,
+    cachedInputTokens: 3,
+    apiKeyName: "AI",
+    accountId: "account-a",
+    accountEmail: "fixture-account@example.test"
+  });
   expect(entry.apiKeyId).toBeTruthy();
   expect(entry.durationMs).toBeGreaterThanOrEqual(0);
-  expect(JSON.stringify(entry)).not.toContain('Hello');
+  expect(JSON.stringify(entry)).not.toContain("Hello");
   expect(JSON.stringify(entry)).not.toContain(key);
-  const failed = await post('/v1/chat/completions', chat(), 'secret-invalid-key');
+  const failed = await post("/v1/chat/completions", chat(), "secret-invalid-key");
   await failed.text();
-  expect(readApiProxyHistory().requests.find(row => row.id === failed.headers.get('x-request-id'))).toMatchObject({ status: 'failed', httpStatus: 401, error: 'Proxy request failed: authentication_error (401). Check the API response for details.' });
-  const invalid = await post('/v1/responses', { model: 'codex-test', input: 'private prompt', 'secret-body-field': 'private value' });
+  expect(readApiProxyHistory().requests.find((row) => row.id === failed.headers.get("x-request-id"))).toMatchObject({
+    status: "failed",
+    httpStatus: 401,
+    error: "Proxy request failed: authentication_error (401). Check the API response for details."
+  });
+  const invalid = await post("/v1/responses", {
+    model: "codex-test",
+    input: "private prompt",
+    "secret-body-field": "private value"
+  });
   await invalid.text();
-  const invalidLog = readApiProxyHistory().requests.find(row => row.id === invalid.headers.get('x-request-id'));
-  expect(invalidLog?.status).toBe('failed');
+  const invalidLog = readApiProxyHistory().requests.find((row) => row.id === invalid.headers.get("x-request-id"));
+  expect(invalidLog?.status).toBe("failed");
   expect(JSON.stringify(invalidLog)).not.toMatch(/secret-body-field|private prompt|private value/);
 });
 
-it('records incomplete streams separately from successful completion', async () => {
-  vi.mocked(upstream).mockResolvedValue(events({ type: 'response.incomplete', response: { ...completed, status: 'incomplete' } }) as never);
-  const response = await post('/v1/responses', { model: 'codex-test', input: 'private prompt', stream: true });
+it("records incomplete streams separately from successful completion", async () => {
+  vi.mocked(upstream).mockResolvedValue(
+    events({ type: "response.incomplete", response: { ...completed, status: "incomplete" } }) as never
+  );
+  const response = await post("/v1/responses", { model: "codex-test", input: "private prompt", stream: true });
   await response.text();
-  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))).toMatchObject({ status: 'incomplete', inputTokens: 11, outputTokens: 4 });
+  expect(readApiProxyHistory().requests.find((row) => row.id === response.headers.get("x-request-id"))).toMatchObject({
+    status: "incomplete",
+    inputTokens: 11,
+    outputTokens: 4
+  });
 });
 
 it("routes the shared dashboard /v1 endpoints without browser login or a second port", async () => {
@@ -204,14 +234,16 @@ it("counts Claude input locally without contacting the saved-account backend", a
   expect(result.status).toBe(200);
   expect(result.headers.get("x-manager-token-count")).toBe("estimate");
   expect(await result.json()).toMatchObject({ input_tokens: expect.any(Number) });
-  expect(readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"))).toMatchObject({
+  expect(readApiProxyHistory().requests.find((row) => row.id === result.headers.get("x-request-id"))).toMatchObject({
     path: "/v1/messages/count_tokens",
     model: "codex-test",
     status: "completed",
     httpStatus: 200
   });
   expect(upstream).not.toHaveBeenCalled();
-  expect((await fetch(origin + "/v1/messages/count_tokens", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(405);
+  expect(
+    (await fetch(origin + "/v1/messages/count_tokens", { headers: { Authorization: `Bearer ${key}` } })).status
+  ).toBe(405);
   const thinkingCount = await post("/v1/messages/count_tokens", {
     model: "codex-test",
     thinking: { type: "enabled", budget_tokens: 1024 },
@@ -219,7 +251,7 @@ it("counts Claude input locally without contacting the saved-account backend", a
     messages: [{ role: "user", content: "Think" }]
   });
   expect(thinkingCount.status).toBe(200);
-  const log = readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"));
+  const log = readApiProxyHistory().requests.find((row) => row.id === result.headers.get("x-request-id"));
   expect(log?.estimatedInputTokens).toBeGreaterThan(0);
   expect(log?.inputTokens).toBeUndefined();
 });
@@ -284,9 +316,9 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
           null,
           "malformed row",
           { slug: "hidden", visibility: "hide" },
-        { slug: "hidden-flag", hidden: true },
-        { slug: "hidden-word", visibility: "hidden" },
-          { slug: "b", display_name: "B" }
+          { slug: "hidden-flag", hidden: true },
+          { slug: "hidden-word", visibility: "hidden" },
+          { slug: "b", displayName: "B" }
         ]
       }) as never
   );
@@ -295,32 +327,82 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
   );
   expect(models.data.map((item: { id: string }) => item.id)).toEqual(["a", "b"]);
   const first = await fetch(origin + "/v1/models?limit=1", { headers: { "x-api-key": key } }).then((r) => r.json());
-  expect(first).toMatchObject({ has_more: true, first_id: "a", data: [{ type: "model", display_name: "A" }] });
-  const next = await fetch(origin + "/v1/models?limit=1&after_id=a", { headers: { "x-api-key": key } }).then((r) =>
-    r.json()
+  expect(first).toMatchObject({ has_more: true, first_id: "claude-a", data: [{ type: "model", display_name: "A" }] });
+  const next = await fetch(origin + "/v1/models?limit=1&after_id=claude-a", { headers: { "x-api-key": key } }).then(
+    (r) => r.json()
   );
-  expect(next).toMatchObject({ has_more: false, first_id: "b" });
+  expect(next).toMatchObject({ has_more: false, first_id: "claude-b" });
   expect(
     (await fetch(origin + "/v1/models/a", { headers: { Authorization: `Bearer ${key}` } }).then((r) => r.json())).id
   ).toBe("a");
   expect(upstream).toHaveBeenCalledOnce();
   expect((await fetch(origin + "/v1/models/no", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(404);
   const cachedModelLog = readApiProxyHistory().requests[0];
-  expect(cachedModelLog).toMatchObject({accountId:'account-a',accountEmail:'fixture-account@example.test',apiKeyName:'AI'});
+  expect(cachedModelLog).toMatchObject({
+    accountId: "account-a",
+    accountEmail: "fixture-account@example.test",
+    apiKeyName: "AI"
+  });
   repo.getTokens.mockResolvedValue({ idToken: "", accessToken: "changed", accountId: "workspace-a" });
   await fetch(origin + "/v1/models", { headers: { Authorization: `Bearer ${key}` } });
   expect(upstream).toHaveBeenCalledTimes(2);
+});
+
+it("publishes Claude role names and maps them back to provider-qualified backend IDs", async () => {
+  vi.mocked(upstream)
+    .mockResolvedValueOnce(
+      Response.json({
+        models: [
+          { id: "cx/sonnet", displayName: "Claude Sonnet" },
+          { id: "cx/opus", display_name: "Claude Opus" },
+          { id: "cx/haiku", name: "Claude Haiku" },
+          { id: "cx/fable", label: "Claude Fable" }
+        ]
+      }) as never
+    )
+    .mockResolvedValueOnce(generation() as never);
+  const catalogue = await fetch(origin + "/v1/models", {
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }
+  }).then((response) => response.json());
+  expect(catalogue.data.map((model: { id: string }) => model.id)).toEqual([
+    "claude-sonnet",
+    "claude-opus",
+    "claude-haiku",
+    "claude-fable"
+  ]);
+  const response = await post("/v1/messages", {
+    model: "claude-sonnet",
+    max_tokens: 100,
+    messages: [{ role: "user", content: "Hello" }]
+  });
+  expect(response.status).toBe(200);
+  await response.text();
+  expect(vi.mocked(upstream).mock.calls[1]?.[1]?.body).toContain('"model":"cx/sonnet"');
 });
 
 it("verifies model credentials and active ownership concurrently", async () => {
   vi.mocked(upstream).mockResolvedValueOnce(Response.json({ models: [{ slug: "fixture-model" }] }) as never);
   let releaseTokens!: () => void;
   let releaseAccount!: () => void;
-  repo.getTokens.mockImplementationOnce(() => new Promise(resolve => { releaseTokens = () => resolve({ idToken: "", accessToken: "saved-access", accountId: "workspace-a" }); }));
-  repo.getAccount.mockImplementationOnce(() => new Promise(resolve => { releaseAccount = () => resolve(active); }));
+  repo.getTokens.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        releaseTokens = () => resolve({ idToken: "", accessToken: "saved-access", accountId: "workspace-a" });
+      })
+  );
+  repo.getAccount.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        releaseAccount = () => resolve(active);
+      })
+  );
   const pending = fetch(origin + "/v1/models", { headers: { Authorization: `Bearer ${key}` } });
-  await vi.waitFor(() => { expect(repo.getTokens).toHaveBeenCalledOnce(); expect(repo.getAccount).toHaveBeenCalledOnce(); });
-  releaseTokens(); releaseAccount();
+  await vi.waitFor(() => {
+    expect(repo.getTokens).toHaveBeenCalledOnce();
+    expect(repo.getAccount).toHaveBeenCalledOnce();
+  });
+  releaseTokens();
+  releaseAccount();
   expect((await pending).status).toBe(200);
 });
 
@@ -340,23 +422,26 @@ it("refreshes rejected credentials once through the shared token repository", as
   expect(upstream).toHaveBeenCalledTimes(2);
 });
 
-it('releases model discovery on disconnect while a credential read is stuck', async () => {
+it("releases model discovery on disconnect while a credential read is stuck", async () => {
   repo.getTokens.mockImplementationOnce(() => new Promise(() => undefined));
   const controller = new AbortController();
-  const pending = fetch(origin + '/v1/models', { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal }).catch(() => undefined);
+  const pending = fetch(origin + "/v1/models", {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: controller.signal
+  }).catch(() => undefined);
   await vi.waitFor(() => expect(repo.getTokens).toHaveBeenCalledOnce());
   controller.abort();
   await pending;
-  await vi.waitFor(() => expect(readApiProxyHistory().requests[0]?.status).toBe('cancelled'));
+  await vi.waitFor(() => expect(readApiProxyHistory().requests[0]?.status).toBe("cancelled"));
   expect(upstream).not.toHaveBeenCalled();
-  expect((await post('/v1/messages/count_tokens', chat())).status).toBe(200);
+  expect((await post("/v1/messages/count_tokens", chat())).status).toBe(200);
 });
 
-it('reports model method errors and stale ownership explicitly', async () => {
-  expect((await post('/v1/models', {})).status).toBe(405);
+it("reports model method errors and stale ownership explicitly", async () => {
+  expect((await post("/v1/models", {})).status).toBe(405);
   expect(upstream).not.toHaveBeenCalled();
   repo.getAccount.mockResolvedValueOnce({ ...active, isActive: false });
-  expect((await fetch(origin + '/v1/models', { headers: { Authorization: `Bearer ${key}` } })).status).toBe(409);
+  expect((await fetch(origin + "/v1/models", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(409);
   expect(upstream).not.toHaveBeenCalled();
 });
 
@@ -369,61 +454,80 @@ it("accepts the native backend event stream when it omits Content-Type", async (
   expect(await result.text()).toContain("Hello 🌍");
 });
 
-it('forwards normal API calls without quota checks or account selection', async () => {
-  expect((await post('/v1/chat/completions', chat())).status).toBe(200);
-  expect(refreshSingleQuota).not.toHaveBeenCalled(); expect(maybeAutoSwitchForActiveQuota).not.toHaveBeenCalled();
+it("forwards normal API calls without quota checks or account selection", async () => {
+  expect((await post("/v1/chat/completions", chat())).status).toBe(200);
+  expect(refreshSingleQuota).not.toHaveBeenCalled();
+  expect(maybeAutoSwitchForActiveQuota).not.toHaveBeenCalled();
   expect(upstream).toHaveBeenCalledOnce();
 });
 
-it.each([401, 429])("checks rejected upstream status %s and retries only after a confirmed account switch", async status => {
+it.each([401, 429])(
+  "checks rejected upstream status %s and retries only after a confirmed account switch",
+  async (status) => {
+    vi.mocked(upstream)
+      .mockResolvedValueOnce(new Response("", { status }) as never)
+      .mockResolvedValueOnce(generation() as never);
+    const replacement = { ...active, id: "account-b", email: "replacement@example.test" };
+    vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo, view, options) => {
+      expect(view.deferHostReload).toBe(true);
+      expect(options?.quotaRejectedAccountId).toBe(status === 429 ? active.id : undefined);
+      repo.listAccounts.mockResolvedValue([replacement]);
+      repo.getAccount.mockResolvedValue(replacement);
+      repo.getTokens.mockResolvedValue({ idToken: "", accessToken: "next-access", accountId: "workspace-b" });
+      return true;
+    });
+    const response = await post("/v1/chat/completions", chat());
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(readApiProxyHistory().requests.find((row) => row.id === response.headers.get("x-request-id"))).toMatchObject(
+      { accountId: "account-b", accountEmail: "replacement@example.test", apiKeyName: "AI" }
+    );
+    expect(refreshSingleQuota).toHaveBeenCalledOnce();
+    expect(maybeAutoSwitchForActiveQuota).toHaveBeenCalledOnce();
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(upstream).mock.calls[1]?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer next-access",
+      "ChatGPT-Account-Id": "workspace-b"
+    });
+  }
+);
+it("still selects a replacement after a confirmed 429 when quota inspection fails", async () => {
+  const replacement = { ...active, id: "account-b" };
   vi.mocked(upstream)
-    .mockResolvedValueOnce(new Response("", { status }) as never)
+    .mockResolvedValueOnce(new Response("", { status: 429 }) as never)
     .mockResolvedValueOnce(generation() as never);
-  const replacement = { ...active, id: 'account-b', email: 'replacement@example.test' };
-  vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo, view, options) => {
-    expect(view.deferHostReload).toBe(true);
-    expect(options?.quotaRejectedAccountId).toBe(status === 429 ? active.id : undefined);
-    repo.listAccounts.mockResolvedValue([replacement]); repo.getAccount.mockResolvedValue(replacement);
-    repo.getTokens.mockResolvedValue({ idToken: '', accessToken: 'next-access', accountId: 'workspace-b' });
+  vi.mocked(refreshSingleQuota).mockRejectedValueOnce(new Error("Quota service offline"));
+  vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo, _view, options) => {
+    expect(options?.quotaRejectedAccountId).toBe(active.id);
+    repo.listAccounts.mockResolvedValue([replacement]);
+    repo.getAccount.mockResolvedValue(replacement);
     return true;
   });
-  const response = await post("/v1/chat/completions", chat());
-  expect(response.status).toBe(200);
-  await response.text();
-  expect(readApiProxyHistory().requests.find(row=>row.id===response.headers.get('x-request-id'))).toMatchObject({accountId:'account-b',accountEmail:'replacement@example.test',apiKeyName:'AI'});
-  expect(refreshSingleQuota).toHaveBeenCalledOnce(); expect(maybeAutoSwitchForActiveQuota).toHaveBeenCalledOnce();
-  expect(upstream).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(upstream).mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer next-access', 'ChatGPT-Account-Id': 'workspace-b' });
-});
-it('still selects a replacement after a confirmed 429 when quota inspection fails', async () => {
-  const replacement = {...active,id:'account-b'};
-  vi.mocked(upstream).mockResolvedValueOnce(new Response('',{status:429}) as never).mockResolvedValueOnce(generation() as never);
-  vi.mocked(refreshSingleQuota).mockRejectedValueOnce(new Error('Quota service offline'));
-  vi.mocked(maybeAutoSwitchForActiveQuota).mockImplementationOnce(async (_repo,_view,options)=>{
-    expect(options?.quotaRejectedAccountId).toBe(active.id);
-    repo.listAccounts.mockResolvedValue([replacement]);repo.getAccount.mockResolvedValue(replacement);return true;
-  });
-  expect((await post('/v1/chat/completions',chat())).status).toBe(200);
+  expect((await post("/v1/chat/completions", chat())).status).toBe(200);
   expect(upstream).toHaveBeenCalledTimes(2);
 });
 
-it('does not replay the same rejected account when a switch reports success before active state confirms it', async () => {
-  vi.mocked(upstream).mockResolvedValueOnce(new Response('', { status: 429 }) as never);
+it("does not replay the same rejected account when a switch reports success before active state confirms it", async () => {
+  vi.mocked(upstream).mockResolvedValueOnce(new Response("", { status: 429 }) as never);
   vi.mocked(maybeAutoSwitchForActiveQuota).mockResolvedValueOnce(true);
-  const result = await post('/v1/chat/completions', chat());
-  expect(result.status).toBe(503); expect(await result.text()).toContain('switch is not confirmed');
+  const result = await post("/v1/chat/completions", chat());
+  expect(result.status).toBe(503);
+  expect(await result.text()).toContain("switch is not confirmed");
   expect(upstream).toHaveBeenCalledOnce();
 });
-it('uses a replacement selected by the main runtime while the error quota check was in progress', async () => {
-  const replacement = { ...active, id: 'account-b' };
-  vi.mocked(upstream).mockResolvedValueOnce(new Response('', { status: 429 }) as never).mockResolvedValueOnce(generation() as never);
+it("uses a replacement selected by the main runtime while the error quota check was in progress", async () => {
+  const replacement = { ...active, id: "account-b" };
+  vi.mocked(upstream)
+    .mockResolvedValueOnce(new Response("", { status: 429 }) as never)
+    .mockResolvedValueOnce(generation() as never);
   vi.mocked(refreshSingleQuota).mockImplementationOnce(async () => {
     repo.listAccounts.mockResolvedValue([replacement]);
     repo.getAccount.mockResolvedValueOnce({ ...active, isActive: false }).mockResolvedValue(replacement);
     return {};
   });
-  expect((await post('/v1/chat/completions', chat())).status).toBe(200);
-  expect(upstream).toHaveBeenCalledTimes(2); expect(refreshSingleQuota).toHaveBeenCalledOnce();
+  expect((await post("/v1/chat/completions", chat())).status).toBe(200);
+  expect(upstream).toHaveBeenCalledTimes(2);
+  expect(refreshSingleQuota).toHaveBeenCalledOnce();
 });
 
 it("does not replay blocked quota, network uncertainty or accepted partial failures", async () => {
@@ -590,60 +694,124 @@ it("translates function calls, results, image inputs and provider-reported usage
 });
 
 it("accepts Claude Code gateway controls and maps its effort setting", () => {
-  const request = normalizeAiRequest({
+  const request = normalizeAiRequest(
+    {
+      model: "codex-test",
+      max_tokens: 32000,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Reply exactly OK.", cache_control: { type: "ephemeral" } }] }
+      ],
+      system: [{ type: "text", text: "System", cache_control: { type: "ephemeral" } }],
+      thinking: { type: "adaptive", display: "omitted" },
+      context_management: { edits: [{ type: "clear_thinking_20251015", keep: "all" }] },
+      output_config: { effort: "high" },
+      metadata: { user_id: "fixture" },
+      stream: true
+    },
+    "claude"
+  );
+  expect(request.body).toMatchObject({
     model: "codex-test",
-    max_tokens: 32000,
-    messages: [{ role: "user", content: [{ type: "text", text: "Reply exactly OK.", cache_control: { type: "ephemeral" } }] }],
-    system: [{ type: "text", text: "System", cache_control: { type: "ephemeral" } }],
-    thinking: { type: "adaptive", display: "omitted" },
-    context_management: { edits: [{ type: "clear_thinking_20251015", keep: "all" }] },
-    output_config: { effort: "high" },
-    metadata: { user_id: "fixture" },
+    max_output_tokens: 32000,
+    reasoning: { effort: "high" },
     stream: true
-  }, "claude");
-  expect(request.body).toMatchObject({ model: "codex-test", max_output_tokens: 32000, reasoning: { effort: "high" }, stream: true });
+  });
   expect(request.body).not.toHaveProperty("context_management");
-  expect(() => normalizeAiRequest({
-    model: "codex-test",
-    max_tokens: 100,
-    system: [{ type: "image", source: { type: "url", url: "https://example.test/system.png" } }],
-    messages: [{ role: "user", content: "Hello" }]
-  }, "claude")).toThrow(/System content supports text blocks only/);
-  expect(() => normalizeAiRequest({ model: "codex-test", max_tokens: 100, thinking: { type: "future-mode" }, messages: [{ role: "user", content: "Hello" }] }, "claude")).toThrow(/thinking.type/);
+  expect(() =>
+    normalizeAiRequest(
+      {
+        model: "codex-test",
+        max_tokens: 100,
+        system: [{ type: "image", source: { type: "url", url: "https://example.test/system.png" } }],
+        messages: [{ role: "user", content: "Hello" }]
+      },
+      "claude"
+    )
+  ).toThrow(/System content supports text blocks only/);
+  expect(() =>
+    normalizeAiRequest(
+      {
+        model: "codex-test",
+        max_tokens: 100,
+        thinking: { type: "future-mode" },
+        messages: [{ role: "user", content: "Hello" }]
+      },
+      "claude"
+    )
+  ).toThrow(/thinking.type/);
 });
 
 it("keeps Claude tool result images and ignores prior thinking blocks", () => {
-  const request = normalizeAiRequest({
-    model: "codex-test",
-    max_tokens: 100,
-    messages: [
-      { role: "assistant", content: [{ type: "thinking", thinking: "prior plan", signature: "sig" }, { type: "tool_use", id: "call-1", name: "screenshot", input: {} }] },
-      { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: [{ type: "text", text: "Screenshot" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "YQ==" } }] }] }
-    ]
-  }, "claude");
+  const request = normalizeAiRequest(
+    {
+      model: "codex-test",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "prior plan", signature: "sig" },
+            { type: "tool_use", id: "call-1", name: "screenshot", input: {} }
+          ]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call-1",
+              content: [
+                { type: "text", text: "Screenshot" },
+                { type: "image", source: { type: "base64", media_type: "image/png", data: "YQ==" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "claude"
+  );
   expect(request.body.input).toMatchObject([
     { type: "function_call", call_id: "call-1" },
     { type: "function_call_output", output: "Screenshot" },
-    { role: "user", content: [{ type: "input_text" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }] }
+    {
+      role: "user",
+      content: [{ type: "input_text" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }]
+    }
   ]);
-  const failed = normalizeAiRequest({
-    model: "codex-test",
-    max_tokens: 100,
-    messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: true, content: "boom" }] }]
-  }, "claude");
+  const failed = normalizeAiRequest(
+    {
+      model: "codex-test",
+      max_tokens: 100,
+      messages: [
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: true, content: "boom" }] }
+      ]
+    },
+    "claude"
+  );
   expect(failed.body.input).toMatchObject([{ type: "function_call_output", output: "[Tool error]\nboom" }]);
-  expect(() => normalizeAiRequest({
-    model: "codex-test",
-    max_tokens: 100,
-    messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: "yes", content: "boom" }] }]
-  }, "claude")).toThrow(/tool_result.is_error/);
+  expect(() =>
+    normalizeAiRequest(
+      {
+        model: "codex-test",
+        max_tokens: 100,
+        messages: [
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: "yes", content: "boom" }] }
+        ]
+      },
+      "claude"
+    )
+  ).toThrow(/tool_result.is_error/);
 });
 
 it("translates Responses reasoning deltas into Claude thinking blocks", () => {
   const stream = new AiStream("claude", "codex-test", false);
   const thinking = stream.event({ type: "response.reasoning_summary_text.delta", delta: "Plan" });
   const text = stream.event({ type: "response.output_text.delta", delta: "Answer" });
-  const done = stream.event({ type: "response.completed", response: { ...completed, output: [{ type: "message", content: [{ type: "output_text", text: "Answer" }] }] } });
+  const done = stream.event({
+    type: "response.completed",
+    response: { ...completed, output: [{ type: "message", content: [{ type: "output_text", text: "Answer" }] }] }
+  });
   expect(thinking).toContain('"type":"thinking"');
   expect(thinking).toContain('"type":"thinking_delta"');
   expect(text).toContain('"type":"content_block_stop"');

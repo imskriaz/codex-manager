@@ -8219,23 +8219,62 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-activity-detail > span { white-space: pre-wrap; }
 .cli-activity-search {
   display: grid;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
   padding: 8px 10px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
-.cli-activity-search > strong {
+.cli-search-query,
+.cli-search-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.cli-search-query > strong,
+.cli-search-results-head > strong {
   color: var(--text-muted);
   font-size: calc(9px * var(--dashboard-text-scale, 1));
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;
 }
-.cli-activity-search > code {
+.cli-search-query > code {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-default));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   color: var(--text-primary);
   font-family: inherit;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
+.cli-search-results {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 78%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-page) 55%, transparent);
+  scrollbar-width: thin;
+}
+.cli-search-results-content { min-width: 0; max-height: min(320px, 40dvh); overflow: auto; scrollbar-width: thin; }
+.cli-search-results-content:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cli-search-results .cli-message-markdown {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: calc(12px * var(--dashboard-text-scale, 1));
+  line-height: 1.6;
+}
+.cli-search-results .cli-message-markdown p { white-space: pre-line; }
+.cli-search-results .cli-message-markdown > :first-child { margin-top: 0; }
+.cli-search-results .cli-message-markdown > :last-child { margin-bottom: 0; }
+.cli-search-results-head > button.cli-code-copy-float { position: static; flex: none; margin: 0; min-width: 24px; min-height: 24px; }
 .cli-activity-error { color: var(--danger); }
 .cli-activity-error pre { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cli-debug-details {
@@ -10289,6 +10328,14 @@ html[data-theme="dark"] .cli-terminal-panel {
   height: 13px;
   font-size: calc(9px * var(--dashboard-text-scale, 1));
 }
+
+.settings-local-preferences { margin-bottom: 10px; }
+.settings-layout > .settings-zoom-block { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+.settings-zoom-block > .settings-actions { grid-column: 2; grid-row: 1; margin: 0; align-self: center; }
+.settings-zoom-block > .step-slider { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 0; }
+.settings-zoom-block .step-slider-copy, .settings-zoom-block .step-slider-scale { display: none; }
+.settings-zoom-block .step-slider-head { grid-column: 2; grid-row: 1; }
+.settings-zoom-block .step-slider-stack { grid-column: 1; grid-row: 1; }
 
 .settings-layout .settings-segment {
   gap: 4px;
@@ -15785,6 +15832,32 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .settings-modal .settings-close { width:30px; height:30px; min-width:30px; min-height:30px; padding:0; border-radius:5px; }
 .settings-modal>.settings-modal-body { padding:12px 14px; overflow:auto; max-height:none; }
 .settings-modal :is(input,select,textarea,button) { font-family:inherit; }
+.settings-modal > .settings-tab-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 6px 12px; }
+.settings-modal .settings-tab { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); box-shadow: none; }
+.settings-modal .settings-tab:hover { background: var(--surface-hover); color: var(--text-primary); }
+.settings-modal .settings-tab.active { background: color-mix(in srgb, var(--accent-blue) 10%, transparent); color: var(--accent-blue); box-shadow: none; }
+.settings-modal .settings-tab .settings-tab-copy { display: block; min-width: 0; }
+.settings-modal .settings-tab .settings-tab-label { display: block; font-size: calc(12px * var(--dashboard-text-scale, 1)); font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.settings-modal .settings-tab .settings-tab-icon { display: block; flex: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; }
+.settings-local-preferences .browser-notification-settings { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 12px; padding: 8px 10px; }
+.settings-local-preferences .browser-notification-heading { align-items: center; gap: 7px; }
+.settings-local-preferences .browser-notification-mark { flex-basis: 24px; height: 24px; border-radius: 6px; }
+.settings-local-preferences .browser-notification-mark svg { width: 15px; height: 15px; }
+.settings-local-preferences .browser-notification-heading .settings-block-title { margin: 0; font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.settings-local-preferences .browser-notification-heading p { margin-top: 2px; font-size: calc(10.5px * var(--dashboard-text-scale, 1)); }
+.settings-local-preferences .browser-notification-actions { grid-column: 2; grid-row: 1; margin: 0; gap: 5px; }
+.settings-local-preferences .browser-notification-button { min-height: 30px; padding: 5px 8px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.settings-local-preferences .browser-notification-badge { padding: 2px 5px; font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+.settings-local-preferences .browser-notification-settings > :is(.browser-notification-help, .browser-notification-feedback, .settings-note) { grid-column: 1 / -1; margin: 0; }
+.settings-local-preferences .browser-notification-help { font-size: calc(10.5px * var(--dashboard-text-scale, 1)); }
+@media (max-width: 650px) {
+  .settings-modal > .settings-tab-list { padding: 4px 10px; }
+  .settings-modal .settings-tab { flex-direction: column; gap: 3px; min-height: 44px; padding: 5px 2px; }
+  .settings-modal .settings-tab .settings-tab-label { font-size: calc(10px * var(--dashboard-text-scale, 1)); }
+  .settings-local-preferences .browser-notification-settings { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .settings-local-preferences .browser-notification-actions { grid-column: 1; grid-row: auto; }
+  .settings-local-preferences .browser-notification-button { min-height: 40px; }
+}
 .settings-modal input:is([type=checkbox],[type=radio]) { width:14px; height:14px; min-width:14px; min-height:14px; flex:0 0 14px; margin:2px 0 0; padding:0; accent-color:var(--accent-blue); }
 .settings-modal :is(.modal-primary-btn,.modal-secondary-btn,.modal-toolbar-btn,.settings-action-btn),.dialog-actions>button { min-height:32px; padding:6px 11px; border-radius:5px; font-size:calc(12px * var(--dashboard-text-scale, 1)); font-weight:500; line-height:1.3; gap:6px; }
 .settings-modal .modal-primary-btn { background:var(--accent-blue); color:#fff; border:1px solid transparent; box-shadow:none; }
@@ -17766,6 +17839,11 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .api-key-error { color: var(--accent-red); }
 .api-proxy-connection [hidden] { display: none !important; }
 .api-connection-toolbar { position: sticky; top: 0; z-index: 3; display: grid; gap: 6px; padding-bottom: 8px; background: var(--bg-surface); }
+.api-model-mapping { width: 100%; border-collapse: collapse; font-size: calc(12px * var(--dashboard-text-scale,1)); }
+.api-model-mapping :is(th,td) { padding: 7px 8px; border-bottom: 1px solid var(--border-default); text-align: left; vertical-align: top; }
+.api-model-mapping thead th { color: var(--text-muted); font-weight: 600; }
+.api-model-mapping code,.api-model-list code { font: calc(11px * var(--dashboard-text-scale,1)) var(--font-mono); overflow-wrap: anywhere; }
+.api-model-list { display: grid; gap: 5px; margin: 8px 0 0; padding-left: 18px; color: var(--text-muted); }
 .api-choice-field { display: grid; gap: 7px; min-width: 0; }
 .api-workspace-screen .api-choice-trigger { display: flex; justify-content: space-between; align-items: center; width: 100%; min-width: 0; padding: 9px 10px; text-align: left; white-space: normal; }
 .api-choice-trigger > span,.api-choice-options [role=option] > span:first-child { display: grid; gap: 4px; min-width: 0; }

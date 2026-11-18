@@ -282,6 +282,7 @@ export function SettingsThresholdBlock(props: {
 export function SettingsDiscreteSlider(props: {
   value: number;
   values: number[];
+  step?: number;
   accent: "violet" | "amber" | "sky";
   valueLabel: (value: number) => string;
   description: (value: number) => string;
@@ -314,7 +315,7 @@ export function SettingsDiscreteSlider(props: {
           aria-label={props.description(currentValue)}
           min={String(minValue)}
           max={String(maxValue)}
-          step="1"
+          step={String(props.step ?? 1)}
           value={currentValue}
           onInput={(event) => {
             const nextRawValue = Number(event.currentTarget.value);

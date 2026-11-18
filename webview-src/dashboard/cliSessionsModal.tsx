@@ -11,7 +11,7 @@ import { sessionQuestionText } from '../../src/domain/sessionQuestions';
 import { formatUsageDuration } from '../../src/utils/accountUsage';
 import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { useComposerCommands } from './composerCommands';
-import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
+import { agentActivityLabel, formatActivityArguments, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
 import { useSessionResume } from './sessionResume';
 import { codexModelLabel, formatTokenCount } from "./helpers";
 import { useSessionAccess } from './sessionAccess';
@@ -2282,7 +2282,7 @@ function CopySnippet({ text, label = "Copy code" }: { text: string; label?: stri
 }
 
 function ActivityCode({ text, label, copyLabel }: { text: string; label: string; copyLabel?: string }) {
-  const formatted = useMemo(() => formatActivityCode(text), [text]);
+  const formatted = useMemo(() => label === "Arguments" ? formatActivityArguments(text) : formatActivityCode(text), [label, text]);
   return <div class="cli-code-surface"><div class="cli-code-surface-head"><strong>{label}</strong><CopySnippet text={text} label={copyLabel} /></div><pre tabIndex={0} aria-label={label}><code>{formatted || 'No output.'}</code></pre></div>;
 }
 
@@ -2348,7 +2348,7 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
     case "collaboration":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-collaboration"><strong>{message.subtitle || "Agent activity"}</strong><MarkdownMessage text={message.text || "An agent contributed to this turn."} />{message.result ? <ActivityCode text={message.result} label="Agent status" copyLabel="Copy agent status" /> : null}</div>;
     case "web-search":
-      return <div class="cli-activity-detail cli-activity-search"><strong>Search query</strong><code>{message.text || "Web search"}</code>{message.result ? <MarkdownMessage text={message.result} /> : null}</div>;
+      return <div class="cli-activity-detail cli-activity-search"><div class="cli-search-query"><strong>Search query</strong><code>{message.text || "Web search"}</code></div>{message.result ? <div class="cli-search-results"><div class="cli-search-results-head"><strong>Search results</strong><CopySnippet text={message.result} label="Copy search results" /></div><div class="cli-search-results-content" tabIndex={0} role="region" aria-label="Search results"><MarkdownMessage text={message.result} /></div></div> : null}</div>;
     case "review":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-review"><strong>Code review</strong><MarkdownMessage text={message.text || "Codex reviewed the current changes."} /></div>;
     case "compaction":
@@ -2362,7 +2362,7 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
 
 function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: NonNullable<DashboardCliSessionMessage["changes"]>; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   if (changes.length === 0) return <div class="cli-activity-copy">File changes are being prepared…</div>;
-  return <div class="cli-file-change-list"><button type="button" disabled={!onOpenReviews} title={!onOpenReviews ? "Open this conversation in its workspace to review files." : undefined} class="cli-open-reviews" onClick={() => onOpenReviews?.()}><ReviewIcon /> Open all in Reviews</button>{changes.map((change) => <details key={`${change.path}-${change.kind}`}>
+  return <div class="cli-file-change-list">{changes.map((change) => <details key={`${change.path}-${change.kind}`}>
     <summary><span><FileIcon /><strong>{change.path}</strong></span><button type="button" disabled={!onOpenFile} onClick={(event) => { event.preventDefault(); onOpenFile?.(change.path); }}>Open</button><button type="button" disabled={!onOpenReviews} onClick={(event) => { event.preventDefault(); onOpenReviews?.(change.path); }}>Review</button><small>{capitalize(change.kind)}</small><ChevronIcon /></summary>
     {change.diff ? <DiffPreview diff={change.diff} /> : <div class="cli-activity-copy">No diff details were recorded.</div>}
   </details>)}</div>;

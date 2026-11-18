@@ -9,8 +9,8 @@ import { CODEX_API_BASE } from "../infrastructure/config/apiEndpoints";
 import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironment";
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
-import { startApiProxyLog } from './aiProxyHistory';
-import type { ApiProxyRequestLog } from '../domain/dashboard/apiProxy';
+import { startApiProxyLog } from "./aiProxyHistory";
+import type { ApiProxyRequestLog } from "../domain/dashboard/apiProxy";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
 import { createSharedInspection, waitWithin } from "../utils/concurrency";
 import {
@@ -27,7 +27,7 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // shortcut: advertise the supported Codex wire version; raise this when adopting newer wire features.
 const CODEX_WIRE_VERSION = "0.160.0";
 type Json = Record<string, unknown>;
-type Model = { id: string; name: string };
+type Model = { id: string; name: string; claudeId?: string };
 export const isAiProxyPath = (path: string): boolean => path === "/v1" || path.startsWith("/v1/");
 
 function countClaudeValue(value: unknown): number {
@@ -38,10 +38,11 @@ function countClaudeValue(value: unknown): number {
     if (typeof item === "string") total += item.length;
     else if (typeof item === "number" || typeof item === "boolean") total += String(item).length;
     else if (Array.isArray(item)) for (const child of item as unknown[]) pending.push(child);
-    else if (item && typeof item === "object") for (const [key, child] of Object.entries(item)) {
-      total += key.length;
-      pending.push(child);
-    }
+    else if (item && typeof item === "object")
+      for (const [key, child] of Object.entries(item)) {
+        total += key.length;
+        pending.push(child);
+      }
   }
   return total;
 }
@@ -51,6 +52,27 @@ function estimateClaudeInputTokens(request: Json): number {
   const chars = countClaudeValue(request["system"]) + countClaudeValue(request["tools"]);
   const messages = request["messages"];
   return Math.max(1, Math.ceil((chars + countClaudeValue(messages)) / 4));
+}
+
+function claudeRole(value: string): "opus" | "sonnet" | "haiku" | "fable" | undefined {
+  const match = value.toLowerCase().match(/(?:^|[^a-z])(opus|sonnet|haiku|fable)(?:[^a-z]|$)/);
+  return match?.[1] as "opus" | "sonnet" | "haiku" | "fable" | undefined;
+}
+
+function withClaudeModelIds(models: Model[]): Model[] {
+  const used = new Set<string>();
+  return models.map((model) => {
+    const role = claudeRole(`${model.id} ${model.name}`);
+    const candidate =
+      model.id.startsWith("claude-") || model.id.includes("anthropic")
+        ? model.id
+        : role && !used.has(`claude-${role}`)
+          ? `claude-${role}`
+          : `claude-${model.id}`;
+    const claudeId = used.has(candidate) ? `claude-${model.id}-${used.size}` : candidate;
+    used.add(claudeId);
+    return { ...model, claudeId };
+  });
 }
 
 /** Parse complete SSE records across arbitrary UTF-8/chunk boundaries. */
@@ -175,7 +197,7 @@ export class AiProxy {
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const protocol: AiProtocol =
-      (url.pathname === "/v1/messages" || url.pathname === "/v1/messages/count_tokens")
+      url.pathname === "/v1/messages" || url.pathname === "/v1/messages/count_tokens"
         ? "claude"
         : url.pathname === "/v1/responses"
           ? "responses"
@@ -186,7 +208,7 @@ export class AiProxy {
     const controller = new AbortController(),
       signal = controller.signal;
     const requestId = randomUUID();
-    const log = startApiProxyLog(request.method ?? '', url.pathname, requestId);
+    const log = startApiProxyLog(request.method ?? "", url.pathname, requestId);
     response.setHeader("x-request-id", requestId);
     response.setHeader("request-id", requestId);
     response.setHeader("Cache-Control", "no-store");
@@ -206,7 +228,12 @@ export class AiProxy {
       if ((auth && !bearer) || (bearer && apiKey && bearer !== apiKey))
         throw new AiProxyError(401, "Supply one valid Manager API key.", "authentication_error");
       const candidate = bearer ?? apiKey;
-      const token = await waitWithin(readDashboardApiToken(this.context, candidate), 5000, "API key verification timed out.", signal);
+      const token = await waitWithin(
+        readDashboardApiToken(this.context, candidate),
+        5000,
+        "API key verification timed out.",
+        signal
+      );
       signal.throwIfAborted();
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
       log.apiKeyId = token.id;
@@ -234,15 +261,28 @@ export class AiProxy {
           throw new AiProxyError(405, "Use GET for model discovery.");
         }
         const models = await this.listModels(signal, log);
-        const format = (model: Model): Json =>
-          protocol === "claude"
-            ? { id: model.id, type: "model", display_name: model.name, created_at: "1970-01-01T00:00:00Z" }
-            : { id: model.id, object: "model", created: 0, owned_by: "openai" };
+        const publicModelId = (model: Model): string =>
+          protocol === "claude" ? (model.claudeId ?? model.id) : model.id;
+        const format = (model: Model): Json => {
+          if (protocol !== "claude") return { id: model.id, object: "model", created: 0, owned_by: "openai" };
+          const publicId = model.claudeId ?? model.id;
+          const role = claudeRole(publicId);
+          return {
+            id: publicId,
+            type: "model",
+            display_name: role ? `Claude ${role[0]!.toUpperCase()}${role.slice(1)}` : model.name,
+            description: model.claudeId ? `Codex Manager backend model: ${model.id}` : model.name,
+            created_at: "1970-01-01T00:00:00Z"
+          };
+        };
         if (path !== "/v1/models") {
           let modelId: string;
-          try { modelId = decodeURIComponent(path.slice("/v1/models/".length)); }
-          catch { throw new AiProxyError(400, "Invalid model URL encoding."); }
-          const model = models.find((item) => item.id === modelId);
+          try {
+            modelId = decodeURIComponent(path.slice("/v1/models/".length));
+          } catch {
+            throw new AiProxyError(400, "Invalid model URL encoding.");
+          }
+          const model = models.find((item) => item.id === modelId || item.claudeId === modelId);
           if (!model) throw new AiProxyError(404, "Model not found. Use GET /v1/models.", "not_found_error");
           this.json(response, format(model));
         } else if (protocol === "claude") {
@@ -252,15 +292,15 @@ export class AiProxy {
           if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || (after && before))
             throw new AiProxyError(400, "Use limit=1..1000 and at most one model cursor.");
           const cursor = after ?? before,
-            index = cursor ? models.findIndex((item) => item.id === cursor) : -1;
+            index = cursor ? models.findIndex((item) => publicModelId(item) === cursor || item.id === cursor) : -1;
           if (cursor && index < 0) throw new AiProxyError(400, "Unknown model cursor.");
           const available = after ? models.slice(index + 1) : before ? models.slice(0, index).reverse() : models;
           const page = available.slice(0, limit);
           this.json(response, {
             data: page.map(format),
             has_more: available.length > limit,
-            first_id: page[0]?.id ?? null,
-            last_id: page.at(-1)?.id ?? null
+            first_id: page[0] ? publicModelId(page[0]) : null,
+            last_id: page.at(-1) ? publicModelId(page.at(-1)!) : null
           });
         } else this.json(response, { object: "list", data: models.map(format) });
         return;
@@ -292,8 +332,9 @@ export class AiProxy {
       }
       const generationProtocol: AiProtocol =
         path === "/v1/messages" ? "claude" : path === "/v1/responses" ? "responses" : "chat";
-      const normalized = normalizeAiRequest(body, generationProtocol);
-      log.model = String(normalized.body['model']);
+      const requestBody = generationProtocol === "claude" ? await this.resolveClaudeModel(body, signal, log) : body;
+      const normalized = normalizeAiRequest(requestBody, generationProtocol);
+      log.model = String(normalized.body["model"]);
       signal.throwIfAborted();
       const upstream = await this.fetchBackend("/responses", normalized.body, signal, log);
       acceptedGeneration = true;
@@ -302,7 +343,12 @@ export class AiProxy {
         await upstream.body?.cancel();
         throw new AiProxyError(502, "The AI backend did not return an event stream.", "api_error");
       }
-      const stream = new AiStream(generationProtocol, String(normalized.body["model"]), normalized.includeUsage, normalized.omitThinking);
+      const stream = new AiStream(
+        generationProtocol,
+        String(normalized.body["model"]),
+        normalized.includeUsage,
+        normalized.omitThinking
+      );
       let completed = false;
       for await (const event of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
         signal.throwIfAborted();
@@ -333,19 +379,29 @@ export class AiProxy {
           }
         }
         if (type === "response.completed" || type === "response.incomplete") {
-          if (type === 'response.incomplete') {
-            log.status = 'incomplete';
+          if (type === "response.incomplete") {
+            log.status = "incomplete";
             log.httpStatus = response.statusCode;
-            log.error = 'The backend returned an incomplete response.';
+            log.error = "The backend returned an incomplete response.";
           }
-          const usage = object(event['response'], 'AI response')['usage'] as Record<string, unknown> | undefined;
-          for (const [source, target] of [['input_tokens', 'inputTokens'], ['output_tokens', 'outputTokens']] as const) {
+          const usage = object(event["response"], "AI response")["usage"] as Record<string, unknown> | undefined;
+          for (const [source, target] of [
+            ["input_tokens", "inputTokens"],
+            ["output_tokens", "outputTokens"]
+          ] as const) {
             const value = usage?.[source];
-            if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) log[target] = value;
+            if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) log[target] = value;
           }
-          const details = usage?.['input_tokens_details'];
-          const cached = details && typeof details === 'object' ? (details as Record<string, unknown>)['cached_tokens'] : undefined;
-          if (typeof cached === 'number' && Number.isSafeInteger(cached) && cached >= 0 && log.inputTokens !== undefined) log.cachedInputTokens = Math.min(log.inputTokens, cached);
+          const details = usage?.["input_tokens_details"];
+          const cached =
+            details && typeof details === "object" ? (details as Record<string, unknown>)["cached_tokens"] : undefined;
+          if (
+            typeof cached === "number" &&
+            Number.isSafeInteger(cached) &&
+            cached >= 0 &&
+            log.inputTokens !== undefined
+          )
+            log.cachedInputTokens = Math.min(log.inputTokens, cached);
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;
@@ -359,9 +415,9 @@ export class AiProxy {
         );
       if (!response.writableEnded) response.end();
     } catch (error) {
-      log.status = response.destroyed ? 'cancelled' : 'failed';
+      log.status = response.destroyed ? "cancelled" : "failed";
       log.httpStatus = response.headersSent ? response.statusCode : undefined;
-      log.error = response.destroyed ? 'Client disconnected before completion.' : 'The proxy request did not complete.';
+      log.error = response.destroyed ? "Client disconnected before completion." : "The proxy request did not complete.";
       if (!response.destroyed && !response.writableEnded) {
         const reason = signal.aborted && signal.reason instanceof AiProxyError ? signal.reason : error;
         const failure =
@@ -386,7 +442,10 @@ export class AiProxy {
         }
       }
     } finally {
-      if (log.status === 'running') { log.status = 'completed'; log.httpStatus = response.statusCode; }
+      if (log.status === "running") {
+        log.status = "completed";
+        log.httpStatus = response.statusCode;
+      }
       log.durationMs = Math.max(0, Date.now() - log.startedAt);
       clearTimeout(timer);
       controller.abort();
@@ -404,11 +463,29 @@ export class AiProxy {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.end(JSON.stringify(value));
   }
+  private async resolveClaudeModel(body: unknown, signal: AbortSignal, log: ApiProxyRequestLog): Promise<unknown> {
+    const request = object(body, "request"),
+      requested = request["model"];
+    if (typeof requested !== "string" || !requested.startsWith("claude-")) return body;
+    const models = await this.listModels(signal, log);
+    const mapped =
+      models.find((model) => model.claudeId === requested) ??
+      (() => {
+        const role = claudeRole(requested);
+        if (!role) return undefined;
+        return (
+          models.find((model) => claudeRole(`${model.id} ${model.name}`) === role) ??
+          models.find((model) => model.claudeId === "claude-sonnet") ??
+          models[0]
+        );
+      })();
+    return mapped ? { ...request, model: mapped.id } : body;
+  }
   private async fetchBackend(
     path: string,
     body: Json | undefined,
     signal: AbortSignal,
-    route?: Pick<ApiProxyRequestLog, 'accountId' | 'accountEmail'>
+    route?: Pick<ApiProxyRequestLog, "accountId" | "accountEmail">
   ): Promise<Awaited<ReturnType<typeof upstreamFetch>>> {
     const tried = new Set<string>();
     const view = { refresh: this.refresh, deferHostReload: true };
@@ -422,7 +499,12 @@ export class AiProxy {
           "Select an enabled account available on this device in Account Center.",
           "api_error"
         );
-      if (tried.has(account.id)) throw new AiProxyError(503, 'The account switch is not confirmed yet. Retry after the active account updates.', 'api_error');
+      if (tried.has(account.id))
+        throw new AiProxyError(
+          503,
+          "The account switch is not confirmed yet. Retry after the active account updates.",
+          "api_error"
+        );
       let tokens = await waitWithin(
         this.repo.getTokens(account.id, { bypassCache: true }),
         5000,
@@ -444,10 +526,18 @@ export class AiProxy {
         );
       for (let renewal = 0; renewal < 2; renewal++) {
         signal.throwIfAborted();
-        const latest = await waitWithin(this.repo.getAccount(account.id), 5000, 'The active account could not be verified.', signal);
+        const latest = await waitWithin(
+          this.repo.getAccount(account.id),
+          5000,
+          "The active account could not be verified.",
+          signal
+        );
         if (!latest?.isActive || latest.enabled === false || !this.canUseAccount(account.id))
           throw new AiProxyError(409, "The active account changed. Retry the request.", "api_error");
-        if (route) { route.accountId = latest.id; route.accountEmail = latest.email?.slice(0, 254); }
+        if (route) {
+          route.accountId = latest.id;
+          route.accountEmail = latest.email?.slice(0, 254);
+        }
         const dispatcher = getCodexProxyDispatcher();
         const result = await upstreamFetch(`${CODEX_API_BASE}/backend-api/codex${path}`, {
           method: body ? "POST" : "GET",
@@ -479,20 +569,24 @@ export class AiProxy {
         }
         if ((status === 401 || status === 429) && !tried.has(account.id) && attempt < 2) {
           tried.add(account.id);
-          try { await waitWithin(
-            refreshSingleQuota(this.repo, view, account.id, {
-              forceRefresh: true,
-              announce: false,
-              warnQuota: false,
-              allowTokenRefresh: false,
-              canUseAccount: (id) => !signal.aborted && this.canUseAccount(id)
-            }),
-            15_000,
-            "Quota verification is still pending. Retry shortly.",
-            signal
-          ); } catch (error) {
+          try {
+            await waitWithin(
+              refreshSingleQuota(this.repo, view, account.id, {
+                forceRefresh: true,
+                announce: false,
+                warnQuota: false,
+                allowTokenRefresh: false,
+                canUseAccount: (id) => !signal.aborted && this.canUseAccount(id)
+              }),
+              15_000,
+              "Quota verification is still pending. Retry shortly.",
+              signal
+            );
+          } catch (error) {
             if (status !== 429 || signal.aborted) throw error;
-            console.warn('[codexManager] API quota refresh failed after a confirmed rejection; selecting a verified replacement.');
+            console.warn(
+              "[codexManager] API quota refresh failed after a confirmed rejection; selecting a verified replacement."
+            );
           }
           const switched = await waitWithin(
             maybeAutoSwitchForActiveQuota(this.repo, view, {
@@ -503,7 +597,18 @@ export class AiProxy {
             "Account selection is still pending. Retry shortly.",
             signal
           );
-          if (switched || (await waitWithin(this.repo.getAccount(account.id), 5000, 'The account switch could not be verified.', signal))?.isActive === false) break;
+          if (
+            switched ||
+            (
+              await waitWithin(
+                this.repo.getAccount(account.id),
+                5000,
+                "The account switch could not be verified.",
+                signal
+              )
+            )?.isActive === false
+          )
+            break;
         }
         if (status === 429)
           throw new AiProxyError(
@@ -528,11 +633,18 @@ export class AiProxy {
   }
 
   private async listModels(signal: AbortSignal, log: ApiProxyRequestLog): Promise<Model[]> {
-    const account = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be read.", signal)).find((item) => item.isActive);
+    const account = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be read.", signal)).find(
+      (item) => item.isActive
+    );
     if (!account || account.enabled === false || !this.canUseAccount(account.id))
       throw new AiProxyError(503, "Select an enabled account available on this device in Account Center.", "api_error");
     const [tokens, latest] = await Promise.all([
-      waitWithin(this.repo.getTokens(account.id, { bypassCache: true }), 5000, "Account credentials could not be read.", signal),
+      waitWithin(
+        this.repo.getTokens(account.id, { bypassCache: true }),
+        5000,
+        "Account credentials could not be read.",
+        signal
+      ),
       waitWithin(this.repo.getAccount(account.id), 5000, "The active account could not be verified.", signal)
     ]);
     signal.throwIfAborted();
@@ -548,7 +660,7 @@ export class AiProxy {
     const result = await createSharedInspection(
       `ai-models:${key}`,
       async (discoverySignal) => {
-        const route: Pick<ApiProxyRequestLog, 'accountId' | 'accountEmail'> = {};
+        const route: Pick<ApiProxyRequestLog, "accountId" | "accountEmail"> = {};
         const response = await this.fetchBackend(
           `/models?client_version=${CODEX_WIRE_VERSION}`,
           undefined,
@@ -581,20 +693,26 @@ export class AiProxy {
         for (const raw of rows.slice(0, 1000)) {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
           const row = object(raw, "model"),
-            id = row["slug"] ?? row["id"];
-          if (row['hidden'] === true || row['visibility'] === 'hide' || row['visibility'] === 'hidden') continue;
+            id = row["slug"] ?? row["id"] ?? row["model"] ?? row["name"];
+          if (row["hidden"] === true || row["visibility"] === "hide" || row["visibility"] === "hidden") continue;
           if (typeof id === "string" && /^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(id) && !seen.has(id)) {
-            data.push({ id, name: typeof row["display_name"] === "string" ? row["display_name"] : id });
+            const displayName = [row["display_name"], row["displayName"], row["name"], row["label"]].find(
+              (value): value is string => typeof value === "string" && value.trim().length > 0
+            );
+            data.push({ id, name: displayName?.trim() ?? id });
             seen.add(id);
           }
         }
         if (!data.length)
           throw new AiProxyError(503, "No API models are available for the active account.", "api_error");
-        const current = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be verified.", discoverySignal)).find((item) => item.isActive);
+        const mapped = withClaudeModelIds(data);
+        const current = (
+          await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be verified.", discoverySignal)
+        ).find((item) => item.isActive);
         if (!current || current.id !== route.accountId || current.enabled === false || !this.canUseAccount(current.id))
           throw new AiProxyError(409, "The active account changed. Retry model discovery.", "api_error");
-        if (current?.id === account.id) this.models = { key, at: Date.now(), data, ...route };
-        return { data, ...route };
+        if (current?.id === account.id) this.models = { key, at: Date.now(), data: mapped, ...route };
+        return { data: mapped, ...route };
       },
       signal,
       15_000

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
 import { apiTokenProjects, type DashboardApiToken } from "../../src/domain/dashboard/apiActions";
+import { mapClaudeModels, mapDiscoveredModels, MODEL_PLACEHOLDER, type ApiProxyModel } from "./apiProxyModelMapping";
 
 export type ApiProxyKeyAccess = {
   tokens: DashboardApiToken[];
@@ -26,6 +27,9 @@ export function ApiProxyConnection(props: {
   const [selectedId, setSelectedId] = useState("");
   const [pastedKey, setPastedKey] = useState("");
   const [waiting, setWaiting] = useState(false);
+  const [models, setModels] = useState<ApiProxyModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
   const creating = useRef(false);
   const keyAccess = props.keyAccess;
   const proxyKeys = keyAccess.tokens.filter(
@@ -58,7 +62,9 @@ export function ApiProxyConnection(props: {
     if (creating.current && !keyAccess.pending && keyAccess.token && proxyKeys.length && !keyAccess.tokenId) {
       setWaiting(false);
       creating.current = false;
-      setNotice("Key created, but this host did not identify its one-time secret. Refresh keys and paste its saved value.");
+      setNotice(
+        "Key created, but this host did not identify its one-time secret. Refresh keys and paste its saved value."
+      );
     }
     if ((keyAccess.error || keyAccess.uncertain) && !keyAccess.pending) {
       setWaiting(false);
@@ -84,6 +90,46 @@ export function ApiProxyConnection(props: {
   }, [props.open]);
   const baseUrl = props.baseUrl?.replace(/\/+$/, "");
   const proxyUrl = baseUrl ? baseUrl + "/v1" : "";
+  const modelMapping = mapClaudeModels(models);
+  const discoveryKey = keyValue === "YOUR_MANAGER_API_KEY" ? "" : keyValue;
+  useEffect(() => {
+    if (!props.open || !baseUrl || !discoveryKey) {
+      setModels([]);
+      setModelsError("");
+      setModelsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), 10_000);
+    setModelsLoading(true);
+    setModelsError("");
+    void fetch(`${baseUrl}/v1/models`, {
+      headers: { Authorization: `Bearer ${discoveryKey}` },
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Model discovery returned HTTP ${response.status}.`);
+        return mapDiscoveredModels(await response.json());
+      })
+      .then((discovered) => {
+        if (!discovered.length) throw new Error("No models were returned by the proxy.");
+        setModels(discovered);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setModels([]);
+          setModelsError(error instanceof Error ? error.message : "Model discovery failed.");
+        }
+      })
+      .finally(() => {
+        globalThis.clearTimeout(timeout);
+        if (!controller.signal.aborted) setModelsLoading(false);
+      });
+    return () => {
+      controller.abort();
+      globalThis.clearTimeout(timeout);
+    };
+  }, [props.open, baseUrl, discoveryKey]);
   const copy = (value: string) => {
     void Promise.resolve()
       .then(() => navigator.clipboard.writeText(value))
@@ -93,7 +139,7 @@ export function ApiProxyConnection(props: {
       );
   };
   const codexConfig = [
-    'model = "MODEL_FROM_CATALOGUE"',
+    `model = ${JSON.stringify(models[0]?.id ?? MODEL_PLACEHOLDER)}`,
     'model_provider = "manager_proxy"',
     "",
     "[model_providers.manager_proxy]",
@@ -108,11 +154,11 @@ export function ApiProxyConnection(props: {
       env: {
         ANTHROPIC_BASE_URL: baseUrl || "https://YOUR_MANAGER_HOST",
         ANTHROPIC_AUTH_TOKEN: keyValue,
-        ANTHROPIC_MODEL: "MODEL_FROM_CATALOGUE",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MODEL_FROM_CATALOGUE",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MODEL_FROM_CATALOGUE",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MODEL_FROM_CATALOGUE",
-        ANTHROPIC_DEFAULT_FABLE_MODEL: "MODEL_FROM_CATALOGUE"
+        ANTHROPIC_MODEL: modelMapping.model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: modelMapping.opus,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: modelMapping.sonnet,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: modelMapping.haiku,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: modelMapping.fable
       }
     },
     null,
@@ -270,11 +316,7 @@ export function ApiProxyConnection(props: {
             <pre tabIndex={0} aria-label="Codex PowerShell setup">
               {launchCommand}
             </pre>
-            <button
-              type="button"
-              aria-label="Copy Codex launch command"
-              onClick={() => copy(launchCommand)}
-            >
+            <button type="button" aria-label="Copy Codex launch command" onClick={() => copy(launchCommand)}>
               Copy launch command
             </button>
             <p>
@@ -295,6 +337,20 @@ export function ApiProxyConnection(props: {
           hidden={client !== "claude"}
           class="api-connection-guide"
         >
+          <section>
+            <h3>Claude Desktop gateway</h3>
+            <p>In Claude Desktop, open Configure third-party inference and choose Gateway.</p>
+            <ul class="api-model-list">
+              <li>
+                Gateway base URL: <code>{baseUrl || "https://YOUR_MANAGER_HOST"}</code> (without <code>/v1</code>)
+              </li>
+              <li>Gateway API key: use the selected Manager key above</li>
+              <li>
+                Gateway auth scheme: <code>x-api-key</code>
+              </li>
+              <li>Model discovery: enable it so Claude Desktop loads the mapped Claude names below</li>
+            </ul>
+          </section>
           <section>
             <h3>Host URL</h3>
             <div class="api-connection-field">
@@ -325,9 +381,59 @@ export function ApiProxyConnection(props: {
               Copy configuration
             </button>
           </section>
+          <section aria-label="Claude model mapping">
+            <h3>Model mapping</h3>
+            {modelsLoading ? <p role="status">Loading models from the active account…</p> : null}
+            {modelsError ? <p role="alert">{modelsError} Use a model ID from GET /v1/models.</p> : null}
+            {models.length ? (
+              <>
+                <table class="api-model-mapping">
+                  <thead>
+                    <tr>
+                      <th scope="col">Claude name</th>
+                      <th scope="col">Proxy model ID</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["default (claude-sonnet)", modelMapping.model],
+                      ["claude-opus", modelMapping.opus],
+                      ["claude-sonnet", modelMapping.sonnet],
+                      ["claude-haiku", modelMapping.haiku],
+                      ["claude-fable", modelMapping.fable]
+                    ].map(([label, id]) => (
+                      <tr key={label}>
+                        <th scope="row">{label}</th>
+                        <td>
+                          <code>{id}</code>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <details>
+                  <summary>Available models ({models.length})</summary>
+                  <ul class="api-model-list">
+                    {models.map((model) => (
+                      <li key={model.id}>
+                        <code>{model.id}</code>
+                        {model.name !== model.id ? ` — ${model.name}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </>
+            ) : !modelsLoading && !modelsError ? (
+              <p>Save or paste a Manager key to load the active account’s model catalogue.</p>
+            ) : null}
+            <small>
+              Claude model names are mapped to the discovered proxy IDs, including provider-qualified IDs such as
+              9router models.
+            </small>
+          </section>
           <p>
-            Merge the env block into your personal settings, then start claude. This uses the Manager key as a bearer
-            token. Remove conflicting gateway credentials from your launch environment.
+            The settings.json block is for Claude Code. Claude Desktop uses the Gateway fields above and does not read
+            this env block.
           </p>
           <p>
             This proxy serves Codex models through the Claude-compatible protocol. It does not provide Anthropic models.
@@ -339,8 +445,8 @@ export function ApiProxyConnection(props: {
           </p>
         </div>
         <p>
-          Use a Manager key with host-wide aiProxy permission. Replace MODEL_FROM_CATALOGUE with a model ID from GET
-          /v1/models. Manager controls use /api/message on the same host.
+          Use a Manager key with host-wide aiProxy permission. The model fields are filled from GET /v1/models when
+          discovery succeeds; Manager controls use /api/message on the same host.
         </p>
       </div>
     </ModalShell>

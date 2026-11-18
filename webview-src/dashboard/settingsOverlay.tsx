@@ -142,7 +142,7 @@ export function SettingsOverlay(props: {
               type="button"
               role="tab"
               aria-label={tab.label}
-              title={tab.label}
+              title={tab.description}
               aria-selected={activeTab === tab.id}
               aria-controls={`settings-panel-${tab.id}`}
               tabIndex={activeTab === tab.id ? 0 : -1}
@@ -171,14 +171,14 @@ export function SettingsOverlay(props: {
               <SettingsTabIcon tab={tab.id} />
               <span class="settings-tab-copy">
                 <span class="settings-tab-label">{tab.label}</span>
-                <span class="settings-tab-description">{tab.description}</span>
               </span>
             </button>
           ))}
         </div>
         <div class="settings-modal-body">
-          {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
-              <div class="settings-block settings-block-wide" data-setting="webview-zoom">
+          {activeTab === "general" ? <div class="settings-local-preferences settings-layout">
+            {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
+              <div class="settings-block settings-block-wide settings-zoom-block" data-setting="webview-zoom">
                 <div class="settings-block-head">
                   <div class="settings-block-title">Dashboard zoom</div>
                   <div class="settings-block-sub">Scale the entire dashboard, workspace, task board, and dialogs on this device.</div>
@@ -186,6 +186,7 @@ export function SettingsOverlay(props: {
                 <SettingsDiscreteSlider
                   value={Math.round(props.webviewZoom * 100)}
                   values={WEBVIEW_ZOOM_VALUES}
+                  step={10}
                   accent="sky"
                   valueLabel={(value) => `${value}%`}
                   description={(value) => `Dashboard zoom ${value}%`}
@@ -195,6 +196,7 @@ export function SettingsOverlay(props: {
                 />
                 <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
               </div>
+          </div> : null}
           <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
           <div
             class="settings-tab-panel"

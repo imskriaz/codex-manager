@@ -1,5 +1,18 @@
 import type { DashboardCliSessionMessage } from './dashboard/types';
 
+/** Decode multiline string previews only; preserve paths, literals and original clipboard data. */
+export function formatActivityArguments(text: string): string {
+  const formatted = formatActivityCode(text);
+  if (formatted.length > 64_000) return formatted;
+  return formatted.replace(/"(?:\\.|[^"\\])*"/g, token => {
+    if (/^"(?:[a-z]:[\\/]|\\\\)/i.test(token)) return token;
+    try {
+      const value: unknown = JSON.parse(token);
+      return typeof value === 'string' && /[\r\n]/.test(value) ? `"${value}"` : token;
+    } catch { return token; }
+  });
+}
+
 export function formatActivityCode(text: string): string {
   const content = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/g, '');
   if (!/^\s*[\[{]/.test(content) || content.length > 64_000) return content;

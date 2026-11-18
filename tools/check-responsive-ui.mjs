@@ -2,6 +2,7 @@ import { checkProjectCreationUi } from './check-project-creation-ui.mjs';
 import { checkAccountCenterUi as checkNarrowAccountCenterUi } from './check-account-center-ui.mjs';
 import { checkSessionRenameUi } from './check-session-rename-ui.mjs';
 import { checkMessageTypesUi } from './check-message-types-ui.mjs';
+import { checkSessionFormattingUi } from './check-session-formatting-ui.mjs';
 import { checkWorkMonitorUi } from './check-work-monitor-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
 import { checkRecoveryToastUi } from './check-recovery-toast-ui.mjs';
@@ -886,6 +887,12 @@ try {
       await checkSessionRequestsUi(page, width, height, output, parentId, runningId);
       assert.deepEqual(errors, [], 'Session approval and question browser errors');
       results.push({width,height,checks:'session approvals, choices, custom and secret answers, navigation, failure, offline, reconnect, duplicates'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--session-formatting')) {
+      await checkSessionFormattingUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, [], 'Session formatting has no browser runtime errors');
+      results.push({ width, height, checks: 'Session formatting and compact General-only zoom' });
       await context.close(); continue;
     }
     if (process.argv.includes('--message-types') || process.argv.includes('--session-errors')) {

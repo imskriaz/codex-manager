@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { agentActivityLabel, formatActivityCode, messageAgentIds } from '../src/domain/sessionMessagePresentation';
+import { agentActivityLabel, formatActivityArguments, formatActivityCode, messageAgentIds } from '../src/domain/sessionMessagePresentation';
 import { commandChoices } from '../webview-src/dashboard/composerCommands';
 
 describe('readable activity payloads', () => {
+  it('previews multiline tool strings without changing paths, literal escapes or large integers', () => {
+    const source = '*** Begin Patch\n*** Update File: D:\\projects\\new\\test.ts\n@@\n+const value = "text";\n*** End Patch';
+    const raw = `const patch = ${JSON.stringify(source)};`;
+    expect(formatActivityArguments(raw)).toBe(`const patch = "${source}";`);
+    const json = '{"path":"D:\\\\new\\\\test.ts","literal":"\\\\n","integer":90071992547409931234}';
+    expect(formatActivityArguments(json)).toBe(formatActivityCode(json));
+    expect(formatActivityArguments('{"script":"first\\nsecond","partial":')).toContain('first\nsecond');
+    expect(formatActivityArguments('const path = "D:\\new\\test";')).toBe('const path = "D:\\new\\test";');
+  });
   it('formats JSON without losing large integers, escapes, empty values or source whitespace', () => {
     const raw = '{"integer":90071992547409931234,"escaped":"a\\n\\\"b","items":[{},[],null,true]}';
     const formatted = formatActivityCode(raw);

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.6-pre.81
+
+- Add an installable PWA entry point for the workspace, with install controls and visible browser menu guidance when a prompt is unavailable.
+- Make session search results bounded and readable, keep tool arguments copyable while previewing multiline patches, remove repeated Reviews actions, and compact the General settings controls.
+
+## 2.0.6-pre.79
+
+- Improve session search and tool argument formatting, and show one shared Reviews action for grouped file changes.
+
+## 2.0.6-pre.80
+
+- Load proxy models into Codex and Claude connection setup, show Claude role mappings including Fable, and expose Claude-compatible discovery aliases that map back to 9router/provider-qualified models.
+
 ## 2.0.6-pre.76
 
 - Keep only the original close button on dashboard toasts; remove the added copy, cancel, and clear icons.
