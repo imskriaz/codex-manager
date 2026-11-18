@@ -339,7 +339,7 @@ export function SettingsOverlay(props: {
                       <SettingsToggleBlock
                         title="Start with system"
                         className="settings-nested-toggle"
-                        sub="Start the local host when you sign in, even if VS Code is closed."
+                        sub="Start the local host when Windows boots, before you sign in, even if VS Code is closed."
                         enabled={props.settings.alwaysActiveStartWithSystem === true}
                         disabled={props.settings.alwaysActive !== true}
                         onToggle={(enabled) => patchAndSend("alwaysActiveStartWithSystem", enabled)}

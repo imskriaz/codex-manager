@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- Host adapters expose promise APIs over synchronous storage and cleanup. */
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { initializeSqliteContextWithRetry } from "./storage/sqliteContext";
@@ -107,8 +107,10 @@ export async function startNodeHost(): Promise<void> {
       !getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false) || syncReady && sync.canAutomateAccount(id));
     if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));
     recordPersistentEvent("info", "node-host", "Standalone ready", { pid: process.pid, url: dashboard.getUrl(), version: (context.extension.packageJSON as { version: string }).version });
+    appendStartupTrace("Standalone host ready", { pid: process.pid, url: dashboard.getUrl() });
   } catch (error) {
     recordPersistentEvent("error", "node-host", "Standalone startup failed", { pid: process.pid }, error);
+    appendStartupTrace("Standalone host failed", { error: error instanceof Error ? error.stack || error.message : String(error) });
     await shutdown();
     process.removeListener("SIGINT", exit);
     process.removeListener("SIGTERM", exit);
@@ -116,6 +118,15 @@ export async function startNodeHost(): Promise<void> {
   }
   console.log(`Codex Manager Node host listening at ${dashboard.getUrl()}`);
   if (process.send) process.send({ type: "codex-manager-ready", url: dashboard.getUrl() });
+}
+
+function appendStartupTrace(message: string, details?: Record<string, unknown>): void {
+  try {
+    const root = getCodexManagerStorageRoot();
+    appendFileSync(path.join(root, "always-online-relay-startup.log"), `[${new Date().toISOString()}] ${message}${details ? ` ${JSON.stringify(details)}` : ""}\n`, { encoding: "utf8" });
+  } catch {
+    // Startup diagnostics must never mask the host result.
+  }
 }
 
 if (require.main === module) {

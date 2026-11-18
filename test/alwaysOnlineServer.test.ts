@@ -171,6 +171,7 @@ describe("always-online WebSocket relay handoff", () => {
     expect(service).toContain('code === "EPERM"');
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain('value === "--config"');
     expect(readFileSync("tools/start-node.cjs", "utf8")).toContain("PRAGMA busy_timeout = 250");
+    expect(readFileSync("tools/start-node.cjs", "utf8")).toContain("process.env.CODEX_HOME = path.dirname(configPath)");
   });
 });
 

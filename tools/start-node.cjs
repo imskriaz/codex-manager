@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 const path = require("node:path");
+const fileSystem = require("node:fs");
 const Module = require("node:module");
 
 const args = process.argv.slice(2);
 let configPath;
+
+function startupLog(message, error) {
+  if (!configPath) return;
+  try {
+    const logPath = path.join(path.dirname(configPath), "always-online-relay-startup.log");
+    const detail = error ? ` ${error instanceof Error ? error.stack || error.message : String(error)}` : "";
+    fileSystem.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}${detail}\n`, { encoding: "utf8" });
+  } catch {
+    // Diagnostics must never prevent the host from starting.
+  }
+}
 
 if (args[0] === "mcp") {
   void import(require('node:url').pathToFileURL(path.join(__dirname, 'codex-manager-mcp.mjs')).href).catch(error => {
@@ -66,16 +78,23 @@ if (!configPath && !process.env.CODEX_MANAGER_ADMIN_TOKEN) {
 }
 
 if (configPath) {
+  startupLog("Node host process started");
   const databasePath = path.join(path.dirname(configPath), "manager.sqlite");
   try {
     const config = JSON.parse(readConfigText(databasePath, configPath));
     if (!process.env.CODEX_MANAGER_STORAGE_ROOT) process.env.CODEX_MANAGER_STORAGE_ROOT = path.dirname(configPath);
+    // A boot task runs as SYSTEM, so os.homedir() would otherwise resolve to
+    // the SYSTEM profile instead of the user's Codex home. Keep the detached
+    // host pointed at the same account data that created the configuration.
+    if (!process.env.CODEX_HOME) process.env.CODEX_HOME = path.dirname(configPath);
     if (!process.env.CODEX_MANAGER_PORT && Number.isInteger(config.port)) process.env.CODEX_MANAGER_PORT = String(config.port);
     if (!process.env.CODEX_MANAGER_ADMIN_TOKEN && config.adminToken) process.env.CODEX_MANAGER_ADMIN_TOKEN = String(config.adminToken);
     if (!process.env.CODEX_MANAGER_PID_FILE && config.pidPath) process.env.CODEX_MANAGER_PID_FILE = path.resolve(String(config.pidPath));
     if (config.workspaceStoragePath) process.env.CODEX_MANAGER_WORKSPACE_STORAGE = String(config.workspaceStoragePath);
     if (config.mode === "node") process.env.CODEX_MANAGER_HANDOFF = "1";
+    startupLog("Node host configuration loaded");
   } catch (error) {
+    startupLog("Node host configuration could not be read", error);
     console.error(`[codexManager] Node host config could not be read: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
@@ -119,6 +138,7 @@ try {
   const host = require(entry);
   if (typeof host.startNodeHost !== "function") throw new Error("The compiled Node host does not export startNodeHost().");
   void host.startNodeHost().catch(error => {
+    startupLog("Node host failed", error);
     console.error(`[codexManager] Node host failed: ${error instanceof Error ? error.message : String(error)}`);
     if (process.connected) process.send({ type: 'codex-manager-startup-error', error: error instanceof Error ? error.message : String(error) });
     process.exitCode = 1;

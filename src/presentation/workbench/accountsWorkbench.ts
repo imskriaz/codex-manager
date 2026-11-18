@@ -48,6 +48,7 @@ export class AccountsWorkbench {
   private readonly webDashboard: WebDashboardServer;
   private readonly alwaysOnlineServer: AlwaysOnlineServer;
   private alwaysOnlinePreparationTimer: NodeJS.Timeout | undefined;
+  private alwaysOnlineStartupWarningShown = false;
   private autoResumeTracking: vscode.Disposable | undefined;
   private disposed = false;
 
@@ -401,8 +402,14 @@ export class AccountsWorkbench {
     }
     this.alwaysOnlinePreparationTimer = setTimeout(() => {
       this.alwaysOnlinePreparationTimer = undefined;
-      void this.alwaysOnlineServer.applyConfiguration().catch((error) => {
+      void this.alwaysOnlineServer.applyConfiguration().then(() => {
+        this.alwaysOnlineStartupWarningShown = false;
+      }).catch((error) => {
         console.warn("[codexManager] Always-online relay startup failed", error);
+        if (!this.alwaysOnlineStartupWarningShown) {
+          this.alwaysOnlineStartupWarningShown = true;
+          void vscode.window.showWarningMessage(`Always Active could not register the Windows boot task. Run VS Code as administrator and retry. ${error instanceof Error ? error.message : String(error)}`);
+        }
       }).finally(() => { if (!this.disposed) this.scheduleAlwaysOnlinePreparation(60_000); });
     }, delay);
     this.alwaysOnlinePreparationTimer.unref?.();

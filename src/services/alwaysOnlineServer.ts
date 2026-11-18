@@ -285,9 +285,20 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (sqliteStoreForFile(configPath)) writeSqliteStateFile(configPath, JSON.stringify(config));
     else await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
     if (this.disposed) throw new Error("Background host preparation stopped because this window closed.");
-    if (mode === "node") await installRelayStartup(configPath, scriptTarget, executable,
-      getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false));
-    else await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
+    if (mode === "node") {
+      const startWithSystem = getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false);
+      try {
+        await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
+        recordPersistentEvent("info", "node-host", startWithSystem ? "Windows boot startup task registered" : "Windows boot startup task removed", {
+          configPath, scriptTarget, executable, startWithSystem
+        });
+      } catch (error) {
+        recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
+          configPath, scriptTarget, executable, startWithSystem
+        }, error);
+        throw error;
+      }
+    } else await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
     this.preparedRelay = prepared;
     return prepared;
   }
