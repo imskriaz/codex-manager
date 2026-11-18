@@ -31,4 +31,5 @@ it('summarizes each key separately and keeps missing usage distinct from zero', 
   expect(apiKeyUsage(snapshot, 'unused')).toMatchObject({ requests: 0, input: 0, output: 0, cached: 0 });
   expect(apiKeyUsage(snapshot, 'missing')).toMatchObject({ requests: 1, input: undefined, output: undefined, cached: undefined });
   expect(apiKeyUsage(undefined, 'key')).toBeUndefined();
+  expect(apiKeyUsage({ capturedAt: 20, requests: [{ ...base, id: 'count', apiKeyId: 'key', path: '/v1/messages/count_tokens', status: 'completed', estimatedInputTokens: 999 }] }, 'key')).toMatchObject({ requests: 1, input: undefined, output: undefined });
 });

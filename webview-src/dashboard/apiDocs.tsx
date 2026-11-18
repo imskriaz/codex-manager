@@ -58,6 +58,14 @@ const guidance: Record<ApiEndpointId, { fields: string[]; response: string }> = 
     ],
     response:
       "Returns Claude-compatible content blocks and usage. External clients may send the Manager key in x-api-key."
+  },
+  countTokens: {
+    fields: [
+      "model: a model ID returned by /v1/models.",
+      "messages: Claude user and assistant messages; system, tools, tool_choice, and thinking are optional.",
+      "This endpoint returns a character-based estimate and does not contact the saved-account backend. Images are not counted with a model tokenizer; x-manager-token-count: estimate identifies the approximation."
+    ],
+    response: "Returns input_tokens for the supplied Claude context."
   }
 };
 

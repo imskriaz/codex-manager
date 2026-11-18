@@ -202,6 +202,7 @@ it("counts Claude input locally without contacting the saved-account backend", a
     tools: [{ name: "lookup", description: "Find a value", input_schema: { type: "object" } }]
   });
   expect(result.status).toBe(200);
+  expect(result.headers.get("x-manager-token-count")).toBe("estimate");
   expect(await result.json()).toMatchObject({ input_tokens: expect.any(Number) });
   expect(readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"))).toMatchObject({
     path: "/v1/messages/count_tokens",
@@ -211,6 +212,9 @@ it("counts Claude input locally without contacting the saved-account backend", a
   });
   expect(upstream).not.toHaveBeenCalled();
   expect((await fetch(origin + "/v1/messages/count_tokens", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(405);
+  const log = readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"));
+  expect(log?.estimatedInputTokens).toBeGreaterThan(0);
+  expect(log?.inputTokens).toBeUndefined();
 });
 
 it.each(["/v1/chat/completions", "/v1/responses", "/v1/messages"])(
@@ -270,6 +274,8 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
       Response.json({
         models: [
           { slug: "a", display_name: "A", supported_in_api: false },
+          null,
+          "malformed row",
           { slug: "hidden", visibility: "hide" },
         { slug: "hidden-flag", hidden: true },
         { slug: "hidden-word", visibility: "hidden" },
@@ -313,6 +319,26 @@ it("refreshes rejected credentials once through the shared token repository", as
   expect((await post("/v1/chat/completions", chat())).status).toBe(200);
   expect(repo.refreshAccountTokens).toHaveBeenCalledWith("account-a", { force: true });
   expect(upstream).toHaveBeenCalledTimes(2);
+});
+
+it('releases model discovery on disconnect while a credential read is stuck', async () => {
+  repo.getTokens.mockImplementationOnce(() => new Promise(() => undefined));
+  const controller = new AbortController();
+  const pending = fetch(origin + '/v1/models', { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal }).catch(() => undefined);
+  await vi.waitFor(() => expect(repo.getTokens).toHaveBeenCalledOnce());
+  controller.abort();
+  await pending;
+  await vi.waitFor(() => expect(readApiProxyHistory().requests[0]?.status).toBe('cancelled'));
+  expect(upstream).not.toHaveBeenCalled();
+  expect((await post('/v1/messages/count_tokens', chat())).status).toBe(200);
+});
+
+it('reports model method errors and stale ownership explicitly', async () => {
+  expect((await post('/v1/models', {})).status).toBe(405);
+  expect(upstream).not.toHaveBeenCalled();
+  repo.getAccount.mockResolvedValueOnce({ ...active, isActive: false });
+  expect((await fetch(origin + '/v1/models', { headers: { Authorization: `Bearer ${key}` } })).status).toBe(409);
+  expect(upstream).not.toHaveBeenCalled();
 });
 
 it("accepts the native backend event stream when it omits Content-Type", async () => {
@@ -534,7 +560,7 @@ it("translates function calls, results, image inputs and provider-reported usage
         type: "response.completed",
         response: {
           ...completed,
-          output: [{ type: "function_call", call_id: "call-a", name: "weather", arguments: "{}" }]
+          output: [{ type: "function_call", call_id: "call-a", name: "weather", arguments: '{"city":"Dhaka"}' }]
         }
       }
     ])
@@ -558,6 +584,13 @@ it("accepts Claude Code gateway controls and maps its effort setting", () => {
   }, "claude");
   expect(request.body).toMatchObject({ model: "codex-test", max_output_tokens: 32000, reasoning: { effort: "high" }, stream: true });
   expect(request.body).not.toHaveProperty("context_management");
+  expect(() => normalizeAiRequest({
+    model: "codex-test",
+    max_tokens: 100,
+    system: [{ type: "image", source: { type: "url", url: "https://example.test/system.png" } }],
+    messages: [{ role: "user", content: "Hello" }]
+  }, "claude")).toThrow(/System content supports text blocks only/);
+  expect(() => normalizeAiRequest({ model: "codex-test", max_tokens: 100, thinking: { type: "future-mode" }, messages: [{ role: "user", content: "Hello" }] }, "claude")).toThrow(/thinking.type/);
 });
 
 it("keeps Claude tool result images and ignores prior thinking blocks", () => {
@@ -580,13 +613,18 @@ it("keeps Claude tool result images and ignores prior thinking blocks", () => {
     messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: true, content: "boom" }] }]
   }, "claude");
   expect(failed.body.input).toMatchObject([{ type: "function_call_output", output: "[Tool error]\nboom" }]);
+  expect(() => normalizeAiRequest({
+    model: "codex-test",
+    max_tokens: 100,
+    messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", is_error: "yes", content: "boom" }] }]
+  }, "claude")).toThrow(/tool_result.is_error/);
 });
 
 it("translates Responses reasoning deltas into Claude thinking blocks", () => {
   const stream = new AiStream("claude", "codex-test", false);
   const thinking = stream.event({ type: "response.reasoning_summary_text.delta", delta: "Plan" });
   const text = stream.event({ type: "response.output_text.delta", delta: "Answer" });
-  const done = stream.event({ type: "response.completed", response: { ...completed, output: [{ type: "message", content: [] }] } });
+  const done = stream.event({ type: "response.completed", response: { ...completed, output: [{ type: "message", content: [{ type: "output_text", text: "Answer" }] }] } });
   expect(thinking).toContain('"type":"thinking"');
   expect(thinking).toContain('"type":"thinking_delta"');
   expect(text).toContain('"type":"content_block_stop"');

@@ -12,6 +12,7 @@ export interface ApiProxyRequestLog {
   httpStatus?: number;
   durationMs?: number;
   inputTokens?: number;
+  estimatedInputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
   error?: string;

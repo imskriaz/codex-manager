@@ -31,20 +31,19 @@ type Model = { id: string; name: string };
 export const isAiProxyPath = (path: string): boolean => path === "/v1" || path.startsWith("/v1/");
 
 function countClaudeValue(value: unknown): number {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "string") return value.length;
-  if (typeof value === "number" || typeof value === "boolean") return String(value).length;
-  if (Array.isArray(value)) {
-    let total = 0;
-    for (const item of value as unknown[]) total += countClaudeValue(item);
-    return total;
+  let total = 0;
+  const pending: unknown[] = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (typeof item === "string") total += item.length;
+    else if (typeof item === "number" || typeof item === "boolean") total += String(item).length;
+    else if (Array.isArray(item)) for (const child of item as unknown[]) pending.push(child);
+    else if (item && typeof item === "object") for (const [key, child] of Object.entries(item)) {
+      total += key.length;
+      pending.push(child);
+    }
   }
-  if (typeof value === "object")
-    return Object.entries(value as Record<string, unknown>).reduce(
-      (total, [key, item]) => total + key.length + countClaudeValue(item),
-      0
-    );
-  return 0;
+  return total;
 }
 
 /** Anthropic's count endpoint is local because the saved-account backend has no equivalent route. */
@@ -101,7 +100,8 @@ export async function* aiEvents(body: ReadableStream<Uint8Array>, signal: AbortS
       }
     }
   } finally {
-    await reader.cancel().catch(() => undefined);
+    // A backend's cancellation callback must not hold the client response or capacity open.
+    void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -206,7 +206,8 @@ export class AiProxy {
       if ((auth && !bearer) || (bearer && apiKey && bearer !== apiKey))
         throw new AiProxyError(401, "Supply one valid Manager API key.", "authentication_error");
       const candidate = bearer ?? apiKey;
-      const token = await readDashboardApiToken(this.context, candidate);
+      const token = await waitWithin(readDashboardApiToken(this.context, candidate), 5000, "API key verification timed out.", signal);
+      signal.throwIfAborted();
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
       log.apiKeyId = token.id;
       log.apiKeyName = token.name;
@@ -227,14 +228,21 @@ export class AiProxy {
         180_000
       );
       const path = url.pathname;
-      if (request.method === "GET" && (path === "/v1/models" || path.startsWith("/v1/models/"))) {
+      if (path === "/v1/models" || path.startsWith("/v1/models/")) {
+        if (request.method !== "GET") {
+          response.setHeader("Allow", "GET");
+          throw new AiProxyError(405, "Use GET for model discovery.");
+        }
         const models = await this.listModels(signal, log);
         const format = (model: Model): Json =>
           protocol === "claude"
             ? { id: model.id, type: "model", display_name: model.name, created_at: "1970-01-01T00:00:00Z" }
             : { id: model.id, object: "model", created: 0, owned_by: "openai" };
         if (path !== "/v1/models") {
-          const model = models.find((item) => item.id === decodeURIComponent(path.slice("/v1/models/".length)));
+          let modelId: string;
+          try { modelId = decodeURIComponent(path.slice("/v1/models/".length)); }
+          catch { throw new AiProxyError(400, "Invalid model URL encoding."); }
+          const model = models.find((item) => item.id === modelId);
           if (!model) throw new AiProxyError(404, "Model not found. Use GET /v1/models.", "not_found_error");
           this.json(response, format(model));
         } else if (protocol === "claude") {
@@ -272,13 +280,14 @@ export class AiProxy {
       );
       if (path === "/v1/messages/count_tokens") {
         const countRequest = object(body, "request");
-        const allowed = new Set(["model", "messages", "system", "tools"]);
+        const allowed = new Set(["model", "messages", "system", "tools", "tool_choice", "thinking"]);
         for (const key of Object.keys(countRequest))
           if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
         const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1 }, "claude");
         log.model = String(normalizedCount.body["model"]);
-        log.inputTokens = estimateClaudeInputTokens(countRequest);
-        this.json(response, { input_tokens: log.inputTokens });
+        log.estimatedInputTokens = estimateClaudeInputTokens(countRequest);
+        response.setHeader("x-manager-token-count", "estimate");
+        this.json(response, { input_tokens: log.estimatedInputTokens });
         return;
       }
       const generationProtocol: AiProtocol =
@@ -293,7 +302,7 @@ export class AiProxy {
         await upstream.body?.cancel();
         throw new AiProxyError(502, "The AI backend did not return an event stream.", "api_error");
       }
-      const stream = new AiStream(generationProtocol, String(normalized.body["model"]), normalized.includeUsage);
+      const stream = new AiStream(generationProtocol, String(normalized.body["model"]), normalized.includeUsage, normalized.omitThinking);
       let completed = false;
       for await (const event of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
         signal.throwIfAborted();
@@ -309,7 +318,8 @@ export class AiProxy {
             ? completedAiResponse(
                 object(event["response"], "AI response"),
                 generationProtocol,
-                String(normalized.body["model"])
+                String(normalized.body["model"]),
+                normalized.omitThinking
               )
             : undefined;
         if (normalized.stream) {
@@ -335,7 +345,7 @@ export class AiProxy {
           }
           const details = usage?.['input_tokens_details'];
           const cached = details && typeof details === 'object' ? (details as Record<string, unknown>)['cached_tokens'] : undefined;
-          if (typeof cached === 'number' && Number.isSafeInteger(cached) && cached >= 0) log.cachedInputTokens = cached;
+          if (typeof cached === 'number' && Number.isSafeInteger(cached) && cached >= 0 && log.inputTokens !== undefined) log.cachedInputTokens = Math.min(log.inputTokens, cached);
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;
@@ -518,10 +528,14 @@ export class AiProxy {
   }
 
   private async listModels(signal: AbortSignal, log: ApiProxyRequestLog): Promise<Model[]> {
-    const account = (await this.repo.listAccounts()).find((item) => item.isActive);
+    const account = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be read.", signal)).find((item) => item.isActive);
     if (!account || account.enabled === false || !this.canUseAccount(account.id))
       throw new AiProxyError(503, "Select an enabled account available on this device in Account Center.", "api_error");
-    const tokens = await this.repo.getTokens(account.id, { bypassCache: true });
+    const tokens = await waitWithin(this.repo.getTokens(account.id, { bypassCache: true }), 5000, "Account credentials could not be read.", signal);
+    signal.throwIfAborted();
+    const latest = await waitWithin(this.repo.getAccount(account.id), 5000, "The active account could not be verified.", signal);
+    if (!latest?.isActive || latest.enabled === false || !this.canUseAccount(account.id))
+      throw new AiProxyError(409, "The active account changed. Retry model discovery.", "api_error");
     const key = `${account.id}:${createHash("sha256")
       .update(tokens?.accessToken ?? "")
       .digest("hex")}`;
@@ -563,6 +577,7 @@ export class AiProxy {
         const data: Model[] = [],
           seen = new Set<string>();
         for (const raw of rows.slice(0, 1000)) {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
           const row = object(raw, "model"),
             id = row["slug"] ?? row["id"];
           if (row['hidden'] === true || row['visibility'] === 'hide' || row['visibility'] === 'hidden') continue;
@@ -573,7 +588,9 @@ export class AiProxy {
         }
         if (!data.length)
           throw new AiProxyError(503, "No API models are available for the active account.", "api_error");
-        const current = (await this.repo.listAccounts()).find((item) => item.isActive);
+        const current = (await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be verified.", discoverySignal)).find((item) => item.isActive);
+        if (!current || current.id !== route.accountId || current.enabled === false || !this.canUseAccount(current.id))
+          throw new AiProxyError(409, "The active account changed. Retry model discovery.", "api_error");
         if (current?.id === account.id) this.models = { key, at: Date.now(), data, ...route };
         return { data, ...route };
       },

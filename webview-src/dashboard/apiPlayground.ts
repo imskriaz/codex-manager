@@ -7,7 +7,8 @@ export const API_ENDPOINTS = [
   { id: 'models', method: 'GET', path: '/v1/models', label: 'Available models', description: 'Discover model IDs through the saved-account proxy. No local conversation is created.', permission: 'aiProxy', group: 'AI proxy' },
   { id: 'chat', method: 'POST', path: '/v1/chat/completions', label: 'Chat Completions', description: 'OpenAI-compatible messages, images and function tools through the active saved account.', permission: 'aiProxy', group: 'AI proxy' },
   { id: 'responses', method: 'POST', path: '/v1/responses', label: 'Responses', description: 'OpenAI-compatible input and output. Set stream to true to inspect server-sent events.', permission: 'aiProxy', group: 'AI proxy' },
-  { id: 'messages', method: 'POST', path: '/v1/messages', label: 'Messages', description: 'Claude-compatible message format using the Codex model IDs returned by /v1/models.', permission: 'aiProxy', group: 'AI proxy' }
+  { id: 'messages', method: 'POST', path: '/v1/messages', label: 'Messages', description: 'Claude-compatible message format using the Codex model IDs returned by /v1/models.', permission: 'aiProxy', group: 'AI proxy' },
+  { id: 'countTokens', method: 'POST', path: '/v1/messages/count_tokens', label: 'Claude token count', description: 'Estimate Claude input tokens locally without creating a response.', permission: 'aiProxy', group: 'AI proxy' }
 ] as const;
 export type ApiEndpointId = typeof API_ENDPOINTS[number]['id'];
 export type ApiInspection = { actions: string[]; projects: string[]; permissions: string[] };
@@ -23,6 +24,7 @@ export function apiPayloadExample(endpoint: ApiEndpointId, model = 'YOUR_MODEL_I
   if (endpoint === 'chat') return JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK.' }], stream: false }, null, 2);
   if (endpoint === 'responses') return JSON.stringify({ model, input: 'Reply with OK.', stream: false }, null, 2);
   if (endpoint === 'messages') return JSON.stringify({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with OK.' }], stream: false }, null, 2);
+  if (endpoint === 'countTokens') return JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK.' }] }, null, 2);
   return '{}';
 }
 export function buildApiTestRequest(endpoint: ApiEndpointId, input: string, operation: string, project: string, requestId: string): { path: string; method: string; body?: string } {

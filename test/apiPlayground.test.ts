@@ -6,7 +6,7 @@ it('keeps proxy access host-wide and invalidates missing grants', () => {
   expect(canTestApiEndpoint('action',scoped,'getProjectBoard')).toBe(true);
   expect(canTestApiEndpoint('action',scoped,'refreshAll')).toBe(false);
   expect(canTestApiEndpoint('state',scoped,'')).toBe(true);
-  for (const endpoint of ['models','chat','responses','messages'] as const) {
+  for (const endpoint of ['models','chat','responses','messages','countTokens'] as const) {
     expect(canTestApiEndpoint(endpoint,scoped,'')).toBe(false);
     expect(canTestApiEndpoint(endpoint,{...scoped,projects:[]},'')).toBe(true);
     expect(canTestApiEndpoint(endpoint,{...scoped,projects:[],permissions:[]},'')).toBe(false);
@@ -21,12 +21,12 @@ it('builds scoped dashboard writes once and leaves GET requests body-free', () =
   for (const endpoint of ['models','state','schema'] as const) expect(buildApiTestRequest(endpoint,'invalid','', '', '')).toEqual({method:'GET',path:API_ENDPOINTS.find(item=>item.id===endpoint)!.path});
   for (const input of ['null','[]','false','{']) expect(()=>buildApiTestRequest('action',input,'refreshAll','','unique')).toThrow();
 });
-it.each(['chat','responses','messages'] as const)('uses the actual %s proxy endpoint and validates its model before sending', endpoint => {
+it.each(['chat','responses','messages','countTokens'] as const)('uses the actual %s proxy endpoint and validates its model before sending', endpoint => {
   expect(()=>buildApiTestRequest(endpoint,apiPayloadExample(endpoint),'','','')).toThrow('Choose a model');
   for (const model of [null,1,'','  ']) expect(()=>buildApiTestRequest(endpoint,JSON.stringify({model}),'','','')).toThrow('Choose a model');
   const request = buildApiTestRequest(endpoint,apiPayloadExample(endpoint,'fixture-model'),'','','');
   expect(request.path).toBe(API_ENDPOINTS.find(item=>item.id===endpoint)!.path);
   expect(request.method).toBe('POST');
-  expect(JSON.parse(request.body!)).toMatchObject({model:'fixture-model',stream:false});
+  expect(JSON.parse(request.body!)).toMatchObject(endpoint === 'countTokens' ? { model: 'fixture-model' } : { model: 'fixture-model', stream: false });
   expect(request.body).not.toContain('dashboard:action');
 });

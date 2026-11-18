@@ -32,6 +32,8 @@ const compiled = await build({ stdin: { contents: `
     window.offline=()=>setConnected(false);
     window.missing=()=>setSnapshot(undefined);
     window.empty=()=>setSnapshot({capturedAt:Date.now(),requests:[]});
+    window.localEstimate=()=>setSnapshot(current=>({...current,requests:[{id:'local-count',startedAt:now,method:'POST',path:'/v1/messages/count_tokens',model:'fixture-model',apiKeyId:'key-0',apiKeyName:'Build pipeline',status:'completed',httpStatus:200,estimatedInputTokens:123},...current.requests]}));
+    window.removeEstimate=()=>setSnapshot(current=>({...current,requests:current.requests.filter(row=>row.id!=='local-count')}));
     return <ApiWorkspace open token={token} tokenId={tokenId} tokens={tokens} proxy={snapshot} privacyMode={privacyMode} enabled connected={connected} pending={pending} uncertain={uncertain} loading={loading} error={error} notice={notice}
       onGenerate={(name,projects,permissions)=>{window.generated={name,projects,permissions};setPending(true);setTimeout(()=>{setPending(false);if(window.failCreate){window.failCreate=false;setError('Creation outcome unknown. Refresh keys before retrying.');setUncertain(true);return;}setToken('cm_fixture_only');setTokenId('fixture-key');setTokens(current=>[...current,{id:'fixture-key',name,createdAt:now,permissions,projectPaths:[]}]);setNotice('API key created. Copy it now.')},50)}}
       onEdit={(original,name,projects,permissions)=>{setTokens(current=>current.map(item=>item.id===original.id?{...item,name,projectPaths:projects??[],permissions}:item));setNotice('API key updated.');}}
@@ -170,11 +172,11 @@ try {
     assert.ok(await response.evaluate(element=>element.scrollTop>0),'Response scrolling works with the keyboard');
     await assertViewport(page,screen);
     await page.screenshot({path:path.join(output,`api-explorer-${theme}-${width}.png`)});
-    for(const endpoint of ['/api/message','/api/state','/api/schema','/v1/models','/v1/chat/completions','/v1/responses','/v1/messages']) {
+    for(const endpoint of ['/api/message','/api/state','/api/schema','/v1/models','/v1/chat/completions','/v1/responses','/v1/messages','/v1/messages/count_tokens']) {
       await endpointPicker.click();
       const endpointSearch=page.getByRole('combobox',{name:'Search endpoint',exact:true});
       await endpointSearch.fill(endpoint);
-      await page.getByRole('listbox',{name:'Endpoint choices',exact:true}).getByRole('option').waitFor();
+      await page.getByRole('listbox',{name:'Endpoint choices',exact:true}).getByRole('option').first().waitFor();
       const flyout=await page.locator('.api-choice-popover').boundingBox();
       assert.ok(flyout.x>=0 && flyout.x+flyout.width<=width+1 && flyout.y>=0 && flyout.y+flyout.height<=height+1,'Picker stays inside the viewport');
       if(endpoint==='/v1/responses')await page.screenshot({path:path.join(output,`api-endpoint-picker-${theme}-${width}.png`)});
@@ -198,6 +200,13 @@ try {
     assert.equal(await diagram.locator('.is-account').count(),2);
     assert.equal(await diagram.locator('.is-key').count(),3);
     assert.equal(await diagram.locator('.api-route-edge').count(),6,'One account can connect to multiple keys');
+    await page.evaluate(()=>window.localEstimate());
+    await screen.getByText('Local estimate',{exact:true}).waitFor();
+    assert.equal(await diagram.locator('.is-account').count(),2,'Local estimates do not invent an account');
+    assert.equal(await diagram.locator('.api-route-edge').count(),6,'Local estimates do not invent an upstream route');
+    await screen.getByText('~123 estimated ↑',{exact:true}).waitFor();
+    await page.evaluate(()=>window.removeEstimate());
+    await screen.getByText('Local estimate',{exact:true}).waitFor({state:'detached'});
     assert.ok(await diagram.locator('.api-route-edge.is-running').count()>0);
     const animated=diagram.locator('.api-route-edge.is-running').first();
     assert.equal(await animated.evaluate(element=>getComputedStyle(element).animationName),'api-route-flow');

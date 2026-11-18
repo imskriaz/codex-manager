@@ -46,12 +46,12 @@ function RequestTable({
                 <strong>
                   {row.accountEmail
                     ? getSensitiveDisplayValue(row.accountEmail, privacyMode, "email")
-                    : "Account unavailable"}
+                    : row.path === "/v1/messages/count_tokens" ? "Local estimate" : "Account unavailable"}
                 </strong>
                 <small>{row.apiKeyName ?? "Unknown API key"}</small>
               </td>
               <td class="api-proxy-tokens">
-                <span>{tokens(row.inputTokens)} ↑</span> <span>{tokens(row.outputTokens)} ↓</span>
+                <span>{row.estimatedInputTokens === undefined ? tokens(row.inputTokens) : `~${tokens(row.estimatedInputTokens)} estimated`} ↑</span> <span>{tokens(row.outputTokens)} ↓</span>
               </td>
               <td>
                 <span class={`api-proxy-status is-${row.status}`}>{row.status}</span>
