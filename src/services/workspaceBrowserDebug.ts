@@ -71,9 +71,10 @@ export async function browserDebugCommand(page: Page, debug: BrowserDebugger, r:
     return r.selector ? page.locator(r.selector).evaluate(element => element.outerHTML) : page.content();
   }
   if (r.operation === 'styles') {
-    const selector = r.x !== undefined && r.y !== undefined ? await page.evaluate(({ x, y }) => {
+    const picked = r.x !== undefined && r.y !== undefined ? await page.evaluate(({ x, y }) => {
       let element = document.elementFromPoint(x, y);
       if (!element) throw new Error('No element at this point.');
+      const rect = element.getBoundingClientRect();
       const parts: string[] = [];
       while (element) {
         const tag = element.tagName.toLowerCase();
@@ -81,8 +82,9 @@ export async function browserDebugCommand(page: Page, debug: BrowserDebugger, r:
         parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(element) + 1})`);
         element = element.parentElement;
       }
-      return parts.join(' > ');
+      return { selector: parts.join(' > '), rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
     }, { x: r.x, y: r.y }) : r.selector || 'body';
+    const selector = typeof picked === 'string' ? picked : picked.selector;
     if (r.params?.['action'] === 'listeners') {
       const expression = r.params['ancestors'] === true ? `(() => { let element = document.querySelector(${JSON.stringify(selector)}); const targets = []; while (element) { targets.push(element); element = element.parentNode; } targets.push(window); return targets; })()` : `document.querySelector(${JSON.stringify(selector)})`;
       const result = await debug.client.send('Runtime.evaluate', { expression, objectGroup: 'manager-listeners' });
@@ -98,7 +100,7 @@ export async function browserDebugCommand(page: Page, debug: BrowserDebugger, r:
         return { selector, listeners };
       } finally { await debug.client.send('Runtime.releaseObjectGroup', { objectGroup: 'manager-listeners' }); }
     }
-    const value = await page.locator(selector).evaluate((element, selector) => ({ selector, html: element.outerHTML, styles: Object.fromEntries(Array.from(getComputedStyle(element), key => [key, getComputedStyle(element).getPropertyValue(key)])) }), selector);
+    const value = await page.locator(selector).evaluate((element, selector) => ({ selector, rect: (() => { const rect = element.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }; })(), html: element.outerHTML, styles: Object.fromEntries(Array.from(getComputedStyle(element), key => [key, getComputedStyle(element).getPropertyValue(key)])) }), selector);
     if (r.params?.['action'] !== 'rules') return value;
     await debug.client.send('DOM.enable');
     await debug.client.send('CSS.enable');

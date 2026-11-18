@@ -12,7 +12,7 @@ const discovered = await response.json();
 const sessions = discovered.messages?.find(message => message.action === 'listCodexCliSessions')?.payload?.cliSessions ?? [];
 const session = sessions.find(item => !item.remote && !item.subAgent && !item.parentSessionId && !item.archived && item.projectPath?.replaceAll('\\', '/').toLowerCase() === process.cwd().replaceAll('\\', '/').toLowerCase());
 assert.ok(session, 'A local workspace conversation is required for this read-only UI check.');
-const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const browser = await chromium.launch({ channel: 'msedge', headless: process.env.CODEX_MANAGER_HEADED !== '1' });
 await mkdir('output/browser-live', { recursive: true });
 try {
   for (const width of [1440, 390, 320]) {
@@ -78,7 +78,14 @@ try {
     const address = await page.locator('.workspace-browser-address').boundingBox();
     const actions = await page.locator('.workspace-browser-actions').boundingBox();
     assert.ok(address.x + address.width - actions.x - actions.width < 10, 'URL controls fill the toolbar.');
-    assert.ok(await page.evaluate(() => { const toast = document.querySelector('.workspace-browser-toast'); return !toast || getComputedStyle(toast).position === 'absolute'; }), 'Action messages are toasts, not an extra row.');
+    assert.equal(await page.locator('.workspace-browser-workbench-header').count(), 0, 'The redundant Page/Comments row is removed.');
+    assert.equal(await page.locator('.workspace-browser-toast').count(), 0, 'Successful actions do not show redundant toasts.');
+    await page.locator('.workspace-browser-address').getByRole('button', { name: 'Comments', exact: true }).click();
+    assert.equal(await page.locator('.workspace-browser-inspector-tools').count(), 1, 'Marking tools sit before inspector tabs.');
+    const toolRows = await page.locator('.workspace-browser-inspector-tools button').evaluateAll(buttons => buttons.map(button => Math.round(button.getBoundingClientRect().top)));
+    assert.ok(Math.max(...toolRows) - Math.min(...toolRows) < 3, 'Inspector tools stay on one compact row.');
+    await page.getByRole('region', { name: 'Saved feedback', exact: true }).getByText('Comments (0)', { exact: true }).waitFor();
+    await page.locator('.workspace-browser-inspector-actions').getByRole('button', { name: 'Close browser inspector', exact: true }).click();
     await page.locator('.workspace-browser').screenshot({ path: `output/browser-live/browser-${width}.png` });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Dashboard fits the viewport.');
     for (const number of [3, 2, 1]) {
@@ -88,7 +95,7 @@ try {
     await page.waitForFunction(() => window.__browserOperations.includes('close'));
     assert.equal(await page.getByRole('tab', { name: 'Env', exact: true }).getAttribute('aria-selected'), 'true', 'Closing the final page returns to Environment.');
     assert.deepEqual(errors, [], 'Browser lifecycle has no runtime errors.');
-    console.log(`PASS ${width}px: repeated Browser adds, full URL bar, toast, background refresh, final close; load ${Math.round(await page.evaluate(() => performance.now()))}ms`);
+    console.log(`PASS ${width}px: repeated Browser adds, compact controls, Comments icon, no extra row or success toast, background refresh, final close; load ${Math.round(await page.evaluate(() => performance.now()))}ms`);
     await context.close();
   }
 } finally { await browser.close(); }

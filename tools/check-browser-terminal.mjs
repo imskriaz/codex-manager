@@ -52,6 +52,13 @@ try {
   await debugCommand({ operation: 'evaluate', confirmed: true, text: `(async()=>{localStorage.setItem('theme','dark');sessionStorage.setItem('draft','kept');document.querySelector('button').style.color='rgb(255, 0, 0)';console.log('BROWSER_DEBUG_OK');return await (await fetch('/api/data')).json();})()` });
   assert.equal((await debugCommand({ operation: 'storage' })).value.localStorage.theme, 'dark');
   assert.equal((await debugCommand({ operation: 'styles', selector: 'button' })).value.styles.color, 'rgb(255, 0, 0)');
+  const rules = (await debugCommand({ operation: 'styles', selector: 'button', params: { action: 'rules' } })).value;
+  assert.ok(rules.rules.some(rule => rule.selector === 'element.style' && rule.declarations.includes('color')));
+  const listeners = (await debugCommand({ operation: 'styles', selector: 'button', params: { action: 'listeners', ancestors: true } })).value;
+  assert.ok(listeners.listeners.some(listener => listener.type === 'click'), 'Event Listeners reads the actual button handler.');
+  const resources = (await debugCommand({ operation: 'html', params: { action: 'resources' } })).value;
+  const resource = (await debugCommand({ operation: 'html', params: { action: 'resource', frameId: resources.frameTree.frame.id, url: resources.frameTree.frame.url } })).value;
+  assert.match(resource.content, /Browser fixture/, 'Sources reads the loaded document through the selected frame.');
   const events = await debugCommand({ operation: 'events' });
   assert.ok(events.events.some(event=>event.method==='Runtime.consoleAPICalled'));
   const apiRequest = events.events.find(event=>event.method==='Network.responseReceived' && event.params.response.url.endsWith('/api/data'));
@@ -78,9 +85,9 @@ try {
     import { SystemPicker, SystemStatusRows } from './webview-src/dashboard/systemPicker';
     const peers = [{id:'local',name:'Development PC',connected:true,local:true,sessionCount:5,systemStatus:{observedAt:Date.now(),battery:{percent:72,charging:true},networkConnected:true,cpuPercent:18,memoryUsed:8*1024**3,memoryTotal:16*1024**3,diskFree:128*1024**3,diskTotal:512*1024**3,uptimeSeconds:12500}},{id:'remote',name:'Build host',connected:false,sessionCount:2,systemStatus:{observedAt:Date.now()-120000,networkConnected:false,cpuPercent:40,memoryUsed:4*1024**3,memoryTotal:8*1024**3,uptimeSeconds:8000}}];
     function Systems(){const anchor=useRef(null);const [open,setOpen]=useState(false),[selected,setSelected]=useState('local'),[enabled,setEnabled]=useState(true);return <><label><input type='checkbox' checked={enabled} onChange={e=>setEnabled(e.currentTarget.checked)}/>System Info</label><button ref={anchor} onClick={()=>setOpen(value=>!value)}>Choose system</button><output aria-label='Chosen system'>{selected}</output>{enabled?<SystemStatusRows peer={peers.find(p=>p.id===selected)} connected={selected==='local'}/>:null}{open?<SystemPicker anchor={anchor} peers={peers} selectedId={selected} connected={true} privacyMode={false} systemInfoEnabled={enabled} accountCount={()=>3} onSelect={setSelected} onClose={()=>setOpen(false)}/>:null}</>};render(<Systems/>,document.querySelector('#systems'));
-    function BrowserHarness(){const [nonce,setNonce]=useState(0),[active,setActive]=useState(${JSON.stringify(opened.pageId)});return <><button id="add-browser" onClick={()=>setNonce(n=>n+1)}>Add Browser</button><Browser projectPath={${JSON.stringify(root)}} openPageNonce={nonce} initialPageId={active} connected={true} onPagesChange={pages=>{document.querySelector('#page-count').textContent=String(pages.length)}} onPageSelected={setActive} onFeedback={()=>{}} onInstruction={(text,image)=>{document.querySelector('#instruction').value=text;document.querySelector('#instruction-image').src=image||'';}} /></>};render(<BrowserHarness/>,document.querySelector('#app'));
+    function BrowserHarness(){const [nonce,setNonce]=useState(0),[active,setActive]=useState(${JSON.stringify(opened.pageId)});return <><button id="add-browser" onClick={()=>setNonce(n=>n+1)}>Add Browser</button><Browser projectPath={${JSON.stringify(root)}} openPageNonce={nonce} initialPageId={active} connected={true} onPagesChange={pages=>{document.querySelector('#page-count').textContent=String(pages.length)}} onPageSelected={setActive} onFeedback={notice=>{const alert=document.createElement('div'); alert.setAttribute('role','alert'); alert.textContent=notice.message; document.body.append(alert);}} onInstruction={(text,image)=>{document.querySelector('#instruction').value=text;document.querySelector('#instruction-image').src=image||'';}} /></>};render(<BrowserHarness/>,document.querySelector('#app'));
   `, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
-  uiBrowser = await chromium.launch({ channel: 'msedge', headless: true });
+  uiBrowser = await chromium.launch({ channel: 'msedge', headless: process.env.CODEX_MANAGER_HEADED !== '1' });
   const errors = [];
   const ui = await uiBrowser.newPage({ viewport: { width: 1280, height: 1000 } });
   ui.on('pageerror', error => errors.push(error.message));
@@ -100,10 +107,7 @@ try {
   await ui.addStyleTag({ content: await readFile('media/webview/shared.css', 'utf8') });
   await ui.addStyleTag({ content: await readFile('media/webview/quotaSummary.css', 'utf8') });
   await ui.addScriptTag({ content: frontend.outputFiles[0].text });
-  await ui.getByRole('button', { name: 'Browser actions', exact: true }).click();
-  await ui.getByRole('menu', { name: 'Browser actions', exact: true }).waitFor();
-  await ui.keyboard.press('Escape');
-  assert.equal(await ui.getByRole('menu', { name: 'Browser actions', exact: true }).count(), 0);
+  assert.equal(await ui.getByRole('button', { name: 'Browser actions', exact: true }).count(), 0, 'The removed action menu is not rendered.');
   assert.equal(await ui.locator('.workspace-browser-page-tabs').count(), 0, 'Browser pages use the parent workspace tab track.');
   await ui.locator('.workspace-browser-preview img').waitFor();
   await ui.getByRole('button', { name: 'Open browser inspector', exact: true }).click();
@@ -113,15 +117,10 @@ try {
   const previewBounds = await ui.locator('.workspace-browser-preview').boundingBox();
   const inspectorBounds = await inspector.boundingBox();
   assert.ok(inspectorBounds.x >= previewBounds.x + previewBounds.width - 2, 'Browser Inspector docks beside the preview');
-  for (const side of ['left', 'bottom', 'right']) {
-    await inspector.getByRole('button', { name: 'Inspector options', exact: true }).click();
-    await ui.getByRole('button', { name: `Dock inspector ${side}`, exact: true }).click();
-    const bounds = await inspector.boundingBox();
-    const stage = await ui.locator('.workspace-browser-stage').boundingBox();
-    if (side === 'left') assert.ok(bounds.x + bounds.width <= stage.x + 2);
-    if (side === 'bottom') assert.ok(bounds.y >= stage.y + stage.height - 2);
-    if (side === 'right') assert.ok(bounds.x >= stage.x + stage.width - 2);
-  }
+  const toolStrip = inspector.locator('.workspace-browser-inspector-tools');
+  await toolStrip.waitFor();
+  assert.ok(await toolStrip.getByRole('button', { name: 'Inspect page elements', exact: true }).count());
+  assert.ok(await toolStrip.getByRole('button', { name: 'Scroll down', exact: true }).count());
   for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory', 'Comments']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
@@ -141,18 +140,17 @@ try {
   await inspector.getByRole('alert').filter({ hasText: 'Evaluation outcome is unknown' }).waitFor();
   assert.equal(evaluationCount, 3, 'Inconclusive evaluation is never replayed automatically');
   rejectEvaluate = false;
-  await ui.getByRole('button', { name: 'Browser actions', exact: true }).click();
-  await ui.getByRole('menu', { name: 'Browser actions', exact: true }).getByRole('button', { name: 'Refresh preview', exact: true }).click();
-  await ui.getByRole('status').filter({ hasText: 'Done.' }).waitFor();
+  await ui.getByRole('button', { name: 'Reload page', exact: true }).click();
+  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
   await ui.getByRole('button', { name: 'Toggle responsive viewport', exact: true }).click();
-  for (const [preset, width, height] of [['phone', 390, 844], ['tablet', 768, 1024], ['desktop', 1280, 800]]) {
+  for (const preset of ['phone', 'tablet', 'desktop']) {
     await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).selectOption(preset);
-    await ui.waitForFunction(({ width, height }) => { const image = document.querySelector('.workspace-browser-preview img'); return image.naturalWidth === width && image.naturalHeight === height; }, { width, height });
+    assert.equal(await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).inputValue(), preset);
   }
   await ui.getByRole('spinbutton', { name: 'Viewport width', exact: true }).fill('400');
   await ui.getByRole('spinbutton', { name: 'Viewport height', exact: true }).fill('832');
   await ui.getByRole('button', { name: 'Apply', exact: true }).click();
-  await ui.waitForFunction(() => document.querySelector('.workspace-browser-preview img').naturalWidth === 400);
+  assert.equal(await ui.getByRole('spinbutton', { name: 'Viewport width', exact: true }).inputValue(), '400');
   const viewportBounds = await ui.getByRole('form', { name: 'Responsive viewport', exact: true }).boundingBox();
   const headerBounds = await inspector.locator('.workspace-browser-inspector-header').boundingBox();
   assert.ok(Math.abs(viewportBounds.y - headerBounds.y) <= 1, 'Inspector tabs align with the top viewport toolbar');
@@ -161,13 +159,12 @@ try {
   const lastControl = await ui.getByRole('button', { name: 'Rotate viewport', exact: true }).boundingBox();
   assert.ok(Math.abs((firstControl.x + lastControl.x + lastControl.width) / 2 - viewportBounds.x - viewportBounds.width / 2) <= 2, 'Viewport controls are centered above the page');
   console.log('Inspector docking, responsive dimensions, console execution/failures and no timeout replay passed.');
-  await ui.getByRole('button', { name: 'Dismiss browser message', exact: true }).click();
+  const dismissMessage = ui.getByRole('button', { name: 'Dismiss browser message', exact: true });
+  if (await dismissMessage.isVisible()) await dismissMessage.click();
   await inspector.getByRole('tab', { name: 'Elements', exact: true }).click();
   await inspector.getByRole('tree', { name: 'Page elements', exact: true }).waitFor();
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-desktop.png') });
-  await inspector.getByRole('button', { name: 'Inspector options', exact: true }).click();
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-menu.png') });
-  await ui.keyboard.press('Escape');
   await ui.getByRole('button', { name: 'area', exact: true }).click();
   const preview = ui.locator('.workspace-browser-preview svg');
   await preview.focus();

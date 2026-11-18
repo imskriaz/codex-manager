@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import type { DashboardNotice } from '../../src/domain/dashboard/types';
 
 type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -60,16 +61,13 @@ export function useBrowserAppInstall() {
       window.dispatchEvent(new Event('codex:app-install-changed'));
     }
   };
-  return { installed, available: available && !installed, busy, notice, installApp };
+  return { installed, available: available && !installed, busy, notice, installApp, dismissNotice: () => setNotice(undefined) };
 }
 
-export function BrowserAppInstall(props: { onFeedback?: (notice: DashboardNotice) => void }) {
+export function BrowserAppInstall() {
   const app = useBrowserAppInstall();
-  const feedback = useRef(props.onFeedback);
-  feedback.current = props.onFeedback;
-  useEffect(() => { if (app.notice) feedback.current?.(app.notice); }, [app.notice]);
   return <>
-    {!app.installed ? <button type="button" class="cli-icon-button" aria-label="Install app" title="Install app · use Codex Manager with browser windows closed" aria-busy={app.busy} disabled={app.busy} onClick={() => void app.installApp()}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg></button> : null}
-    {!props.onFeedback && app.notice ? <p class={`browser-notification-feedback ${app.notice.level === 'warning' ? 'is-failed' : ''}`} role={app.notice.level === 'warning' ? 'alert' : 'status'}>{app.notice.message}</p> : null}
+    {!app.installed && (app.available || app.busy) ? <button type="button" class="cli-icon-button" aria-label="Install app" title="Install app · use Codex Manager with browser windows closed" aria-busy={app.busy} disabled={app.busy} onClick={() => void app.installApp()}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg></button> : null}
+    {app.notice ? createPortal(<p class={`browser-notification-feedback browser-app-install-feedback ${app.notice.level === 'warning' ? 'is-failed' : ''}`} role={app.notice.level === 'warning' ? 'alert' : 'status'}><span>{app.notice.message}</span><button type="button" aria-label="Dismiss install message" onClick={app.dismissNotice}>×</button></p>, document.body) : null}
   </>;
 }

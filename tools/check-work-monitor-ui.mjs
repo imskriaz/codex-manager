@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-export async function checkWorkMonitorUi(page, { origin, parentId, runningId, width, height, output }) {
+export async function checkWorkMonitorUi(page, { origin, parentId, runningId, width, height, output, installOnly = false }) {
   const context = page.context(), errors = [];
   const track = child => { child.on('pageerror', error => errors.push(error.message)); child.on('console', message => { if (message.type() === 'error') console.log('Monitor console:', message.text()); }); };
   context.on('page', track);
@@ -16,6 +16,39 @@ export async function checkWorkMonitorUi(page, { origin, parentId, runningId, wi
   await toggle.click();
   await page.locator('.dashboard-notice').filter({ hasText: 'Allow pop-ups' }).waitFor();
   await page.evaluate(() => { window.open = window.__monitorOriginalOpen; });
+  const install = page.locator('.cli-work-window-slot').getByRole('button', { name: 'Install app', exact: true });
+  assert.equal(await install.count(), 0, 'No install icon without a browser install prompt');
+  for (const outcome of ['dismissed', 'accepted', 'failure', 'timeout']) {
+    console.log(`${width}px: checking install ${outcome}`);
+    await page.evaluate(outcome => {
+      const event = new Event('beforeinstallprompt', { cancelable: true });
+      Object.assign(event, {
+        prompt: () => {
+          window.__installRequests = (window.__installRequests ?? 0) + 1;
+          window.__installGesture = navigator.userActivation.isActive;
+          return outcome === 'failure' ? Promise.reject(new Error('Install blocked')) : Promise.resolve();
+        },
+        userChoice: new Promise(resolve => { window.__resolveInstall = () => resolve({ outcome }); })
+      });
+      window.dispatchEvent(event);
+    }, outcome);
+    if (outcome === 'accepted') {
+      await install.waitFor({ state: 'visible' });
+      assert.ok(await install.evaluate(button => { const rect = button.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth; }), 'Install fits in the compact conversation toolbar');
+      await page.screenshot({ path: path.join(output, `work-monitor-install-${width}x${height}.png`), animations: 'disabled' });
+    }
+    await install.click();
+    assert.equal(await page.evaluate(() => window.__installGesture), true, 'Install starts directly inside the click gesture');
+    if (outcome !== 'failure') {
+      assert.equal(await install.isDisabled(), true, 'Pending install stays visible and cannot be repeated');
+      if (outcome !== 'timeout') await page.evaluate(() => window.__resolveInstall());
+    }
+    await page.locator('.browser-app-install-feedback').filter({ hasText: outcome === 'accepted' ? 'Installation requested' : outcome === 'dismissed' ? 'Installation cancelled' : outcome === 'timeout' ? 'Installation was not confirmed in time' : 'Installation failed' }).waitFor();
+    await page.getByRole('button', { name: 'Dismiss install message', exact: true }).click();
+    await page.locator('.browser-app-install-feedback').waitFor({ state: 'hidden' });
+    await install.waitFor({ state: 'hidden' });
+  }
+  assert.equal(await page.evaluate(() => window.__installRequests), 4, 'Each click opens exactly one native install request');
   const popup = page.waitForEvent('popup'); await toggle.click();
   const monitor = await popup;
   monitor.setDefaultTimeout(30_000);
@@ -28,6 +61,15 @@ export async function checkWorkMonitorUi(page, { origin, parentId, runningId, wi
   await composer.waitFor();
   const content = monitor.frames().find(frame => frame.parentFrame());
   assert.ok(content, 'Embedded workspace document is available');
+  assert.equal(await monitor.getByRole('button', { name: 'Install app', exact: true }).count(), 0, 'Floating shell has no unsupported install action');
+  assert.ok(await monitor.locator('iframe').evaluate(frame => Math.abs(frame.getBoundingClientRect().top - frame.parentElement.getBoundingClientRect().top) <= 1), 'No separate install row above the floating workspace');
+  if (installOnly) {
+    await monitor.screenshot({ path: path.join(output, `work-monitor-compact-install-${width}x${height}.png`), animations: 'disabled' });
+    await monitor.close();
+    context.off('page', track);
+    assert.deepEqual(errors, [], 'Install controls and floating workspace have no runtime errors');
+    return;
+  }
   assert.equal(await composer.inputValue(), '', 'The monitor never copies the original draft');
   assert.equal(await mobile.getByRole('button', { name: 'Keep on top', exact: true }).count(), 0, 'No recursive monitors');
   await mobile.locator('.cli-activity-group-details').evaluateAll(elements => elements.forEach(element => { element.open = true; }));

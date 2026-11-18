@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { BrowserInspectorContent, BrowserResizeHandle } from './workspaceBrowserInspector';
 import type { JSX } from "preact";
 import { useWorkspaceRequest } from "./workspaceRequest";
-import { WorkspaceMenu } from "./workspaceMenu";
 import { ToolIcon } from "./icons";
-import { scheduleDashboardToastDismiss } from './toast';
 import type { DashboardNotice } from "../../src/domain/dashboard/types";
 import type {
   BrowserFeedback,
@@ -35,15 +33,15 @@ export default function WorkspaceBrowser(props: {
   const [selected, setSelected] = useState(props.initialPageId ?? ""),
     [url, setUrl] = useState(props.initialUrl ?? "");
   const [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState(""),
-    [failed, setFailed] = useState(false);
+    [, setNotice] = useState(""),
+    [, setFailed] = useState(false);
   const [mode, setMode] = useState<"interact" | BrowserFeedback["kind"]>("interact");
   const [points, setPoints] = useState<BrowserPoint[]>([]),
     [text, setText] = useState(""),
     [reference, setReference] = useState("");
   const [input, setInput] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [dock, setDock] = useState<'left' | 'right' | 'bottom'>('right');
+  const [dock] = useState<'left' | 'right' | 'bottom'>('right');
   const [responsive, setResponsive] = useState(false);
   const [viewport, setViewport] = useState({ width: 390, height: 844 });
   const [viewportPreset, setViewportPreset] = useState('responsive');
@@ -60,6 +58,8 @@ export default function WorkspaceBrowser(props: {
   const [theme, setTheme] = useState('auto'), [wrap, setWrap] = useState(false);
   const [size, setSize] = useState({ width: 1280, height: 800 });
   const [cursor, setCursor] = useState<BrowserPoint>({ x: 20, y: 20 });
+  const [hoverRect, setHoverRect] = useState<{ x: number; y: number; width: number; height: number }>();
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
   const locked = useRef(false),
     generation = useRef(0),
     drawing = useRef(false);
@@ -77,27 +77,6 @@ export default function WorkspaceBrowser(props: {
   const revision = state.pageId === selected ? state.revision : undefined;
   const current = state.pages.find((page) => page.id === selected);
   const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
-  useEffect(() => {
-    if (!notice || failed) return;
-    return scheduleDashboardToastDismiss(() => setNotice(''), 3000);
-  }, [notice, failed]);
-  const copyUrl = async (): Promise<void> => {
-    try { await navigator.clipboard.writeText(current?.url ?? url); noticeAction("URL copied."); }
-    catch { setFailed(true); setNotice("Clipboard access was unavailable. Select the URL and copy it manually."); }
-  };
-  const saveScreenshot = (): void => {
-    if (!state.image) return;
-    const link = document.createElement("a"); link.href = state.image; link.download = "codex-browser-screenshot.jpg"; link.click(); noticeAction("Screenshot saved.");
-  };
-  const saveHtml = async (): Promise<void> => {
-    if (!selected) return;
-    try {
-      const response = await request("workspaceBrowser", { browserRequest: { operation: "html", pageId: selected } });
-      const html = response.workspaceBrowser?.value;
-      if (typeof html !== "string") throw new Error("HTML was not returned.");
-      const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([html], { type: "text/html" })); link.download = "codex-browser-page.html"; link.click(); URL.revokeObjectURL(link.href); noticeAction("HTML saved.");
-    } catch (error) { setFailed(true); setNotice(error instanceof Error ? error.message : String(error)); }
-  };
   useEffect(() => {
     if (draftPage.current !== selected) {
       setActiveFeedback(''); setInspect(false);
@@ -257,6 +236,7 @@ export default function WorkspaceBrowser(props: {
       kind: mode === "interact" ? ("comment" as const) : mode,
       points,
       text,
+      selector: elementSelector || undefined,
       referenceUrl: reference || undefined
     };
     savedId.current = feedback.id;
@@ -288,7 +268,7 @@ export default function WorkspaceBrowser(props: {
         prepared.push({ feedback, image: await annotateScreenshot(image, feedback) });
       }
       if (version !== generation.current) return;
-      props.onInstruction(prepared.map(({ feedback }) => `Browser feedback: ${feedback.url}\n${feedback.kind} at ${JSON.stringify(feedback.points)}\n${feedback.text}${feedback.referenceUrl ? `\nDesign reference: ${feedback.referenceUrl}` : ""}\nFeedback ID: ${feedback.id}`).join('\n\n'), prepared[0]?.image, prepared.map(item => item.image));
+      props.onInstruction(prepared.map(({ feedback }) => `Browser feedback: ${feedback.url}\n${feedback.kind} at ${JSON.stringify(feedback.points)}\n${feedback.text}${feedback.selector ? `\nElement: ${feedback.selector}` : ""}${feedback.referenceUrl ? `\nDesign reference: ${feedback.referenceUrl}` : ""}\nFeedback ID: ${feedback.id}`).join('\n\n'), prepared[0]?.image, prepared.map(item => item.image));
       setFailed(false);
       setNotice("Feedback and marked screenshots added to the composer. Review and send when ready.");
     } catch (error) {
@@ -301,18 +281,18 @@ export default function WorkspaceBrowser(props: {
       }
     }
   };
-  const pickElement = async (point: BrowserPoint): Promise<void> => {
+  const pickElement = async (point: BrowserPoint, commit = true): Promise<void> => {
     if (locked.current) return;
     locked.current = true; setBusy(true);
     const version = generation.current;
     try {
       const response = await request('workspaceBrowser', { browserRequest: { operation: 'styles', pageId: selected, ...point } });
       if (version !== generation.current) return;
-      const value = response.workspaceBrowser?.value as { selector?: string } | undefined;
+      const value = response.workspaceBrowser?.value as { selector?: string; rect?: { x: number; y: number; width: number; height: number } } | undefined;
       if (!value?.selector) throw new Error('No element was returned. Refresh and select it again.');
-      setElementSelector(value.selector); setInspectorTab('elements'); setInspectorOpen(true); setInspect(false);
-      noticeAction('Element selected. Styles and event listeners are available in Elements.');
-    } catch (error) { if (version === generation.current) { setFailed(true); setNotice(error instanceof Error ? error.message : String(error)); } }
+      setHoverRect(value.rect);
+      if (commit) { setElementSelector(value.selector); setInspectorTab('elements'); setInspectorOpen(true); setInspect(false); }
+    } catch (error) { if (commit && version === generation.current) { setFailed(true); setNotice(error instanceof Error ? error.message : String(error)); } }
     finally { if (version === generation.current) { locked.current = false; setBusy(false); } }
   };
   const chooseTool = (tool: typeof mode): void => {
@@ -361,6 +341,16 @@ export default function WorkspaceBrowser(props: {
       </g>
     );
   };
+  const browserControls = <div class="workspace-browser-inspector-tools" role="toolbar" aria-label="Feedback tools">
+    <button type="button" class="workspace-browser-icon-button" aria-label="Inspect page elements" title="Select an element on the page" aria-pressed={inspect} disabled={busy || !current || !props.connected || !!points.length} onClick={() => { setInspect(value => !value); setMode('interact'); setInspectorOpen(true); setInspectorTab('elements'); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6M8 8l11 5-5 1-1 5z" /></svg></button>
+    {(['interact', 'pointer', 'area', 'draw', 'comment'] as const).map(tool => <button type="button" class="workspace-browser-icon-button" aria-label={tool} title={tool === 'interact' ? 'Control page' : tool === 'draw' ? 'Freehand pen' : tool} aria-pressed={!inspect && mode === tool} disabled={busy || !props.connected || !revision} onClick={() => chooseTool(tool)}><BrowserMarkIcon tool={tool} /></button>)}
+    <button class="workspace-browser-compact-button" type="button" aria-label={showMarks ? 'Hide marks' : 'Show marks'} title={showMarks ? 'Hide marks' : 'Show marks'} aria-pressed={showMarks} onClick={() => setShowMarks(value => !value)}><ToolIcon kind="eye" /></button>
+    <input aria-label="Type into focused browser field" value={input} onInput={event => setInput(event.currentTarget.value)} />
+    <button class="workspace-browser-compact-button" type="button" aria-label="Type" title="Type" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'type', text: input })}><ToolIcon kind="edit" /></button>
+    <button class="workspace-browser-compact-button" type="button" aria-label="Press Enter" title="Press Enter" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'press', key: 'Enter' })}><ToolIcon kind="play" /></button>
+    <button class="workspace-browser-compact-button" type="button" aria-label="Scroll up" title="Scroll up" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: -500 })}><ToolIcon kind="up" /></button>
+    <button class="workspace-browser-compact-button" type="button" aria-label="Scroll down" title="Scroll down" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: 500 })}><ToolIcon kind="down" /></button>
+  </div>;
   return (
     <section class="workspace-browser" aria-label="Development browser">
       <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); const nextUrl = normalizeBrowserInput(url); if (!nextUrl) { setFailed(true); setNotice("Enter a website address."); return; } setUrl(nextUrl); command({ operation: current ? "navigate" : "open", url: nextUrl }); }}>
@@ -371,32 +361,13 @@ export default function WorkspaceBrowser(props: {
         <button class="workspace-browser-icon-button workspace-browser-go" type="submit" aria-label="Go to URL" title="Go to URL" disabled={busy || !props.connected || !url.trim()}><ToolIcon kind="right" /></button>
       <div class="workspace-browser-actions">
         <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" aria-pressed={responsive} onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" /></button>
-        <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><ToolIcon kind="comment" /></button>
-        <WorkspaceMenu label="Browser actions" icon={<BrowserMenuIcon />}>
-          <button type="button" disabled={!current} onClick={() => current && window.open(current.url, "_blank", "noopener,noreferrer")}><ToolIcon kind="external" />Open externally</button>
-          <button type="button" disabled={!current} onClick={() => void copyUrl()}><ToolIcon kind="copy" />Copy URL</button>
-          <button type="button" disabled={!state.image} onClick={saveScreenshot}><ToolIcon kind="download" />Save screenshot</button>
-          <button type="button" disabled={!current} onClick={() => void saveHtml()}><ToolIcon kind="download" />Open HTML file…</button>
-          <div class="workspace-browser-menu-divider" />
-          <div class="workspace-browser-menu-divider" />
-          <button type="button" disabled={busy || !props.connected} onClick={() => void run({ operation: selected ? "screenshot" : "list", pageId: selected || undefined })}><ToolIcon kind="refresh" />Refresh preview</button>
-          <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "close" })}><ToolIcon kind="close" />Close page</button>
-          <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" />Reload page</button>
-        </WorkspaceMenu>
+        <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 20" /></svg></button>
+        <button class="workspace-browser-icon-button" type="button" aria-label="Comments" title="Comments" aria-pressed={inspectorOpen && inspectorTab === 'feedback'} onClick={() => { setInspectorOpen(true); setInspectorTab('feedback'); }}><ToolIcon kind="comment" /></button>
       </div>
       </form>
-      {notice ? <div class={`workspace-browser-toast dashboard-notice ${failed ? 'is-error' : ''}`} role={failed ? 'alert' : 'status'}><span>{notice}</span><button type="button" aria-label="Dismiss browser message" onClick={() => setNotice('')}>×</button></div> : null}
       {!props.connected ? (
         <p role="status">Offline. Reconnect to control the browser. Unsaved feedback stays in this panel.</p>
       ) : null}
-      <header class="workspace-browser-workbench-header">
-        <div class="workspace-browser-inline-tools" role="toolbar" aria-label="Feedback tools">
-          <button type="button" class="workspace-browser-icon-button" aria-label="Inspect page elements" title="Select an element on the page" aria-pressed={inspect} disabled={busy || !current || !props.connected || !!points.length} onClick={() => { setInspect(value => !value); setMode('interact'); setInspectorOpen(true); setInspectorTab('elements'); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6M8 8l11 5-5 1-1 5z" /></svg></button>
-          {(['interact', 'pointer', 'area', 'draw', 'comment'] as const).map(tool => <button type="button" class="workspace-browser-icon-button" aria-label={tool} title={tool === 'interact' ? 'Control page' : tool === 'draw' ? 'Freehand pen' : tool} aria-pressed={!inspect && mode === tool} disabled={busy || !props.connected || !revision} onClick={() => chooseTool(tool)}>{tool === 'interact' ? '↖' : tool === 'pointer' ? '◉' : tool === 'area' ? '□' : tool === 'draw' ? '✎' : 'T'}</button>)}
-        </div>
-        <span class="workspace-browser-toolbar-caption">{inspect ? 'Click an element to inspect' : mode === 'interact' ? 'Page' : `Mark: ${mode}`}</span>
-        <button type="button" aria-pressed={inspectorOpen && inspectorTab === 'feedback'} onClick={() => { setInspectorOpen(true); setInspectorTab('feedback'); }}>Comments ({state.feedback.length})</button>
-      </header>
       <div class={`workspace-browser-content dock-${dock}`}>
       <div class="workspace-browser-page">
       {responsive ? <form class="workspace-browser-viewport" aria-label="Responsive viewport" onSubmit={event => { event.preventDefault(); command({ operation: 'resize', ...viewport }); }}>
@@ -477,6 +448,12 @@ export default function WorkspaceBrowser(props: {
               setPoints([point]);
             }}
             onPointerMove={(event) => {
+              if (inspect && !drawing.current) {
+                const point = coordinate(event);
+                if (hoverTimer.current) clearTimeout(hoverTimer.current);
+                hoverTimer.current = setTimeout(() => void pickElement(point, false), 70);
+                return;
+              }
               if (drawing.current && (mode === "draw" || mode === "area")) {
                 const point = coordinate(event);
                 setPoints((previous) => (mode === "area" ? [previous[0]!, point] : [...previous.slice(0, 499), point]));
@@ -502,10 +479,11 @@ export default function WorkspaceBrowser(props: {
               stroke="#469fff"
               stroke-width="2"
             />
+            {inspect && hoverRect ? <rect class="workspace-browser-element-hover" x={hoverRect.x} y={hoverRect.y} width={hoverRect.width} height={hoverRect.height} fill="#1a73e822" stroke="#1a73e8" stroke-width="2" stroke-dasharray="5 3" /> : null}
           </svg>
           {anchor && (points.length > 0 || visibleNote) ? <div class="workspace-browser-inline-comment" role="dialog" aria-label={visibleNote ? 'Saved comment' : 'Comment on mark'} style={{ left: `${Math.min(65, Math.max(2, anchor.x / size.width * 100))}%`, top: `${Math.min(70, Math.max(2, anchor.y / size.height * 100))}%` }}>
             <header><strong>{visibleNote ? 'Comment' : 'New comment'}</strong><button type="button" aria-label="Close comment" onClick={() => { if (visibleNote) setActiveFeedback(''); else { setPoints([]); setText(''); setReference(''); noticeAction('Mark cancelled.'); } }}>×</button></header>
-            {visibleNote ? <><p>{visibleNote.text || 'Visual mark'}</p><button type="button" disabled={busy || !props.connected || !props.onInstruction} onClick={() => void addInstruction([visibleNote])}>Add to instruction</button></> : <>
+            {visibleNote ? <><p>{visibleNote.text || 'Visual mark'}</p>{visibleNote.selector ? <code class="workspace-browser-feedback-selector">{visibleNote.selector}</code> : null}<button type="button" disabled={busy || !props.connected || !props.onInstruction} onClick={() => void addInstruction([visibleNote])}>Add to instruction</button></> : <>
               <textarea aria-label="Area instruction or design feedback" maxLength={8000} placeholder="Describe the change…" value={text} onInput={event => setText(event.currentTarget.value)} />
               <input type="url" aria-label="Design or inspiration reference URL" placeholder="Reference URL (optional)" value={reference} onInput={event => setReference(event.currentTarget.value)} />
               <footer><button type="button" disabled={busy || !current || !props.connected} onClick={() => void addFeedback()}>Save feedback</button><button type="button" onClick={() => { setPoints([]); setText(''); setReference(''); noticeAction('Mark cancelled.'); }}>Cancel mark</button></footer>
@@ -521,37 +499,15 @@ export default function WorkspaceBrowser(props: {
         </div>
       )}
       </div>
-      <footer class="workspace-browser-comment-controls">
-        <button type="button" aria-pressed={mode === 'comment'} disabled={busy || !revision || !props.connected} onClick={() => chooseTool('comment')}><ToolIcon kind="comment" />Comment</button>
-        <button type="button" aria-pressed={showMarks} onClick={() => setShowMarks(value => !value)}><ToolIcon kind="eye" />{showMarks ? 'Hide marks' : 'Show marks'}</button>
-        <input aria-label="Type into focused browser field" value={input} onInput={event => setInput(event.currentTarget.value)} />
-        <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'type', text: input })}>Type</button>
-        <button type="button" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'press', key: 'Enter' })}>Enter</button>
-        <button type="button" aria-label="Scroll up" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: -500 })}>↑</button>
-        <button type="button" aria-label="Scroll down" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: 500 })}>↓</button>
-      </footer>
       </div>
       {inspectorOpen ? <BrowserResizeHandle label="Resize browser inspector" value={inspectorSize} onChange={setInspectorSize} axis={dock === 'bottom' ? 'y' : 'x'} reverse={dock !== 'left'} responsive /> : null}
       <aside style={{ '--inspector-size': `${inspectorSize}%` }} data-inspector-theme={theme} class={`workspace-browser-inspector ${inspectorOpen ? "is-open" : ""}`} aria-label="Browser inspector" aria-hidden={!inspectorOpen}>
         <header class="workspace-browser-inspector-header">
+          {browserControls}
           <nav class="workspace-browser-inspector-tabs" role="tablist" aria-label="Browser inspector panels">
             {(["elements", "console", "sources", "network", "application", "performance", "memory", "feedback"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab === 'feedback' ? 'Comments' : tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
           </nav>
-          <div class="workspace-browser-inspector-actions">
-            <WorkspaceMenu label="Inspector options" icon={<BrowserMenuIcon />}>
-              <div class="workspace-browser-dock" role="group" aria-label="Dock side">
-                <span>Dock side</span>
-                {(['left', 'bottom', 'right'] as const).map(side => <button type="button" aria-label={`Dock inspector ${side}`} title={`Dock inspector ${side}`} aria-pressed={dock === side} onClick={() => setDock(side)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1" /><path d={side === 'bottom' ? 'M3 14h18' : side === 'left' ? 'M10 4v16' : 'M14 4v16'} /></svg></button>)}
-              </div>
-              <div class="workspace-browser-menu-divider" />
-              <button type="button" onClick={() => setConsoleDrawer(value => !value)}><ToolIcon kind="comment" />Toggle Console drawer</button>
-              <button type="button" onClick={() => setSettings(value => !value)}><ToolIcon kind="edit" />Settings</button>
-              <button type="button" onClick={() => setInspectorTab("console")}><ToolIcon kind="comment" />Show Console</button>
-              <button type="button" onClick={() => setInspectorTab("elements")}><ToolIcon kind="eye" />Inspect page</button>
-              <button type="button" onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" />Responsive viewport</button>
-            </WorkspaceMenu>
-            <button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button>
-          </div>
+          <div class="workspace-browser-inspector-actions"><button class="workspace-browser-icon-button" type="button" aria-label="Close browser inspector" title="Close browser inspector" onClick={() => setInspectorOpen(false)}><ToolIcon kind="close" /></button></div>
         </header>
 
         <div class={`workspace-browser-inspector-layout drawer-${drawerSide}`}>
@@ -560,8 +516,8 @@ export default function WorkspaceBrowser(props: {
             <header><strong>Comments ({state.feedback.length})</strong><button type="button" disabled={busy || !props.connected || !state.feedback.length || !props.onInstruction} title="Add all saved feedback and marked screenshots to the instruction composer" onClick={() => void addInstruction(state.feedback)}>Send all</button></header>
             <input aria-label="Search comments" placeholder="Search comments?" value={feedbackFilter} onInput={event => setFeedbackFilter(event.currentTarget.value)} />
             {!state.feedback.length ? <p>Choose a mark tool and click or draw on the page to add a comment.</p> : null}
-            {state.feedback.filter(item => `${item.text} ${item.url}`.toLowerCase().includes(feedbackFilter.toLowerCase())).map(f => <article key={f.id} class={f.id === activeFeedback ? 'is-selected' : ''}>
-              <strong>{state.feedback.indexOf(f) + 1}. {f.kind}</strong><small>{f.url}</small><p>{f.text || 'Visual mark'}</p>
+            {state.feedback.filter(item => `${item.text} ${item.url} ${item.selector ?? ''}`.toLowerCase().includes(feedbackFilter.toLowerCase())).map(f => <article key={f.id} class={f.id === activeFeedback ? 'is-selected' : ''}>
+              <strong>{state.feedback.indexOf(f) + 1}. {f.kind}</strong><small>{f.url}</small>{f.selector ? <code class="workspace-browser-feedback-selector">{f.selector}</code> : null}<p>{f.text || 'Visual mark'}</p>
               {f.referenceUrl ? <a href={f.referenceUrl} target="_blank" rel="noreferrer">Reference ?</a> : null}
               <footer><button type="button" disabled={!!points.length || !feedback.some(item => item.id === f.id)} onClick={() => { setActiveFeedback(f.id); setShowMarks(true); }}>Show mark</button><button type="button" disabled={busy || !props.connected || !props.onInstruction} onClick={() => void addInstruction([f])}>Add to instruction</button><button type="button" disabled={busy || !props.connected} onClick={() => command({ operation: 'deleteFeedback', feedbackId: f.id })}>Delete</button></footer>
             </article>)}
@@ -584,8 +540,9 @@ export function normalizeBrowserInput(value: string): string {
   return `https://${input}`;
 }
 
-function BrowserMenuIcon() {
-  return <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>;
+function BrowserMarkIcon(props: { tool: 'interact' | BrowserFeedback['kind'] }) {
+  if (props.tool === 'comment') return <ToolIcon kind="comment" />;
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{props.tool === 'interact' ? <path d="m5 3 14 9-7 1-3 7z" /> : props.tool === 'pointer' ? <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3" /></> : props.tool === 'area' ? <rect x="4" y="5" width="16" height="14" rx="1" /> : <><path d="m5 16-1 4 4-1L20 7l-3-3zM14 7l3 3" /></>}</svg>;
 }
 
 async function annotateScreenshot(source: string, feedback: BrowserFeedback): Promise<string> {

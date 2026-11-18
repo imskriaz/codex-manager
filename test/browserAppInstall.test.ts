@@ -17,4 +17,8 @@ describe('browser app installation', () => {
     expect(source).toContain('Safari Share > Add to Home Screen');
     expect(source).toContain('App installation requires HTTPS or localhost');
   });
+
+  it('only renders install controls when the browser exposes an install prompt', () => {
+    expect(source).toContain('!app.installed && (app.available || app.busy)');
+  });
 });

@@ -736,9 +736,9 @@ try {
     }
     if (process.argv.includes('--work-monitor')) {
       await page.goto(`${origin}/workspace/${parentId}`);
-      await checkWorkMonitorUi(page, { origin, parentId, runningId, width, height, output });
+      await checkWorkMonitorUi(page, { origin, parentId, runningId, width, height, output, installOnly: process.argv.includes('--app-install') });
       assert.deepEqual(errors, [], 'Work monitor has no opener errors');
-      results.push({ width, height, checks: 'Full mobile workspace, conversation list, tools, composer, independent drafts, sending, offline/reconnect, popup blocking, duplicate opening, loading failure/retry, PiP rejection/timeout/late completion and cleanup' });
+      results.push({ width, height, checks: process.argv.includes('--app-install') ? 'Install capability, direct click gesture, single prompt, busy control, acceptance/cancellation/failure/timeout, dismissal and compact floating workspace' : 'Full mobile workspace, conversation list, tools, composer, independent drafts, sending, offline/reconnect, popup blocking, duplicate opening, loading failure/retry, PiP rejection/timeout/late completion and cleanup' });
       await context.close(); continue;
     }
     if (process.argv.includes('--new-session-queue')) {

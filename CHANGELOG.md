@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.95
+
+- Commit the browser install, compact workspace monitor, inspector, and responsive UI changes together with their regression checks.
+
+
 ## 2.0.6-pre.94
 
 - Make Claude CLI and Claude Desktop model discovery use recognized Claude IDs while routing each saved model to its selected Codex target.
