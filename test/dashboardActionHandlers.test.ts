@@ -486,7 +486,7 @@ describe("executeDashboardActionMessage", () => {
     const request = { type: "dashboard:action" as const, action: "steerCodexCliSessionTurn" as const,
       requestId: "queue-overflow", payload: { sessionId: "invalid", text: "Follow up" } };
     for (let index = 0; index < 128; index++)
-      expect((await executeDashboardActionMessage(ctx, { ...request, requestId: `bounded-${index}` })).status).toBe("failed");
+      expect((await executeDashboardActionMessage(ctx, { ...request, requestId: `bounded-${index}`, payload: { ...request.payload, text: `Follow up ${index}` } })).status).toBe("failed");
     expect((await executeDashboardActionMessage(ctx, request)).errorMessage).toMatch(/queue is full/i);
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 600_001);
@@ -509,10 +509,12 @@ describe("executeDashboardActionMessage", () => {
       requestId: "duplicate-session-send", payload: { sessionId: session.id, text: "Continue" } };
     const first = executeDashboardActionMessage(ctx, request);
     const duplicate = executeDashboardActionMessage(ctx, request);
+    const duplicateRequest = executeDashboardActionMessage(ctx, { ...request, requestId: "duplicate-session-send-second-window" });
     expect((await executeDashboardActionMessage(ctx, { ...request, payload: { ...request.payload, text: "Changed" } })).status).toBe("failed");
     finish();
     expect((await first).status).toBe("completed");
     expect((await duplicate).status).toBe("completed");
+    expect((await duplicateRequest).status).toBe("completed");
     expect((await executeDashboardActionMessage(ctx, request)).status).toBe("completed");
     expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
   });

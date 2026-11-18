@@ -90,6 +90,8 @@ export type CliSessionSection = "active" | "archived";
 import { isCodexQuotaInterruption, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, isCodexSessionRunningForDisplay, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
+const CLI_DUPLICATE_SUBMISSION_WINDOW_MS = 15_000;
+
 export async function copyWorkspaceText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
@@ -444,10 +446,20 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const recoveryRead = useRef(props.onRefreshMessages); recoveryRead.current = props.onRefreshMessages;
   const connectionInterrupted = props.liveState?.status === 'disconnected' || isSessionConnectionFailure(props.messagesError ?? '') || isSessionConnectionFailure(props.messages.at(-1)?.kind === 'error' ? props.messages.at(-1)!.text : '');
   useEffect(() => {
-    if (!connectionInterrupted || props.connected === false || !props.selectedSession) return;
-    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') recoveryRead.current(); }, 15_000);
-    return () => clearInterval(timer);
-  }, [connectionInterrupted, props.connected, props.selectedSession?.id, props.selectedSession?.deviceId]);
+    const status = props.selectedSession?.status;
+    if (props.connected === false || !props.selectedSession || !(connectionInterrupted || status === 'running')) return;
+    // A lost live stream can leave the last tool call looking active after the
+    // command has already finished. Re-read with bounded backoff until the
+    // authoritative transcript/status settles, without stacking requests.
+    let delay = 5_000;
+    let timer: ReturnType<typeof setTimeout>;
+    const verify = () => {
+      if (document.visibilityState !== 'hidden') { recoveryRead.current(); delay = Math.min(delay * 2, 15_000); }
+      timer = setTimeout(verify, delay);
+    };
+    timer = setTimeout(verify, delay);
+    return () => clearTimeout(timer);
+  }, [connectionInterrupted, props.connected, props.selectedSession?.id, props.selectedSession?.deviceId, props.selectedSession?.status]);
   const verifyStatus = useRef(props.onVerifyStatus ?? props.onRefresh); verifyStatus.current = props.onVerifyStatus ?? props.onRefresh;
   useEffect(() => {
     if (props.connected === false || props.selectedSession?.status !== "unknown") return;
@@ -1202,6 +1214,21 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       try { prepareChatInput(value.text, value.attachments); }
       catch (error) { reportLocalFeedback({ level: 'error', message: (error as Error).message }); return; }
       if (!value.text.trim() && !value.attachments.length) return;
+      const attachmentPreview = JSON.stringify(chatAttachmentPreviews(value.attachments));
+      const duplicatePending = [...submittedDrafts.current.values()].some(submitted =>
+        !submitted.failedDraft && sameCliSessionTarget(submitted.session, props.selectedSession)
+        && submitted.text.trim() === value.text.trim()
+        && JSON.stringify(chatAttachmentPreviews(submitted.attachments)) === attachmentPreview);
+      const duplicateRecent = [...props.messages].reverse().some(message => {
+        if (message.role !== 'user' || (message.kind && message.kind !== 'message') || message.text.trim() !== value.text.trim()) return false;
+        const timestamp = message.timestamp ? Date.parse(message.timestamp) : NaN;
+        return Number.isFinite(timestamp) && Date.now() - timestamp <= CLI_DUPLICATE_SUBMISSION_WINDOW_MS
+          && JSON.stringify(message.textAttachments ?? []) === attachmentPreview;
+      });
+      if (duplicatePending || duplicateRecent) {
+        reportLocalFeedback({ level: 'warning', message: 'This message was just sent. Check the conversation before sending it again.' });
+        return;
+      }
       const id = messageQueue.enqueue(value);
       if (id) {
         setComposerFeedback(undefined);

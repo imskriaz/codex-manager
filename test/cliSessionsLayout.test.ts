@@ -200,6 +200,8 @@ describe("sessions sidebar layout", () => {
     const queue = readFileSync("webview-src/dashboard/cliMessageQueue.ts", "utf8");
     expect(source).toContain("newChatSubmitPendingRef.current");
     expect(source).toContain("newChatSubmitPending || !draftReadyKeys.has(draftKey)");
+    expect(source).toContain("This message was just sent. Check the conversation before sending it again.");
+    expect(source).toContain("CLI_DUPLICATE_SUBMISSION_WINDOW_MS");
     expect(queue).toContain("This message is already queued or being sent");
   });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
@@ -779,6 +781,8 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("Reconnecting to Codex… your message is saved and will continue automatically.");
     expect(source).toContain("verifyStatus.current(); delay = Math.min(delay * 2, 15_000)");
+    expect(source).toContain("connectionInterrupted || status === 'running'");
+    expect(source).toContain("A lost live stream can leave the last tool call looking active");
   });
 
   it("keeps new-chat in the workspace composer without a default-surface setting", () => {

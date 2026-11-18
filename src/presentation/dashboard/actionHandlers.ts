@@ -253,7 +253,11 @@ type SessionActionResult = Awaited<ReturnType<typeof executeDashboardActionMessa
 const sessionActionRequestsByContext = new WeakMap<vscode.ExtensionContext, Map<string, {
   fingerprint: string; expiresAt: number; pending: boolean; result: Promise<SessionActionResult>;
 }>>();
+const recentSessionActionFingerprintsByContext = new WeakMap<vscode.ExtensionContext, Map<string, {
+  expiresAt: number; result: Promise<SessionActionResult>;
+}>>();
 const SESSION_REQUEST_TTL_MS = 10 * 60_000;
+const SESSION_DUPLICATE_FENCE_MS = 5_000;
 const MAX_SESSION_REQUESTS = 128;
 
 export function executeDashboardActionMessage(
@@ -300,6 +304,14 @@ async function executeDashboardActionMessageInTransport(
     if (!request.pending && request.expiresAt <= now) sessionActionRequests.delete(id);
   }
   const fingerprint = createHash("sha256").update(JSON.stringify([message.action, message.accountId, message.payload])).digest("hex");
+  let recentFingerprints = recentSessionActionFingerprintsByContext.get(ctx.context);
+  if (!recentFingerprints) {
+    recentFingerprints = new Map();
+    recentSessionActionFingerprintsByContext.set(ctx.context, recentFingerprints);
+  }
+  for (const [key, entry] of recentFingerprints) if (entry.expiresAt <= now) recentFingerprints.delete(key);
+  const recent = recentFingerprints.get(fingerprint);
+  if (recent && recent.expiresAt > now) return recent.result;
   const existing = sessionActionRequests.get(message.requestId);
   if (existing) return existing.fingerprint === fingerprint ? existing.result : {
     status: "failed", errorMessage: "This request identifier was already used for a different session action. Refresh and try again."
@@ -323,6 +335,9 @@ async function executeDashboardActionMessageInTransport(
     request.result = Promise.resolve(result);
     return result;
   });
+  if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn"].includes(message.action)) {
+    recentFingerprints.set(fingerprint, { expiresAt: now + SESSION_DUPLICATE_FENCE_MS, result: request.result });
+  }
   return request.result;
 }
 

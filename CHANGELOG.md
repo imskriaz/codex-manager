@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.71
+
+- Block identical follow-up sends while a new-session prompt or recent transcript entry is still pending, coalesce duplicate session action requests across request IDs, and refresh stale running/disconnected conversations with bounded status reads.
+
 ## 2.0.6-pre.70
 
 - Prevent rapid duplicate message submissions with synchronous new-chat and queue dispatch fences, and disable the new-chat send control while a start request is being created.
