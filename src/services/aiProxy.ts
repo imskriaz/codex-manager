@@ -280,7 +280,7 @@ export class AiProxy {
       );
       if (path === "/v1/messages/count_tokens") {
         const countRequest = object(body, "request");
-        const allowed = new Set(["model", "messages", "system", "tools", "tool_choice", "thinking"]);
+        const allowed = new Set(["model", "messages", "system", "tools", "tool_choice", "thinking", "output_config"]);
         for (const key of Object.keys(countRequest))
           if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
         const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1_000_000 }, "claude");

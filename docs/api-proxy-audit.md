@@ -13,6 +13,8 @@
 | Claude requests structured JSON output | Translate `output_config.format` to Responses JSON schema | `test/aiProxyEdgeCases.test.ts` |
 | Claude thinking uses adaptive, enabled, between-tools, budgets, or update display | Validate supported thinking modes and translate supported depth to Responses reasoning effort; invalid budgets are rejected | `test/aiProxyEdgeCases.test.ts` |
 | Claude request metadata is supplied | Validate metadata but omit it because the saved-account Codex bridge rejects Anthropic attribution fields | `test/aiProxyEdgeCases.test.ts` |
+| Claude count-token request includes `output_config` | Accept and validate the official output configuration while keeping the local estimate independent of generation settings | `test/aiProxy.test.ts` |
+| Claude cache-control hint is supplied | Validate `ephemeral`/`5m`/`1h` shapes, then omit the hint because the Codex backend has no Anthropic prompt-cache contract | `test/aiProxyEdgeCases.test.ts` |
 | `output_config` has a format but no effort | Keep adaptive-thinking effort fallback | `test/aiProxyEdgeCases.test.ts` |
 | Thinking display is omitted | Suppress reasoning summaries for both streaming and JSON responses | `test/aiProxyEdgeCases.test.ts` |
 | Completed response mixes text, reasoning summaries and tools | Preserve Claude output order and expose reported reasoning summaries | `test/aiProxyEdgeCases.test.ts` |
@@ -20,6 +22,7 @@
 | Backend tool arguments are not a JSON object | Report an upstream error; never replace invalid arguments with an invented object | `test/aiProxyEdgeCases.test.ts` |
 | Tool arguments arrive at item start, item completion, or final completion | Emit missing arguments once and reject inconsistent prefixes | `test/aiProxyEdgeCases.test.ts` |
 | Final text contains an unsent suffix, or arrives without deltas | Forward the missing text once and reject inconsistent prefixes | `test/aiProxyEdgeCases.test.ts` |
+| Reasoning summaries arrive only at item/final completion | Forward summaries and missing suffixes once; preserve omitted-thinking display | `test/aiProxyEdgeCases.test.ts` |
 | Text transitions to a tool or reasoning | Close the text block; unrelated item completions do not close it | `test/aiProxyEdgeCases.test.ts` |
 | Backend cancellation never settles | Release the response and request capacity without waiting for the cancellation callback | `test/aiProxyEdgeCases.test.ts` |
 | Claude asks to count tokens without generating | Handle `/v1/messages/count_tokens` locally with authentication, validation, history and Explorer documentation | `test/aiProxy.test.ts`, `test/apiPlayground.test.ts` |
@@ -55,5 +58,6 @@
 - Token counting is a character-based estimate, not a model tokenizer. Base64/image size and non-English text can differ substantially from actual consumption. Only backend-reported generation usage contributes to token totals.
 - Request history contains the latest 100 metadata records in the current host process and clears on host restart. It is not durable billing history or a lifetime usage total.
 - Anthropic caching hints and thinking budgets cannot reproduce Anthropic execution on a Codex backend. Thinking effort is translated where supported; prior Anthropic thinking signatures cannot be replayed as Codex reasoning state.
+- Claude metadata, cache-control, citations, server tools, container/skill controls, fast-mode, service tiers, and inference-region controls do not have an equivalent saved-account Codex contract. Metadata and cache-control are shape-validated; unsupported semantics are omitted only where doing so preserves the prompt, and other unsupported features are rejected before upstream work.
 - `thinking.type=enabled` and `between_tools` are accepted for Claude-client compatibility and translated to Codex reasoning effort; the Codex backend has no exact Anthropic token-budget or signed-thinking equivalent.
 - Upstream model support, quota, credentials and network availability can change. The proxy reports failures and inconclusive outcomes; a compatibility audit cannot guarantee the absence of every future failure.

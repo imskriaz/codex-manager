@@ -35,10 +35,30 @@ function image(value: unknown): string {
     throw new AiProxyError(400, "Images require an HTTPS URL or a base64 image.");
   return url;
 }
+function cacheControl(value: unknown, label = "cache_control"): void {
+  if (value === null) return;
+  const config = object(value, label);
+  if (config["type"] !== "ephemeral")
+    throw new AiProxyError(400, `${label}.type must be ephemeral.`);
+  if (config["ttl"] !== undefined && config["ttl"] !== "5m" && config["ttl"] !== "1h")
+    throw new AiProxyError(400, `${label}.ttl must be 5m or 1h.`);
+}
+function metadata(value: unknown): void {
+  const config = object(value, "metadata");
+  for (const key of Object.keys(config))
+    if (key !== "user_id") throw new AiProxyError(400, `Unsupported metadata parameter: ${key}.`);
+  if (config["user_id"] !== undefined && config["user_id"] !== null &&
+      (typeof config["user_id"] !== "string" || config["user_id"].length > 512))
+    throw new AiProxyError(400, "metadata.user_id must be a string of at most 512 characters or null.");
+}
 function content(value: unknown, assistant: boolean, claude: boolean): Json[] {
   if (typeof value === "string") return [{ type: assistant ? "output_text" : "input_text", text: value }];
   return array(value, "message content").map((raw) => {
     const part = object(raw, "content block");
+    if (part["cache_control"] !== undefined) cacheControl(part["cache_control"], "content block cache_control");
+    if (part["citations"] !== undefined && part["citations"] !== null &&
+        array(part["citations"], "citations").length)
+      throw new AiProxyError(400, "Citations are not supported by the saved-account Codex backend.");
     if (part["type"] === "text" || part["type"] === "input_text" || part["type"] === "output_text")
       return { type: assistant ? "output_text" : "input_text", text: textString(part["text"], "text") };
     if (!assistant && part["type"] === "image_url")
@@ -73,6 +93,7 @@ function instruction(value: unknown): string {
 }
 function tool(raw: unknown, claude: boolean): Json {
   const entry = object(raw, "tool");
+  if (entry["cache_control"] !== undefined) cacheControl(entry["cache_control"], "tool cache_control");
   if (!claude && entry["type"] !== "function")
     throw new AiProxyError(400, "Only client-executed function tools are supported.");
   const fn = !claude && entry["function"] ? object(entry["function"]) : entry;
@@ -328,7 +349,10 @@ export function normalizeAiRequest(
   const body: Json = { model, input, instructions: instructions.join("\n\n"), stream: true, store: false };
   // Validate client metadata for a stable boundary, but do not forward it: the saved-account
   // Codex bridge rejects Anthropic metadata fields and has no equivalent attribution contract.
-  if (request["metadata"] !== undefined) object(request["metadata"], "metadata");
+  if (request["metadata"] !== undefined) {
+    if (protocol === "claude") metadata(request["metadata"]);
+    else object(request["metadata"], "metadata");
+  }
   if (request["tools"] !== undefined)
     body["tools"] = array(request["tools"], "tools").map((entry) => tool(entry, protocol === "claude"));
   if (request["tool_choice"] !== undefined) {
@@ -532,6 +556,7 @@ export class AiStream {
   private toolArguments = new Map<number, string>();
   private toolIds = new Map<string, number>();
   private textDeltas = new Map<number, string>();
+  private reasoningDeltas = new Map<string, string>();
   constructor(
     private readonly protocol: AiProtocol,
     private readonly model: string,
@@ -564,6 +589,17 @@ export class AiStream {
     if (!full.startsWith(previous)) throw new AiProxyError(502, "The backend returned inconsistent tool arguments.", "api_error");
     return full.length > previous.length ? this.event({ type: "response.function_call_arguments.delta", output_index: outputIndex, delta: full.slice(previous.length) }) : "";
   }
+  private finishReasoning(item: Json, outputIndex: number): string {
+    if (this.omitThinking || item["type"] !== "reasoning" || !Array.isArray(item["summary"])) return "";
+    let wire = "";
+    for (const [summaryIndex, raw] of item["summary"].entries()) {
+      const full = textString(object(raw)["text"], "reasoning summary");
+      const previous = this.reasoningDeltas.get(`${outputIndex}:${summaryIndex}`) ?? "";
+      if (!full.startsWith(previous)) throw new AiProxyError(502, "The backend returned inconsistent reasoning text.", "api_error");
+      if (full.length > previous.length) wire += this.event({ type: "response.reasoning_summary_text.delta", output_index: outputIndex, summary_index: summaryIndex, delta: full.slice(previous.length) });
+    }
+    return wire;
+  }
   event(event: Json): string {
     if (this.protocol === "responses") return `event: ${String(event["type"])}\ndata: ${JSON.stringify(event)}\n\n`;
     let wire = "";
@@ -595,6 +631,9 @@ export class AiStream {
       if (typeof event["delta"] !== "string")
         throw new AiProxyError(502, "Invalid reasoning delta from backend.", "api_error");
       if (this.omitThinking) return wire;
+      const summaryIndex = typeof event["summary_index"] === "number" ? event["summary_index"] : 0;
+      const key = `${outputIndex}:${summaryIndex}`;
+      this.reasoningDeltas.set(key, (this.reasoningDeltas.get(key) ?? "") + event["delta"]);
       if (this.protocol === "chat") wire += this.chat({ reasoning_content: event["delta"] });
       else {
         wire += this.closeText();
@@ -679,6 +718,7 @@ export class AiStream {
       }
     } else if (type === "response.output_item.done") {
       wire += this.finishTool(event, outputIndex);
+      if (event["item"]) wire += this.finishReasoning(object(event["item"]), outputIndex);
       const block = this.blocks.get(outputIndex);
       if (block && !block.closed) {
         block.closed = true;
@@ -692,6 +732,7 @@ export class AiStream {
       for (const [index, raw] of output.entries()) {
         const item = object(raw);
         wire += this.finishTool({ item }, index);
+        wire += this.finishReasoning(item, index);
         if (item["type"] === "message" && Array.isArray(item["content"])) {
           const full = (item["content"] as unknown[]).map(part => object(part))
             .filter(part => part["type"] === "output_text" || part["type"] === "refusal")

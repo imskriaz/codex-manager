@@ -215,6 +215,7 @@ it("counts Claude input locally without contacting the saved-account backend", a
   const thinkingCount = await post("/v1/messages/count_tokens", {
     model: "codex-test",
     thinking: { type: "enabled", budget_tokens: 1024 },
+    output_config: { effort: "high", format: { type: "json_schema", schema: { type: "object" } } },
     messages: [{ role: "user", content: "Think" }]
   });
   expect(thinkingCount.status).toBe(200);

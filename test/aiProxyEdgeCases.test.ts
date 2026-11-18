@@ -46,6 +46,20 @@ it('supports Claude thinking modes, budgets, update display, and metadata withou
   expect(() => normalizeAiRequest(request({ thinking: { type: 'enabled', budget_tokens: 100 }, max_tokens: 4096 }), 'claude')).toThrow(/budget_tokens/);
   expect(() => normalizeAiRequest(request({ thinking: { type: 'adaptive', budget_tokens: 1024 } }), 'claude')).toThrow(/only valid/);
   expect(normalizeAiRequest(request({ thinking: { type: 'between_tools' } }), 'claude').body).toMatchObject({ reasoning: { effort: 'high' } });
+  expect(() => normalizeAiRequest(request({ metadata: { user_id: 'x'.repeat(513) } }), 'claude')).toThrow(/metadata.user_id/);
+  expect(() => normalizeAiRequest(request({ metadata: { tenant: 'private' } }), 'claude')).toThrow(/Unsupported metadata/);
+});
+
+it('validates Claude cache-control hints without forwarding unsupported cache semantics', () => {
+  const result = normalizeAiRequest(request({
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: { type: 'ephemeral', ttl: '1h' } }] }],
+    tools: [{ name: 'lookup', cache_control: { type: 'ephemeral' }, input_schema: { type: 'object' } }]
+  }), 'claude');
+  expect(result.body.input).toMatchObject([{ role: 'user' }]);
+  expect(() => normalizeAiRequest(request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: { type: 'forever' } }] }] }), 'claude')).toThrow(/cache_control.type/);
+  expect(() => normalizeAiRequest(request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', citations: [{ type: 'char_location' }] }] }] }), 'claude')).toThrow(/Citations are not supported/);
+  expect(normalizeAiRequest(request({ messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', citations: [] }] }] }), 'claude').body.input).toMatchObject([{ content: [{ text: 'Hello' }] }]);
+  expect(() => normalizeAiRequest(request({ metadata: { trace: 'request-1' } }), 'chat')).not.toThrow();
 });
 
 it('honors omitted thinking for streaming and completed messages', () => {
@@ -114,6 +128,18 @@ it.each(['chat', 'claude'] as const)('keeps final-only %s text and fills missing
 it('keeps invalid usage out of translated totals', () => {
   expect(aiUsage({ usage: { input_tokens: -1, output_tokens: 0.5 } })).toEqual({ input: 0, output: 0, cached: 0 });
   expect(aiUsage({ usage: { input_tokens: 10, output_tokens: 2, input_tokens_details: { cached_tokens: 50 } } })).toEqual({ input: 10, output: 2, cached: 10 });
+});
+
+it.each(['chat', 'claude'] as const)('preserves final-only %s reasoning and emits missing summary suffixes once', protocol => {
+  const item = { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Plan carefully' }] };
+  const stream = new AiStream(protocol, 'fixture', false);
+  stream.event({ type: 'response.reasoning_summary_text.delta', output_index: 0, summary_index: 0, delta: 'Plan' });
+  const done = stream.event({ type: 'response.output_item.done', output_index: 0, item });
+  expect(done).toContain(' carefully');
+  expect(done).not.toContain('Plan');
+  expect(stream.event({ type: 'response.completed', response: response([item]) })).not.toContain('carefully');
+  expect(new AiStream(protocol, 'fixture', false).event({ type: 'response.completed', response: response([item]) })).toContain('Plan carefully');
+  expect(new AiStream(protocol, 'fixture', false, true).event({ type: 'response.completed', response: response([item]) })).not.toContain('Plan carefully');
 });
 
 it.each(['input_audio', 'document'] as const)('explicitly rejects unsupported %s instead of dropping it', type => {
