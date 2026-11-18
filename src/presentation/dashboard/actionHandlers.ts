@@ -1,3 +1,4 @@
+import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
 import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
@@ -121,7 +122,7 @@ import { readApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
-  "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
+  "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -449,8 +450,19 @@ async function runDashboardAction(
         projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined });
       return { ...(action === 'generateApiToken' ? { apiToken: created.token, apiTokenId: created.record.id } : {}), apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
     }
-    case 'listApiTokens':
-      return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: readApiProxyHistory(), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
+    case 'saveApiProxyModelMapping': {
+      const catalogue = await waitWithin(readCodexCliComposerConfig(), 8_000, 'Codex model discovery timed out. Refresh models to retry.');
+      const claudeMapping = await saveClaudeProxyMapping(ctx.context, payload?.claudeMapping, payload?.expectedClaudeMapping, catalogue.models.map(model => model.id));
+      return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: { ...readApiProxyHistory(), models: catalogue.models.map(model => ({ id: model.id, name: model.label })), modelDiscoveryWarning: catalogue.modelDiscoveryWarning, claudeMapping } };
+    }
+    case 'listApiTokens': {
+      const [apiTokens, catalogue] = await Promise.all([
+        listDashboardApiTokens(ctx.context),
+        waitWithin(readCodexCliComposerConfig(), 8_000, 'Codex model discovery timed out. Refresh models to retry.')
+          .catch((error: unknown) => ({ models: [], modelDiscoveryWarning: error instanceof Error ? error.message : 'Codex models could not be loaded. Refresh models to retry.' }))
+      ]);
+      return { apiTokens, apiProxy: { ...readApiProxyHistory(), models: catalogue.models.map(model => ({ id: model.id, name: model.label })), modelDiscoveryWarning: catalogue.modelDiscoveryWarning, claudeMapping: readClaudeProxyMapping(ctx.context) }, apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
+    }
     case 'revokeApiToken':
       return { apiTokens: await revokeDashboardApiToken(ctx.context, payload?.tokenId), notice: { level:'info', message:'API token revoked.' } };
     case 'getProjectBoard':

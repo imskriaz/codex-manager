@@ -10,6 +10,8 @@ import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironme
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
 import { startApiProxyLog } from "./aiProxyHistory";
+import { readClaudeProxyMapping } from './aiProxyModelMapping';
+import { CLAUDE_PROXY_MODELS, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
 import type { ApiProxyRequestLog } from "../domain/dashboard/apiProxy";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
 import { createSharedInspection, waitWithin } from "../utils/concurrency";
@@ -59,19 +61,12 @@ function claudeRole(value: string): "opus" | "sonnet" | "haiku" | "fable" | unde
   return match?.[1] as "opus" | "sonnet" | "haiku" | "fable" | undefined;
 }
 
-function withClaudeModelIds(models: Model[]): Model[] {
-  const used = new Set<string>();
-  return models.map((model) => {
-    const role = claudeRole(`${model.id} ${model.name}`);
-    const candidate =
-      model.id.startsWith("claude-") || model.id.includes("anthropic")
-        ? model.id
-        : role && !used.has(`claude-${role}`)
-          ? `claude-${role}`
-          : `claude-${model.id}`;
-    const claudeId = used.has(candidate) ? `claude-${model.id}-${used.size}` : candidate;
-    used.add(claudeId);
-    return { ...model, claudeId };
+function withClaudeModelIds(models: Model[], saved?: ClaudeProxyMapping): Model[] {
+  if (!models.length) return [];
+  return (Object.keys(CLAUDE_PROXY_MODELS) as Array<keyof ClaudeProxyMapping>).flatMap(role => {
+    const target = saved ? models.find(model => model.id === saved[role]) :
+      models.find(model => claudeRole(`${model.id} ${model.name}`) === role) ?? models[0];
+    return target ? [{ ...target, claudeId: CLAUDE_PROXY_MODELS[role] }] : [];
   });
 }
 
@@ -260,7 +255,9 @@ export class AiProxy {
           response.setHeader("Allow", "GET");
           throw new AiProxyError(405, "Use GET for model discovery.");
         }
-        const models = await this.listModels(signal, log);
+        const saved = protocol === 'claude' ? readClaudeProxyMapping(this.context) : undefined;
+        const catalogue = saved ? [...new Set(Object.values(saved))].map(id => ({ id, name: id })) : await this.listModels(signal, log);
+        const models: Model[] = protocol === 'claude' ? withClaudeModelIds(catalogue, saved) : catalogue;
         const publicModelId = (model: Model): string =>
           protocol === "claude" ? (model.claudeId ?? model.id) : model.id;
         const format = (model: Model): Json => {
@@ -332,8 +329,9 @@ export class AiProxy {
       }
       const generationProtocol: AiProtocol =
         path === "/v1/messages" ? "claude" : path === "/v1/responses" ? "responses" : "chat";
-      const requestBody = generationProtocol === "claude" ? await this.resolveClaudeModel(body, signal, log) : body;
-      const normalized = normalizeAiRequest(requestBody, generationProtocol);
+      const normalized = normalizeAiRequest(body, generationProtocol);
+      const clientModel = String(normalized.body['model']);
+      if (generationProtocol === 'claude') normalized.body['model'] = await this.resolveClaudeModel(clientModel, signal, log);
       log.model = String(normalized.body["model"]);
       signal.throwIfAborted();
       const upstream = await this.fetchBackend("/responses", normalized.body, signal, log);
@@ -345,12 +343,14 @@ export class AiProxy {
       }
       const stream = new AiStream(
         generationProtocol,
-        String(normalized.body["model"]),
+        generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
         normalized.includeUsage,
         normalized.omitThinking
       );
       let completed = false;
-      for await (const event of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
+      for await (const upstreamEvent of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
+        const event = generationProtocol === 'claude' && upstreamEvent['response'] && typeof upstreamEvent['response'] === 'object'
+          ? { ...upstreamEvent, response: { ...object(upstreamEvent['response'], 'AI response'), model: clientModel } } : upstreamEvent;
         signal.throwIfAborted();
         const type = event["type"];
         if (type === "error" || type === "response.failed")
@@ -364,7 +364,7 @@ export class AiProxy {
             ? completedAiResponse(
                 object(event["response"], "AI response"),
                 generationProtocol,
-                String(normalized.body["model"]),
+                generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
                 normalized.omitThinking
               )
             : undefined;
@@ -463,23 +463,17 @@ export class AiProxy {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.end(JSON.stringify(value));
   }
-  private async resolveClaudeModel(body: unknown, signal: AbortSignal, log: ApiProxyRequestLog): Promise<unknown> {
-    const request = object(body, "request"),
-      requested = request["model"];
-    if (typeof requested !== "string" || !requested.startsWith("claude-")) return body;
+  private async resolveClaudeModel(requested: string, signal: AbortSignal, log: ApiProxyRequestLog): Promise<string> {
+    const role = claudeRole(requested);
+    if (!role && !requested.startsWith('claude-')) return requested;
+    const saved = readClaudeProxyMapping(this.context);
+    // Saved routes are authoritative and do not wait on optional catalogue discovery.
+    if (saved && role) return saved[role];
     const models = await this.listModels(signal, log);
-    const mapped =
-      models.find((model) => model.claudeId === requested) ??
-      (() => {
-        const role = claudeRole(requested);
-        if (!role) return undefined;
-        return (
-          models.find((model) => claudeRole(`${model.id} ${model.name}`) === role) ??
-          models.find((model) => model.claudeId === "claude-sonnet") ??
-          models[0]
-        );
-      })();
-    return mapped ? { ...request, model: mapped.id } : body;
+    const mapped = models.find(model => model.id === requested) ??
+      (role ? models.find(model => claudeRole(`${model.id} ${model.name}`) === role) ?? models[0] : undefined);
+    if (!mapped) throw new AiProxyError(400, 'Unknown Claude model. Choose a model from GET /v1/models.');
+    return mapped.id;
   }
   private async fetchBackend(
     path: string,
@@ -705,7 +699,7 @@ export class AiProxy {
         }
         if (!data.length)
           throw new AiProxyError(503, "No API models are available for the active account.", "api_error");
-        const mapped = withClaudeModelIds(data);
+        const mapped = data;
         const current = (
           await waitWithin(this.repo.listAccounts(), 5000, "Accounts could not be verified.", discoverySignal)
         ).find((item) => item.isActive);

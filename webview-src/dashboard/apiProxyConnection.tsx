@@ -1,13 +1,14 @@
+import { CLAUDE_PROXY_MODELS, type ClaudeProxyMapping } from "../../src/domain/dashboard/apiProxy";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
 import { apiTokenProjects, type DashboardApiToken } from "../../src/domain/dashboard/apiActions";
 import {
   mapClaudeModels,
-  mapDiscoveredModels,
   MODEL_PLACEHOLDER,
-  type ApiProxyModel,
-  type ClaudeModelMapping
+  type ApiProxyModel
 } from "./apiProxyModelMapping";
+
+const NO_MODELS: ApiProxyModel[] = [];
 
 export type ApiProxyKeyAccess = {
   tokens: DashboardApiToken[];
@@ -18,6 +19,7 @@ export type ApiProxyKeyAccess = {
   loading?: boolean;
   uncertain?: boolean;
   error?: string;
+  notice?: string;
   onCreate: (name: string) => void;
   onRefresh: () => void;
 };
@@ -25,6 +27,10 @@ export type ApiProxyKeyAccess = {
 export function ApiProxyConnection(props: {
   open: boolean;
   baseUrl?: string;
+  models?: ApiProxyModel[];
+  modelsWarning?: string;
+  mapping?: ClaudeProxyMapping;
+  onSaveMapping?: (mapping: ClaudeProxyMapping) => void;
   keyAccess: ApiProxyKeyAccess;
   onClose: () => void;
 }) {
@@ -32,10 +38,11 @@ export function ApiProxyConnection(props: {
   const [client, setClient] = useState<"codex" | "claude">("codex");
   const [selectedId, setSelectedId] = useState("");
   const [waiting, setWaiting] = useState(false);
-  const [models, setModels] = useState<ApiProxyModel[]>([]);
-  const [claudeMapping, setClaudeMapping] = useState<ClaudeModelMapping>(() => mapClaudeModels([]));
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState("");
+  const models = props.models ?? NO_MODELS;
+  const initial = mapClaudeModels([]);
+  const [claudeMapping, setClaudeMapping] = useState<ClaudeProxyMapping>({ opus: initial.opus, sonnet: initial.sonnet, haiku: initial.haiku, fable: initial.fable });
+  const savedMappingKey = JSON.stringify(props.mapping);
+  useEffect(() => { if (props.mapping) setClaudeMapping(props.mapping); }, [savedMappingKey]);
   const creating = useRef(false);
   const keyAccess = props.keyAccess;
   const proxyKeys = keyAccess.tokens.filter(
@@ -97,52 +104,13 @@ export function ApiProxyConnection(props: {
   useEffect(() => {
     const available = new Set(models.map((model) => model.id));
     setClaudeMapping((current) => {
-      const next = { ...modelMapping };
-      for (const key of Object.keys(next) as Array<keyof ClaudeModelMapping>) {
-        if (available.has(current[key])) next[key] = current[key];
+      const next: ClaudeProxyMapping = { opus: modelMapping.opus, sonnet: modelMapping.sonnet, haiku: modelMapping.haiku, fable: modelMapping.fable };
+      for (const key of Object.keys(next) as Array<keyof ClaudeProxyMapping>) {
+        if (props.mapping || available.has(current[key])) next[key] = current[key];
       }
       return next;
     });
-  }, [models]);
-  const discoveryKey = keyValue === "YOUR_MANAGER_API_KEY" ? "" : keyValue;
-  useEffect(() => {
-    if (!props.open || !baseUrl || !discoveryKey) {
-      setModels([]);
-      setModelsError("");
-      setModelsLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), 10_000);
-    setModelsLoading(true);
-    setModelsError("");
-    void fetch(`${baseUrl}/v1/models`, {
-      headers: { Authorization: `Bearer ${discoveryKey}` },
-      signal: controller.signal
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Model discovery returned HTTP ${response.status}.`);
-        return mapDiscoveredModels(await response.json());
-      })
-      .then((discovered) => {
-        if (!discovered.length) throw new Error("No models were returned by the proxy.");
-        setModels(discovered);
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          setModels([]);
-          setModelsError(error instanceof Error ? error.message : "Model discovery failed.");
-        }
-      })
-      .finally(() => {
-        globalThis.clearTimeout(timeout);
-        if (!controller.signal.aborted) setModelsLoading(false);
-      });
-    return () => {
-      controller.abort();
-      globalThis.clearTimeout(timeout);
-    };
-  }, [props.open, baseUrl, discoveryKey]);
+  }, [models, savedMappingKey]);
   const copy = (value: string) => {
     void Promise.resolve()
       .then(() => navigator.clipboard.writeText(value))
@@ -167,11 +135,11 @@ export function ApiProxyConnection(props: {
       env: {
         ANTHROPIC_BASE_URL: baseUrl || "https://YOUR_MANAGER_HOST",
         ANTHROPIC_AUTH_TOKEN: keyValue,
-        ANTHROPIC_MODEL: claudeMapping.model,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: claudeMapping.opus,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: claudeMapping.sonnet,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeMapping.haiku,
-        ANTHROPIC_DEFAULT_FABLE_MODEL: claudeMapping.fable
+        ANTHROPIC_MODEL: CLAUDE_PROXY_MODELS.sonnet,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CLAUDE_PROXY_MODELS.opus,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: CLAUDE_PROXY_MODELS.sonnet,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CLAUDE_PROXY_MODELS.haiku,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: CLAUDE_PROXY_MODELS.fable
       }
     },
     null,
@@ -209,6 +177,7 @@ export function ApiProxyConnection(props: {
             ))}
           </div>
           {notice ? <p role="status">{notice}</p> : null}
+          {keyAccess.notice ? <p role="status">{keyAccess.notice}</p> : null}
           {keyAccess.error ? (
             <p role="alert" class="api-key-error">
               {keyAccess.error}
@@ -216,7 +185,7 @@ export function ApiProxyConnection(props: {
           ) : null}
           {keyAccess.uncertain ? (
             <div role="status">
-              Key creation was not confirmed. Refresh before trying again.{" "}
+              The last change was not confirmed. Refresh before trying again.{" "}
               <button type="button" disabled={keyAccess.loading} onClick={keyAccess.onRefresh}>
                 Refresh keys
               </button>
@@ -342,7 +311,7 @@ export function ApiProxyConnection(props: {
               </li>
               <li>Gateway API key: use the selected Manager key above</li>
               <li>
-                Gateway auth scheme: <code>x-api-key</code>
+                Gateway auth scheme: <code>x-api-key</code> or <code>Authorization: Bearer</code>
               </li>
               <li>Model discovery: enable it so Claude Desktop loads the mapped Claude names below</li>
             </ul>
@@ -379,36 +348,32 @@ export function ApiProxyConnection(props: {
           </section>
           <section aria-label="Claude model mapping">
             <h3>Model mapping</h3>
-            {modelsLoading ? <p role="status">Loading models from the active account…</p> : null}
-            {modelsError ? <p role="alert">{modelsError} Use a model ID from GET /v1/models.</p> : null}
+            <button type="button" disabled={keyAccess.loading} onClick={keyAccess.onRefresh}>Refresh Codex models</button>
+            {keyAccess.loading ? <p role="status">Loading Codex models…</p> : null}
+            {!keyAccess.loading && models.length > 0 ? <p role="status">{models.length} Codex models available.</p> : null}
+            {props.modelsWarning ? <p role="alert">{props.modelsWarning}</p> : null}
             <table class="api-model-mapping">
                   <thead>
                     <tr>
                       <th scope="col">Claude model</th>
-                      <th scope="col">Available backend model</th>
+                      <th scope="col">Codex model</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      ["claude-sonnet (default)", "model"],
-                      ["claude-opus", "opus"],
-                      ["claude-sonnet", "sonnet"],
-                      ["claude-haiku", "haiku"],
-                      ["claude-fable", "fable"]
-                    ].map(([label, key]) => (
+                    {Object.entries(CLAUDE_PROXY_MODELS).map(([key, label]) => (
                       <tr key={label}>
                         <th scope="row"><code>{label}</code></th>
                         <td>
                           <select
                             aria-label={`Proxy model for ${label}`}
-                            value={claudeMapping[key as keyof ClaudeModelMapping]}
-                            onChange={(event) =>
-                              setClaudeMapping((current) => ({
-                                ...current,
-                                [String(key)]: event.currentTarget.value
-                              }))
-                            }
+                            value={claudeMapping[key as keyof ClaudeProxyMapping]}
+                            disabled={busy || !models.length}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              setClaudeMapping((current) => ({ ...current, [String(key)]: value }));
+                            }}
                           >
+                            {models.length > 0 && !models.some(model => model.id === claudeMapping[key as keyof ClaudeProxyMapping]) ? <option value={claudeMapping[key as keyof ClaudeProxyMapping]} disabled>{claudeMapping[key as keyof ClaudeProxyMapping]} (unavailable)</option> : null}
                             {models.length ? models.map((model) => (
                               <option key={model.id} value={model.id}>
                                 {model.id}{model.name !== model.id ? ` — ${model.name}` : ""}
@@ -420,6 +385,10 @@ export function ApiProxyConnection(props: {
                     ))}
                   </tbody>
             </table>
+            <button type="button" disabled={busy || keyAccess.loading || !!keyAccess.uncertain || !keyAccess.enabled || !props.onSaveMapping || !Object.values(claudeMapping).every(id => models.some(model => model.id === id)) || savedMappingKey === JSON.stringify(claudeMapping)} onClick={() => { setNotice(""); props.onSaveMapping?.(claudeMapping); }}>
+              {keyAccess.pending ? "Saving..." : "Save model mapping"}
+            </button>
+            <p>Save these host-wide routes before connecting Claude Desktop or Claude Code. Sonnet is the default.</p>
             {models.length ? (
                 <details>
                   <summary>Available models ({models.length})</summary>
@@ -432,8 +401,8 @@ export function ApiProxyConnection(props: {
                     ))}
                   </ul>
                 </details>
-            ) : !modelsLoading && !modelsError ? (
-              <p>Save or create a new Manager key to load Codex models.</p>
+            ) : !keyAccess.loading && !props.modelsWarning ? (
+              <p>No Codex models available. Refresh models to retry.</p>
             ) : null}
             <small>
               Claude model names stay in the <code>claude-*</code> format; each maps to a selected Codex model.
@@ -453,8 +422,8 @@ export function ApiProxyConnection(props: {
           </p>
         </div>
         <p>
-          Use a Manager key with host-wide aiProxy permission. The model fields are filled from GET /v1/models when
-          discovery succeeds; Manager controls use /api/message on the same host.
+          Use a Manager key with host-wide aiProxy permission. Model choices use the same Codex catalogue as sessions;
+          Manager controls use /api/message on the same host.
         </p>
       </div>
     </ModalShell>

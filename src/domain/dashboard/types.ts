@@ -573,6 +573,7 @@ export type DashboardActionName =
   | "generateApiToken"
   | "editApiToken"
   | "copyApiToken"
+  | "saveApiProxyModelMapping"
   | "listApiTokens"
   | "revokeApiToken"
   | "getProjectBoard"
@@ -674,6 +675,8 @@ export interface DashboardActionPayload {
   tagReplacement?: string;
   tokenId?: string;
   expectedApiToken?: import('./apiActions').DashboardApiToken;
+  claudeMapping?: import('./apiProxy').ClaudeProxyMapping;
+  expectedClaudeMapping?: import('./apiProxy').ClaudeProxyMapping;
   tokenName?: string;
   tokenPermissions?: string[];
   tokenProjectPaths?: string[];

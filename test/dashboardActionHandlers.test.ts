@@ -1,3 +1,4 @@
+import * as proxyMapping from "../src/services/aiProxyModelMapping";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -13,6 +14,7 @@ import * as sessionRecovery from "../src/services/codexSessionRecovery";
 import { readNativeCodexSessionRunning } from '../src/services/codexNativeSessionStatus';
 import * as workspaceTools from "../src/services/workspaceTools";
 import * as autoResume from "../src/services/codexSessionAutoResume";
+import * as apiTokens from '../src/services/dashboardApiToken';
 
 const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.hoisted(() => ({
   consumeResetCreditMock: vi.fn().mockResolvedValue(undefined),
@@ -97,6 +99,59 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 afterAll(async () => {
   await removeTestDirectory(operationDirectory);
+});
+
+describe('proxy Codex model discovery', () => {
+  it('saves mappings through the shared host action and returns confirmed routes', async () => {
+    const mapping = { opus: 'gpt-test', sonnet: 'gpt-test', haiku: 'gpt-test', fable: 'gpt-test' };
+    vi.spyOn(apiTokens, 'listDashboardApiTokens').mockResolvedValue([]);
+    vi.spyOn(sessionEditors, 'readCodexCliComposerConfig').mockResolvedValue({ models: [{ id: 'gpt-test', label: 'GPT Test' }] } as never);
+    const save = vi.spyOn(proxyMapping, 'saveClaudeProxyMapping').mockResolvedValue(mapping);
+    const result = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'saveApiProxyModelMapping', requestId: 'save-mapping', payload: { claudeMapping: mapping } });
+    expect(save).toHaveBeenCalledWith(expect.anything(), mapping, undefined, ['gpt-test']);
+    expect(result).toMatchObject({ status: 'completed', payload: { apiProxy: { claudeMapping: mapping } } });
+    save.mockRejectedValueOnce(new Error('Mapping storage unavailable'));
+    const failed = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'saveApiProxyModelMapping', requestId: 'failed-mapping', payload: { claudeMapping: mapping } });
+    expect(failed).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('Mapping storage unavailable') });
+  });
+  it('bounds a stalled catalogue read and returns a visible retry warning', async () => {
+    vi.spyOn(apiTokens, 'listDashboardApiTokens').mockResolvedValue([]);
+    const discovery = vi.spyOn(sessionEditors, 'readCodexCliComposerConfig').mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers();
+    try {
+      const result = executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'listApiTokens', requestId: 'stalled-models' });
+      await vi.waitFor(() => expect(discovery).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await result).toMatchObject({ status: 'completed', payload: {
+        apiTokens: [], apiProxy: { models: [], modelDiscoveryWarning: 'Codex model discovery timed out. Refresh models to retry.' }
+      } });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('loads the session catalogue for existing keys without reading their secrets', async () => {
+    vi.spyOn(apiTokens, 'listDashboardApiTokens').mockResolvedValue([{ id: 'existing', name: 'Existing key', permissions: ['aiProxy'], createdAt: 1 }]);
+    const copy = vi.spyOn(apiTokens, 'copyDashboardApiToken');
+    const config = vi.spyOn(sessionEditors, 'readCodexCliComposerConfig').mockResolvedValue({
+      models: [{ id: 'gpt-test', label: 'GPT Test', reasoningEfforts: [] }], defaultSandboxMode: 'danger-full-access',
+      modelDiscoveryWarning: 'Showing the saved catalog.'
+    });
+    const result = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'listApiTokens', requestId: 'existing-key-models' });
+    expect(config).toHaveBeenCalledOnce();
+    expect(copy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'completed', payload: {
+      apiTokens: [{ id: 'existing' }],
+      apiProxy: { models: [{ id: 'gpt-test', name: 'GPT Test' }], modelDiscoveryWarning: 'Showing the saved catalog.' }
+    } });
+  });
+
+  it('retains key access and exposes discovery errors for retry', async () => {
+    vi.spyOn(apiTokens, 'listDashboardApiTokens').mockResolvedValue([]);
+    vi.spyOn(sessionEditors, 'readCodexCliComposerConfig').mockRejectedValue(new Error('Codex is unavailable.'));
+    const result = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action: 'listApiTokens', requestId: 'failed-models' });
+    expect(result).toMatchObject({ status: 'completed', payload: {
+      apiTokens: [], apiProxy: { models: [], modelDiscoveryWarning: 'Codex is unavailable.' }
+    } });
+  });
 });
 
 describe("manual Codex navigation and recovery", () => {

@@ -1,3 +1,12 @@
+// Stable, recognized Claude IDs are public gateway aliases, not upstream model claims.
+export const CLAUDE_PROXY_MODELS = {
+  opus: 'claude-opus-4-6',
+  sonnet: 'claude-sonnet-4-6',
+  haiku: 'claude-haiku-4-5',
+  fable: 'claude-fable-5'
+} as const;
+export type ClaudeProxyMapping = Record<keyof typeof CLAUDE_PROXY_MODELS, string>;
+
 export interface ApiProxyRequestLog {
   id: string;
   startedAt: number;
@@ -21,6 +30,9 @@ export interface ApiProxyRequestLog {
 export interface ApiProxySnapshot {
   capturedAt: number;
   requests: ApiProxyRequestLog[];
+  models?: Array<{ id: string; name: string }>;
+  modelDiscoveryWarning?: string;
+  claudeMapping?: ClaudeProxyMapping;
 }
 
 export function apiKeyUsage(snapshot: ApiProxySnapshot | undefined, id: string) {

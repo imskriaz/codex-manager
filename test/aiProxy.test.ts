@@ -1,3 +1,5 @@
+import { CLAUDE_PROXY_MODELS } from "../src/domain/dashboard/apiProxy";
+import { readClaudeProxyMapping, saveClaudeProxyMapping } from "../src/services/aiProxyModelMapping";
 import { createServer, type Server } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
@@ -89,7 +91,9 @@ beforeEach(async () => {
   vi.mocked(refreshSingleQuota).mockResolvedValue({});
   vi.mocked(upstream).mockImplementation(async () => generation() as never);
   const secrets = new Map<string, string>();
+  const state = new Map<string, unknown>();
   context = {
+    globalState: { get: (name: string) => state.get(name), update: async (name: string, value: unknown) => { state.set(name, value); } },
     secrets: {
       get: async (name: string) => secrets.get(name),
       store: async (name: string, value: string) => {
@@ -327,11 +331,11 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
   );
   expect(models.data.map((item: { id: string }) => item.id)).toEqual(["a", "b"]);
   const first = await fetch(origin + "/v1/models?limit=1", { headers: { "x-api-key": key } }).then((r) => r.json());
-  expect(first).toMatchObject({ has_more: true, first_id: "claude-a", data: [{ type: "model", display_name: "A" }] });
-  const next = await fetch(origin + "/v1/models?limit=1&after_id=claude-a", { headers: { "x-api-key": key } }).then(
+  expect(first).toMatchObject({ has_more: true, first_id: "claude-opus-4-6", data: [{ type: "model", display_name: "Claude Opus" }] });
+  const next = await fetch(origin + "/v1/models?limit=1000&after_id=claude-opus-4-6", { headers: { "x-api-key": key } }).then(
     (r) => r.json()
   );
-  expect(next).toMatchObject({ has_more: false, first_id: "claude-b" });
+  expect(next).toMatchObject({ has_more: false, first_id: "claude-sonnet-4-6" });
   expect(
     (await fetch(origin + "/v1/models/a", { headers: { Authorization: `Bearer ${key}` } }).then((r) => r.json())).id
   ).toBe("a");
@@ -364,12 +368,7 @@ it("publishes Claude role names and maps them back to provider-qualified backend
   const catalogue = await fetch(origin + "/v1/models", {
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01" }
   }).then((response) => response.json());
-  expect(catalogue.data.map((model: { id: string }) => model.id)).toEqual([
-    "claude-sonnet",
-    "claude-opus",
-    "claude-haiku",
-    "claude-fable"
-  ]);
+  expect(catalogue.data.map((model: { id: string }) => model.id)).toEqual(Object.values(CLAUDE_PROXY_MODELS));
   const response = await post("/v1/messages", {
     model: "claude-sonnet",
     max_tokens: 100,
@@ -817,4 +816,51 @@ it("translates Responses reasoning deltas into Claude thinking blocks", () => {
   expect(text).toContain('"type":"content_block_stop"');
   expect(text).toContain('"type":"text_delta"');
   expect(done).toContain('"type":"message_stop"');
+});
+
+const savedRoutes = { opus: 'gpt-fast', sonnet: 'gpt-codex', haiku: 'gpt-fast', fable: 'gpt-codex' };
+it.each([false, true])('uses saved Codex routes and preserves recognized Claude identity (stream=%s)', async stream => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const response = await post('/v1/messages', { ...chat({ model: CLAUDE_PROXY_MODELS.opus }), max_tokens: 100, stream });
+  expect(response.status).toBe(200);
+  const wire = await response.text();
+  expect(wire).toContain(CLAUDE_PROXY_MODELS.opus);
+  expect(wire).not.toContain('codex-test');
+  expect(upstream).toHaveBeenCalledOnce();
+  expect(JSON.parse(String(vi.mocked(upstream).mock.calls[0]?.[1]?.body)).model).toBe('gpt-fast');
+  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))?.model).toBe('gpt-fast');
+});
+it('maps Claude role aliases through the saved route', async () => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const response = await post('/v1/messages', { ...chat({ model: 'sonnet' }), max_tokens: 100 });
+  expect(response.status).toBe(200);
+  await response.text();
+  expect(JSON.parse(String(vi.mocked(upstream).mock.calls[0]?.[1]?.body)).model).toBe('gpt-codex');
+});
+it.each(['x-api-key', 'bearer'])('discovers saved Claude mappings without upstream discovery (%s)', async scheme => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const headers = scheme === 'x-api-key' ? { 'x-api-key': key } : { Authorization: 'Bearer ' + key };
+  const response = await fetch(origin + '/v1/models', { headers: { ...headers, 'anthropic-version': '2023-06-01' } });
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result.data.map((model: {id: string}) => model.id)).toEqual(Object.values(CLAUDE_PROXY_MODELS));
+  expect(result.data[0].description).toContain('gpt-fast');
+  const detail = await fetch(origin + '/v1/models/' + CLAUDE_PROXY_MODELS.opus, { headers: { ...headers, 'anthropic-version': '2023-06-01' } });
+  expect(await detail.json()).toMatchObject({ id: CLAUDE_PROXY_MODELS.opus, display_name: 'Claude Opus' });
+  expect(upstream).not.toHaveBeenCalled();
+});
+it('persists mapping edits, rejects stale edits and unavailable targets, and preserves storage errors', async () => {
+  const available = ['gpt-fast', 'gpt-codex'];
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, available);
+  expect(readClaudeProxyMapping(context)).toEqual(savedRoutes);
+  await expect(saveClaudeProxyMapping(context, savedRoutes, undefined, available)).rejects.toThrow('another window');
+  await expect(saveClaudeProxyMapping(context, { ...savedRoutes, opus: 'unavailable' }, savedRoutes, available)).rejects.toThrow('unavailable');
+  await expect(saveClaudeProxyMapping(context, {}, savedRoutes, available)).rejects.toThrow('each Claude model');
+  expect(readClaudeProxyMapping(context)).toEqual(savedRoutes);
+  const update = vi.spyOn(context.globalState, 'update').mockRejectedValueOnce(new Error('Mapping storage unavailable'));
+  await expect(saveClaudeProxyMapping(context, { ...savedRoutes, opus: 'gpt-codex' }, savedRoutes, available)).rejects.toThrow('Mapping storage unavailable');
+  update.mockRestore();
+  expect(readClaudeProxyMapping(context)).toEqual(savedRoutes);
+  await saveClaudeProxyMapping(context, { ...savedRoutes, opus: 'gpt-codex' }, savedRoutes, available);
+  expect(readClaudeProxyMapping(context)?.opus).toBe('gpt-codex');
 });

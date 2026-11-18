@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.94
+
+- Make Claude CLI and Claude Desktop model discovery use recognized Claude IDs while routing each saved model to its selected Codex target.
+- Persist Claude-to-Codex mappings with conflict checks and visible save, failure, and retry states.
+
+
 ## 2.0.6-pre.91
 
 - Compact and polish the browser reset-usage dialog with tighter spacing and clearer reset actions.

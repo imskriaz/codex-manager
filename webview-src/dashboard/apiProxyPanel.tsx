@@ -83,6 +83,7 @@ function RequestTable({
 
 export function ApiProxyPanel(props: {
   snapshot?: ApiProxySnapshot;
+  onSaveMapping?: (mapping: import("../../src/domain/dashboard/apiProxy").ClaudeProxyMapping) => void;
   connected: boolean;
   baseUrl?: string;
   keyAccess: ApiProxyKeyAccess;
@@ -170,6 +171,10 @@ export function ApiProxyPanel(props: {
       </div>
       <ApiProxyConnection
         open={connectionOpen}
+        models={props.snapshot?.models}
+        modelsWarning={props.snapshot?.modelDiscoveryWarning}
+        mapping={props.snapshot?.claudeMapping}
+        onSaveMapping={props.onSaveMapping}
         baseUrl={props.baseUrl}
         keyAccess={props.keyAccess}
         onClose={() => setConnectionOpen(false)}

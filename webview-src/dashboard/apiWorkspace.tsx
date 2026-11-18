@@ -30,6 +30,7 @@ export function ApiWorkspace(props: {
   uncertain?: boolean;
   loading?: boolean;
   onRefresh: () => void;
+  onSaveMapping?: (mapping: import("../../src/domain/dashboard/apiProxy").ClaudeProxyMapping) => void;
   enabled: boolean;
   connected: boolean;
   pending: boolean;
@@ -365,6 +366,7 @@ export function ApiWorkspace(props: {
           <div role="tabpanel" id="api-panel-proxy" aria-labelledby="api-tab-proxy">
             <ApiProxyPanel
               snapshot={props.proxy}
+              onSaveMapping={props.onSaveMapping}
               baseUrl={baseUrl}
               keyAccess={{
                 tokens: props.tokens,
@@ -375,6 +377,7 @@ export function ApiWorkspace(props: {
                 loading: props.loading,
                 uncertain: props.uncertain,
                 error: props.error,
+                notice: props.notice,
                 onCreate: (name) => props.onGenerate(name, undefined, ["aiProxy"]),
                 onRefresh: props.onRefresh
               }}
