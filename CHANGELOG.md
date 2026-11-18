@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.86
+
+- Show Claude-compatible mapping fields first and map them to selectable Codex models.
+
 ## 2.0.6-pre.85
 
 - Keep Claude model names in the `claude-*` namespace while mapping each one to a selectable backend model.

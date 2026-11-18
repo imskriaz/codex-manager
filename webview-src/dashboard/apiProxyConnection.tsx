@@ -381,9 +381,7 @@ export function ApiProxyConnection(props: {
             <h3>Model mapping</h3>
             {modelsLoading ? <p role="status">Loading models from the active account…</p> : null}
             {modelsError ? <p role="alert">{modelsError} Use a model ID from GET /v1/models.</p> : null}
-            {models.length ? (
-              <>
-                <table class="api-model-mapping">
+            <table class="api-model-mapping">
                   <thead>
                     <tr>
                       <th scope="col">Claude model</th>
@@ -411,17 +409,18 @@ export function ApiProxyConnection(props: {
                               }))
                             }
                           >
-                            {models.map((model) => (
+                            {models.length ? models.map((model) => (
                               <option key={model.id} value={model.id}>
                                 {model.id}{model.name !== model.id ? ` — ${model.name}` : ""}
                               </option>
-                            ))}
+                            )) : <option value="" disabled>No Codex models discovered</option>}
                           </select>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+            </table>
+            {models.length ? (
                 <details>
                   <summary>Available models ({models.length})</summary>
                   <ul class="api-model-list">
@@ -433,13 +432,11 @@ export function ApiProxyConnection(props: {
                     ))}
                   </ul>
                 </details>
-              </>
             ) : !modelsLoading && !modelsError ? (
-              <p>Save or paste a Manager key to load the active account’s model catalogue.</p>
+              <p>Save or create a new Manager key to load Codex models.</p>
             ) : null}
             <small>
-              Claude model names are mapped to the discovered proxy IDs, including provider-qualified IDs such as
-              9router models.
+              Claude model names stay in the <code>claude-*</code> format; each maps to a selected Codex model.
             </small>
           </section>
           <p>

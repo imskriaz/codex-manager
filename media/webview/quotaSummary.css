@@ -17833,6 +17833,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .api-workspace-screen [aria-label="Proxy connection settings"] svg { width: 16px; height: 16px; }
 
 .api-connection-guide { display: grid; gap: 18px; }
+.api-connection-guide > section[aria-label="Claude model mapping"] { order: -1; }
 .api-connection-keys { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-base); }
 .api-connection-keys label { display: grid; gap: 6px; font-weight: 500; }
 .api-connection-keys :is(input,select) { box-sizing: border-box; min-width: 0; width: 100%; min-height: 36px; padding: 8px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); font: inherit; }
@@ -18262,3 +18263,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .workspace-browser-welcome p { max-width:330px; margin:0 0 10px; color:var(--text-secondary); line-height:1.7; }
 .workspace-browser-welcome > button { padding:9px 16px; border-color:var(--accent-blue,#388bfd); background:color-mix(in srgb,var(--accent-blue,#388bfd) 14%,var(--bg-base)); }
 .workspace-browser-welcome-features { display:flex; flex-wrap:wrap; justify-content:center; gap:10px 18px; max-width:340px; margin-top:30px; color:var(--text-muted); font-size:10px; }
+.workspace-browser-inline-error { position:absolute; z-index:8; right:12px; bottom:52px; display:flex; align-items:center; gap:8px; max-width:min(420px,calc(100% - 24px)); padding:7px 10px; border:1px solid var(--accent-red,#f85149); border-radius:6px; background:var(--bg-surface); color:var(--accent-red,#f85149); font-size:11px; box-shadow:0 4px 14px #0004; }
+.workspace-browser-inline-error button { margin-left:auto; padding:1px 5px; }
+.workspace-browser-comment-controls { min-height:32px; padding:2px 5px; }
+.workspace-browser-compact-button { width:25px; height:25px; min-height:25px; padding:4px!important; display:inline-flex; align-items:center; justify-content:center; }
+.workspace-browser-compact-button svg { width:14px; height:14px; }
+.workspace-browser-comment-controls .workspace-browser-inline-tools { gap:1px; }
