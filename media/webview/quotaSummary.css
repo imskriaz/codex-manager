@@ -18265,3 +18265,18 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .workspace-browser-compact-button { width:25px; height:25px; min-height:25px; padding:4px!important; display:inline-flex; align-items:center; justify-content:center; }
 .workspace-browser-compact-button svg { width:14px; height:14px; }
 .workspace-browser-comment-controls .workspace-browser-inline-tools { gap:1px; }
+.browser-action-modal.dashboard-confirm-modal { width:min(440px,calc(var(--dashboard-viewport-width, 100vw) - 24px)); border-radius:12px; }
+.browser-action-modal .dashboard-modal-body { gap:7px; padding:10px 13px 12px; }
+.browser-action-modal .modal-stack { gap:7px; }
+.browser-action-modal .modal-note { font-size:calc(11px * var(--dashboard-text-scale, 1)); line-height:1.4; }
+.browser-action-modal .reset-credit-list { gap:6px; padding:8px; border-radius:9px; background:color-mix(in srgb,var(--bg-base) 72%,var(--bg-surface)); }
+.browser-action-modal .reset-credit-list-heading { align-items:center; font-size:calc(11px * var(--dashboard-text-scale, 1)); line-height:1.2; }
+.browser-action-modal .reset-credit-list-heading > span { display:grid; place-items:center; min-width:21px; height:21px; padding:0 6px; box-sizing:border-box; border-radius:999px; background:var(--cyan-soft); color:var(--accent-blue); font-variant-numeric:tabular-nums; }
+.browser-action-modal .reset-credit-list ul { gap:5px; max-height:160px; }
+.browser-action-modal .reset-credit-list li { border-radius:7px; background:var(--bg-surface); }
+.browser-action-modal .reset-credit-row { min-height:44px; padding:7px 8px; }
+.browser-action-modal .reset-credit-row-main { gap:3px; }
+.browser-action-modal .reset-credit-row-main strong { font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.browser-action-modal .reset-credit-row-main small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(10px * var(--dashboard-text-scale, 1)); line-height:1.25; }
+.browser-action-modal .reset-credit-row-action { padding:4px 7px; border-radius:999px; background:var(--cyan-soft); font-size:calc(10px * var(--dashboard-text-scale, 1)); line-height:1; }
+.browser-action-modal .reset-credit-row:hover:not(:disabled) .reset-credit-row-action, .browser-action-modal .reset-credit-row:focus-visible .reset-credit-row-action { background:color-mix(in srgb,var(--accent-blue) 18%,var(--bg-surface)); }
