@@ -161,10 +161,18 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
     <div class="maintenance-layout">
     {!dialog ? <section class="maintenance-dashboard" aria-label="Codex Manager Tools">
       <header class="maintenance-dashboard-heading"><div><span class="maintenance-kicker">Codex Manager Tools</span><strong>Keep Codex fast, tidy, and recoverable</strong></div><button class="settings-action-btn" type="button" disabled={busy || running} onClick={() => check("storage")}>{busy ? "Reading…" : "About Codex"}</button></header>
-      <div class="maintenance-dashboard-grid maintenance-storage-operations">
-        {MAINTENANCE_TOOLS.map(tool => <button key={`manage-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Manage`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => inspect(tool.id)}><span class="maintenance-dashboard-icon">⌘</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span>Manage</span></button>)}
-        {CODEX_INSPECTIONS.map(tool => <button key={`inspect-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Inspect`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => check(tool.id)}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span>Inspect</span></button>)}
-      </div>
+      <section class="maintenance-dashboard-section" aria-labelledby="maintenance-manage-heading">
+        <h3 id="maintenance-manage-heading">Manage data</h3>
+        <div class="maintenance-dashboard-grid">
+          {MAINTENANCE_TOOLS.map(tool => <button key={`manage-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Manage`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => inspect(tool.id)}><span class="maintenance-dashboard-icon">⌘</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span class="maintenance-dashboard-action" aria-hidden="true">›</span></button>)}
+        </div>
+      </section>
+      <section class="maintenance-dashboard-section" aria-labelledby="maintenance-inspect-heading">
+        <h3 id="maintenance-inspect-heading">Inspect system</h3>
+        <div class="maintenance-dashboard-grid">
+          {CODEX_INSPECTIONS.map(tool => <button key={`inspect-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Inspect`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => check(tool.id)}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span class="maintenance-dashboard-action" aria-hidden="true">›</span></button>)}
+        </div>
+      </section>
     </section> : null}
     <ModalShell open={Boolean(dialog && props.parentOpen)} title={dialogTitles[dialog ?? ""] ?? 'Codex tools'} closeLabel="Close tool" className="maintenance-tool-modal" onClose={() => { if (confirmation) setConfirmation(undefined); else setDialog(undefined); }}>
       {dialog ? <section class="maintenance-workspace" role="region" aria-label={dialogTitles[dialog] ?? 'Codex tools'}>

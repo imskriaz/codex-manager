@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.84
+
+- Polish the Tools panel with clearer Manage data and Inspect system groups, compact cards, and unclipped action affordances.
+
+
 ## 2.0.6-pre.83
 
 - Clarify the installed PWA always-on-top workflow: open it, then choose Keep on top.
