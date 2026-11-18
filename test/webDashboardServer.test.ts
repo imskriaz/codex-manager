@@ -377,7 +377,7 @@ describe("browser PWA routes", () => {
       const manifest = await get("/manifest.webmanifest", true);
       expect(manifest.status).toBe(200);
       expect(manifest.headers.get("content-type")).toContain("application/manifest+json");
-      expect(JSON.parse(manifest.body)).toMatchObject({ name: "Codex Manager", display: "standalone", start_url: "/" });
+      expect(JSON.parse(manifest.body)).toMatchObject({ id: "/", name: "Codex Manager", display: "standalone", start_url: "/workspace", scope: "/" });
       const worker = await get("/service-worker.js", true);
       expect(worker.status).toBe(200);
       expect(worker.headers.get("cache-control")).toBe("no-store");

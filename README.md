@@ -295,7 +295,7 @@ In the browser dashboard, open General settings and choose **Enable notification
 
 Notification titles start with the originating system name. Session notifications also keep the conversation title, so notifications from multiple systems are easy to distinguish.
 
-Use **Install app** where available, or your browser's **Add to Home Screen** option. On iPhone and iPad, open the installed Home Screen app before enabling notifications. The offline recovery screen reconnects automatically after a host restart. Saved read views remain available offline after a successful visit. Live actions require an authenticated connection; notifications never automatically repeat an uncertain action.
+Choose **Install app** in the chat toolbar, floating workspace, or **Settings → General** to install Codex Manager. The installed app opens directly in the workspace, can be resized, and stays open when normal browser windows close. Launch it again from your apps or taskbar. It still uses the browser engine. In the installed app, choose **Keep on top** in the conversation header to keep the workspace above other windows. If no installation prompt is available, the action shows browser-menu instructions. Live work requires a running dashboard host; enable **Always Active** to keep it running after VS Code closes. On iPhone and iPad, open the installed Home Screen app before enabling notifications. The offline recovery screen reconnects automatically after a host restart. Saved read views remain available offline after a successful visit. Live actions require an authenticated connection; notifications never automatically repeat an uncertain action.
 
 Browser notification setup appears when an unsubscribed device opens the HTTPS dashboard. Choose **Enable notifications**, then allow the browser permission prompt. You can also use **Settings → General → Browser notifications**. Major Codex Manager notices in VS Code, including account switches and reloads, are mirrored to subscribed devices; delivery attempts run in parallel and are drained before managed reloads.
 
@@ -339,7 +339,7 @@ and tool calls, and use the normal composer, approvals, queue, and workspace too
 The original window keeps its current conversation and draft. The floating view
 has its own saved drafts and message queues, using the dashboard's existing send
 safeguards. Keep the original
-dashboard open while using the floating workspace.
+dashboard open while using the floating workspace. To work with that browser window closed, choose **Install app**, open the installed app, and use its **Keep on top** control.
 
 Desktop Chrome and Edge can keep this window above other apps. Other browsers
 open a normal resizable pop-up and show a warning. Blocked windows and loading

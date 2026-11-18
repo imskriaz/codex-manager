@@ -3,7 +3,7 @@
   "short_name": "Codex",
   "description": "Codex sessions and account dashboard",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/workspace",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f9fc",

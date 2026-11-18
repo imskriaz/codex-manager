@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.6-pre.83
+
+- Clarify the installed PWA always-on-top workflow: open it, then choose Keep on top.
+
+## 2.0.6-pre.82
+
+- Add an installable PWA entry point for the workspace, with install controls and visible browser menu guidance when a prompt is unavailable.
+
 ## 2.0.6-pre.81
 
 - Add an installable PWA entry point for the workspace, with install controls and visible browser menu guidance when a prompt is unavailable.
