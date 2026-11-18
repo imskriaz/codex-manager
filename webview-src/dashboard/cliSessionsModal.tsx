@@ -2287,7 +2287,7 @@ function ActivityCode({ text, label, copyLabel }: { text: string; label: string;
 }
 
 function isCapacityMessage(message: DashboardCliSessionMessage): boolean {
-  return message.kind !== 'command' && isCodexCapacityInterruption([message.text, message.result, message.kind === 'error' ? message.debug : undefined].filter(Boolean).join(' '));
+  return message.kind !== 'command' && (message.kind === 'error' || message.status === 'failed' || message.status === 'interrupted') && isCodexCapacityInterruption([message.text, message.result, message.kind === 'error' ? message.debug : undefined].filter(Boolean).join(' '));
 }
 
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
@@ -2308,8 +2308,9 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
     let retryLabel = retrying ? 'Retrying…' : 'Retry attempt';
     if (attempt) retryLabel = `Reconnecting ${attempt[1]}/${attempt[2]}`;
     else if (retrying && seconds && seconds > 0 && seconds <= 86400) retryLabel = `Retrying · ${seconds}s delay`;
-    const label = <span role="status" title={capacity ? "Selected model is at capacity. Please try a different model." : message.text}>{capacity ? `Model at capacity${retrying ? ` · ${retryLabel}` : ''}` : retryLabel}</span>;
-    return <div class="cli-capacity-notice">{label}{capacity ? <span class="cli-error-message">{message.text || message.result || 'Selected model is at capacity. Please try a different model.'}</span> : null}{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+    const diagnostics = capacity ? [...new Set([message.text, message.result, message.debug].filter(Boolean))].join('\n\n') : message.debug;
+    const label = <span class={capacity ? 'is-error' : undefined} role="status" title={message.text || (capacity ? "Selected model is at capacity. Please try a different model." : undefined)}>{capacity ? `Model at capacity${retrying ? ` · ${retryLabel}` : ''}` : retryLabel}</span>;
+    return <div class="cli-capacity-notice">{label}{diagnostics ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={diagnostics} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
   }
   if (automaticRecovery && message.kind === 'error' && isCodexQuotaInterruption(message.text)) return <details class="cli-activity cli-quota-recovery-detail"><summary>Account usage limit · saved for recovery</summary><ActivityDetail message={message} /></details>;
   if (message.kind === 'error') return <div class="cli-activity is-error is-failed cli-error-notice" role="alert"><ActivityDetail message={message} />{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;

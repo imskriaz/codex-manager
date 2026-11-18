@@ -27,13 +27,16 @@ it.each(['error', 'tool-call', 'compaction', 'review'] as const)('shows %s capac
     expect(label.props.role).toBe('status');
     expect(label.props.children).toBe('Model at capacity');
     expect(label.props.title).toBe('Selected model is at capacity. Please try a different model.');
-    expect(node.props.children[1].props.children).toBe("Selected model is at capacity. Please try a different model.");
-    if (debug) expect(node.props.children[2].props.children[1].props.text).toBe(debug);
+    expect(label.props.class).toBe('is-error');
+    const details = node.props.children[1];
+    expect(details.type).toBe('details');
+    expect(details.props.open).not.toBe(true);
+    expect(details.props.children[1].props.text).toBe(["Selected model is at capacity. Please try a different model.", debug].filter(Boolean).join('\n\n'));
   }
 });
 
 it('recognizes capacity in tool results while preserving ordinary errors and command transcripts', () => {
-  expect(activity({ id: 'result', kind: 'tool-call', text: '', result: '{"error":"model_overloaded"}' }).props.class).toBe('cli-capacity-notice');
+  expect(activity({ id: 'result', kind: 'tool-call', text: '', result: '{"error":"model_overloaded"}', status: 'failed' }).props.class).toBe('cli-capacity-notice');
   for (const message of [
     { id: 'ordinary', kind: 'error' as const, text: 'Connection failed.' },
     { id: 'command', kind: 'command' as const, text: 'Selected model is at capacity.', command: 'echo capacity', output: 'Keep the original output.' }
@@ -42,6 +45,19 @@ it('recognizes capacity in tool results while preserving ordinary errors and com
     expect(node.props.class).not.toContain('cli-capacity-notice');
     expect(node.props.class).toContain(`is-${message.kind}`);
   }
+});
+
+it.each(['completed', 'inProgress', undefined] as const)('keeps %s tool output mentioning capacity in its original activity', status => {
+  const node = activity({ id: 'source', kind: 'tool-call', text: 'Script completed', result: 'Selected model is at capacity. Please try a different model.\nmodelCapacityAutoSwitchEnabled: true', status });
+  expect(node.type).toBe('details');
+  expect(node.props.class).toContain('cli-activity is-tool-call');
+});
+
+it('retains every capacity diagnostic without repeating identical fields', () => {
+  const result = '{"error":"model_overloaded"}';
+  const node = activity({ id: 'result', kind: 'tool-call', text: 'Service unavailable', result, debug: result, status: 'failed' });
+  expect(node.props.children[1].props.children[1].props.text).toBe(`Service unavailable\n\n${result}`);
+  expect(node.props.children[0].props.title).toBe('Service unavailable');
 });
 
 it.each([

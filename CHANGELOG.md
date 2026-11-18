@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.89
+
+- Show model-capacity errors as one compact red line, with the original error and diagnostics under Debug details.
+- Keep successful tool output mentioning capacity in its original activity instead of displaying a false capacity error.
+
 ## 2.0.6-pre.86
 
 - Show Claude-compatible mapping fields first and map them to selectable Codex models.

@@ -43,6 +43,7 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
     { id: 'reason-types', kind: 'reasoning', text: 'Considering the next step.', status: 'completed' },
     { id: 'plan-types', kind: 'plan', text: '1. Inspect messages\n2. Improve presentation', status: 'completed' },
     { id: 'tool-types', kind: 'tool-call', title: 'Used formatting tool', text: 'Formatted output', arguments: raw, result: '\n\nshort result\n\n', debug: raw, status: 'completed' },
+    { id: 'source-types', kind: 'tool-call', title: 'Read capacity settings', text: 'Script completed', result: 'Selected model is at capacity. Please try a different model.\nmodelCapacityAutoSwitchEnabled: true', status: 'completed' },
     { id: 'command-types', kind: 'command', text: 'echo output', command: 'echo output', output: 'long-token-'.repeat(150), status: 'completed' },
     { id: 'files-types', kind: 'file-change', text: 'Edited files', changes: [{ path: 'src/example.ts', kind: 'update', diff: '@@ -1 +1 @@\n-before\n+after' }], status: 'completed' },
     { id: 'search-types', kind: 'web-search', text: 'Documentation query', result: '[Documentation](https://example.com/docs)', status: 'completed' },
@@ -61,14 +62,22 @@ export async function checkMessageTypesUi(page, { parentId, agentId, width, outp
     dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: '66666666-6666-4666-8666-666666666666', sequence: 1, status: 'completed', updatedAt: Date.now(), messages } } }));
   }, { messages: fixtures, sessionId: parentId });
   await page.locator('.cli-capacity-notice').waitFor();
-  await page.waitForFunction(() => { const tools = document.querySelectorAll('.cli-session-messages .cli-activity.is-tool-call'); return tools.length === 2 && tools[0].textContent.includes('Formatted output'); });
+  await page.waitForFunction(() => { const tools = document.querySelectorAll('.cli-session-messages .cli-activity.is-tool-call'); return tools.length === 3 && tools[0].textContent.includes('Formatted output'); });
   const capacity = page.locator('.cli-capacity-notice');
-  assert.ok((await capacity.innerText()).includes('Selected model is at capacity.'), 'Capacity error is visible without expansion');
+  assert.equal(await capacity.count(), 1, 'Completed tool output mentioning capacity stays in its original activity');
+  assert.equal(await capacity.getByRole('status').innerText(), 'Model at capacity', 'Capacity has one compact label');
+  assert.ok(!(await capacity.innerText()).includes('Selected model is at capacity.'), 'Raw capacity text starts collapsed');
+  assert.ok(await capacity.getByRole('status').evaluate(element => {
+    const style = getComputedStyle(element);
+    const probe = document.createElement('span'); probe.style.color = 'var(--danger)'; element.append(probe);
+    const red = getComputedStyle(probe).color; probe.remove();
+    return style.color === red && element.getBoundingClientRect().height <= parseFloat(style.lineHeight) + 2;
+  }), 'Capacity label uses the error color and stays on one line');
   assert.equal(await capacity.locator('pre').isVisible(), false, 'Capacity diagnostics start collapsed');
   await capacity.locator('summary').click();
-  assert.deepEqual(JSON.parse(await capacity.locator('pre').innerText()), { error: 'model_overloaded' }, 'Original diagnostics stay available');
+  assert.equal(await capacity.locator('pre').innerText(), 'Selected model is at capacity.\n\n{"error":"model_overloaded"}', 'Original text and diagnostics stay available without duplication');
   await capacity.locator('summary').click();
-  assert.ok((await capacity.innerText()).includes('Selected model is at capacity.'));
+  assert.ok(!(await capacity.innerText()).includes('Selected model is at capacity.'));
   if (errorsOnly) {
     const error = page.locator('.cli-error-notice').filter({ hasText: 'Request failed. Reconnect before retrying.' });
     await error.scrollIntoViewIfNeeded(); assert.ok(await error.isVisible());
