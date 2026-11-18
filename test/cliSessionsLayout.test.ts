@@ -768,6 +768,12 @@ describe("sessions sidebar layout", () => {
     expect(styles).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*inset:\s*0 0 0 calc/s);
   });
 
+  it("keeps transient session verification waits compact and recoverable", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("Reconnecting to Codex… your message is saved and will continue automatically.");
+    expect(source).toContain("setInterval(() => { if (document.visibilityState !== \"hidden\") props.onRefresh(); }, 1000)");
+  });
+
   it("keeps new-chat in the workspace composer without a default-surface setting", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");

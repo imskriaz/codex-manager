@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.6-pre.64
+
+- Compact saved-account cards and list rows across desktop and mobile, with bounded metric text and aligned controls.
+- Keep project folders visible in the session rail and show edit only on hover or focus.
+
+## 2.0.6-pre.63
+
+- Keep Claude tool results compatible with the Responses backend, including image attachments and explicit tool errors.
+- Stream backend reasoning deltas as Claude thinking blocks so Claude Code can continue sending messages after a tool turn.
+
 ## 2.0.6-pre.60
 
 - Preserve structured model-capacity failures for automatic recovery and map serialized tool results to readable activity output.

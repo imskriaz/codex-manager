@@ -1163,7 +1163,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     props.onBackToList();
   };
 
-  const queueDispatchReason = props.connected === false ? 'Waiting for connection. Queued messages stay saved on this session.' : access.pending ? 'Waiting for permission confirmation.' : resume.pending ? 'Waiting for session recovery.' : props.stopping || props.steering || props.sending && !canSteer ? 'Waiting for the current action to finish.' : currentTurnRunning && props.selectedSession?.status === 'unknown' ? 'Waiting for a verified session status.' : undefined;
+  const queueDispatchReason = props.connected === false ? 'Reconnecting… your message is saved and will continue automatically.' : access.pending ? 'Confirming permissions… your message is saved.' : resume.pending ? 'Recovering this session… your message is saved.' : props.stopping || props.steering || props.sending && !canSteer ? 'Finishing the current action… your message is saved.' : currentTurnRunning && props.selectedSession?.status === 'unknown' ? 'Reconnecting to Codex… your message is saved and will continue automatically.' : undefined;
   const messageQueue = useCliMessageQueue({ webview: !props.browser, connected: props.connected !== false,
     scope: props.selectedSession && !props.dashboardMode && !props.taskBoardActive ? draftKey : undefined, messages: props.messages, results: props.submissionResults ?? [],
     canDispatch: Boolean(props.selectedSession && !selectedArchived && props.connected !== false && props.selectedSession.status !== 'unknown' && !props.stopping && !props.steering && (!props.sending || canSteer) && !access.pending && !resume.pending),

@@ -177,6 +177,16 @@ describe("dashboard toast", () => {
     expect(css).toContain(".cli-workspace .cli-composer-unavailable { width: calc(100% - 16px);");
   });
 
+  it("offers cancel, copy, and clear controls for visible action notices", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(main).toContain('>Cancel</button>');
+    expect(main).toContain('>Copy</button>');
+    expect(main).toContain('aria-label="Clear notification"');
+    expect(main).toContain('navigator.clipboard ? navigator.clipboard.writeText(notice.message)');
+    expect(css).toContain(".dashboard-notice-actions");
+  });
+
   it("closes browser push notifications on replacement, timeout, and reload", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
 

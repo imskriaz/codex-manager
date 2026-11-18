@@ -2981,6 +2981,24 @@ function App() {
                 role={notice.level === "error" ? "alert" : "status"}
               >
                 <span>{notice.message}</span>
+                <div class="dashboard-notice-actions">
+                  {selectedCliSession && selectedCliSession.status !== "idle" && /^(?:Reconnecting|Recovering|Finishing)/.test(notice.message) ? <button
+                    type="button"
+                    class="dashboard-notice-action"
+                    onClick={() => { requestSessionAction("cancelCodexCliSessionTurn", selectedCliSession); noticeControllerRef.current?.dismiss(notice.id); }}
+                  >Cancel</button> : null}
+                  <button
+                    type="button"
+                    class="dashboard-notice-action"
+                    onClick={() => { void (navigator.clipboard ? navigator.clipboard.writeText(notice.message) : Promise.reject(new Error("Clipboard unavailable"))).then(() => showCliSessionFeedback({ key: Date.now(), level: "warning", message: "Notification copied." })).catch(() => showCliSessionFeedback({ key: Date.now(), level: "warning", message: "Notification could not be copied." })); }}
+                  >Copy</button>
+                  <button
+                    type="button"
+                    class="dashboard-notice-action"
+                    aria-label="Clear notification"
+                    onClick={() => { noticeControllerRef.current?.dismiss(notice.id); closeBrowserPush(); }}
+                  >Clear</button>
+                </div>
                 <button
                   type="button"
                   aria-label="Dismiss notification"

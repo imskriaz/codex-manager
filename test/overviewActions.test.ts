@@ -234,7 +234,7 @@ describe("overview actions", () => {
     expect(css).toMatch(/\.account-count-badges \{[\s\S]*?flex-wrap: nowrap;/);
     expect(css).toMatch(/\.dashboard-account-toolbar \.account-search-control \{[\s\S]*?flex: 1 1 140px;/);
     expect(css).toMatch(/\.dashboard-account-toolbar \.dashboard-view-controls \{[\s\S]*?margin-left: 0;/);
-    expect(css).not.toContain(".dashboard-account-toolbar:has(.account-tag-filter)");
+    expect(css).toContain(".dashboard-account-toolbar:has(.account-tag-filter)");
   });
 
   it("keeps reset availability in the compact badge instead of a second quota block", () => {
@@ -249,6 +249,18 @@ describe("overview actions", () => {
     expect(source).not.toContain("Weekly quota remaining");
     expect(source).not.toContain("Auto-switch is enabled");
     expect(css).not.toContain(".overview-quota-notice");
+  });
+
+  it("keeps saved account views compact without horizontal overflow", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const sessions = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+
+    expect(css).toContain(".dashboard-content :is(.saved-card, .saved-table-row)");
+    expect(css).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, auto)");
+    expect(css).toContain(".dashboard-content :is(.saved-progress .metric-label");
+    expect(css).toContain("@media (hover:none) { .cli-workspace .is-dense-tree .cli-project-edit");
+    expect(sessions).toContain("<EmptyFolderIcon />");
+    expect(sessions).toContain('class="cli-project-edit"');
   });
 
   it("renders every visible metric and uses an in-app graph tooltip", () => {
