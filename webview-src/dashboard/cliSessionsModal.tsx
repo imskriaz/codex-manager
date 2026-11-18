@@ -61,7 +61,8 @@ import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
-export type CliSessionFeedback = DashboardNotice & { key: number };
+import type { DashboardLocalNotice } from './toast';
+export type CliSessionFeedback = DashboardLocalNotice & { key: number };
 
 export function sessionQuotaWaitingMessage(session: DashboardCliSessionSummary | undefined, messages: DashboardCliSessionMessage[], live: DashboardCodexSessionLiveState | undefined, accounts: DashboardAccountViewModel[], automatic: boolean, connected: boolean, running: boolean): string | undefined {
   if (!automatic || !session || session.archived || session.autoResumeEnabled === false || session.subAgent || session.parentSessionId || session.queueEnabled || session.queueError || running || session.status === 'unknown' || session.goal && !['active', 'usage_limited'].includes(session.goal.status)) return;
@@ -89,7 +90,7 @@ export type CliSessionSection = "active" | "archived";
 import { isCodexQuotaInterruption, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, isCodexSessionRunningForDisplay, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
-async function copyWorkspaceText(text: string): Promise<void> {
+export async function copyWorkspaceText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
     return;
@@ -270,6 +271,7 @@ export type CliSessionsPageProps = {
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   onPeerChange?: (peerId: string) => void;
   onRefresh: () => void;
+  onVerifyStatus?: () => void;
   onProjectChanged?: () => void;
   onMoveSession?: (session: DashboardCliSessionSummary, destination: string) => void;
   onStart: (input: { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string }) => string | undefined;
@@ -446,13 +448,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') recoveryRead.current(); }, 15_000);
     return () => clearInterval(timer);
   }, [connectionInterrupted, props.connected, props.selectedSession?.id, props.selectedSession?.deviceId]);
+  const verifyStatus = useRef(props.onVerifyStatus ?? props.onRefresh); verifyStatus.current = props.onVerifyStatus ?? props.onRefresh;
   useEffect(() => {
     if (props.connected === false || props.selectedSession?.status !== "unknown") return;
-    // Verify in the background while the saved queue waits; do not turn a
-    // temporary inspection gap into a blocking toast or lost composer draft.
-    const timer = setInterval(() => { if (document.visibilityState !== "hidden") props.onRefresh(); }, 1000);
-    return () => clearInterval(timer);
-  }, [props.connected, props.selectedSession?.id, props.selectedSession?.deviceId, props.selectedSession?.status, props.onRefresh]);
+    // Automatic reads must not force overlapping scans or emit manual-refresh notices.
+    let delay = 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const retry = () => {
+      if (document.visibilityState !== "hidden") { verifyStatus.current(); delay = Math.min(delay * 2, 15_000); }
+      timer = setTimeout(retry, delay);
+    };
+    timer = setTimeout(retry, delay);
+    return () => clearTimeout(timer);
+  }, [props.connected, props.selectedSession?.id, props.selectedSession?.deviceId, props.selectedSession?.status]);
 
   const [goalDeleteTarget, setGoalDeleteTarget] = useState<string>();
   const [section, setSection] = useState<CliSessionSection>("active");
@@ -583,7 +591,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   }, [pendingMessages, startsStorageReady]);
   useEffect(() => { if (props.connected !== false) setComposerFeedback(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
-  const reportLocalFeedback = (notice: DashboardNotice, sourceKey = draftKey): void => { if (currentDraftKey.current === sourceKey) setComposerFeedback(notice); props.onActionFeedback(notice); };
+  const reportLocalFeedback = (notice: DashboardLocalNotice, sourceKey = draftKey): void => { if (currentDraftKey.current === sourceKey) setComposerFeedback(notice); props.onActionFeedback(notice); };
   useEffect(() => setComposerFeedback(undefined), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   useEffect(() => {
     if (composerFeedback?.level !== 'info') return;
@@ -1182,7 +1190,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: restoreFailedCliComposerDraft(current, value) };
       setComposerDrafts(composerDraftsRef.current); return true;
     },
-    feedback: message => reportLocalFeedback({ level: 'warning', message })
+    feedback: (message, cancel) => reportLocalFeedback({ level: 'warning', message, cancel })
   });
   const submit = (): string | undefined => {
     if (props.selectedSession) {
@@ -3393,8 +3401,8 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
         {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => queue.steerNow(item.id)}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
         {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><SendIcon /></button> : null}
-        {item.state !== 'sending' ? <button type="button" class="cli-icon-button cli-goal-control is-danger" aria-label="Delete queued message" title="Delete" onClick={() => queue.remove(item.id)}><TrashIcon /></button> : null}
-        {item.state !== 'sending' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Edit queued message" title="Edit queued message" onClick={() => queue.remove(item.id, true)}><PencilIcon /></button> : null}
+        {item.state !== 'sending' ? <button type="button" class="cli-icon-button cli-goal-control is-danger" aria-label="Delete queued message" title="Delete" onClick={() => { void queue.remove(item.id); }}><TrashIcon /></button> : null}
+        {item.state !== 'sending' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Edit queued message" title="Edit queued message" onClick={() => { void queue.remove(item.id, true); }}><PencilIcon /></button> : null}
       </span>
       <ChevronIcon />
       </summary>

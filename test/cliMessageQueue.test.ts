@@ -87,6 +87,31 @@ it('rejects replies to questions already answered in the transcript', async () =
   expect(queue.enqueue(draft(text))).toBeUndefined(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('already answered'));
 });
 
+it('cancels the exact queued message from its recovery toast without sending it later', async () => {
+  render({ dispatchReason: 'Reconnecting' }); await flush();
+  const id = queue.enqueue(draft('Old queued work'))!; await flush();
+  queue.steerNow(id);
+  const cancel = feedback.mock.lastCall![1] as () => Promise<boolean>;
+  const cancelling = cancel(); await flush();
+  expect(await cancelling).toBe(true);
+  expect(queue.items).toEqual([]);
+  expect(harness.records.get('message-queue:pc:session')).toEqual([]);
+  render({ canDispatch: true }); await flush(); expect(send).not.toHaveBeenCalled();
+});
+
+it.each(['scope', 'sending', 'storage'])('retains the cancellation fence after a %s change', async mode => {
+  render({ dispatchReason: 'Reconnecting' }); await flush();
+  const id = queue.enqueue(draft())!; await flush(); queue.steerNow(id);
+  const cancel = feedback.mock.lastCall![1] as () => Promise<boolean>;
+  if (mode === 'scope') { render({ scope: 'another-session' }); await flush(); }
+  if (mode === 'sending') { render({ canDispatch: true }); await flush(); }
+  if (mode === 'storage') harness.writes.mockResolvedValue(false);
+  const cancelling = cancel(); await flush();
+  expect(await cancelling).toBe(false);
+  if (mode === 'storage') expect(queue.items[0]).toMatchObject({ state: 'failed', error: expect.stringContaining('could not be removed') });
+  expect(send).toHaveBeenCalledTimes(mode === 'sending' ? 1 : 0);
+});
+
 it('saves multiple offline messages immediately, fences each send, and drains in FIFO order after confirmation', async () => {
   render(); await flush(); expect(queue.ready).toBe(true);
   queue.enqueue(draft()); queue.enqueue(draft('Second')); await flush();

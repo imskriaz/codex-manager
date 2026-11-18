@@ -26,6 +26,8 @@ describe("first-run onboarding", () => {
     expect(donation).not.toContain("Riaz");
     expect(readFileSync("README.md", "utf8")).toContain("send to **Codex Manager**");
     expect(donation).toContain("01628301525");
+    expect(donation).toContain("navigator.clipboard.writeText(BKASH_NUMBER)");
+    expect(donation).toContain("Copied ${BKASH_NUMBER}");
     const about = readFileSync("webview-src/dashboard/aboutModal.tsx", "utf8");
     expect(about).not.toContain('title: "Donate"');
     expect(about).not.toContain("DonationDetails");

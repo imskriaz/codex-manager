@@ -1,9 +1,16 @@
 # Changelog
 
-## 2.0.6-pre.67
+## 2.0.6-pre.69
+
+- Open Xoom and copy the bKash donation number together, with a visible copied or failure toast.
+
+## 2.0.6-pre.68
 
 - Keep standalone restarts independent of the initiating dashboard or terminal, retain restart credentials on direct launches, and document setup and updates without opening VS Code.
 - Read current restart configuration from SQLite, preserve custom ports, and invoke npm directly on Windows. Add regression checks for interrupted restart, failed builds, and refused shutdown.
+- Keep recovery notices compact on desktop and mobile with icon-only Cancel, Copy, and Clear actions, accessible labels, and bounded automatic status retries.
+- Preserve queued messages when cancellation or clipboard writes fail, and verify the exact queued item before removing it.
+- Verify Claude proxy credentials concurrently before model discovery and retain the active-account ownership guard.
 
 ## 2.0.6-pre.66
 

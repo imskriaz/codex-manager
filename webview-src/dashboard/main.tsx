@@ -63,6 +63,7 @@ import {
 import { useDashboardActions, useDashboardHostSync, useDashboardModals } from "./hooks";
 import {
   CodexSessionsIcon,
+  CopyIcon,
   EyeIcon,
   EyeOffIcon,
   GridViewIcon,
@@ -90,7 +91,7 @@ import {
 import { SavedAccountCard } from "./savedAccountCard";
 import { createInitialState, reducer, visibleDashboardSnapshot } from "./state";
 import { resolveDashboardThemeFromMedia } from "./theme";
-import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
+import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast, type DashboardLocalNotice } from "./toast";
 import { useSessionQuestionNotifications } from './sessionQuestionNotifications';
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
@@ -102,7 +103,7 @@ import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedba
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { AutoResumeIcon, copyWorkspaceText, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { isCodexSessionInspectionNotice, filterCliSessionsBySection, isCodexSessionRunningForDisplay, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -482,7 +483,7 @@ function App() {
   }, []);
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
-    (next: DashboardNotice) => {
+    (next: DashboardLocalNotice) => {
       if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info") return;
       noticeControllerRef.current?.show(next);
@@ -2980,24 +2981,31 @@ function App() {
                 class={`dashboard-notice is-${notice.level}`}
                 role={notice.level === "error" ? "alert" : "status"}
               >
-                <span>{notice.message}</span>
+                <span>{notice.message}{notice.actionError ? <small class="dashboard-notice-action-error" role="alert">{notice.actionError}</small> : null}</span>
                 <div class="dashboard-notice-actions">
-                  {selectedCliSession && selectedCliSession.status !== "idle" && /^(?:Reconnecting|Recovering|Finishing)/.test(notice.message) ? <button
+                  {notice.cancel ? <button
                     type="button"
-                    class="dashboard-notice-action"
-                    onClick={() => { requestSessionAction("cancelCodexCliSessionTurn", selectedCliSession); noticeControllerRef.current?.dismiss(notice.id); }}
-                  >Cancel</button> : null}
+                    class="dashboard-notice-action dashboard-notice-icon-action"
+                    aria-label="Cancel queued message"
+                    title="Cancel queued message"
+                    disabled={!!notice.pendingAction}
+                    onClick={() => { void noticeControllerRef.current?.cancel(notice.id).then(cleared => { if (cleared) closeBrowserPush(); }); }}
+                  ><NoticeCancelIcon /></button> : null}
                   <button
                     type="button"
-                    class="dashboard-notice-action"
-                    onClick={() => { void (navigator.clipboard ? navigator.clipboard.writeText(notice.message) : Promise.reject(new Error("Clipboard unavailable"))).then(() => showCliSessionFeedback({ key: Date.now(), level: "warning", message: "Notification copied." })).catch(() => showCliSessionFeedback({ key: Date.now(), level: "warning", message: "Notification could not be copied." })); }}
-                  >Copy</button>
+                    class="dashboard-notice-action dashboard-notice-icon-action"
+                    aria-label="Copy notification"
+                    title="Copy notification"
+                    disabled={!!notice.pendingAction}
+                    onClick={() => { void noticeControllerRef.current?.copy(notice.id, copyWorkspaceText).then(cleared => { if (cleared) closeBrowserPush(); }); }}
+                  ><CopyIcon /></button>
                   <button
                     type="button"
-                    class="dashboard-notice-action"
+                    class="dashboard-notice-action dashboard-notice-icon-action"
                     aria-label="Clear notification"
+                    title="Clear notification"
                     onClick={() => { noticeControllerRef.current?.dismiss(notice.id); closeBrowserPush(); }}
-                  >Clear</button>
+                  ><NoticeCloseIcon /></button>
                 </div>
                 <button
                   type="button"
@@ -3309,6 +3317,7 @@ function App() {
               onRefresh={() => {
                 requestCliSessions(true, true);
               }}
+              onVerifyStatus={() => { requestCliSessions(); }}
               onProjectChanged={() => {
                 requestCliSessions(true, true);
               }}
@@ -3507,6 +3516,14 @@ function App() {
       />
     </>
   );
+}
+
+function NoticeCloseIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>;
+}
+
+function NoticeCancelIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" /><path d="m9 9 6 6m0-6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>;
 }
 
 function WorkspaceConnectionBanner(props: { stage: ConnectionStage; onReload: () => void }) {

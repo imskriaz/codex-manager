@@ -4,6 +4,7 @@ import { checkSessionRenameUi } from './check-session-rename-ui.mjs';
 import { checkMessageTypesUi } from './check-message-types-ui.mjs';
 import { checkWorkMonitorUi } from './check-work-monitor-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
+import { checkRecoveryToastUi } from './check-recovery-toast-ui.mjs';
 import { checkImagesUi } from './check-images-ui.mjs';
 import { checkSessionAccessUi } from './check-session-access-ui.mjs';
 import { checkUploadsUi } from './check-uploads-ui.mjs';
@@ -697,6 +698,12 @@ try {
       await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--recovery-toasts')) {
+      await checkRecoveryToastUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, []);
+      results.push({ width, height, checks: 'Queue-bound cancellation, copy-and-clear, retained clipboard errors, compact toast geometry, automatic recovery backoff' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--inline-copy')) {
       await page.goto(origin + '/workspace/' + parentId);

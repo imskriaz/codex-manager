@@ -180,11 +180,53 @@ describe("dashboard toast", () => {
   it("offers cancel, copy, and clear controls for visible action notices", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(main).toContain('>Cancel</button>');
-    expect(main).toContain('>Copy</button>');
+    expect(main).toContain('aria-label="Cancel queued message"');
+    expect(main).toContain('aria-label="Copy notification"');
     expect(main).toContain('aria-label="Clear notification"');
-    expect(main).toContain('navigator.clipboard ? navigator.clipboard.writeText(notice.message)');
+    expect(main).toContain('dashboard-notice-icon-action');
+    expect(main).toContain('copy(notice.id, copyWorkspaceText)');
     expect(css).toContain(".dashboard-notice-actions");
+  });
+
+  it('copies the original notification and clears it only after clipboard confirmation', async () => {
+    const changed = vi.fn(), controller = createDashboardToastController(changed);
+    controller.show({ level: 'error', message: 'Original failure' });
+    const id = changed.mock.lastCall![0]!.id;
+    let finish!: () => void;
+    const write = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const copying = controller.copy(id, write);
+    expect(changed.mock.lastCall![0]).toMatchObject({ message: 'Original failure', pendingAction: 'copy' });
+    expect(await controller.copy(id, write)).toBe(false);
+    finish();
+    expect(await copying).toBe(true);
+    expect(write).toHaveBeenCalledExactlyOnceWith('Original failure');
+    expect(changed.mock.lastCall![0]).toBeUndefined(); controller.dispose();
+  });
+
+  it('preserves clipboard failures and never clears a newer toast on late copy completion', async () => {
+    const changed = vi.fn(), controller = createDashboardToastController(changed);
+    controller.show({ level: 'error', message: 'Original failure' });
+    const id = changed.mock.lastCall![0]!.id;
+    expect(await controller.copy(id, async () => { throw new Error('Denied'); })).toBe(false);
+    expect(changed.mock.lastCall![0]).toMatchObject({ message: 'Original failure', actionError: expect.stringContaining('Copy failed') });
+    let finish!: () => void;
+    const copying = controller.copy(id, () => new Promise<void>(resolve => { finish = resolve; }));
+    controller.show({ level: 'warning', message: 'Newer failure' });
+    finish(); expect(await copying).toBe(false);
+    expect(changed.mock.lastCall![0]?.message).toBe('Newer failure'); controller.dispose();
+  });
+
+  it('cancels only the captured operation and preserves an unconfirmed cancellation', async () => {
+    const changed = vi.fn(), controller = createDashboardToastController(changed), cancel = vi.fn(async () => false);
+    controller.show({ level: 'warning', message: 'Queued work', cancel });
+    const id = changed.mock.lastCall![0]!.id;
+    expect(await controller.cancel(id)).toBe(false);
+    expect(changed.mock.lastCall![0]).toMatchObject({ message: 'Queued work', actionError: expect.stringContaining('Cancellation was not confirmed') });
+    cancel.mockResolvedValue(true);
+    expect(await controller.cancel(id)).toBe(true);
+    expect(changed.mock.lastCall![0]).toBeUndefined();
+    expect(await controller.cancel(id)).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(2); controller.dispose();
   });
 
   it("closes browser push notifications on replacement, timeout, and reload", () => {

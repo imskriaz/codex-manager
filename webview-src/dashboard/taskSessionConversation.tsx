@@ -1,4 +1,5 @@
 import { useTaskViewPosition } from './taskViewPosition';
+import type { DashboardLocalNotice } from './toast';
 import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { isCodexSessionRunning } from '../../src/domain/codexSessionState';
 import { useSessionResume } from './sessionResume';
@@ -35,7 +36,7 @@ export function TaskSessionConversation(props: {
   const currentScope = useRef(scope); currentScope.current = scope;
   const mounted = useRef(true);
   useEffect(() => { if (props.connected !== false) setNotice(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
-  const report = (input: DashboardNotice) => { const value = { ...input, message: sessionFailureMessage(input.message, 'Task management') }; if (currentScope.current === scope) setNotice(value); props.onFeedback(value); };
+  const report = (input: DashboardLocalNotice) => { const value = { ...input, message: sessionFailureMessage(input.message, 'Task management') }; if (currentScope.current === scope) setNotice(value); props.onFeedback(value); };
   useEffect(() => setNotice(undefined), [scope]);
   useEffect(() => {
     if (notice?.level !== 'info') return;
@@ -83,7 +84,7 @@ export function TaskSessionConversation(props: {
       ? props.sendAction('steerCodexCliSessionTurn', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId, expectedTurnId: steerTurnId })
       : !running ? props.sendAction('sendCodexCliSessionMessage', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId }) : undefined,
     restore: value => { if (!canRestoreCliComposerDraft(current.current, value)) { report({ level: 'warning', message: 'Your newer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; } current.current = restoreFailedCliComposerDraft(current.current, value); setDraft(current.current); return true; },
-    feedback: message => report({ level: 'warning', message })
+    feedback: (message, cancel) => report({ level: 'warning', message, cancel })
   });
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {

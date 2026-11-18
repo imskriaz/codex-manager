@@ -771,7 +771,7 @@ describe("sessions sidebar layout", () => {
   it("keeps transient session verification waits compact and recoverable", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("Reconnecting to Codex… your message is saved and will continue automatically.");
-    expect(source).toContain("setInterval(() => { if (document.visibilityState !== \"hidden\") props.onRefresh(); }, 1000)");
+    expect(source).toContain("verifyStatus.current(); delay = Math.min(delay * 2, 15_000)");
   });
 
   it("keeps new-chat in the workspace composer without a default-surface setting", () => {

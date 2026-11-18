@@ -53,7 +53,7 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { webview?: boolean; scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string) => void }) {
+export function useCliMessageQueue(props: { webview?: boolean; scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string, cancel?: () => Promise<boolean>) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
@@ -164,11 +164,27 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     }, Math.max(65_000, chatUploadTimeoutMs(pending.draft.attachments)));
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
+  const remove = async (id: string, restore = false): Promise<boolean> => {
+    const item = current.current.find(item => item.id === id);
+    if (!owned.current || !item || item.state === 'sending') return false;
+    if (restore && !options.current.restore(item.draft)) return false;
+    const index = current.current.indexOf(item), epoch = generation.current;
+    const next = current.current.filter(item => item.id !== id); update(next);
+    const saved = await save(next).catch(() => false);
+    if (epoch !== generation.current) return false;
+    if (saved) return true;
+    if (!current.current.some(item => item.id === id)) {
+      const restored = [...current.current];
+      restored.splice(Math.min(index,restored.length),0,{...item,state:'failed',error:'The saved message could not be removed. It was kept here; verify it before reopening or resending.'});
+      update(restored);
+    }
+    return false;
+  };
   return { items, ready, error, notice, reason: props.dispatchReason, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
     steerNow: (id: string) => {
       const item = current.current.find(entry => entry.id === id), epoch = generation.current;
       if (!owned.current || !ready || !item || item.state !== 'queued' || item.durable === false) { setNotice('This message is not ready to steer. Check its queue status before retrying.'); return; }
-      if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) { const message = options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'; setNotice(message); options.current.feedback(message); return; }
+      if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) { const message = options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'; setNotice(message); options.current.feedback(message, async () => epoch === generation.current && current.current.some(entry => entry.id === id && entry.state === 'queued') ? remove(id) : false); return; }
       if (draining.current || current.current.some(entry => entry.state === 'sending')) { const message = 'Another queued message is already sending. Wait for confirmation before steering this message.'; setNotice(message); options.current.feedback(message); return; }
       draining.current = true;
       const sending = { ...item, state: 'sending' as const, durable: false, seenIds: options.current.messages.map(message => message.id).slice(-3000), turnId: options.current.turnId };
@@ -244,19 +260,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
         update(updated);
       });
     },
-    remove: (id: string, restore = false) => {
-      const item = current.current.find(item => item.id === id);
-      if (!owned.current || !item || item.state === 'sending') return;
-      if (restore && !props.restore(item.draft)) return;
-      const index = current.current.indexOf(item), epoch = generation.current;
-      const next = current.current.filter(item => item.id !== id); update(next);
-      void save(next).then(saved => {
-        if (saved || epoch !== generation.current || current.current.some(item => item.id === id)) return;
-        const restored = [...current.current];
-        restored.splice(Math.min(index,restored.length),0,{...item,state:'failed',error:'The saved message could not be removed. It was kept here; verify it before reopening or resending.'});
-        update(restored);
-      });
-    }
+    remove
   };
 }
 
