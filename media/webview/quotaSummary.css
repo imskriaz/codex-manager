@@ -16743,7 +16743,6 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: calc(9px *
 
 /* Final compact layout rules follow the legacy skins so mobile sizing wins. */
 html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.155; }
-html[data-dashboard-host="browser"] body { font-size: calc(14px * var(--dashboard-text-scale, 1)); }
 .cli-context-meter { display: inline-flex; flex: none; align-items: center; gap: 3px; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); line-height: 1.2; }
 .cli-context-meter svg { width: 20px; height: 20px; transform: rotate(-90deg); }
 .cli-context-meter circle { fill: none; stroke-width: 2.4; }
