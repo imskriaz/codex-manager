@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.6-pre.76
+
+- Keep only the original close button on dashboard toasts; remove the added copy, cancel, and clear icons.
+
+## 2.0.6-pre.75
+
+- Attempt manual sends without waiting on cached running status or background actions, honor explicit Queue mode, and preserve visible Send/Steer errors with Retry.
+
+## 2.0.6-pre.74
+
+- Keep terminal actions in one toolbar, refresh the list and shell screens together, and make the trash button close the selected terminal with confirmation.
+
+## 2.0.6-pre.73
+
+- Enable the interactive Terminal tool in standalone workspaces while preserving standalone chat settings and hiding the VS Code terminal action on the local Node host.
+
 ## 2.0.6-pre.71
 
 - Block identical follow-up sends while a new-session prompt or recent transcript entry is still pending, coalesce duplicate session action requests across request IDs, and refresh stale running/disconnected conversations with bounded status reads.

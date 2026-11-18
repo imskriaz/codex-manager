@@ -905,6 +905,7 @@ export interface DashboardCliModelOption {
 
 export interface DashboardCliComposerConfig {
   modelDiscoveryWarning?: string;
+  standalone?: boolean;
   terminalSupported?: boolean;
   models: DashboardCliModelOption[];
   /** Workspace folders available as the Codex project working directory. */

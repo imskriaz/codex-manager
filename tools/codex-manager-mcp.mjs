@@ -89,6 +89,7 @@ async function action(args, signal) {
   if (!object(args) || typeof args.action !== "string" || (args.payload !== undefined && !object(args.payload)))
     throw new Error("Supply action and an optional payload object.");
   const requestId = args.requestId || randomUUID();
+  if (args.action === 'workspaceBrowser' && object(args.payload?.browserRequest)) args = { ...args, payload: { ...args.payload, browserRequest: { ...args.payload.browserRequest, openedBy: 'ai' } } };
   if (typeof requestId !== "string" || requestId.length > 100)
     throw new Error("Use a requestId of at most 100 characters.");
   const response = await api("/api/message", signal, {
@@ -199,7 +200,7 @@ const tools = [
   {
     name: "manager_browser",
     description:
-      "Control the shared right-panel development browser. Start with list/open, then snapshot. All mutations need the current page revision; keep operationId when checking the same attempt. Read HTML/computed styles, network/console/events, storage/cookies; inject or modify JavaScript/CSS/DOM via evaluate or page-scoped DevTools cdp commands. events uses an after cursor. Feedback is saved and visible in the panel. evaluate/cdp/storage changes require confirmed=true.",
+      "Control every tab in the shared Manager browser, including user-opened tabs. Start with list to discover all page IDs and revisions, then snapshot or screenshot. AI-opened tabs are labeled AI in the UI. All mutations need the current page revision; keep operationId when checking the same attempt. Read HTML, styles (params.action rules/listeners), loaded sources (html params.action resources/resource), network/console/events, storage/cookies; modify JavaScript/CSS/DOM via evaluate or page-scoped DevTools cdp commands. events uses an after cursor. Feedback is saved and visible in the panel. evaluate/cdp/storage changes require confirmed=true.",
     inputSchema: browserSchema
   }
 ];

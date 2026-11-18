@@ -131,6 +131,16 @@ it("shares pages, rejects stale writes, and never repeats an operation ID", asyn
   expect(snapshot.text).toContain("Save");
   expect((await workspaceBrowser("C:/other-project", { operation: "list" })).pages).toHaveLength(0);
 });
+it('lists user and AI tabs together and preserves provenance when either client operates on them', async () => {
+  const user = await open('manual-tab');
+  const ai = await workspaceBrowser(project, { operation: 'open', operationId: 'ai-tab', openedBy: 'ai', url: 'http://localhost:3000' });
+  expect(ai.pages).toEqual(expect.arrayContaining([expect.objectContaining({ id: user.pageId }), expect.objectContaining({ id: ai.pageId, openedBy: 'ai' })]));
+  const clicked = await workspaceBrowser(project, { operation: 'click', operationId: 'ai-clicks-user-tab', openedBy: 'ai', pageId: user.pageId, revision: user.revision, x: 1, y: 1 });
+  expect(clicked.pageId).toBe(user.pageId);
+  expect(clicked.pages.find(page => page.id === user.pageId)?.openedBy).toBeUndefined();
+  expect((await workspaceBrowser(project, { operation: 'list' })).pages.find(page => page.id === ai.pageId)?.openedBy).toBe('ai');
+  expect(() => validateBrowserRequest({ operation: 'open', openedBy: 'unknown' })).toThrow('origin');
+});
 it("stores feedback before acknowledging it, reports disk failures, and preserves feedback after browser reboot", async () => {
   const page = await open();
   const feedback = {

@@ -54,12 +54,13 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
-  it('reports terminal support from the current host even when the composer configuration is shared', async () => {
+  it('supports terminals on both hosts and keeps standalone mode separate from the shared composer configuration', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'codex-composer-host-')); roots.push(home);
-    expect((await readCodexCliComposerConfig(home)).terminalSupported).toBeUndefined();
+    expect(await readCodexCliComposerConfig(home)).toMatchObject({ terminalSupported: true, standalone: false });
     Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
-    try { expect((await readCodexCliComposerConfig(home)).terminalSupported).toBe(false); }
+    try { expect(await readCodexCliComposerConfig(home)).toMatchObject({ terminalSupported: true, standalone: true }); }
     finally { Reflect.deleteProperty(vscode.env, 'appHost'); }
+    expect(await readCodexCliComposerConfig(home)).toMatchObject({ terminalSupported: true, standalone: false });
   });
   it('opens saved history without waiting on runtime inspection while leaving an unverified writer locked', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'codex-display-only-')); roots.push(home);
@@ -1143,7 +1144,9 @@ describe("Codex session integration", () => {
       defaultReasoningEffort: "medium",
       defaultSandboxMode: "danger-full-access",
       projects: [],
-      hiddenProjectPaths: []
+      hiddenProjectPaths: [],
+      terminalSupported: true,
+      standalone: false
     });
   });
 

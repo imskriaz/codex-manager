@@ -45,6 +45,7 @@ export type BrowserOperation = (typeof BROWSER_OPERATIONS)[number];
 export type WorkspaceBrowserRequest = {
   operation: BrowserOperation;
   operationId?: string;
+  openedBy?: 'ai' | 'user';
   pageId?: string;
   revision?: string;
   url?: string;
@@ -65,7 +66,7 @@ export type WorkspaceBrowserRequest = {
 };
 export type BrowserDebugEvent = { sequence: number; timestamp: number; method: string; params: unknown; truncated?: boolean };
 export type WorkspaceBrowserState = {
-  pages: Array<{ id: string; url: string; title: string; revision: string }>;
+  pages: Array<{ id: string; url: string; title: string; revision: string; openedBy?: 'ai' | 'user' }>;
   pageId?: string;
   revision?: string;
   image?: string;
@@ -84,6 +85,7 @@ export type WorkspaceBrowserState = {
 export function validateBrowserRequest(value: unknown): WorkspaceBrowserRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a browser operation.");
   const row = value as Record<string, unknown>;
+  if (row['openedBy'] !== undefined && !['ai', 'user'].includes(String(row['openedBy']))) throw new Error('Invalid browser tab origin.');
   if (JSON.stringify(value).length > 128_000) throw new Error("Browser request exceeds 128 KB.");
   if (!BROWSER_OPERATIONS.includes(row["operation"] as BrowserOperation)) throw new Error("Unknown browser operation.");
   for (const key of ["pageId", "revision", "operationId", "feedbackId"])

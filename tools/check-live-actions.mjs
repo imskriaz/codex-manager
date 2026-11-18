@@ -128,11 +128,13 @@ const addTool = async name => {
 };
 let terminalId;
 let terminalSupported = true;
+let standalone = false;
 let observer;
 try {
   await page.goto(`${origin}/workspace`);
   const list = await action("listCodexCliSessions");
   terminalSupported = list.payload.cliComposerConfig.terminalSupported !== false;
+  standalone = list.payload.cliComposerConfig.standalone === true;
   const projects = list.payload.cliComposerConfig.projects ?? [];
   let stale;
   for (const candidate of list.payload.cliSessions) {
@@ -484,7 +486,7 @@ try {
   const accountState = await (await fetch(`${origin}/api/state`)).json();
   await record(accountState.accounts?.length ? "live account filter counts, search, card/table views and quota metrics" : "empty account dashboard", async () => {
     await page.goto(`${origin}/`);
-    if (!terminalSupported) {
+    if (standalone) {
       await page.locator('.overview-more-wrap button').first().click();
       assert.equal(await page.getByRole('menuitem', { name: 'Codex', exact: true }).count(), 0);
       await page.keyboard.press('Escape');

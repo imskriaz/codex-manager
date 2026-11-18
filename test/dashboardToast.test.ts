@@ -177,15 +177,17 @@ describe("dashboard toast", () => {
     expect(css).toContain(".cli-workspace .cli-composer-unavailable { width: calc(100% - 16px);");
   });
 
-  it("offers cancel, copy, and clear controls for visible action notices", () => {
+  it("keeps only the original close button for visible notices", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(main).toContain('aria-label="Cancel queued message"');
-    expect(main).toContain('aria-label="Copy notification"');
-    expect(main).toContain('aria-label="Clear notification"');
-    expect(main).toContain('dashboard-notice-icon-action');
-    expect(main).toContain('copy(notice.id, copyWorkspaceText)');
-    expect(css).toContain(".dashboard-notice-actions");
+    expect(main).toContain('aria-label="Dismiss notification"');
+    for (const label of ['Cancel queued message', 'Copy notification', 'Clear notification']) {
+      expect(main).not.toContain('aria-label="' + label + '"');
+    }
+    expect(main).not.toContain('dashboard-notice-icon-action');
+    expect(css).not.toContain(".dashboard-notice-actions");
+    expect(css).toContain('grid-template-columns: 8px minmax(0, 1fr) 28px');
+    expect(css).toContain('grid-template-columns: 6px minmax(0, 1fr) 24px');
   });
 
   it('copies the original notification and clears it only after clipboard confirmation', async () => {

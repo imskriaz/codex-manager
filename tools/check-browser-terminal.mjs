@@ -122,7 +122,7 @@ try {
     if (side === 'bottom') assert.ok(bounds.y >= stage.y + stage.height - 2);
     if (side === 'right') assert.ok(bounds.x >= stage.x + stage.width - 2);
   }
-  for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Feedback']) {
+  for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory', 'Comments']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
@@ -182,9 +182,9 @@ try {
   assert.equal(await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).inputValue(), 'Improve this layout');
   rejectSave = false;
   await ui.getByRole('button', { name: 'Save feedback' }).click();
-  await ui.waitForFunction(() => document.querySelector('[aria-label="Area instruction or design feedback"]').value === '');
+  await ui.getByRole('dialog', { name: 'Comment on mark', exact: true }).waitFor({ state: 'detached' });
   console.log('Storage failure preserves the draft; saving after recovery passed.');
-  await ui.getByText('Saved feedback (2)', { exact: true }).click();
+  await inspector.getByRole('tab', { name: 'Comments', exact: true }).click();
   const note = ui.locator('.workspace-browser article').filter({ hasText: 'Improve this layout' });
   await note.getByRole('button', { name: 'Add to instruction' }).click();
   await ui.waitForFunction(() => document.querySelector('#instruction').value.includes('Improve this layout') && document.querySelector('#instruction-image').src.startsWith('data:image/jpeg'));

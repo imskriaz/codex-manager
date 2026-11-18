@@ -63,7 +63,6 @@ import {
 import { useDashboardActions, useDashboardHostSync, useDashboardModals } from "./hooks";
 import {
   CodexSessionsIcon,
-  CopyIcon,
   EyeIcon,
   EyeOffIcon,
   GridViewIcon,
@@ -103,7 +102,7 @@ import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedba
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { AutoResumeIcon, copyWorkspaceText, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { isCodexSessionInspectionNotice, filterCliSessionsBySection, isCodexSessionRunningForDisplay, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -1264,7 +1263,8 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "sendCodexCliSessionMessage") {
-        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status);
+        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status,
+          message.error ?? (message.status === "completed" && !message.payload?.cliSession ? "The send response was incomplete. Refresh the conversation before retrying." : undefined));
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         const target = turnRequests.current.get(message.requestId);
         turnRequests.current.delete(message.requestId);
@@ -1333,7 +1333,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "steerCodexCliSessionTurn") {
-        recordSubmissionResult(message.requestId, message.status);
+        recordSubmissionResult(message.requestId, message.status, message.error);
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         const target = turnRequests.current.get(message.requestId);
         turnRequests.current.delete(message.requestId);
@@ -2955,7 +2955,7 @@ function App() {
             onDisableAll={() => sendAction("disableAll")}
             showCliSessions={snapshot.settings.cliIntegrationEnabled === true}
             onOpenCliSessions={openCliSessions}
-            onOpenCodex={cliComposerConfig?.terminalSupported === false ? undefined : () => sendAction("openNewCodexWebview")}
+            onOpenCodex={cliComposerConfig?.standalone ? undefined : () => sendAction("openNewCodexWebview")}
             onResumeSessions={() => sendAction("resumeCodexSessions")}
             resumeSessionsPending={isActionPending("resumeCodexSessions")}
             codexOpenPending={isActionPending("openNewCodexWebview")}
@@ -2982,31 +2982,6 @@ function App() {
                 role={notice.level === "error" ? "alert" : "status"}
               >
                 <span>{notice.message}{notice.actionError ? <small class="dashboard-notice-action-error" role="alert">{notice.actionError}</small> : null}</span>
-                <div class="dashboard-notice-actions">
-                  {notice.cancel ? <button
-                    type="button"
-                    class="dashboard-notice-action dashboard-notice-icon-action"
-                    aria-label="Cancel queued message"
-                    title="Cancel queued message"
-                    disabled={!!notice.pendingAction}
-                    onClick={() => { void noticeControllerRef.current?.cancel(notice.id).then(cleared => { if (cleared) closeBrowserPush(); }); }}
-                  ><NoticeCancelIcon /></button> : null}
-                  <button
-                    type="button"
-                    class="dashboard-notice-action dashboard-notice-icon-action"
-                    aria-label="Copy notification"
-                    title="Copy notification"
-                    disabled={!!notice.pendingAction}
-                    onClick={() => { void noticeControllerRef.current?.copy(notice.id, copyWorkspaceText).then(cleared => { if (cleared) closeBrowserPush(); }); }}
-                  ><CopyIcon /></button>
-                  <button
-                    type="button"
-                    class="dashboard-notice-action dashboard-notice-icon-action"
-                    aria-label="Clear notification"
-                    title="Clear notification"
-                    onClick={() => { noticeControllerRef.current?.dismiss(notice.id); closeBrowserPush(); }}
-                  ><NoticeCloseIcon /></button>
-                </div>
                 <button
                   type="button"
                   aria-label="Dismiss notification"
@@ -3227,7 +3202,7 @@ function App() {
               quotaWarningSettings={snapshot?.settings}
               connectionStatus={null}
               browser={isBrowserDashboard}
-              standalone={cliComposerConfig?.terminalSupported === false}
+              standalone={cliComposerConfig?.standalone}
               dashboardMode={browserPath === "/" || browserPath === "/tasks" || apiTokenOpen}
               taskBoardActive={browserPath === '/tasks'}
               apiActive={apiTokenOpen}
@@ -3516,14 +3491,6 @@ function App() {
       />
     </>
   );
-}
-
-function NoticeCloseIcon() {
-  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>;
-}
-
-function NoticeCancelIcon() {
-  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" /><path d="m9 9 6 6m0-6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>;
 }
 
 function WorkspaceConnectionBanner(props: { stage: ConnectionStage; onReload: () => void }) {

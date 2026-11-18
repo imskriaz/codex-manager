@@ -13,7 +13,7 @@ import { projectTaskKey } from "./projectTasks";
 import { waitWithin } from "../utils/concurrency";
 import { browserDebugCommand, createBrowserDebugger, type BrowserDebugger } from './workspaceBrowserDebug';
 
-type ManagedPage = { page: Page; revision: string; logs: string[]; debug?: Promise<BrowserDebugger> };
+type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; debug?: Promise<BrowserDebugger> };
 type Session = { context: BrowserContext; pages: Map<string, ManagedPage> };
 const sessions = new Map<string, Session>();
 const busy = new Set<string>();
@@ -80,7 +80,8 @@ async function state(project: string, pageId?: string, image = false): Promise<W
       id,
       url: item.page.url(),
       title: await waitWithin(item.page.title(), 3000, "Page title is unavailable.").catch(() => "Unavailable"),
-      revision: item.revision
+      revision: item.revision,
+      ...(item.openedBy ? { openedBy: item.openedBy } : {})
     }))
   );
   const item = pageId ? session?.pages.get(pageId) : undefined;
@@ -178,6 +179,7 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
     try { page = await session.context.newPage(); }
     catch (error) { if (!session.pages.size) { sessions.delete(project); await session.context.close().catch(() => undefined); } throw error; }
     const id = [...session.pages].find(([, item]) => item.page === page)?.[0] ?? register(session, page);
+    session.pages.get(id)!.openedBy = r.openedBy;
     if (url !== "about:blank") {
       try {
         await debuggerFor(session.pages.get(id)!);
@@ -361,6 +363,9 @@ function register(session: Session, page: Page): string {
   const id = randomUUID(),
     item: ManagedPage = { page, revision: randomUUID(), logs: [] };
   session.pages.set(id, item);
+  if (typeof page.opener === 'function') void page.opener().then(opener => {
+    if (opener && !item.openedBy) item.openedBy = [...session.pages.values()].find(parent => parent.page === opener)?.openedBy;
+  }).catch(() => undefined);
   page.on("close", () => {
     session.pages.delete(id);
     if (!session.pages.size) {

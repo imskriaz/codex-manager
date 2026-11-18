@@ -2,8 +2,19 @@ import { expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 vi.mock('preact/hooks', () => ({ useState: (value: unknown) => [value, vi.fn()], useRef: (value: unknown) => ({ current: value ?? null }), useId: () => 'composer-fixture', useLayoutEffect: () => undefined, useEffect: () => undefined }));
-import { Composer, TurnUsageStrip } from '../webview-src/dashboard/cliSessionsModal';
+import { Composer, QueuedMessages, TurnUsageStrip } from '../webview-src/dashboard/cliSessionsModal';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
+
+it('shows saved send errors and waiting reasons without opening the queue row', () => {
+  const tree = nodes(QueuedMessages({ queue: {
+    items: [{ id: 'failed-send', state: 'failed', draft: { text: 'Keep this prompt', attachments: [] }, error: 'The owner disconnected.', createdAt: 0, seenIds: [] }],
+    ready: true, connected: true, reason: 'Waiting for the current turn to finish.',
+  } as Parameters<typeof QueuedMessages>[0]['queue'], onRefresh() {} }));
+  expect(tree.find(node => node.type === 'details')?.props.open).toBe(true);
+  expect(tree.find(node => node.props.role === 'alert')?.props.children).toBe('The owner disconnected.');
+  expect(tree.find(node => node.props.role === 'status')?.props.children).toBe('Waiting for the current turn to finish.');
+  expect(tree.some(node => node.props['aria-label'] === 'Resend queued message')).toBe(true);
+});
 
 it('keeps the composer stable without status rows or connection placeholders', () => {
   const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
@@ -15,6 +26,8 @@ it('keeps the composer stable without status rows or connection placeholders', (
     expect(tree.some(node => node.props.role === 'alert')).toBe(false);
   }
   expect(nodes(Composer({ ...config, unavailableReason: 'Reconnecting…' })).find(node => node.type === 'textarea')?.props.placeholder).toBe('Message Codex…');
+  const sending = nodes(Composer({ ...config, draft: 'Send immediately', resuming: true, stopping: true }));
+  expect(sending.find(node => node.type === 'button' && node.props.type === 'submit')?.props.disabled).toBe(false);
 });
 
 it('exposes Queue and Steer follow-up modes in Message settings', () => {

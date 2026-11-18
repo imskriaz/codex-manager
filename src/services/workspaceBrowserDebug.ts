@@ -5,7 +5,7 @@ import { waitWithin } from '../utils/concurrency';
 
 const domains = new Set(['Accessibility', 'Animation', 'Audits', 'CSS', 'CacheStorage', 'DOM', 'DOMDebugger', 'DOMSnapshot', 'DOMStorage', 'Debugger', 'Emulation', 'Fetch', 'IndexedDB', 'Input', 'Inspector', 'LayerTree', 'Log', 'Media', 'Network', 'Overlay', 'Page', 'Performance', 'PerformanceTimeline', 'Profiler', 'Runtime', 'Security', 'WebAudio', 'WebAuthn']);
 const blocked = new Set(['Page.setDownloadBehavior', 'DOM.setFileInputFiles', 'Network.clearBrowserCache', 'Network.clearBrowserCookies', 'Network.getAllCookies']);
-const defaults = ['Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed', 'Network.webSocketCreated', 'Network.webSocketFrameReceived', 'Network.webSocketFrameSent', 'Runtime.consoleAPICalled', 'Runtime.exceptionThrown', 'Page.javascriptDialogOpening', 'Page.frameNavigated', 'DOMStorage.domStorageItemAdded', 'DOMStorage.domStorageItemUpdated', 'DOMStorage.domStorageItemRemoved', 'DOMStorage.domStorageItemsCleared', 'Fetch.requestPaused', 'Fetch.authRequired', 'CSS.styleSheetAdded', 'Debugger.paused'];
+const defaults = ['Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed', 'Network.webSocketCreated', 'Network.webSocketFrameReceived', 'Network.webSocketFrameSent', 'Runtime.consoleAPICalled', 'Runtime.exceptionThrown', 'Log.entryAdded', 'Page.javascriptDialogOpening', 'Page.frameNavigated', 'DOMStorage.domStorageItemAdded', 'DOMStorage.domStorageItemUpdated', 'DOMStorage.domStorageItemRemoved', 'DOMStorage.domStorageItemsCleared', 'Fetch.requestPaused', 'Fetch.authRequired', 'CSS.styleSheetAdded', 'Debugger.paused', 'Debugger.resumed'];
 export type BrowserDebugger = { client: CDPSession; events: BrowserDebugEvent[]; sequence: number; subscribed: Set<string> };
 
 export function validateDebugMethod(method: string): void {
@@ -19,7 +19,7 @@ export async function createBrowserDebugger(page: Page): Promise<BrowserDebugger
   try {
     await waitWithin(Promise.all([
       client.send('Network.enable', { maxTotalBufferSize: 8 * 1024 * 1024, maxResourceBufferSize: 1024 * 1024, maxPostDataSize: 64 * 1024 }),
-      client.send('Runtime.enable'), client.send('Page.enable'), client.send('DOMStorage.enable')
+      client.send('Runtime.enable'), client.send('Page.enable'), client.send('DOMStorage.enable'), client.send('Log.enable')
     ]), 5000, 'Browser diagnostics startup timed out.');
     return debug;
   } catch (error) { await client.detach().catch(() => undefined); throw error; }
@@ -52,14 +52,77 @@ function subscribe(debug: BrowserDebugger, names: string[]): void {
 }
 
 export async function browserDebugCommand(page: Page, debug: BrowserDebugger, r: WorkspaceBrowserRequest): Promise<unknown> {
-  if (r.operation === 'html') return r.selector ? page.locator(r.selector).evaluate(element => element.outerHTML) : page.content();
-  if (r.operation === 'styles') return page.locator(r.selector || 'body').evaluate(element => ({ html: element.outerHTML, styles: Object.fromEntries(Array.from(getComputedStyle(element), key => [key, getComputedStyle(element).getPropertyValue(key)])) }));
+  if (r.operation === 'html') {
+    if (r.params?.['action'] === 'metrics') { await debug.client.send('Performance.enable'); return debug.client.send('Performance.getMetrics'); }
+    if (r.params?.['action'] === 'heap') return debug.client.send('Runtime.getHeapUsage');
+    if (r.params?.['action'] === 'response') {
+      if (typeof r.params['requestId'] !== 'string') throw new Error('Choose a captured request.');
+      return debug.client.send('Network.getResponseBody', { requestId: r.params['requestId'] });
+    }
+    if (r.params?.['action'] === 'resources') return debug.client.send('Page.getResourceTree');
+    if (r.params?.['action'] === 'resource') {
+      const { frameId, url } = r.params;
+      if (typeof frameId !== 'string' || typeof url !== 'string') throw new Error('Choose a page resource.');
+      const { frameTree } = await debug.client.send('Page.getResourceTree');
+      const belongs = (tree: typeof frameTree): boolean => tree.frame.id === frameId && (tree.frame.url === url || tree.resources.some(resource => resource.url === url)) || (tree.childFrames ?? []).some(belongs);
+      if (!belongs(frameTree)) throw new Error('Choose a resource from this page.');
+      return debug.client.send('Page.getResourceContent', { frameId, url });
+    }
+    return r.selector ? page.locator(r.selector).evaluate(element => element.outerHTML) : page.content();
+  }
+  if (r.operation === 'styles') {
+    const selector = r.x !== undefined && r.y !== undefined ? await page.evaluate(({ x, y }) => {
+      let element = document.elementFromPoint(x, y);
+      if (!element) throw new Error('No element at this point.');
+      const parts: string[] = [];
+      while (element) {
+        const tag = element.tagName.toLowerCase();
+        const siblings = element.parentElement ? Array.from(element.parentElement.children).filter(sibling => sibling.tagName === element!.tagName) : [element];
+        parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(element) + 1})`);
+        element = element.parentElement;
+      }
+      return parts.join(' > ');
+    }, { x: r.x, y: r.y }) : r.selector || 'body';
+    if (r.params?.['action'] === 'listeners') {
+      const expression = r.params['ancestors'] === true ? `(() => { let element = document.querySelector(${JSON.stringify(selector)}); const targets = []; while (element) { targets.push(element); element = element.parentNode; } targets.push(window); return targets; })()` : `document.querySelector(${JSON.stringify(selector)})`;
+      const result = await debug.client.send('Runtime.evaluate', { expression, objectGroup: 'manager-listeners' });
+      const objectId = result.result.objectId;
+      if (!objectId) throw new Error('The selected element is no longer available. Select it again.');
+      try {
+        const targets = r.params['ancestors'] === true ? (await debug.client.send('Runtime.getProperties', { objectId, ownProperties: true })).result.filter(property => /^\d+$/.test(property.name) && property.value?.objectId).map(property => property.value!) : [{ objectId, description: selector }];
+        const listeners = [];
+        for (const target of targets) {
+          const result = await debug.client.send('DOMDebugger.getEventListeners', { objectId: target.objectId!, depth: 0, pierce: true });
+          listeners.push(...result.listeners.map(listener => ({ target: target.description, type: listener.type, useCapture: listener.useCapture, passive: listener.passive, once: listener.once, lineNumber: listener.lineNumber + 1, columnNumber: listener.columnNumber + 1, scriptId: listener.scriptId, handler: listener.handler?.description })));
+        }
+        return { selector, listeners };
+      } finally { await debug.client.send('Runtime.releaseObjectGroup', { objectGroup: 'manager-listeners' }); }
+    }
+    const value = await page.locator(selector).evaluate((element, selector) => ({ selector, html: element.outerHTML, styles: Object.fromEntries(Array.from(getComputedStyle(element), key => [key, getComputedStyle(element).getPropertyValue(key)])) }), selector);
+    if (r.params?.['action'] !== 'rules') return value;
+    await debug.client.send('DOM.enable');
+    await debug.client.send('CSS.enable');
+    const documentResult = await debug.client.send('DOM.getDocument');
+    const { nodeId } = await debug.client.send('DOM.querySelector', { nodeId: documentResult.root.nodeId, selector });
+    const matched = await debug.client.send('CSS.getMatchedStylesForNode', { nodeId });
+    return { ...value, rules: [{ selector: 'element.style', declarations: matched.inlineStyle?.cssText ?? '' }, ...(matched.matchedCSSRules ?? []).map(({ rule }) => ({ selector: rule.selectorList.text, declarations: rule.style.cssText ?? rule.style.cssProperties.filter(property => !property.implicit).map(property => `${property.name}: ${property.value}${property.important ? ' !important' : ''};`).join('\n') }))] };
+  }
   if (r.operation === 'storage') {
     const action = r.params?.['action'] ?? 'read';
-    if (action === 'read') return { cookies: await page.context().cookies(), ...(await page.evaluate(() => ({ origin: location.origin, localStorage: { ...localStorage }, sessionStorage: { ...sessionStorage } }))) };
+    if (action === 'read') return { cookies: await page.context().cookies(), ...(await page.evaluate(async () => {
+      if (location.origin === 'null') return { origin: location.origin, localStorage: {}, sessionStorage: {}, indexedDB: [], cacheStorage: [], serviceWorkers: [] };
+      return { origin: location.origin, localStorage: { ...localStorage }, sessionStorage: { ...sessionStorage }, indexedDB: await indexedDB.databases(), cacheStorage: 'caches' in window ? await caches.keys() : [], serviceWorkers: 'serviceWorker' in navigator ? (await navigator.serviceWorker.getRegistrations()).map(registration => ({ scope: registration.scope, scriptURL: registration.active?.scriptURL, state: registration.active?.state })) : [] };
+    })) };
     if (r.confirmed !== true) throw new Error('Storage changes require confirmed=true.');
     if (action === 'setCookies' && Array.isArray(r.params?.['cookies'])) { await page.context().addCookies(r.params['cookies'] as Parameters<ReturnType<Page['context']>['addCookies']>[0]); return { updated: true }; }
     if (action === 'clearCookies') { await page.context().clearCookies(); return { cleared: true }; }
+    if (action === 'clearLocalStorage' || action === 'clearSessionStorage') { await page.evaluate(action => { (action === 'clearLocalStorage' ? localStorage : sessionStorage).clear(); }, action); return { cleared: true }; }
+    if (action === 'setLocalStorage' || action === 'setSessionStorage' || action === 'removeLocalStorage' || action === 'removeSessionStorage') {
+      const { key, value } = r.params ?? {};
+      if (typeof key !== 'string' || key.length > 2000 || action.startsWith('set') && typeof value !== 'string') throw new Error('Provide a storage key and string value.');
+      await page.evaluate(({ action, key, value }) => { const storage = action.endsWith('LocalStorage') ? localStorage : sessionStorage; if (action.startsWith('remove')) storage.removeItem(key); else storage.setItem(key, value!); }, { action, key, value: value as string | undefined });
+      return { updated: true };
+    }
     throw new Error('Use storage action read, setCookies, or clearCookies. Change local/session storage with evaluate and IndexedDB/cache with DevTools.');
   }
   if (r.operation !== 'cdp' || !r.method) throw new Error('Choose a DevTools method.');

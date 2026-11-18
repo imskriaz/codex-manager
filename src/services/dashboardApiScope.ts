@@ -18,6 +18,7 @@ export async function authorizeApiMessage(token: DashboardApiToken, message: Das
     return message;
   }
   if (message.type !== 'dashboard:action' || !hasApiPermission(token, message.action)) throw new ApiPermissionError('This token does not permit that operation.');
+  if (message.action === 'workspaceBrowser' && message.payload?.browserRequest) message = { ...message, payload: { ...message.payload, browserRequest: { ...message.payload.browserRequest, openedBy: 'ai' } } };
   if (!projects.length) return message;
   const target = message.payload?.targetDeviceId;
   if (!PROJECT_API_ACTIONS.has(message.action) || target && target !== 'local' && target !== localDeviceId || message.accountId) throw new ApiPermissionError(`Operation ${message.action} is outside this token project scope. Account operations such as refreshAll require an all-project token.`);

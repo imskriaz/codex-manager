@@ -307,14 +307,13 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.locator('.workspace-xterm .xterm-helper-textarea').focus();
   await page.keyboard.type('echo fixture'); await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__uiActions.filter(action => action.action==='workspaceTerminal' && action.payload?.terminalRequest?.operation==='input').map(action=>action.payload.terminalRequest.data).join('').includes('echo fixture'));
-  await page.getByRole('button', exact('Reconnect terminal screen')).click();
+  await page.getByRole('button', exact('Refresh terminals')).click();
   await page.locator('.workspace-terminal-status').waitFor({state:'detached'});
   await page.locator('.workspace-xterm .xterm-helper-textarea').focus();
   await page.keyboard.press('ControlOrMeta+f');
   await page.getByRole('textbox', exact('Find terminal text')).fill('Fixture');
   await page.getByRole('button', exact('Close terminal search')).click();
   if (width === 1440 || width === 390) await page.screenshot({ path: path.join(output, `inspector-terminal-${width}.png`), animations: 'disabled' });
-  await page.getByRole('button', exact('Terminal actions')).click();
   await page.getByRole('button', exact('Close terminal')).click();
   await page.getByRole('dialog').getByRole('button', exact('Close terminal')).click();
   await page.getByRole('button', exact('New shared terminal')).waitFor();

@@ -12,6 +12,7 @@ import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
 import { checkSessionQuestionUi } from './check-session-question-ui.mjs';
 import { checkSteerUi } from './check-steer-ui.mjs';
+import { checkSendRecoveryUi } from './check-send-recovery-ui.mjs';
 import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
@@ -702,7 +703,7 @@ try {
     if (process.argv.includes('--recovery-toasts')) {
       await checkRecoveryToastUi(page, { origin, parentId, width, output });
       assert.deepEqual(errors, []);
-      results.push({ width, height, checks: 'Queue-bound cancellation, copy-and-clear, retained clipboard errors, compact toast geometry, automatic recovery backoff' });
+      results.push({ width, height, checks: 'Native toast close, preserved queued work, compact toast geometry, automatic recovery backoff' });
       await context.close(); continue;
     }
     if (process.argv.includes('--inline-copy')) {
@@ -860,6 +861,12 @@ try {
       await checkUploadsUi(page,{origin,parentId,width,height,output});
       assert.deepEqual(errors,[],'Document uploads have no browser runtime errors');
       results.push({width,height,checks:'PDF and DOCX uploads over 2 MB, durable queue, compact inline Resend, newer draft preservation, reload without replay'}); await context.close(); continue;
+    }
+    if (process.argv.includes('--send-recovery')) {
+      await checkSendRecoveryUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, [], 'Send recovery has no browser runtime errors');
+      results.push({ width, height, checks: 'Unknown status dispatches immediately, visible failure, explicit retry, newer draft preservation' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--steer')) {
       await checkSteerUi(page, { origin, parentId, width, output });

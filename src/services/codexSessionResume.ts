@@ -944,7 +944,7 @@ async function readKnownProjectRoots(home: string, force = false): Promise<strin
 export function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
   const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
   return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome))
-    .then(config => ({ ...config, projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), ...(vscode.env.appHost === 'node' ? { terminalSupported: false } : {}) }));
+    .then(config => ({ ...config, projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }));
 }
 
 async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {

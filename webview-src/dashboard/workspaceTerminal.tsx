@@ -1,6 +1,7 @@
 import { ToolIcon } from "./icons";
 import { WorkspaceMenu } from "./workspaceMenu";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { Ref } from "preact";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { SearchAddon } from "@xterm/addon-search";
@@ -17,8 +18,10 @@ import { createActionRequestId, postMessageToHost } from "./host";
 import { WorkspaceDialog as ModalShell } from "./workspaceDialog";
 
 let clientId = "";
+type TerminalScreenActions = { find: () => void; copy: () => void; clear: () => void };
 
 export default function WorkspaceTerminal(props: {
+  standalone?: boolean;
   projectPath?: string;
   targetDeviceId?: string;
   connected: boolean;
@@ -33,11 +36,14 @@ export default function WorkspaceTerminal(props: {
   const [terminals, setTerminals] = useState(props.terminals);
   const [selected, setSelected] = useState<string>();
   const [split, setSplit] = useState<string>();
+  const [screenRefresh, setScreenRefresh] = useState(0);
+  const screenActions = useRef<TerminalScreenActions>(null);
   const [profile, setProfile] = useState<"default" | "powershell" | "cmd" | "bash">("default");
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [uncertain, setUncertain] = useState(false);
   const [closeId, setCloseId] = useState<string>();
+  const [changeError, setChangeError] = useState("");
   const [renameId, setRenameId] = useState<string>(),
     [name, setName] = useState("");
   const generation = useRef(0);
@@ -78,10 +84,11 @@ export default function WorkspaceTerminal(props: {
       generation.current++;
     };
   }, [request]);
-  const refresh = async () => {
+  const refresh = async (reconnect = false) => {
     const token = generation.current;
     setBusy(true);
     setNotice("");
+    if (reconnect) setScreenRefresh(value => value + 1);
     try {
       const result = await request("listWorkspaceTerminals");
       if (token !== generation.current) {
@@ -135,6 +142,7 @@ export default function WorkspaceTerminal(props: {
   const change = async (operation: "close" | "rename", id: string) => {
     const token = generation.current;
     setBusy(true);
+    setChangeError("");
     try {
       const state = await request("workspaceTerminal", {
         terminalId: id,
@@ -155,6 +163,7 @@ export default function WorkspaceTerminal(props: {
     } catch (error) {
       if (token === generation.current) {
         setNotice((error as Error).message);
+        setChangeError((error as Error).message);
       }
     } finally {
       if (token === generation.current) {
@@ -204,22 +213,31 @@ export default function WorkspaceTerminal(props: {
           title="Refresh terminals"
           aria-label="Refresh terminals"
           disabled={busy || !props.connected}
-          onClick={() => void refresh()}
+          onClick={() => void refresh(true)}
         >
           <ToolIcon kind="refresh" />
+        </button>
+        <button type="button" title="Find in terminal" aria-label="Find in terminal" disabled={!current?.shared} onClick={() => screenActions.current?.find()}>
+          <ToolIcon kind="search" />
+        </button>
+        <button type="button" title="Copy selection" aria-label="Copy terminal selection" disabled={!current?.shared} onClick={() => screenActions.current?.copy()}>
+          <ToolIcon kind="copy" />
+        </button>
+        <button type="button" title="Close terminal" aria-label="Close terminal" disabled={busy || !current?.shared || !props.connected} onClick={() => { setChangeError(""); setCloseId(current?.id); }}>
+          <ToolIcon kind="clear" />
         </button>
         <WorkspaceMenu label="Terminal actions" icon={<ToolIcon kind="more" />}>
           <div>
             <label>
               Shell profile
               <select value={profile} onChange={(event) => setProfile(event.currentTarget.value as typeof profile)}>
-                <option value="default">VS Code default</option>
+                <option value="default">Default shell</option>
                 <option value="powershell">PowerShell</option>
                 <option value="cmd">Command Prompt</option>
                 <option value="bash">Bash</option>
               </select>
             </label>
-            <button
+            {!props.standalone ? <button
               type="button"
               disabled={!current || !props.connected}
               onClick={(event) => {
@@ -230,12 +248,13 @@ export default function WorkspaceTerminal(props: {
               }}
             >
               Show in VS Code
-            </button>
+            </button> : null}
             <button
               type="button"
               disabled={!current?.shared || !props.connected}
               onClick={(event) => {
                 event.currentTarget.closest("details")?.removeAttribute("open");
+                setChangeError("");
                 setName(current?.name ?? "");
                 setRenameId(current?.id);
               }}
@@ -244,13 +263,10 @@ export default function WorkspaceTerminal(props: {
             </button>
             <button
               type="button"
-              disabled={!current?.shared || !props.connected}
-              onClick={(event) => {
-                event.currentTarget.closest("details")?.removeAttribute("open");
-                setCloseId(current?.id);
-              }}
+              disabled={!current?.shared}
+              onClick={() => screenActions.current?.clear()}
             >
-              Close terminal
+              Clear local scrollback
             </button>
           </div>
         </WorkspaceMenu>
@@ -262,7 +278,7 @@ export default function WorkspaceTerminal(props: {
       ) : null}
       <div class={`workspace-terminal-panes ${second ? "is-split" : ""}`}>
         {current?.shared ? (
-          <TerminalScreen key={current.id} {...props} id={current.id} name={current.name} />
+          <TerminalScreen key={current.id} {...props} id={current.id} name={current.name} actions={screenActions} refreshNonce={screenRefresh} />
         ) : (
           <div class="workspace-tool-empty">
             <ToolIcon kind="terminal" />
@@ -307,7 +323,7 @@ export default function WorkspaceTerminal(props: {
             >
               <ToolIcon kind="close" />
             </button>
-            <TerminalScreen key={second.id} {...props} id={second.id} name={second.name} />
+            <TerminalScreen key={second.id} {...props} id={second.id} name={second.name} refreshNonce={screenRefresh} />
           </div>
         ) : null}
       </div>
@@ -329,6 +345,7 @@ export default function WorkspaceTerminal(props: {
           }
         >
           <p>Save work in running programs before closing this terminal.</p>
+          {changeError ? <p role="alert">{changeError}</p> : null}
         </ModalShell>
       ) : null}
       {renameId ? (
@@ -351,6 +368,7 @@ export default function WorkspaceTerminal(props: {
             Terminal name
             <input value={name} maxLength={80} onInput={(event) => setName(event.currentTarget.value)} />
           </label>
+          {changeError ? <p role="alert">{changeError}</p> : null}
         </ModalShell>
       ) : null}
     </section>
@@ -367,6 +385,8 @@ function TerminalScreen(props: {
   projectPath?: string;
   targetDeviceId?: string;
   connected: boolean;
+  actions?: Ref<TerminalScreenActions>;
+  refreshNonce: number;
 }) {
   const request = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected);
   const element = useRef<HTMLDivElement>(null),
@@ -378,8 +398,7 @@ function TerminalScreen(props: {
     [find, setFind] = useState<string>();
   const [canClaim, setCanClaim] = useState(false);
   const findInput = useRef<HTMLInputElement>(null);
-  const [refresh, setRefresh] = useState(0),
-    [claim, setClaim] = useState(false),
+  const [claim, setClaim] = useState(false),
     [ready, setReady] = useState(false);
   const controls = useRef<{ claim: () => void; fit: () => void }>({ claim: () => undefined, fit: () => undefined });
   useLayoutEffect(() => {
@@ -770,7 +789,7 @@ function TerminalScreen(props: {
       input.dispose();
       window.removeEventListener("message", receive);
     };
-  }, [props.id, props.connected, request, refresh, ready]);
+  }, [props.id, props.connected, request, props.refreshNonce, ready]);
   const copy = async () => {
     try {
       const value = terminal.current?.getSelection();
@@ -784,42 +803,16 @@ function TerminalScreen(props: {
       setNotice("Clipboard access was denied. Use Ctrl+Shift+C to copy the selection.");
     }
   };
+  useImperativeHandle(props.actions ?? null, () => ({
+    find: () => setFind(value => value === undefined ? "" : undefined),
+    copy: () => void copy(),
+    clear: () => {
+      terminal.current?.clear();
+      setNotice("Local scrollback cleared. The shell continues running.");
+    }
+  }));
   return (
     <div class="workspace-terminal-screen">
-      <div class="workspace-terminal-caption">
-        <span title={props.name}>{props.name}</span>
-        <button
-          type="button"
-          title="Find in terminal"
-          aria-label="Find in terminal"
-          onClick={() => setFind(find === undefined ? "" : undefined)}
-        >
-          <ToolIcon kind="search" />
-        </button>
-        <button type="button" title="Copy selection" aria-label="Copy terminal selection" onClick={() => void copy()}>
-          <ToolIcon kind="copy" />
-        </button>
-        <button
-          type="button"
-          title="Clear local scrollback"
-          aria-label="Clear local terminal scrollback"
-          onClick={() => {
-            terminal.current?.clear();
-            setNotice("Local scrollback cleared. The shell continues running.");
-          }}
-        >
-          <ToolIcon kind="clear" />
-        </button>
-        <button
-          type="button"
-          title="Reconnect terminal screen"
-          aria-label="Reconnect terminal screen"
-          disabled={!props.connected}
-          onClick={() => setRefresh((value) => value + 1)}
-        >
-          <ToolIcon kind="refresh" />
-        </button>
-      </div>
       {find !== undefined ? (
         <form
           class="workspace-terminal-find"
