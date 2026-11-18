@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
 import { apiTokenProjects, type DashboardApiToken } from "../../src/domain/dashboard/apiActions";
-import { mapClaudeModels, mapDiscoveredModels, MODEL_PLACEHOLDER, type ApiProxyModel } from "./apiProxyModelMapping";
+import {
+  mapClaudeModels,
+  mapDiscoveredModels,
+  MODEL_PLACEHOLDER,
+  type ApiProxyModel,
+  type ClaudeModelMapping
+} from "./apiProxyModelMapping";
 
 export type ApiProxyKeyAccess = {
   tokens: DashboardApiToken[];
@@ -28,6 +34,7 @@ export function ApiProxyConnection(props: {
   const [pastedKey, setPastedKey] = useState("");
   const [waiting, setWaiting] = useState(false);
   const [models, setModels] = useState<ApiProxyModel[]>([]);
+  const [claudeMapping, setClaudeMapping] = useState<ClaudeModelMapping>(() => mapClaudeModels([]));
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
   const creating = useRef(false);
@@ -91,6 +98,16 @@ export function ApiProxyConnection(props: {
   const baseUrl = props.baseUrl?.replace(/\/+$/, "");
   const proxyUrl = baseUrl ? baseUrl + "/v1" : "";
   const modelMapping = mapClaudeModels(models);
+  useEffect(() => {
+    const available = new Set(models.map((model) => model.id));
+    setClaudeMapping((current) => {
+      const next = { ...modelMapping };
+      for (const key of Object.keys(next) as Array<keyof ClaudeModelMapping>) {
+        if (available.has(current[key])) next[key] = current[key];
+      }
+      return next;
+    });
+  }, [models]);
   const discoveryKey = keyValue === "YOUR_MANAGER_API_KEY" ? "" : keyValue;
   useEffect(() => {
     if (!props.open || !baseUrl || !discoveryKey) {
@@ -154,11 +171,11 @@ export function ApiProxyConnection(props: {
       env: {
         ANTHROPIC_BASE_URL: baseUrl || "https://YOUR_MANAGER_HOST",
         ANTHROPIC_AUTH_TOKEN: keyValue,
-        ANTHROPIC_MODEL: modelMapping.model,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: modelMapping.opus,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: modelMapping.sonnet,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: modelMapping.haiku,
-        ANTHROPIC_DEFAULT_FABLE_MODEL: modelMapping.fable
+        ANTHROPIC_MODEL: claudeMapping.model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: claudeMapping.opus,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: claudeMapping.sonnet,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeMapping.haiku,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: claudeMapping.fable
       }
     },
     null,
@@ -396,16 +413,31 @@ export function ApiProxyConnection(props: {
                   </thead>
                   <tbody>
                     {[
-                      ["default (claude-sonnet)", modelMapping.model],
-                      ["claude-opus", modelMapping.opus],
-                      ["claude-sonnet", modelMapping.sonnet],
-                      ["claude-haiku", modelMapping.haiku],
-                      ["claude-fable", modelMapping.fable]
-                    ].map(([label, id]) => (
+                      ["default (claude-sonnet)", "model"],
+                      ["claude-opus", "opus"],
+                      ["claude-sonnet", "sonnet"],
+                      ["claude-haiku", "haiku"],
+                      ["claude-fable", "fable"]
+                    ].map(([label, key]) => (
                       <tr key={label}>
                         <th scope="row">{label}</th>
                         <td>
-                          <code>{id}</code>
+                          <select
+                            aria-label={`Proxy model for ${label}`}
+                            value={claudeMapping[key as keyof ClaudeModelMapping]}
+                            onChange={(event) =>
+                              setClaudeMapping((current) => ({
+                                ...current,
+                                [String(key)]: event.currentTarget.value
+                              }))
+                            }
+                          >
+                            {models.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {model.id}{model.name !== model.id ? ` — ${model.name}` : ""}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                       </tr>
                     ))}
