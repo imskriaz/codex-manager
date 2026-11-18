@@ -15920,9 +15920,9 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .cli-workspace .is-dense-tree .cli-project-select[aria-expanded="true"] .cli-project-fold svg { transform:none; }
 .cli-workspace .is-dense-tree .cli-project-select:hover { background:var(--bg-hover); }
 .cli-workspace .is-dense-tree .cli-project-row { position:relative; }
-.cli-workspace .is-dense-tree .cli-project-edit { position:absolute; top:50%; left:0; display:grid; opacity:0; place-items:center; width:22px; min-width:22px; height:24px; min-height:24px; padding:4px; border:0; border-radius:4px; background:var(--bg-surface); color:var(--text-muted); transform:translateY(-50%); }
+.cli-workspace .is-dense-tree .cli-project-edit { position:absolute; top:50%; left:0; display:grid; opacity:0; pointer-events:none; place-items:center; width:22px; min-width:22px; height:24px; min-height:24px; padding:4px; border:0; border-radius:4px; background:var(--bg-surface); color:var(--text-muted); transform:translateY(-50%); }
 .cli-workspace .is-dense-tree .cli-project-edit svg { width:14px; height:14px; }
-.cli-workspace .is-dense-tree .cli-project-row:hover .cli-project-edit,.cli-workspace .is-dense-tree .cli-project-row:focus-within .cli-project-edit { opacity:1; }
+.cli-workspace .is-dense-tree .cli-project-row:hover .cli-project-edit,.cli-workspace .is-dense-tree .cli-project-row:focus-within .cli-project-edit { opacity:1; pointer-events:auto; }
 .cli-workspace .is-dense-tree .cli-project-edit:hover,.cli-workspace .is-dense-tree .cli-project-edit:focus-visible { background:var(--bg-hover); color:var(--text-primary); }
 .cli-workspace .is-dense-tree .cli-project-row.is-selected .cli-project-select strong { font-weight:700; }
 .cli-workspace .is-dense-tree .cli-project-sessions { margin:0 0 2px; padding:0; border:0; }
@@ -15937,7 +15937,6 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .cli-workspace .cli-project-empty button { padding:0; min-height:20px; border:0; background:transparent; color:var(--accent-blue); font:inherit; }
 .cli-workspace .cli-project-row.is-drop-target { outline:1px solid var(--accent-blue); outline-offset:-1px; }
 .cli-workspace .cli-session-row.is-running .cli-session-spinner { opacity:1 !important; visibility:visible; }
-@media (hover:none) { .cli-workspace .is-dense-tree .cli-project-edit { opacity:1; } }
 .cli-workspace .is-dense-tree .cli-project-select:focus-visible,.cli-workspace .is-dense-tree .cli-pc-group-toggle:focus-visible,.cli-workspace .is-dense-tree .cli-session-row-select:focus-visible { outline:2px solid var(--accent-blue); outline-offset:-2px; }
 @media(max-width:760px),(hover:none) {
   .cli-workspace .is-dense-tree .cli-pc-group-toggle,.cli-workspace .is-dense-tree .cli-project-select { min-height:32px; }
@@ -17792,14 +17791,32 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .dashboard-content .overview-account .overview-meta { grid-template-rows: auto; gap: 4px; padding-top: 5px; }
 .dashboard-content .overview-meta-item { min-height: 0; gap: 2px; padding: 4px 6px; }
 .dashboard-content .overview-account { align-self: start; }
-.dashboard-content .saved-card-front { min-height: 0; }
+.dashboard-content .saved-card-inner:not(.flipped) .saved-card-back { position: absolute; inset: 0; overflow: hidden; }
+.dashboard-content .saved-card-front {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "identity primary secondary" "meta primary secondary" "quota quota quota";
+  align-items: center;
+  gap: 2px 3px;
+  min-height: 0;
+}
+.dashboard-content .saved-card-front :is(.saved-head, .saved-card-footer) { display: contents; }
+.dashboard-content .saved-card-front .saved-title { grid-area: identity; }
+.dashboard-content .saved-card-front .saved-credit-summary { grid-area: meta; gap: 3px; }
+.dashboard-content .saved-card-front .saved-top-actions { grid-area: primary; }
+.dashboard-content .saved-card-front .saved-actions { grid-area: secondary; }
+.dashboard-content .saved-card-front :is(.saved-top-actions, .saved-actions) { align-items: center; align-self: stretch; gap: 2px; min-height: 0; }
+.dashboard-content .saved-card-front :is(.saved-control, .action-btn.icon-only, .saved-overflow-trigger) { width: 24px; min-width: 24px; height: 30px; min-height: 30px; padding: 2px; }
 .dashboard-content .saved-card-front .saved-progress {
+  grid-area: quota;
+  margin-top: 3px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 8px;
 }
 .dashboard-content .saved-progress > .row { min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .dashboard-content .saved-progress .label-wrap { flex: none; }
 .dashboard-content .saved-progress .metric-row-summary { flex: 1; }
+.dashboard-content :is(.saved-progress, .saved-table-metrics) .metric-row-summary { margin-left: 0; }
 .dashboard-content .overview-shell { grid-auto-rows: auto; align-items: start; }
 .dashboard-content .saved-card-container,
 .dashboard-content .saved-card-inner,
@@ -17846,7 +17863,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 }
 .dashboard-content :is(.saved-progress .row-head, .saved-table-metrics .row-head) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   min-width: 0;
   gap: 4px;
@@ -17857,6 +17874,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   overflow: hidden;
 }
 .dashboard-content :is(.saved-progress .metric-label, .saved-table-metrics .metric-label, .saved-progress .metric-reset-inline, .saved-table-metrics .metric-reset-inline) {
+  font-size: inherit;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -17864,11 +17882,11 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   white-space: nowrap;
 }
 .dashboard-content :is(.saved-progress .percent, .saved-table-metrics .percent) {
-  font-size: calc(11px * var(--dashboard-text-scale, 1));
+  font-size: inherit;
   white-space: nowrap;
 }
 
-@media (max-width: 760px) {
+@container dashboard-surface (max-width: 760px) {
   .dashboard-content :is(.saved-card, .saved-table-row) {
     padding: 5px 6px;
   }
@@ -17887,10 +17905,11 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
     min-height: 26px;
   }
   .dashboard-content :is(.saved-progress .row-head, .saved-table-metrics .row-head) {
-    font-size: calc(9px * var(--dashboard-text-scale, 1));
-  }
-  .dashboard-content :is(.saved-progress .percent, .saved-table-metrics .percent) {
     font-size: calc(10px * var(--dashboard-text-scale, 1));
+  }
+  .dashboard-content .metric-gauge-head :is(.metric-gauge-label, .metric-gauge-reset, .metric-gauge-value) {
+    font-size: calc(10px * var(--dashboard-text-scale, 1));
+    line-height: 1.2;
   }
   .dashboard-content .saved-progress,
   .dashboard-content .saved-table-metrics {
@@ -17900,6 +17919,14 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
     gap: 4px;
     padding-top: 4px;
   }
+  .dashboard-content .saved-table-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "identity actions" "metrics metrics";
+    gap: 4px;
+  }
+  .dashboard-content .saved-table-identity { grid-area: identity; }
+  .dashboard-content .saved-table-actions { grid-area: actions; }
+  .dashboard-content .saved-table-metrics { grid-area: metrics; }
 }
 .dashboard-content .accounts-grid { align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
 .dashboard-content .dashboard-view-list .accounts-grid { grid-template-columns: minmax(0, 1fr); }
@@ -17954,7 +17981,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   width: var(--account-control-size);
   min-width: var(--account-control-size);
   height: var(--account-control-size);
+  min-height: var(--account-control-size);
 }
+.dashboard-content .dashboard-account-toolbar .account-search-control > button { height: calc(var(--account-control-size) - 2px); min-height: 0; }
 @media (pointer: coarse) {
   .dashboard-content .dashboard-account-toolbar { --account-control-size: 40px; }
 }

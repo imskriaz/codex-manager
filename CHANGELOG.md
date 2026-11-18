@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.66
+
+- Size compact account cards, list rows, and search controls by dashboard pane width, with uniform quota text and no horizontal overflow.
+- Align account actions beside the name and plan rows, and reveal project editing on hover or keyboard focus.
+
 ## 2.0.6-pre.64
 
 - Compact saved-account cards and list rows across desktop and mobile, with bounded metric text and aligned controls.

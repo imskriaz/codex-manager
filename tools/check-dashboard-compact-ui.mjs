@@ -69,6 +69,34 @@ try {
       });
       try { await inspectControls(); }
       finally { if (tagFixture) await toolbar.locator('.account-tag-filter').evaluate(element => element.remove()); }
+      const toggle = toolbar.locator('.dashboard-view-toggle');
+      const listInitially = await scope.locator('.saved-table-row').count() > 0;
+      for (const list of [false, true]) {
+        if ((await scope.locator('.saved-table-row').count() > 0) !== list) await toggle.click();
+        const rows = scope.locator(list ? '.saved-table-row' : '.saved-card-front');
+        await rows.first().waitFor();
+        const cards = await rows.evaluateAll(elements => elements.map(card => {
+          const bounds = card.getBoundingClientRect();
+          return {
+            width: card.clientWidth, scroll: card.scrollWidth,
+            metrics: [...card.querySelectorAll('.row-head')].map(row => ({
+              width: row.clientWidth, scroll: row.scrollWidth,
+              fonts: [...row.querySelectorAll('.metric-label, .metric-reset-inline, .percent')].map(node => getComputedStyle(node).fontSize),
+              percentRight: row.querySelector('.percent').getBoundingClientRect().right,
+              cardRight: bounds.right,
+            })),
+          };
+        }));
+        assert.ok(cards.every(card => card.scroll <= card.width + 1), `${label}/${list ? 'list' : 'cards'}: each account fits its pane ${JSON.stringify(cards)}`);
+        assert.ok(cards.every(card => card.metrics.every(row => row.scroll <= row.width + 1 && row.percentRight <= row.cardRight + 1 && new Set(row.fonts).size === 1)), `${label}: quota text uses one font size and percentages fit`);
+        const paneWidth = await scope.locator('.dashboard-content').evaluate(element => element.clientWidth);
+        if (paneWidth <= 760) {
+          const heights = await toolbar.evaluate(element => [...element.children].map(child => child.getBoundingClientRect().height));
+          assert.ok(heights.every(height => height <= 32), `${label}: small panes use controls no taller than 32px: ${heights}`);
+        }
+        await page.screenshot({ path: path.join(output, `${label}-${list ? 'list' : 'cards'}.png`) });
+      }
+      if ((await scope.locator('.saved-table-row').count() > 0) !== listInitially) await toggle.click();
       const layout = await scope.evaluate(element => ({
         width: element.clientWidth, scroll: element.scrollWidth,
         overview: element.querySelector('.overview-shell').getBoundingClientRect().height,

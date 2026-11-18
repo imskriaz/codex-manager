@@ -35,7 +35,7 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
 try {
   for (const width of [1440, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+    const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 760, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(8000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -48,6 +48,12 @@ try {
     await page.addStyleTag({ content: await readFile('media/webview/quotaSummary.css', 'utf8') });
     const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
     if (await show.isVisible()) await show.click();
+    await page.mouse.move(width - 1, 1);
+    const edit = page.getByRole('button', { name: 'Edit One', exact: true });
+    assert.equal(await edit.evaluate(element => getComputedStyle(element).opacity), '0', 'Project shows its folder until hover or focus, including touch screens');
+    assert.equal(await edit.evaluate(element => getComputedStyle(element).pointerEvents), 'none', 'Hidden edit does not intercept the folder action');
+    await edit.focus();
+    assert.equal(await edit.evaluate(element => getComputedStyle(element).opacity), '1', 'Keyboard focus reveals edit');
     await page.getByRole('button', { name: 'Expand One', exact: true }).click();
     assert.equal(await page.locator('.cli-session-drag').count(), 0);
     assert.equal(await page.locator('.cli-session-row[draggable=true]').count(), 2);

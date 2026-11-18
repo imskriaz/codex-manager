@@ -256,9 +256,9 @@ describe("overview actions", () => {
     const sessions = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
 
     expect(css).toContain(".dashboard-content :is(.saved-card, .saved-table-row)");
-    expect(css).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, auto)");
+    expect(css).toContain("grid-template-columns: auto minmax(0, 1fr)");
     expect(css).toContain(".dashboard-content :is(.saved-progress .metric-label");
-    expect(css).toContain("@media (hover:none) { .cli-workspace .is-dense-tree .cli-project-edit");
+    expect(css).not.toContain("@media (hover:none) { .cli-workspace .is-dense-tree .cli-project-edit");
     expect(sessions).toContain("<EmptyFolderIcon />");
     expect(sessions).toContain('class="cli-project-edit"');
   });
