@@ -41,7 +41,8 @@ it('supports Claude thinking modes, budgets, update display, and metadata withou
     metadata: { user_id: 'opaque-id' },
     thinking: { type: 'enabled', budget_tokens: 1024, display: 'updates' }
   }), 'claude');
-  expect(result.body).toMatchObject({ metadata: { user_id: 'opaque-id' }, reasoning: { effort: 'high' } });
+  expect(result.body).toMatchObject({ reasoning: { effort: 'high' } });
+  expect(result.body).not.toHaveProperty('metadata');
   expect(() => normalizeAiRequest(request({ thinking: { type: 'enabled', budget_tokens: 100 }, max_tokens: 4096 }), 'claude')).toThrow(/budget_tokens/);
   expect(() => normalizeAiRequest(request({ thinking: { type: 'adaptive', budget_tokens: 1024 } }), 'claude')).toThrow(/only valid/);
   expect(normalizeAiRequest(request({ thinking: { type: 'between_tools' } }), 'claude').body).toMatchObject({ reasoning: { effort: 'high' } });

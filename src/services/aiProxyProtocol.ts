@@ -326,7 +326,9 @@ export function normalizeAiRequest(
   }
   if (!input.length) throw new AiProxyError(400, "Provide at least one user message or tool result.");
   const body: Json = { model, input, instructions: instructions.join("\n\n"), stream: true, store: false };
-  if (request["metadata"] !== undefined) body["metadata"] = object(request["metadata"], "metadata");
+  // Validate client metadata for a stable boundary, but do not forward it: the saved-account
+  // Codex bridge rejects Anthropic metadata fields and has no equivalent attribution contract.
+  if (request["metadata"] !== undefined) object(request["metadata"], "metadata");
   if (request["tools"] !== undefined)
     body["tools"] = array(request["tools"], "tools").map((entry) => tool(entry, protocol === "claude"));
   if (request["tool_choice"] !== undefined) {

@@ -12,7 +12,7 @@
 | Claude disables parallel tool use | Translate the restriction to `parallel_tool_calls: false` | `test/aiProxyEdgeCases.test.ts` |
 | Claude requests structured JSON output | Translate `output_config.format` to Responses JSON schema | `test/aiProxyEdgeCases.test.ts` |
 | Claude thinking uses adaptive, enabled, between-tools, budgets, or update display | Validate supported thinking modes and translate supported depth to Responses reasoning effort; invalid budgets are rejected | `test/aiProxyEdgeCases.test.ts` |
-| Claude request metadata is supplied | Preserve validated metadata in the Responses request | `test/aiProxyEdgeCases.test.ts` |
+| Claude request metadata is supplied | Validate metadata but omit it because the saved-account Codex bridge rejects Anthropic attribution fields | `test/aiProxyEdgeCases.test.ts` |
 | `output_config` has a format but no effort | Keep adaptive-thinking effort fallback | `test/aiProxyEdgeCases.test.ts` |
 | Thinking display is omitted | Suppress reasoning summaries for both streaming and JSON responses | `test/aiProxyEdgeCases.test.ts` |
 | Completed response mixes text, reasoning summaries and tools | Preserve Claude output order and expose reported reasoning summaries | `test/aiProxyEdgeCases.test.ts` |
