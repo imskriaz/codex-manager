@@ -12,6 +12,8 @@ it('bounds host metadata, normalizes untrusted paths, and returns isolated snaps
   expect(readApiProxyHistory().requests[0]).toMatchObject({ method: 'OTHER', path: '/v1/unknown' });
   startApiProxyLog('GET', '/v1/models/private-secret', 'model');
   expect(readApiProxyHistory().requests[0].path).toBe('/v1/models/:id');
+  startApiProxyLog('POST', '/v1/messages/count_tokens', 'count');
+  expect(readApiProxyHistory().requests[0].path).toBe('/v1/messages/count_tokens');
   expect(JSON.stringify(readApiProxyHistory())).not.toContain('private-secret');
 });
 

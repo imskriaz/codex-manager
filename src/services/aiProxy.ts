@@ -30,6 +30,30 @@ type Json = Record<string, unknown>;
 type Model = { id: string; name: string };
 export const isAiProxyPath = (path: string): boolean => path === "/v1" || path.startsWith("/v1/");
 
+function countClaudeValue(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "string") return value.length;
+  if (typeof value === "number" || typeof value === "boolean") return String(value).length;
+  if (Array.isArray(value)) {
+    let total = 0;
+    for (const item of value as unknown[]) total += countClaudeValue(item);
+    return total;
+  }
+  if (typeof value === "object")
+    return Object.entries(value as Record<string, unknown>).reduce(
+      (total, [key, item]) => total + key.length + countClaudeValue(item),
+      0
+    );
+  return 0;
+}
+
+/** Anthropic's count endpoint is local because the saved-account backend has no equivalent route. */
+function estimateClaudeInputTokens(request: Json): number {
+  const chars = countClaudeValue(request["system"]) + countClaudeValue(request["tools"]);
+  const messages = request["messages"];
+  return Math.max(1, Math.ceil((chars + countClaudeValue(messages)) / 4));
+}
+
 /** Parse complete SSE records across arbitrary UTF-8/chunk boundaries. */
 export async function* aiEvents(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<Json> {
   const reader = body.getReader(),
@@ -151,7 +175,7 @@ export class AiProxy {
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const protocol: AiProtocol =
-      url.pathname === "/v1/messages"
+      (url.pathname === "/v1/messages" || url.pathname === "/v1/messages/count_tokens")
         ? "claude"
         : url.pathname === "/v1/responses"
           ? "responses"
@@ -233,7 +257,7 @@ export class AiProxy {
         } else this.json(response, { object: "list", data: models.map(format) });
         return;
       }
-      if (!["/v1/chat/completions", "/v1/responses", "/v1/messages"].includes(path))
+      if (!["/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/messages/count_tokens"].includes(path))
         throw new AiProxyError(404, "Unknown AI endpoint.", "not_found_error");
       if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
@@ -246,6 +270,17 @@ export class AiProxy {
             : new AiProxyError(408, "The request body timed out.");
         }
       );
+      if (path === "/v1/messages/count_tokens") {
+        const countRequest = object(body, "request");
+        const allowed = new Set(["model", "messages", "system", "tools"]);
+        for (const key of Object.keys(countRequest))
+          if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
+        const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1 }, "claude");
+        log.model = String(normalizedCount.body["model"]);
+        log.inputTokens = estimateClaudeInputTokens(countRequest);
+        this.json(response, { input_tokens: log.inputTokens });
+        return;
+      }
       const generationProtocol: AiProtocol =
         path === "/v1/messages" ? "claude" : path === "/v1/responses" ? "responses" : "chat";
       const normalized = normalizeAiRequest(body, generationProtocol);

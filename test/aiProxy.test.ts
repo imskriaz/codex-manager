@@ -194,6 +194,25 @@ it.each(["/v1/chat/completions", "/v1/responses", "/v1/messages"])(
   }
 );
 
+it("counts Claude input locally without contacting the saved-account backend", async () => {
+  const result = await post("/v1/messages/count_tokens", {
+    model: "codex-test",
+    system: "Be concise",
+    messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+    tools: [{ name: "lookup", description: "Find a value", input_schema: { type: "object" } }]
+  });
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ input_tokens: expect.any(Number) });
+  expect(readApiProxyHistory().requests.find(row => row.id === result.headers.get("x-request-id"))).toMatchObject({
+    path: "/v1/messages/count_tokens",
+    model: "codex-test",
+    status: "completed",
+    httpStatus: 200
+  });
+  expect(upstream).not.toHaveBeenCalled();
+  expect((await fetch(origin + "/v1/messages/count_tokens", { headers: { Authorization: `Bearer ${key}` } })).status).toBe(405);
+});
+
 it.each(["/v1/chat/completions", "/v1/responses", "/v1/messages"])(
   "streams %s exactly once and includes usage",
   async (path) => {
