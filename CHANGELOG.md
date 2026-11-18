@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.67
+
+- Keep standalone restarts independent of the initiating dashboard or terminal, retain restart credentials on direct launches, and document setup and updates without opening VS Code.
+- Read current restart configuration from SQLite, preserve custom ports, and invoke npm directly on Windows. Add regression checks for interrupted restart, failed builds, and refused shutdown.
+
 ## 2.0.6-pre.66
 
 - Size compact account cards, list rows, and search controls by dashboard pane width, with uniform quota text and no horizontal overflow.

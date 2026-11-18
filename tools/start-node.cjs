@@ -56,6 +56,15 @@ for (let index = 0; index < args.length; index += 1) {
 }
 if (!configPath && args[0] && !args[0].startsWith("--")) configPath = path.resolve(args[0]);
 
+// Direct launches retain credentials for later authenticated standalone restarts.
+if (!configPath && !process.env.CODEX_MANAGER_ADMIN_TOKEN) {
+  const storage = process.env.CODEX_MANAGER_STORAGE_ROOT || path.join(require('node:os').homedir(), '.codex');
+  configPath = path.join(storage, 'always-online-relay.json');
+  require('./standalone-config.cjs').createConfig(configPath, {
+    port: Number(process.env.CODEX_MANAGER_PORT || 39875)
+  });
+}
+
 if (configPath) {
   const databasePath = path.join(path.dirname(configPath), "manager.sqlite");
   try {
@@ -78,6 +87,7 @@ if (args.includes("--background")) {
     detached: true, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"], env: process.env
   });
   let ready = false;
+  let startupError;
   const timer = setTimeout(() => {
     console.error("Codex Manager background startup timed out. Run without --background to inspect the failure.");
     child.kill();
@@ -86,9 +96,10 @@ if (args.includes("--background")) {
   child.once("error", error => { clearTimeout(timer); console.error(`Background startup failed: ${error.message}`); process.exitCode = 1; });
   child.once("exit", code => {
     clearTimeout(timer);
-    if (!ready) { console.error(`Background host exited before becoming ready (${code}). Run without --background for details.`); process.exitCode = 1; }
+    if (!ready) { console.error(`Background host exited before becoming ready (${code}). ${startupError || 'Run without --background for details.'}`); process.exitCode = 1; }
   });
   child.on("message", message => {
+    if (message?.type === 'codex-manager-startup-error') { startupError = message.error; return; }
     if (message?.type !== "codex-manager-ready" || ready) return;
     ready = true;
     clearTimeout(timer);
@@ -109,6 +120,7 @@ try {
   if (typeof host.startNodeHost !== "function") throw new Error("The compiled Node host does not export startNodeHost().");
   void host.startNodeHost().catch(error => {
     console.error(`[codexManager] Node host failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (process.connected) process.send({ type: 'codex-manager-startup-error', error: error instanceof Error ? error.message : String(error) });
     process.exitCode = 1;
   });
 } catch (error) {

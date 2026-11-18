@@ -113,14 +113,27 @@ npm start -- --background
 Open `http://127.0.0.1:39875` in a browser. The host uses the same `.codex` storage as the extension by default; pass `--data-dir <path>` to use another storage directory. To install a newer checkout and reload the running standalone host without opening VS Code, run:
 
 ```bash
+git pull --ff-only
 npm run standalone:update
 ```
 
-That command runs `npm install`, compiles the current source, gracefully stops the old Node host, and starts the updated host in the background. Use `npm run standalone:update -- --data-dir <path>` when the host uses a custom data directory. A failed install or compile leaves the current host running.
+That command runs `npm install`, compiles the current source, then starts an independent restart worker before gracefully stopping the old Node host. The worker starts the updated host in the background even if the initiating terminal or dashboard disconnects. Startup is confirmed before success is reported. Run the update on each PC; browser clients reconnect to that PC's host.
+
+Use `npm run standalone:update -- --data-dir <path>` for a custom data directory, or `--config <path>` for an existing host configuration. The saved port is retained; `--port <number>` overrides it. A failed install or compile leaves the current host running. Restart outcomes and startup errors are saved in `standalone-update.log` beside `manager.sqlite`.
+
+To reload an already compiled checkout without reinstalling dependencies or opening VS Code:
+
+```bash
+npm run standalone:restart
+```
+
+Direct launches save the credentials required for authenticated restart. An older unmanaged host needs to be stopped manually once before running `npm start -- --background`; the updater leaves any host it cannot authenticate running. Updating a checkout changes that standalone installation. To update an installed VS Code extension as well, install the matching VSIX with `code --install-extension codex-manager-<version>.vsix --force`; the command does not require opening an editor window.
 
 Press `F5` in VS Code to open an Extension Development Host. Use `npm test` and `npm run verify` before distributing a build. Packaging is intentionally not part of the normal setup flow; run `npm run package` only when you are preparing a VSIX.
 
 ## First run
+
+In standalone mode, open the browser dashboard and use **Add Account** to sign in, or import the existing Codex credentials. Configure the shared password in Settings for remote browser access. The Command Palette steps below apply to the VS Code extension.
 
 Use an account's **More actions → Tags** to edit up to 10 labels. Tags appear beside subscription days in a single compact row, with additional tags summarized in a tooltip. **All tags** filters the account list; search also matches tag labels. Edits apply to the selected system and remain outside credential sharing.
 

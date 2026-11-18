@@ -16,6 +16,8 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+for (const file of ['start-node.cjs', 'standalone-config.cjs', 'update-standalone.cjs'])
+  if (!listing.split('\n').includes(`extension/tools/${file}`)) throw new Error(`VSIX standalone launcher is missing: ${file}`);
 for (const file of ['extension/AGENTS.md', 'extension/WORKSPACE-GOAL.md', 'extension/pending_log.md', 'extension/PROJECT_LOG.md'])
   if (listing.split('\n').includes(file)) throw new Error(`VSIX contains internal workspace notes: ${file}`);
 for (const file of ["extension/tools/inspect-codex-storage.cjs", "extension/media/webview/dashboard/dashboard-manifest.json", "extension/tools/codex-manager-mcp.mjs", "extension/skills/codex-manager/SKILL.md", "extension/skills/codex-manager/references/connection.md", "extension/skills/codex-manager/references/browser-debugging.md", "extension/docs/ai-control.md"])
