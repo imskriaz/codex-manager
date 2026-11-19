@@ -97,7 +97,7 @@ try {
     const copied = JSON.parse(await page.evaluate(() => window.copied));
     assert.equal(copied.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'claude-opus');
     assert.equal(copied.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, 'claude-opus (GPT Fast)');
-    assert.equal(copied.modelOverrides['claude-opus-4-6'], 'claude-opus');
+    assert.equal(copied.modelOverrides['claude-opus-5-5'], 'claude-opus');
     assert.equal(copied.env.ANTHROPIC_AUTH_TOKEN, 'cm_'+'b'.repeat(64), 'Ready-to-paste configuration includes the selected stored API key');
     assert.ok(!JSON.stringify(copied).includes('YOUR_MANAGER_API_KEY'));
     await dialog.getByLabel('Proxy API key', { exact: true }).selectOption('legacy');

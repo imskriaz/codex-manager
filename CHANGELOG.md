@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.6-pre.105
+
+- Recover standalone dashboard requests for stale hashed lazy chunks after an extension update by resolving them through the current dashboard manifest.
+
+## 2.0.6-pre.104
+
+- Recognize gateway aliases as Opus, Sonnet, and Haiku 5.5 and Fable 5.2 in copied Claude configuration.
+
+## 2.0.6-pre.103
+
+- Keep host browser tabs and feedback separate for each session, shared by clients viewing that session. Push browser changes over authenticated WebSockets for immediate mirror refresh.
+- Publish workspace panel changes immediately with a stable command listener. Remove frame waits from reads, unregister closed views immediately, and report changed or background views without replaying commands.
+
 ## 2.0.6-pre.102
 
 - Preserve the shared standalone host and startup settings during cleanup of an older extension version when a replacement remains installed. Refuse cleanup if installation registration cannot be verified.

@@ -8,6 +8,12 @@ describe("API proxy model mapping", () => {
     expect(claudeProxyModelName('opus', { id: 'gpt-6.1', name: 'GPT 6.1' })).toBe('claude-opus (GPT 6.1)');
     expect(claudeProxyModelName('sonnet', { id: 'gpt-6.1', name: 'gpt-6.1' })).toBe('claude-sonnet (GPT 6.1)');
     expect(Object.values(CLAUDE_PROXY_MODEL_OVERRIDES)).toEqual(Object.values(CLAUDE_PROXY_MODELS));
+    expect(CLAUDE_PROXY_MODEL_OVERRIDES).toEqual({
+      'claude-opus-5-5': 'claude-opus',
+      'claude-sonnet-5-5': 'claude-sonnet',
+      'claude-haiku-5-5': 'claude-haiku',
+      'claude-fable-5-2': 'claude-fable'
+    });
   });
   it("maps Claude roles to discovered IDs, including Fable and provider-qualified models", () => {
     const models = mapDiscoveredModels({

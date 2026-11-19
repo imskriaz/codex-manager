@@ -6,10 +6,10 @@ export const CLAUDE_PROXY_MODELS = {
   fable: 'claude-fable'
 } as const;
 export const CLAUDE_PROXY_MODEL_OVERRIDES = {
-  'claude-opus-4-6': CLAUDE_PROXY_MODELS.opus,
-  'claude-sonnet-4-6': CLAUDE_PROXY_MODELS.sonnet,
-  'claude-haiku-4-5': CLAUDE_PROXY_MODELS.haiku,
-  'claude-fable-5': CLAUDE_PROXY_MODELS.fable
+  'claude-opus-5-5': CLAUDE_PROXY_MODELS.opus,
+  'claude-sonnet-5-5': CLAUDE_PROXY_MODELS.sonnet,
+  'claude-haiku-5-5': CLAUDE_PROXY_MODELS.haiku,
+  'claude-fable-5-2': CLAUDE_PROXY_MODELS.fable
 };
 export type ClaudeProxyMapping = Record<keyof typeof CLAUDE_PROXY_MODELS, string>;
 
