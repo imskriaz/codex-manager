@@ -10,18 +10,21 @@ import { removeTestDirectory } from "./testFilesystem";
 const source = fs.readFileSync("tools/uninstall.js", "utf8");
 let root: string;
 let store: SqliteStateStore;
+let extensionRoot: string;
 beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "manager-uninstall-"));
+  extensionRoot = path.join(root, 'extensions', 'imskriaz.codex-manager-old');
+  fs.mkdirSync(path.join(extensionRoot, 'tools'), { recursive: true });
   store = await SqliteStateStore.open(path.join(root, ".codex", "manager.sqlite"));
   fs.writeFileSync(path.join(root, ".codex", "always-online-relay.json"), JSON.stringify({ adminToken: "legacy-token" }));
 });
 afterEach(async () => { store.close(); await removeTestDirectory(root); });
 
 async function run() {
-  const requests: Array<{ headers: Record<string, string> }> = [];
+  const requests: Array<{ port: number; headers: Record<string, string> }> = [];
   const processStub = { env: {}, exitCode: 0 };
   const errors = vi.fn();
-  vm.runInNewContext(source, { console: { error: errors }, process: processStub, Buffer,
+  vm.runInNewContext(source, { console: { error: errors, log: vi.fn() }, process: processStub, Buffer, __dirname: path.join(extensionRoot, 'tools'),
     require: (id: string) => {
       if (id === "node:fs") return fs;
       if (id === "node:os") return { homedir: () => root };
@@ -56,6 +59,39 @@ it("stops the relay with SQLite's current token instead of the retained legacy f
 it("uses legacy config only when no migrated record exists", async () => {
   const result = await run();
   expect(result.requests[0]!.headers["X-Codex-Admin"]).toBe("legacy-token");
+});
+
+it.each(['relative', 'uri'])('preserves the live shared host when old-version cleanup finds a replacement (%s)', async location => {
+  const replacement = path.join(root, 'extensions', 'imskriaz.codex-manager-new');
+  fs.mkdirSync(replacement);
+  fs.writeFileSync(path.join(replacement, 'package.json'), '{}');
+  const entry = { identifier: {id:'imskriaz.codex-manager'}, ...(location === 'relative'
+    ? {relativeLocation:path.basename(replacement)} : {location:{scheme:'file',path:process.platform === 'win32' ? '/' + replacement.replaceAll('\\', '/') : replacement}}) };
+  fs.writeFileSync(path.join(root, 'extensions', 'extensions.json'), JSON.stringify([entry]));
+  const result = await run();
+  expect(result.requests).toHaveLength(0);
+  expect(result.errors).not.toHaveBeenCalled();
+});
+
+it('still cleans up the last registered installation on a genuine uninstall', async () => {
+  fs.writeFileSync(path.join(root, 'extensions', 'extensions.json'), JSON.stringify([{identifier:{id:'imskriaz.codex-manager'},relativeLocation:path.basename(extensionRoot)}]));
+  expect((await run()).requests).toHaveLength(1);
+});
+
+it('leaves the shared host running when installation registration cannot be read safely', async () => {
+  fs.writeFileSync(path.join(root, 'extensions', 'extensions.json'), 'invalid JSON');
+  const result = await run();
+  expect(result.requests).toHaveLength(0);
+  expect(result.errors).toHaveBeenCalledOnce();
+});
+
+it('targets only the saved standalone port during a genuine uninstall', async () => {
+  store.set('files', 'always-online-relay.json', {text:JSON.stringify({adminToken:'current-token',port:41234})});
+  expect((await run()).requests[0]?.port).toBe(41234);
+  store.set('files', 'always-online-relay.json', {text:JSON.stringify({adminToken:'current-token',port:0})});
+  const result = await run();
+  expect(result.requests).toHaveLength(0);
+  expect(result.errors).toHaveBeenCalledOnce();
 });
 
 it("does not resurrect deleted config or silently replace unreadable SQLite state", async () => {

@@ -121,6 +121,8 @@ That command runs `npm install`, compiles the current source, then starts an ind
 
 Use `npm run standalone:update -- --data-dir <path>` for a custom data directory, or `--config <path>` for an existing host configuration. The saved port is retained; `--port <number>` overrides it. A failed install or compile leaves the current host running. Restart outcomes and startup errors are saved in `standalone-update.log` beside `manager.sqlite`.
 
+Removing an older extension version after an upgrade preserves the shared standalone host and startup settings while another registered Manager installation remains. With System Log enabled, authenticated shutdown requests record whether they came from standalone restart, VS Code host control, or extension uninstall.
+
 To reload an already compiled checkout without reinstalling dependencies or opening VS Code:
 
 ```bash

@@ -478,7 +478,7 @@ function requestShutdown(port: number, token: string): Promise<void> {
         port,
         path: "/shutdown",
         method: "POST",
-        headers: { "X-Codex-Admin": token },
+        headers: { "X-Codex-Admin": token, "X-Codex-Shutdown-Reason": "vscode-host-control" },
         timeout: 1_000
       },
       (response) => {

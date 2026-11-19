@@ -57,7 +57,7 @@ async function restart() {
   if (await portIsOpen(port)) {
     if (!config?.adminToken || config.mode !== 'node') throw new Error(`Port ${port} has an unmanaged host. It was left running; stop it manually once, then use npm start -- --background.`);
     const response = await fetch(`http://127.0.0.1:${port}/shutdown`, {
-      method: 'POST', headers: { 'X-Codex-Admin': config.adminToken }, signal: AbortSignal.timeout(2_000)
+      method: 'POST', headers: { 'X-Codex-Admin': config.adminToken, 'X-Codex-Shutdown-Reason': 'standalone-restart' }, signal: AbortSignal.timeout(2_000)
     });
     await response.text();
     if (!response.ok) throw new Error(`Shutdown refused (HTTP ${response.status}); the existing host was left running.`);

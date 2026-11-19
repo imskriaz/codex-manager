@@ -970,6 +970,9 @@ export class WebDashboardServer implements vscode.Disposable {
     if (request.method === "POST" && path === "/shutdown") {
       const adminToken = process.env["CODEX_MANAGER_ADMIN_TOKEN"];
       if (!adminToken || request.headers["x-codex-admin"] !== adminToken) { response.statusCode = 403; response.end("Forbidden"); return; }
+      const requestedReason = request.headers['x-codex-shutdown-reason'];
+      const reason = typeof requestedReason === 'string' && ['standalone-restart', 'extension-uninstall', 'vscode-host-control'].includes(requestedReason) ? requestedReason : 'external-admin';
+      recordPersistentEvent('info', 'node-host', 'Authenticated standalone shutdown requested', { pid: process.pid, reason });
       response.end("Shutting down");
       setImmediate(() => process.emit("SIGTERM"));
       return;

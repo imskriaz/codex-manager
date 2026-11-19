@@ -51,8 +51,8 @@ const adminToken = randomBytes(32).toString("hex");
 writeSqliteStateFile(configPath, JSON.stringify({ mode: "node", port, pidPath, adminToken, workspaceStoragePath: root }));
 store.set(`settings:${createHash("sha256").update(root).digest("hex")}`, "cloudflaredDomain", "https://dashboard.example");
 const children = new Set();
-function launch(args) {
-  const child = spawn(process.execPath, [path.join(project, "tools", "start-node.cjs"), ...args], {
+function launch(args, script = 'start-node.cjs') {
+  const child = spawn(process.execPath, [path.join(project, "tools", script), ...args], {
     windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: process.env
   });
   children.add(child);
@@ -124,6 +124,16 @@ try {
   response = await remote("/api/state", { headers: { cookie } });
   assert.equal(response.status, 200, "login must survive background restart");
   assert.equal((await response.json()).connectedPeers.find(peer => peer.local).id, deviceId);
+  const previousPid = readSqliteStateFile(pidPath);
+  const restartStarted = performance.now();
+  const restarted = await launch(['--restart-only', '--config', configPath], 'update-standalone.cjs').done;
+  assert.equal(restarted.code, 0, restarted.output);
+  await ready();
+  timings.standaloneRestartMs = Math.round(performance.now() - restartStarted);
+  assert.notEqual(readSqliteStateFile(pidPath), previousPid, 'Standalone restart starts a new host without VS Code');
+  response = await remote('/api/state', {headers:{cookie}});
+  assert.equal(response.status, 200, 'The authenticated browser reconnects after standalone restart');
+  assert.equal((await response.json()).connectedPeers.find(peer => peer.local).id, deviceId);
   const logout = await remote("/logout", { method: "POST", headers: { cookie, origin: "https://dashboard.example" } });
   assert.equal(logout.status, 303);
   await auth.refresh();
@@ -132,11 +142,13 @@ try {
   await stop();
   const logs = await SqliteStateStore.open(path.join(root, "manager_logs.sqlite"));
   try {
-    const messages = logs.keys("logs").map(key => logs.get("logs", key)).filter(record => record.scope === "node-host").map(record => record.message);
+    const records = logs.keys("logs").map(key => logs.get("logs", key)).filter(record => record.scope === "node-host");
+    const messages = records.map(record => record.message);
     for (const message of ["Standalone startup started", "Standalone ready", "Standalone startup failed", "Standalone shutdown started"])
       assert.ok(messages.includes(message), `Shared system log must retain: ${message}`);
+    assert.ok(records.some(record => record.message === 'Authenticated standalone shutdown requested' && record.details?.reason === 'standalone-restart'), 'System log identifies a standalone restart request');
   } finally { logs.close(); }
-  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "shared-logout", "shared-diagnostics"], timings }));
+  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "independent-standalone-restart", "shutdown-reason", "shared-logout", "shared-diagnostics"], timings }));
 } finally {
   if (placeholder.listening) await new Promise(resolve => placeholder.close(resolve));
   try { await stop(); } catch { /* The host may already be stopped or not yet started. */ }

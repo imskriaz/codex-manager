@@ -8,7 +8,27 @@ const appData = process.env.APPDATA;
 const startupLauncher = appData
   ? path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "CodexManagerAlwaysOnline.cmd")
   : undefined;
-const storage = path.join(os.homedir(), ".codex");
+const storage = process.env.CODEX_MANAGER_STORAGE_ROOT?.trim()
+  ? path.resolve(process.env.CODEX_MANAGER_STORAGE_ROOT.trim()) : path.join(os.homedir(), ".codex");
+
+function hasReplacementInstallation() {
+  const extensionRoot = path.resolve(__dirname, "..");
+  const extensionsRoot = path.dirname(extensionRoot);
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(path.join(extensionsRoot, "extensions.json"), "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+  if (!Array.isArray(entries)) throw new Error("Extension registration could not be verified; shared host cleanup was skipped.");
+  return entries.some(entry => {
+    if (entry.identifier?.id?.toLowerCase() !== "imskriaz.codex-manager") return false;
+    const registeredPath = entry.relativeLocation
+      ? path.resolve(extensionsRoot, entry.relativeLocation)
+      : entry.location?.scheme === "file" && entry.location.path?.replace(/^\/([a-zA-Z]:[\\/])/, "$1");
+    if (!registeredPath) throw new Error("Registered Manager installation path is unavailable; shared host cleanup was skipped.");
+    const candidate = path.resolve(registeredPath);
+    const same = process.platform === "win32" ? candidate.toLowerCase() === extensionRoot.toLowerCase() : candidate === extensionRoot;
+    return !same && fs.existsSync(path.join(candidate, "package.json"));
+  });
+}
 
 function removeFile(target) {
   if (!target) return;
@@ -21,14 +41,16 @@ function removeFile(target) {
 
 function requestRelayShutdown(config) {
   if (!config?.adminToken) return Promise.resolve();
+  const port = Number(config.port ?? 39875);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Saved host port is invalid; shutdown was skipped.');
   return new Promise((resolve) => {
     const request = http.request(
       {
         host: "127.0.0.1",
-        port: 39875,
+        port,
         path: "/shutdown",
         method: "POST",
-        headers: { "X-Codex-Admin": String(config.adminToken) },
+        headers: { "X-Codex-Admin": String(config.adminToken), "X-Codex-Shutdown-Reason": "extension-uninstall" },
         timeout: 1_000
       },
       (response) => {
@@ -46,6 +68,11 @@ function requestRelayShutdown(config) {
 }
 
 async function main() {
+  // VS Code also runs this hook while deleting superseded extension versions.
+  if (hasReplacementInstallation()) {
+    console.log("[codex-manager] A replacement extension is installed; preserving the shared standalone host and startup settings.");
+    return;
+  }
   // Remove the boot trigger first, so a failed best-effort shutdown cannot
   // resurrect the relay at the next Windows sign-in.
   removeFile(startupLauncher);

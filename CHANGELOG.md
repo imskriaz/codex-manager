@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.102
+
+- Preserve the shared standalone host and startup settings during cleanup of an older extension version when a replacement remains installed. Refuse cleanup if installation registration cannot be verified.
+- Record the source of authenticated shutdown requests and honor the saved host port during uninstall cleanup. Verify independent restart and browser reconnection without VS Code.
+
 ## 2.0.6-pre.101
 
 - Add MCP discovery and control of live workspace panels, including mobile dashboards, with browser snapshots and terminal screen reads.
@@ -32,12 +37,10 @@
 
 - Commit the browser install, compact workspace monitor, inspector, and responsive UI changes together with their regression checks.
 
-
 ## 2.0.6-pre.94
 
 - Make Claude CLI and Claude Desktop model discovery use recognized Claude IDs while routing each saved model to its selected Codex target.
 - Persist Claude-to-Codex mappings with conflict checks and visible save, failure, and retry states.
-
 
 ## 2.0.6-pre.91
 
@@ -79,7 +82,6 @@
 ## 2.0.6-pre.84
 
 - Polish the Tools panel with clearer Manage data and Inspect system groups, compact cards, and unclipped action affordances.
-
 
 ## 2.0.6-pre.83
 
@@ -364,7 +366,6 @@
 ## 2.0.6-pre.4
 
 - Start the VS Code quota scheduler with an immediate active-account check and reopen missing Codex tabs when the native session survived a host restart.
-
 
 ## 2.0.6-pre.3
 

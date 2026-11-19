@@ -89,6 +89,27 @@ try {
   assert.ok(token.length >= 43, 'Fresh standalone launch saves restart credentials even with an existing database');
   const firstPid = (await state()).pid;
 
+  // Version cleanup must preserve a host while its replacement is installed.
+  const oldTools = path.join(fixture, 'extensions', 'old', 'tools');
+  const newExtension = path.join(fixture, 'extensions', 'new');
+  await mkdir(oldTools, {recursive:true});
+  await mkdir(newExtension);
+  await copyFile(new URL('uninstall.js', import.meta.url), path.join(oldTools, 'uninstall.js'));
+  await writeFile(path.join(newExtension, 'package.json'), '{}');
+  await writeFile(path.join(fixture, 'extensions', 'extensions.json'), JSON.stringify([
+    {identifier:{id:'imskriaz.codex-manager'},relativeLocation:'new'}
+  ]));
+  await writeFile(path.join(fixture, 'tools', 'cleanup.cjs'), `
+    const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+    const file=path.join(__dirname,'../extensions/old/tools/uninstall.js');
+    vm.runInNewContext(fs.readFileSync(file,'utf8'),{process,console,Buffer,__dirname:path.dirname(file),
+      require:id=>id==='node:child_process'?{execFileSync(){throw {status:1};}}:require(id)});
+  `);
+  const cleanup = await launch('cleanup.cjs', [], {CODEX_MANAGER_STORAGE_ROOT:storage,APPDATA:path.join(fixture,'appdata')}).done;
+  assert.equal(cleanup.code, 0, cleanup.output);
+  assert.match(cleanup.output, /preserving the shared standalone host/);
+  assert.equal((await state()).pid, firstPid, 'Old-version cleanup never stops the live standalone host');
+
   await writeFile(configPath, JSON.stringify({ mode: 'node', port: 1, adminToken: 'stale' }));
   assert.equal(configModule.readConfig(configPath).port, port, 'SQLite configuration takes priority over a stale disk file');
   const restarted = await launch('update-standalone.cjs', ['--restart-only', '--data-dir', storage]).done;
@@ -133,7 +154,7 @@ try {
     .run(JSON.stringify({ text: null }), 'files', path.basename(configPath));
   assert.equal(configModule.readConfig(configPath), undefined, 'Deleted SQLite config never falls back to stale disk credentials');
   db.close();
-  console.log('PASS: direct launch, SQLite priority, custom port, detached restart after parent loss, Windows npm invocation, build failure, authorization failure, startup error details, retry after failed startup, persistent failure log.');
+  console.log('PASS: direct launch, old-version cleanup preserves the live host, SQLite priority, custom port, detached restart after parent loss, Windows npm invocation, build failure, authorization failure, startup error details, retry after failed startup, persistent failure log.');
 } finally {
   try { await stop(); } catch { /* Fixture may not have started. */ }
   for (const child of pending) child.kill();
