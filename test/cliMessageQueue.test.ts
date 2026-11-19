@@ -87,6 +87,46 @@ it('rejects replies to questions already answered in the transcript', async () =
   expect(queue.enqueue(draft(text))).toBeUndefined(); expect(feedback).toHaveBeenCalledWith(expect.stringContaining('already answered'));
 });
 
+it('sends a question answer to the running turn ahead of queued follow-ups', async () => {
+  render({ canSteer: true, turnId: 'waiting-turn', steer }); await flush();
+  const followUp = queue.enqueue(draft('Work on this after the turn'));
+  const answer = draft(sessionQuestionReply({ id: 'ask', text: '', questions: [{ title: 'Continue?' }] }, { '0': 'Yes' }));
+  const id = queue.enqueue(answer);
+  expect(queue.enqueue(answer)).toBe(id);
+  await flush();
+  expect(steer).toHaveBeenCalledExactlyOnceWith(answer);
+  expect(send).not.toHaveBeenCalled();
+  expect(queue.items.find(item => item.id === followUp)?.state).toBe('queued');
+  expect(queue.items.find(item => item.id === id)).toMatchObject({ state: 'sending', requestId: 'steer-1', turnId: 'waiting-turn' });
+  render({ results: [{ requestId: 'steer-1', status: 'completed' }] }); await flush();
+  expect(steer).toHaveBeenCalledOnce();
+  expect(queue.items.find(item => item.id === followUp)?.state).toBe('queued');
+});
+
+it.each(['offline', 'unverified-owner', 'access-change', 'storage-full', 'timeout'] as const)('keeps a running question answer safe after %s', async failure => {
+  render({ canSteer: true, turnId: 'waiting-turn', steer }); await flush();
+  let finish!: (saved: boolean) => void;
+  harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  const answer = draft(sessionQuestionReply({ id: 'ask', text: '', questions: [{ title: 'Continue?' }] }, { '0': 'Yes' }));
+  queue.enqueue(answer); await flush();
+  if (failure === 'offline') render({ connected: false });
+  if (failure === 'unverified-owner') render({ turnId: undefined });
+  if (failure === 'access-change') render({ canSteer: false });
+  finish(failure !== 'storage-full'); await flush();
+  if (failure === 'timeout') {
+    expect(steer).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(65_001); await flush();
+    expect(queue.items[0]).toMatchObject({ state: 'uncertain', error: expect.stringContaining('not be sent again automatically') });
+    render({ turnId: 'next-turn' }); await flush();
+    expect(steer).toHaveBeenCalledOnce();
+  } else {
+    expect(steer).not.toHaveBeenCalled();
+    expect(queue.items[0]?.draft).toEqual(answer);
+    expect(queue.items[0]?.state).toBe(failure === 'storage-full' ? 'failed' : 'queued');
+  }
+  expect(send).not.toHaveBeenCalled();
+});
+
 it('cancels the exact queued message from its recovery toast without sending it later', async () => {
   render({ dispatchReason: 'Reconnecting' }); await flush();
   const id = queue.enqueue(draft('Old queued work'))!; await flush();

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.114
+
+- Keep blocking Codex questions visible in the browser until the owning session resolves them, and deliver async question answers immediately to a verified waiting turn.
+
 ## 2.0.6-pre.110
 
 - Give API keys, API Explorer, and Proxy dedicated URLs that survive refresh and browser history.

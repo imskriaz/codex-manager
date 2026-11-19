@@ -2,6 +2,30 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 export async function checkSessionQuestionUi(page, { parentId, width, output }) {
+  const waiting = { id: 'waiting-question', role: 'assistant', kind: 'message', text: '', timestamp: new Date().toISOString(), questions: [{ title: 'Continue the waiting turn?', options: ['Continue', 'Stop'] }] };
+  await page.evaluate(({ sessionId, question }) => {
+    for (const session of window.__uiSessions.filter(item => item.id === sessionId)) Object.assign(session, { status: 'running', steerTurnId: 'waiting-turn' });
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-question-owner', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: 'waiting-question-stream', sequence: 1, turnId: 'waiting-turn', status: 'running', updatedAt: Date.now(), messages: [question] } } }));
+  }, { sessionId: parentId, question: waiting });
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Follow-up mode', exact: true }).selectOption('queue');
+  await page.keyboard.press('Escape');
+  const waitingForm = page.getByRole('form', { name: 'Answer Codex question', exact: true });
+  await waitingForm.getByRole('radio', { name: 'Continue', exact: true }).check();
+  await waitingForm.getByRole('button', { name: 'Send answer', exact: true }).click();
+  await page.waitForFunction(() => window.__uiActions.some(item => item.action === 'steerCodexCliSessionTurn'));
+  const answer = await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').at(-1));
+  assert.equal(answer.payload.expectedTurnId, 'waiting-turn', 'A question answer steers the verified waiting turn even in queue mode');
+  assert.match(answer.payload.text, /waiting-question/);
+  await page.evaluate(({ sessionId, question, text }) => {
+    for (const session of window.__uiSessions.filter(item => item.id === sessionId)) Object.assign(session, { status: 'idle', steerTurnId: undefined });
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: { sessionId, streamId: 'waiting-question-stream', sequence: 2, status: 'completed', updatedAt: Date.now(), messages: [question, { id: 'waiting-answer', role: 'user', kind: 'message', text, turnId: 'waiting-turn' }] } } }));
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-question-completed', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  }, { sessionId: parentId, question: waiting, text: answer.payload.text });
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Follow-up mode', exact: true }).selectOption('steer');
+  await page.keyboard.press('Escape');
   const inject = async (messages, sequence) => page.evaluate(({ messages, sequence, sessionId }) => {
     window.__questionHistory = messages;
     window.__questionFixture = { sessionId, streamId: '55555555-5555-4555-8555-555555555555', sequence, status: 'completed', updatedAt: Date.now(), messages };
@@ -39,8 +63,11 @@ export async function checkSessionQuestionUi(page, { parentId, width, output }) 
   await form.getByRole('textbox', { name: 'Answer: Which layout?' }).fill('Compact with clear feedback');
   const composer = page.getByRole('textbox', { name: 'Message Codex', exact: true });
   await composer.fill('Keep my next draft');
-  await page.evaluate(() => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
-  assert.equal(await form.getByRole('button', {name:'Send answer',exact:true}).isDisabled(),true,'Offline disables answer actions without discarding the draft');
+  await page.evaluate(() => {
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } }));
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:host-status', stage: 'reconnecting' } }));
+  });
+  assert.equal(await form.getByRole('textbox', { name: 'Answer: Which layout?' }).inputValue(), 'Compact with clear feedback', 'Offline preserves the answer for the durable queue');
   const before = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length);
   await form.evaluate(element => { element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
   await form.waitFor({ state: 'hidden' });
@@ -49,17 +76,12 @@ export async function checkSessionQuestionUi(page, { parentId, width, output }) 
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before, 'Offline answers queue without dispatch');
   assert.equal(await page.locator('.cli-local-queue').count(), 1, 'Repeated answer submission queues once');
   await page.screenshot({ path: path.join(output, `question-answer-queued-${width}.png`) });
-  await composer.fill('Urgent next step');
-  await composer.evaluate(element => element.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   const queue = page.locator('.cli-local-queue');
-  await queue.locator('.cli-queued-message').filter({ hasText: 'Urgent next step' }).getByRole('button', { name: 'Steer', exact: true }).click();
-  await queue.getByText('Waiting for connection', { exact: true }).waitFor();
-  assert.match(await queue.locator('.cli-queued-message').first().innerText(), /Urgent next step/, 'Steer promotes a waiting message to the top');
   assert.ok(await queue.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1; }), 'Queue actions fit the viewport');
   await page.screenshot({ path: path.join(output, `queue-send-now-${width}.png`) });
-  await page.evaluate(() => { window.__holdNextSend = true; dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })); });
+  await page.evaluate(() => { window.__holdNextSend = true; dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })); dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:host-status', stage: 'live' } })); });
   await page.waitForFunction(() => window.__heldSendResult);
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').length), before + 1, 'Reconnect sends the queued answer exactly once');
-  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').at(-1).payload.text), 'Urgent next step', 'Reconnect sends the promoted message first');
+  assert.match(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'sendCodexCliSessionMessage').at(-1).payload.text), /Compact with clear feedback/, 'Reconnect sends the retained question answer');
   assert.equal(await page.locator('.codex-request-backdrop').count(), 0, 'Questions never open a modal');
 }

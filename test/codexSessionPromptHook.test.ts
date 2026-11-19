@@ -174,10 +174,18 @@ it('uses the transcript queue for async questions and never selects a modal for 
   expect(hook.active).toBeUndefined(); expect(hook.background).toBeUndefined();
 });
 
-it('does not surface expired question notifications after reconnect', () => {
+it('keeps a blocking question visible after reconnect until the owner resolves it', () => {
   render({ target: { id: 'another' } });
-  emit({ type: 'dashboard:codex-requests', requests: [{ ...request(), createdAt: Date.now() - 120_000 }] });
-  expect(render().background).toBeUndefined();
+  const pending = { ...request(), createdAt: Date.now() - 600_000 };
+  emit({ type: 'dashboard:codex-requests', requests: [pending] });
+  expect(render().background?.request).toEqual(pending);
+  let hook = render({ target: { id: 'thread', deviceId: 'worker' } });
+  hook.answer(codexPromptKey(pending), 'choice', 'Typed answer');
+  hook = render(); hook.respond(codexPromptKey(pending), 'approve');
+  expect(render().active).toBeUndefined();
+  expect(send).toHaveBeenCalledOnce();
+  emit({ type: 'dashboard:action-result', requestId: 'response1', action: 'respondCodexServerRequest', status: 'completed' });
+  expect(render().active).toBeUndefined();
 });
 
 

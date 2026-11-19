@@ -12,7 +12,7 @@ type PendingPrompt = {
   method: string;
   params: Record<string, unknown>;
   request: DashboardCodexServerRequest;
-  timer: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
   expiresAt: number;
   autoApprove?: () => boolean;
   autoAttempted?: boolean;
@@ -54,14 +54,15 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
       rpc.rejectServerRequest(serverRequest.id, `Codex Manager cannot safely answer ${serverRequest.method}.`);
       return;
     }
-    const timer = setTimeout(() => {
+    const blockingQuestion = request.kind === 'question' && !request.sourceMessageId;
+    const timer = blockingQuestion ? undefined : setTimeout(() => {
       const pending = pendingPrompts.get(request.id);
       if (!pending) return;
       try { pending.rpc?.rejectServerRequest(pending.serverId, "The dashboard prompt timed out without a user answer."); } catch { /* connection closed */ }
       finishPrompt(request.id, pending);
     }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { rpc, serverId: serverRequest.id, method: serverRequest.method,
-      params: serverRequest.params && typeof serverRequest.params === "object" ? serverRequest.params as Record<string, unknown> : {}, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
+      params: serverRequest.params && typeof serverRequest.params === "object" ? serverRequest.params as Record<string, unknown> : {}, request, timer, expiresAt: blockingQuestion ? Infinity : Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
     publishDashboardRealtime({ type: "dashboard:codex-request", request });
     autoApprovePendingCodexPrompts(threadId);
   });
@@ -98,9 +99,10 @@ export function syncNativeCodexPrompts(source: object, threadId: string, request
       if (previous?.signature === signature) request.createdAt = previous.createdAt;
       else questionTimes.set(serverRequest.id, { signature, createdAt: request.createdAt! });
     }
-    const timer = setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
+    const blockingQuestion = request.kind === 'question' && !request.sourceMessageId;
+    const timer = blockingQuestion ? undefined : setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { nativeSource: source, respondNative: result => respond(serverRequest, result),
-      serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
+      serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: blockingQuestion ? Infinity : Date.now() + PROMPT_TIMEOUT_MS, autoApprove });
     publishDashboardRealtime({ type: "dashboard:codex-request", request });
   }
   autoApprovePendingCodexPrompts(threadId);

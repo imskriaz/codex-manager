@@ -133,8 +133,12 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     if (changed) { update(next); void save(next).finally(() => releaseInBackground.current()); }
   }, [props.messages, props.results, ready, items]);
   useEffect(() => {
-    if (!ready || !owned.current || !props.canDispatch || draining.current) return;
-    const next = current.current.find(item => item.state !== 'sent');
+    if (!ready || !owned.current || draining.current) return;
+    const steerAnswer = !props.canDispatch && props.connected !== false && props.canSteer && props.turnId && props.steer;
+    if (!props.canDispatch && !steerAnswer) return;
+    if (current.current.some(item => item.state === 'sending' || item.state === 'uncertain')) return;
+    // A waiting turn needs its answer before ordinary queued follow-ups can run.
+    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0) : current.current.find(item => item.state !== 'sent');
     if (!next || next.state !== 'queued' || !next.durable) return;
     draining.current = true;
     const epoch = generation.current;
@@ -144,17 +148,20 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       if (epoch !== generation.current || !owned.current) return;
       if (!current.current.some(item => item.id === next.id && item.state === 'sending')) return;
       if (!saved) throw new Error('Browser storage could not save the send state. Your message was kept and was not sent. Free storage before retrying.');
-      if (!options.current.canDispatch) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
-      const requestId = options.current.send(next.draft);
+      const currentOptions = options.current;
+      const steer = answeredSessionQuestionIds([queuedMessageView(next)]).size > 0 && currentOptions.canSteer && currentOptions.turnId ? currentOptions.steer : undefined;
+      if (currentOptions.connected === false || !currentOptions.canDispatch && !steer) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
+      const turnId = currentOptions.turnId;
+      const requestId = steer ? steer(next.draft) : currentOptions.send(next.draft);
       if (!requestId) throw new Error('The message was not sent. It is kept in the conversation. Reconnect before resending.');
-      const sent = current.current.map(item => item.id === next.id ? { ...item, requestId } : item); update(sent); void save(sent);
+      const sent = current.current.map(item => item.id === next.id ? { ...item, requestId, turnId } : item); update(sent); void save(sent);
     }).catch(error => {
       if (epoch !== generation.current) return;
       const message = (error as Error).message;
       const failed = current.current.map(item => item.id === next.id ? { ...item, state: 'failed' as const, error: message } : item);
       update(failed); void save(failed);
     }).finally(() => { if (epoch === generation.current) { draining.current = false; setItems([...current.current]); releaseInBackground.current(); } });
-  }, [items, ready, props.canDispatch, props.turnId]);
+  }, [items, ready, props.canDispatch, props.canSteer, props.turnId, props.connected]);
   useEffect(() => {
     const pending = items.find(item => item.state === 'sending');
     if (!pending) return;

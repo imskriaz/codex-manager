@@ -30,17 +30,33 @@ it('distinguishes answered requests from unanswered disconnects in resolution ev
   } finally { detach(); stop(); }
 });
 
-it('preserves native question age across owner resync and prompt expiry', async () => {
-  vi.useFakeTimers(); const source = {}, respond = vi.fn();
+it('keeps native blocking questions answerable across long waits and owner resync', async () => {
+  vi.useFakeTimers(); const source = {}, respond = vi.fn().mockResolvedValue(undefined);
   const requests = [{ id: 'native-question', method: 'item/tool/requestUserInput', params: { threadId: 'native-age', questions: [{ id: 'choice', question: 'Continue?' }] } }];
   try {
     syncNativeCodexPrompts(source, 'native-age', requests, respond);
     const first = listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')!;
-    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')).toEqual(first);
     syncNativeCodexPrompts(source, 'native-age', requests, respond);
-    expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')?.createdAt).toBe(first.createdAt);
+    expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'native-age')).toEqual(first);
     expect(respond).not.toHaveBeenCalled();
+    await respondCodexAppServerPrompt(first.id, 'approve', { choice: 'Yes' });
+    expect(respond).toHaveBeenCalledExactlyOnceWith(requests[0], { answers: { choice: { answers: ['Yes'] } } });
   } finally { clearNativeCodexPrompts(source); }
+});
+
+it('keeps an app-server blocking question pending without rejecting it on a dashboard timeout', async () => {
+  vi.useFakeTimers(); const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'waiting');
+  try {
+    fake.emit({ id: 'blocking', method: 'item/tool/requestUserInput', params: { threadId: 'waiting', isBlocking: true, questions: [{ id: 'choice', question: 'Continue?' }] } });
+    const first = listPendingCodexAppServerPrompts().find(request => request.threadId === 'waiting')!;
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(listPendingCodexAppServerPrompts().find(request => request.threadId === 'waiting')).toEqual(first);
+    expect(fake.rejectServerRequest).not.toHaveBeenCalled();
+    respondCodexAppServerPrompt(first.id, 'approve', { choice: 'Typed answer' });
+    expect(fake.answerServerRequest).toHaveBeenCalledExactlyOnceWith('blocking', { answers: { choice: { answers: ['Typed answer'] } } });
+  } finally { detach(); }
 });
 
 describe("Codex app-server dashboard prompts", () => {

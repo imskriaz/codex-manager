@@ -13,7 +13,7 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.y >= 0 && bounds.y + bounds.height <= height, "Session requests fit the viewport");
     assert.equal(await page.locator(".codex-request-backdrop").count(), 0, "Browser requests stay inside the session");
   };
-  const question = { id: "question-ui", threadId, kind: "question", title: "Choose how to continue", questions: [
+  const question = { id: "question-ui", threadId, kind: "question", title: "Choose how to continue", createdAt: Date.now() - 600_000, questions: [
     { id: "layout", header: "Layout", question: "Which layout?", isSecret: false, options: [{ label: "Compact", description: "Use less space" }, { label: "Comfortable", description: "More space" }] },
     { id: "secret", header: "Secret", question: "Enter the secret value", isSecret: true },
     { id: "notes", header: "Notes", question: "Add instructions", isSecret: false }
@@ -79,13 +79,17 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
   assert.equal(await secret.inputValue(), "  private fixture value  ");
   assert.equal(await send.isEnabled(), true, "An explicit failure permits a reviewed retry");
 
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:connection", connected: false } })));
+  await page.evaluate(() => {
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:connection", connected: false } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "reconnecting" } }));
+  });
   await page.getByText("The owning system is offline. Your answer is kept; reconnect before sending.", { exact: true }).waitFor();
   assert.equal(await send.isDisabled(), true);
   assert.equal(await custom.inputValue(), "Custom compact answer", 'Offline recovery preserves the answer draft');
   const beforeReconnect = await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").length);
   await page.evaluate(() => {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:connection", connected: true } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } }));
     window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-requests", requests: window.__uiCodexRequests } }));
   });
   await send.waitFor();
