@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.6-pre.99
+
+- Separate Always Active (keep running after VS Code closes) from Start with system (Windows boot). Boot-task failures report their error without blocking the shutdown handoff; no sign-in fallback replaces Windows boot.
+
+- Load the selected saved API key into ready-to-paste proxy configuration, with retry and replacement controls.
+- Display versionless Claude aliases with their mapped Codex model names and include Claude recognition overrides.
+- Translate mid-conversation Claude system messages; verify all four aliases using the installed Claude CLI with both auth schemes.
+
 ## 2.0.6-pre.98
 
 - Focus interactive terminals on open and click, route prompt keys and shell shortcuts to the terminal, and keep Escape in terminal search from closing workspace tools.

@@ -924,7 +924,7 @@ export class WebDashboardServer implements vscode.Disposable {
   async isConfiguredDomainLocal(): Promise<boolean> {
     const settings = this.settingsStore.getDashboardSettings();
     const domain = normalizeCloudflaredDomain(settings.cloudflaredDomain ?? "");
-    if (settings.alwaysActive === true && settings.webDashboardEnabled) return true;
+    if ((settings.alwaysActive === true || settings.alwaysActiveStartWithSystem === true) && settings.webDashboardEnabled) return true;
     if (!this.encryptedSync?.isCrossPcEnabled() || !domain || !settings.webDashboardEnabled || settings.webSocketServerEnabled === false) return false;
     const challenge = crypto.randomBytes(16).toString("hex");
     const controller = new AbortController();

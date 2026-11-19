@@ -247,7 +247,7 @@ export function normalizeAiRequest(
         else {
           const role = string(item["role"], "role");
           if (!["system", "developer", "user", "assistant"].includes(role))
-            throw new AiProxyError(400, "Invalid message role.");
+            throw new AiProxyError(400, `Invalid message role: ${role}.`);
           if (role === "system" || role === "developer")
             instructions.push(instruction(item["content"]));
           else input.push({ role, content: content(item["content"], role === "assistant", false) });
@@ -259,7 +259,7 @@ export function normalizeAiRequest(
     for (const rawMessage of array(request["messages"], "messages")) {
       const message = object(rawMessage, "message"),
         role = string(message["role"], "role");
-      if (!["user", "assistant", ...(protocol === "chat" ? ["system", "developer", "tool"] : [])].includes(role))
+      if (!["user", "assistant", "system", ...(protocol === "chat" ? ["developer", "tool"] : [])].includes(role))
         throw new AiProxyError(400, "Invalid message role.");
       if (role === "tool") {
         input.push({
@@ -270,6 +270,13 @@ export function normalizeAiRequest(
         continue;
       }
       if (role === "system" || role === "developer") {
+        if (protocol === 'claude') {
+          // Keep Claude's mid-conversation reminders in order for the Responses backend.
+          const blocks = content(message['content'], false, true);
+          if (blocks.some(block => block['type'] !== 'input_text')) throw new AiProxyError(400, 'System content supports text blocks only.');
+          if (blocks.length) input.push({ role: 'developer', content: blocks });
+          continue;
+        }
         instructions.push(instruction(message["content"]));
         continue;
       }

@@ -112,6 +112,10 @@ const browserSchema = {
   additionalProperties: false,
   properties: {
     projectPath: { type: "string" },
+    targetDeviceId: {
+      type: "string",
+      description: "Optional connected remote device ID from manager_state.connectedPeers. Omit to use the MCP host."
+    },
     request: {
       type: "object",
       required: ["operation"],
@@ -224,7 +228,11 @@ async function tool(name, args, signal) {
     const response = await action(
       {
         action: "workspaceBrowser",
-        payload: { projectPath: args.projectPath, browserRequest: { operationId: randomUUID(), ...args.request } }
+        payload: {
+          projectPath: args.projectPath,
+          ...(typeof args.targetDeviceId === "string" && args.targetDeviceId.trim() ? { targetDeviceId: args.targetDeviceId } : {}),
+          browserRequest: { operationId: randomUUID(), ...args.request }
+        }
       },
       signal
     );

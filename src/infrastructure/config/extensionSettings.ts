@@ -87,7 +87,7 @@ export class ExtensionSettingsStore {
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", true),
       webSocketServerEnabled: config.get<boolean>("webSocketServerEnabled", true),
       alwaysActive: config.get<boolean>("alwaysActive", false),
-      alwaysActiveStartWithSystem: config.get<boolean>("alwaysActive", false) && config.get<boolean>("alwaysActiveStartWithSystem", false),
+      alwaysActiveStartWithSystem: config.get<boolean>("alwaysActiveStartWithSystem", false),
       cloudflaredDomain: config.get<string>("cloudflaredDomain", "").trim(),
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")
     };

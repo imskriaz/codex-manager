@@ -135,7 +135,7 @@ export function ApiWorkspace(props: {
   };
   useEffect(() => {
     setAccess(undefined);
-    if (!props.open || createOpen || !browser || !props.connected || !props.enabled || !bearer) {
+    if (!props.open || tab !== 'explorer' || createOpen || !browser || !props.connected || !props.enabled || !bearer) {
       setInspection("");
       return;
     }
@@ -204,7 +204,7 @@ export function ApiWorkspace(props: {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [props.open, createOpen, bearer, props.connected, props.enabled, inspectRetry]);
+  }, [props.open, tab, createOpen, bearer, props.connected, props.enabled, inspectRetry]);
   useEffect(() => () => requestRef.current?.abort(), []);
   useEffect(() => {
     if (!props.connected) requestRef.current?.abort("Connection lost");
@@ -379,6 +379,7 @@ export function ApiWorkspace(props: {
                 error: props.error,
                 notice: props.notice,
                 onCreate: (name) => props.onGenerate(name, undefined, ["aiProxy"]),
+                onLoad: (id) => { setCopyTarget(undefined); setKeyCopyStatus(''); props.onCopy(id); },
                 onRefresh: props.onRefresh
               }}
               privacyMode={props.privacyMode}

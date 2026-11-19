@@ -1,4 +1,4 @@
-import { CLAUDE_PROXY_MODELS, type ClaudeProxyMapping } from "../../src/domain/dashboard/apiProxy";
+import { CLAUDE_PROXY_MODELS, CLAUDE_PROXY_MODEL_OVERRIDES, claudeProxyModelName, type ClaudeProxyMapping } from "../../src/domain/dashboard/apiProxy";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
 import { apiTokenProjects, type DashboardApiToken } from "../../src/domain/dashboard/apiActions";
@@ -21,6 +21,7 @@ export type ApiProxyKeyAccess = {
   error?: string;
   notice?: string;
   onCreate: (name: string) => void;
+  onLoad: (id: string) => void;
   onRefresh: () => void;
 };
 
@@ -44,6 +45,7 @@ export function ApiProxyConnection(props: {
   const savedMappingKey = JSON.stringify(props.mapping);
   useEffect(() => { if (props.mapping) setClaudeMapping(props.mapping); }, [savedMappingKey]);
   const creating = useRef(false);
+  const attemptedKey = useRef('');
   const keyAccess = props.keyAccess;
   const proxyKeys = keyAccess.tokens.filter(
     (token) =>
@@ -54,6 +56,7 @@ export function ApiProxyConnection(props: {
     if (!props.open) {
       setWaiting(false);
       creating.current = false;
+      attemptedKey.current = '';
       return;
     }
     if (
@@ -73,7 +76,7 @@ export function ApiProxyConnection(props: {
       setWaiting(false);
       creating.current = false;
       setNotice(
-        "Key created, but this host did not identify its one-time secret. Refresh keys and paste its saved value."
+        "The host did not identify the created key. Refresh keys and select it again."
       );
     }
     if ((keyAccess.error || keyAccess.uncertain) && !keyAccess.pending) {
@@ -94,6 +97,18 @@ export function ApiProxyConnection(props: {
   const keyValue = freshKey || "YOUR_MANAGER_API_KEY";
   const launchCommand = "$env:MANAGER_API_KEY = '" + keyValue.replaceAll("'", "''") + "'\ncodex";
   const busy = keyAccess.pending || waiting;
+  const createKey = () => {
+    if (creating.current) return;
+    creating.current = true;
+    setWaiting(true);
+    setNotice('');
+    keyAccess.onCreate(selectedKey ? `${selectedKey.name.slice(0, 60)} replacement` : client === 'codex' ? 'Codex proxy' : 'Claude proxy');
+  };
+  useEffect(() => {
+    if (!props.open || !selectedKey || freshKey || busy || !keyAccess.enabled || keyAccess.uncertain || attemptedKey.current === selectedId) return;
+    attemptedKey.current = selectedId;
+    keyAccess.onLoad(selectedId);
+  }, [props.open, selectedId, selectedKey?.id, freshKey, busy, keyAccess.enabled, keyAccess.uncertain]);
   useEffect(() => {
     setNotice("");
     if (props.open) setClient("codex");
@@ -132,6 +147,7 @@ export function ApiProxyConnection(props: {
   ].join("\n");
   const claudeConfig = JSON.stringify(
     {
+      modelOverrides: CLAUDE_PROXY_MODEL_OVERRIDES,
       env: {
         ANTHROPIC_BASE_URL: baseUrl || "https://YOUR_MANAGER_HOST",
         ANTHROPIC_AUTH_TOKEN: keyValue,
@@ -139,7 +155,11 @@ export function ApiProxyConnection(props: {
         ANTHROPIC_DEFAULT_OPUS_MODEL: CLAUDE_PROXY_MODELS.opus,
         ANTHROPIC_DEFAULT_SONNET_MODEL: CLAUDE_PROXY_MODELS.sonnet,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: CLAUDE_PROXY_MODELS.haiku,
-        ANTHROPIC_DEFAULT_FABLE_MODEL: CLAUDE_PROXY_MODELS.fable
+        ANTHROPIC_DEFAULT_FABLE_MODEL: CLAUDE_PROXY_MODELS.fable,
+        ...Object.fromEntries((Object.keys(CLAUDE_PROXY_MODELS) as Array<keyof ClaudeProxyMapping>).map(role => {
+          const id = claudeMapping[role];
+          return [`ANTHROPIC_DEFAULT_${role.toUpperCase()}_MODEL_NAME`, claudeProxyModelName(role, models.find(model => model.id === id) ?? { id, name: id })];
+        }))
       }
     },
     null,
@@ -214,9 +234,13 @@ export function ApiProxyConnection(props: {
                 </select>
               </label>
               {freshKey ? (
-                <p role="status">New key selected. Copy the configuration now; its secret is shown only once.</p>
+                <p role="status">Selected API key loaded. The configuration is ready to copy and paste.</p>
               ) : (
-                <p role="status">Select a newly created key to copy its one-time secret into the configuration.</p>
+                <div role="status">
+                  {busy ? 'Loading selected API key...' : 'The selected API key is not loaded. Retry, or create a replacement from API keys.'}
+                  <button type="button" disabled={busy || !keyAccess.enabled || !!keyAccess.uncertain} onClick={() => keyAccess.onLoad(selectedId)}>Retry loading key</button>
+                  <button type="button" disabled={busy || !keyAccess.enabled || !!keyAccess.uncertain} onClick={createKey}>Create replacement key</button>
+                </div>
               )}
             </>
           ) : (
@@ -225,13 +249,7 @@ export function ApiProxyConnection(props: {
               <button
                 type="button"
                 disabled={!keyAccess.enabled || busy || !!keyAccess.uncertain}
-                onClick={() => {
-                  if (creating.current) return;
-                  creating.current = true;
-                  setWaiting(true);
-                  setNotice("");
-                  keyAccess.onCreate(client === "codex" ? "Codex proxy" : "Claude proxy");
-                }}
+                onClick={createKey}
               >
                 {busy ? "Creating…" : "Create proxy key"}
               </button>
@@ -281,7 +299,7 @@ export function ApiProxyConnection(props: {
             <pre tabIndex={0} aria-label="Codex PowerShell setup">
               {launchCommand}
             </pre>
-            <button type="button" aria-label="Copy Codex launch command" onClick={() => copy(launchCommand)}>
+            <button type="button" aria-label="Copy Codex launch command" disabled={!freshKey || busy} onClick={() => copy(launchCommand)}>
               Copy launch command
             </button>
             <p>
@@ -342,7 +360,7 @@ export function ApiProxyConnection(props: {
             <pre tabIndex={0} aria-label="Claude configuration">
               {claudeConfig}
             </pre>
-            <button type="button" aria-label="Copy Claude configuration" onClick={() => copy(claudeConfig)}>
+            <button type="button" aria-label="Copy Claude configuration" disabled={!freshKey || busy} onClick={() => copy(claudeConfig)}>
               Copy configuration
             </button>
           </section>
@@ -362,7 +380,7 @@ export function ApiProxyConnection(props: {
                   <tbody>
                     {Object.entries(CLAUDE_PROXY_MODELS).map(([key, label]) => (
                       <tr key={label}>
-                        <th scope="row"><code>{label}</code></th>
+                        <th scope="row"><code>{claudeProxyModelName(key as keyof ClaudeProxyMapping, models.find(model => model.id === claudeMapping[key as keyof ClaudeProxyMapping]) ?? { id: claudeMapping[key as keyof ClaudeProxyMapping], name: claudeMapping[key as keyof ClaudeProxyMapping] })}</code></th>
                         <td>
                           <select
                             aria-label={`Proxy model for ${label}`}

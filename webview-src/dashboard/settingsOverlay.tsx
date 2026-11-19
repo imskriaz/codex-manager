@@ -336,15 +336,13 @@ export function SettingsOverlay(props: {
                           ? "The standalone Node host will keep using port 39875 after VS Code closes."
                           : "Enable Web Dashboard for this host to stay active."}
                       </div>
-                      <SettingsToggleBlock
-                        title="Start with system"
-                        className="settings-nested-toggle"
-                        sub="Start the local host when Windows boots, before you sign in, even if VS Code is closed."
-                        enabled={props.settings.alwaysActiveStartWithSystem === true}
-                        disabled={props.settings.alwaysActive !== true}
-                        onToggle={(enabled) => patchAndSend("alwaysActiveStartWithSystem", enabled)}
-                      />
                     </SettingsToggleBlock>
+                    <SettingsToggleBlock
+                      title="Start with system"
+                      sub="Start the local host when Windows boots, before sign-in. Requires administrator permission to register."
+                      enabled={props.settings.alwaysActiveStartWithSystem === true}
+                      onToggle={(enabled) => patchAndSend("alwaysActiveStartWithSystem", enabled)}
+                    />
                     <SettingsToggleBlock
                       title="Dashboard API"
                       sub="Allow generated Bearer tokens to call the local dashboard API."

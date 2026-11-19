@@ -18,12 +18,17 @@ describe("relay startup without generated files", () => {
   it("registers the packaged script and removes the legacy launcher only after success", async () => {
     await installRelayStartup("C:\\test home\\.codex\\always-online-relay.json", "C:\\extension\\tools\\always-online-server.js");
     expect(fixture.exec).toHaveBeenCalledWith("schtasks.exe", expect.arrayContaining(["/Create", "/SC", "ONSTART", "/RU", "SYSTEM"]), { windowsHide: true, timeout: 5000 }, expect.any(Function));
+    const args = fixture.exec.mock.calls[0]![1] as string[];
+    expect(args[args.indexOf('/TR') + 1]).toBe('cmd.exe /d /s /c ""C:\\test home\\.codex\\always-online-relay-start.cmd""');
     expect(fixture.writeFile).toHaveBeenCalledWith(expect.stringContaining("always-online-relay-start.cmd"), expect.stringContaining("Windows boot task triggered"), expect.any(Object));
     expect(fixture.unlink).toHaveBeenCalledOnce();
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("task scheduler unavailable")));
     fixture.unlink.mockClear();
+    fixture.writeFile.mockClear();
     await expect(installRelayStartup("config", "script")).rejects.toThrow("task scheduler unavailable");
     expect(fixture.unlink).not.toHaveBeenCalled();
+    expect(fixture.writeFile).toHaveBeenCalledOnce();
+    expect(fixture.writeFile.mock.calls[0]![0]).not.toContain('Startup');
   });
   it("handles missing entries and reports inconclusive removal", async () => {
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(Object.assign(new Error("missing"), { code: 1 })));

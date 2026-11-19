@@ -5,7 +5,7 @@ vi.mock("undici", async original => ({ ...await original<typeof import("undici")
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 
 const secret = Buffer.alloc(32, 7);
-let settings: { cloudflaredDomain: string; webDashboardEnabled: boolean; webSocketServerEnabled: boolean; alwaysActive?: boolean };
+let settings: { cloudflaredDomain: string; webDashboardEnabled: boolean; webSocketServerEnabled: boolean; alwaysActive?: boolean; alwaysActiveStartWithSystem?: boolean };
 let server: WebDashboardServer;
 beforeEach(() => {
   settings = { cloudflaredDomain: "https://tunnel.example", webDashboardEnabled: true, webSocketServerEnabled: true };
@@ -31,6 +31,13 @@ it("honors a disabled cross-system toggle without making a network request", asy
 });
 it("keeps the local Always Active host enabled when cross-system transport is off", async () => {
   settings.alwaysActive = true;
+  settings.webSocketServerEnabled = false;
+  expect(await server.isConfiguredDomainLocal()).toBe(true);
+  expect(mockFetch).not.toHaveBeenCalled();
+});
+it('prepares boot startup independently of Always Active and cross-system transport', async () => {
+  settings.alwaysActive = false;
+  settings.alwaysActiveStartWithSystem = true;
   settings.webSocketServerEnabled = false;
   expect(await server.isConfiguredDomainLocal()).toBe(true);
   expect(mockFetch).not.toHaveBeenCalled();

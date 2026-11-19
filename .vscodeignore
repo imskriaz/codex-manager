@@ -2,6 +2,7 @@
 *.vsix.sha256
 *.apk
 *.log
+.tmp-*
 AGENTS.md
 WORKSPACE-GOAL.md
 pending_log.md

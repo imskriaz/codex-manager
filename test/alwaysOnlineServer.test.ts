@@ -159,7 +159,7 @@ describe("always-online WebSocket relay handoff", () => {
     );
     const shutdownRequest = service.slice(
       service.indexOf("function requestShutdown("),
-      service.indexOf("async function writeStartupLauncher(")
+      service.indexOf("async function removeStartupLauncher(")
     );
     expect(shutdownRequest).toContain('request.on("timeout", () => {');
     expect(shutdownRequest).toContain("request.destroy();");

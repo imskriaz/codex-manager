@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { mapClaudeModels, mapDiscoveredModels, MODEL_PLACEHOLDER } from "../webview-src/dashboard/apiProxyModelMapping";
+import { CLAUDE_PROXY_MODELS, CLAUDE_PROXY_MODEL_OVERRIDES, claudeProxyModelName } from '../src/domain/dashboard/apiProxy';
 
 describe("API proxy model mapping", () => {
+  it('uses versionless Claude aliases and names their actual Codex target', () => {
+    expect(CLAUDE_PROXY_MODELS.opus).toBe('claude-opus');
+    expect(claudeProxyModelName('opus', { id: 'gpt-6.1', name: 'GPT 6.1' })).toBe('claude-opus (GPT 6.1)');
+    expect(claudeProxyModelName('sonnet', { id: 'gpt-6.1', name: 'gpt-6.1' })).toBe('claude-sonnet (GPT 6.1)');
+    expect(Object.values(CLAUDE_PROXY_MODEL_OVERRIDES)).toEqual(Object.values(CLAUDE_PROXY_MODELS));
+  });
   it("maps Claude roles to discovered IDs, including Fable and provider-qualified models", () => {
     const models = mapDiscoveredModels({
       data: [

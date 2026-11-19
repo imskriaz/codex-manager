@@ -102,3 +102,48 @@ it("preserves Manager permissions/results, account targets and unknown-outcome e
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+it("routes manager_browser through the selected remote device", async () => {
+  const requests: any[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", data => { body += data; });
+    request.on("end", () => {
+      const value = JSON.parse(body);
+      requests.push(value);
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ messages: [{
+        type: "dashboard:action-result",
+        requestId: value.requestId,
+        status: "completed",
+        payload: { workspaceBrowser: { pages: [{ id: "remote-page", url: "https://example.com", revision: "1" }], feedback: [] } }
+      }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address() as { port: number };
+    await withClient(async send => {
+      await send("initialize");
+      const result = await send("tools/call", {
+        name: "manager_browser",
+        arguments: {
+          projectPath: "D:/remote-project",
+          targetDeviceId: "remote-device",
+          request: { operation: "list" }
+        }
+      });
+      expect(result.result.isError).not.toBe(true);
+    }, `http://127.0.0.1:${address.port}`);
+    expect(requests[0]).toMatchObject({
+      action: "workspaceBrowser",
+      payload: {
+        projectPath: "D:/remote-project",
+        targetDeviceId: "remote-device",
+        browserRequest: { operation: "list", openedBy: "ai" }
+      }
+    });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

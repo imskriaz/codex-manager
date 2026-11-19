@@ -39,6 +39,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private verifiedConfiguration: string | undefined;
   private applying: Promise<RelayConfigurationResult> | undefined;
   private disposed = false;
+  private startupWarning: string | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -51,12 +52,12 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (this.applying) return this.applying;
     const task = (async () => {
       for (;;) {
-        const configuration = this.configurationKey();
+        const configuration = this.settingsKey();
         try {
           const result = await this.applyConfigurationInternal();
-          if (this.disposed || configuration === this.configurationKey()) return result;
+          if (this.disposed || configuration === this.settingsKey()) return result;
         } catch (error) {
-          if (this.disposed || configuration === this.configurationKey()) throw error;
+          if (this.disposed || configuration === this.settingsKey()) throw error;
         }
       }
     })().finally(() => { if (this.applying === task) this.applying = undefined; });
@@ -90,7 +91,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       // does not await Disposable.dispose(), so beginning this work from
       // dispose() is too late and can leave the shared dashboard port empty.
       await this.prepareRelay(hostKey);
-      if (this.disposed || configuration !== this.configurationKey()) { await this.stop(); return "stopped"; }
+      // Disposal may already have handed off while boot registration waited.
+      if (this.disposed) return "stopped";
+      if (configuration !== this.configurationKey()) { await this.stop(); return "stopped"; }
       return "paused";
     }
     return this.start(hostKey);
@@ -184,7 +187,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     this.sessionActive = false;
     if (
       this.preparedRelay &&
-      this.verifiedConfiguration !== undefined && this.verifiedConfiguration === this.configurationKey()
+      this.verifiedConfiguration !== undefined && this.verifiedConfiguration === this.configurationKey() &&
+      (this.preparedRelay.mode !== "node" || getCodexManagerConfiguration().get<boolean>("alwaysActive", false))
     ) {
       // Disposable.dispose() is synchronous. Spawn the already-prepared relay
       // before the extension host exits; it retries the bind until the Web
@@ -197,18 +201,24 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
     const alwaysActive = config.get<boolean>("alwaysActive", false);
+    const startWithSystem = config.get<boolean>("alwaysActiveStartWithSystem", false);
     const dashboardEnabled = config.get<boolean>("webDashboardEnabled", true);
     const crossSystemEnabled = config.get<boolean>("webSocketServerEnabled", true);
     // Always Active is a local standalone host. Keep it independent from the
     // optional cross-system relay toggle so VS Code can hand off the local
     // dashboard when WS Cross System is disabled.
-    if (dashboardEnabled && alwaysActive) return JSON.stringify(["local", "node"]);
+    if (dashboardEnabled && (alwaysActive || startWithSystem)) return JSON.stringify(["local", "node", alwaysActive]);
     return dashboardEnabled && crossSystemEnabled && domain
       ? JSON.stringify([domain, "relay"]) : undefined;
   }
 
+  private settingsKey(): string {
+    return JSON.stringify([this.configurationKey(), getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false)]);
+  }
+
   private async getLocalHostKey(): Promise<string | undefined> {
-    if (!getCodexManagerConfiguration().get<boolean>("alwaysActive", false)) return undefined;
+    const config = getCodexManagerConfiguration();
+    if (!config.get<boolean>("alwaysActive", false) && !config.get<boolean>("alwaysActiveStartWithSystem", false)) return undefined;
     let key = await this.context.secrets.get(LOCAL_HOST_KEY_SECRET);
     if (!key) {
       key = crypto.randomBytes(32).toString("base64url");
@@ -254,7 +264,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
         throw new Error("The previous relay did not stop; its admin token was not rotated on disk.");
       }
     }
-    const mode: "relay" | "node" = getCodexManagerConfiguration().get<boolean>("alwaysActive", false) ? "node" : "relay";
+    const settings = getCodexManagerConfiguration();
+    const mode: "relay" | "node" = settings.get<boolean>("alwaysActive", false) || settings.get<boolean>("alwaysActiveStartWithSystem", false) ? "node" : "relay";
     const { configPath, scriptTarget, launchArgs } = await this.prepareRelayFiles(mode, storage);
     const executable = await resolveNodeExecutable();
     const prepared: PreparedRelay = {
@@ -289,20 +300,23 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     // prepared host first so a slow or unavailable scheduler cannot prevent
     // the normal VS Code shutdown handoff.
     this.preparedRelay = prepared;
-    if (mode === "node") {
-      const startWithSystem = getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false);
-      try {
-        await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
-        recordPersistentEvent("info", "node-host", startWithSystem ? "Windows boot startup task registered" : "Windows boot startup task removed", {
-          configPath, scriptTarget, executable, startWithSystem
-        });
-      } catch (error) {
-        recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
-          configPath, scriptTarget, executable, startWithSystem
-        }, error);
-        throw error;
+    const startWithSystem = getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false);
+    try {
+      await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
+      this.startupWarning = undefined;
+      recordPersistentEvent("info", "node-host", startWithSystem ? "Windows boot startup task registered" : "Windows boot startup task removed", {
+        configPath, scriptTarget, executable, startWithSystem
+      });
+    } catch (error) {
+      recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
+        configPath, scriptTarget, executable, startWithSystem
+      }, error);
+      const message = `Start with system could not ${startWithSystem ? "register the Windows boot task. Run VS Code as administrator and retry" : "remove the Windows boot task; it may still start at boot"}. Always Active can still keep the host running after VS Code closes. ${error instanceof Error ? error.message : String(error)}`;
+      if (message !== this.startupWarning) {
+        this.startupWarning = message;
+        void vscode.window.showWarningMessage(message);
       }
-    } else await writeStartupLauncher(this.context, configPath, scriptTarget, executable);
+    }
     return prepared;
   }
 
@@ -457,11 +471,6 @@ function requestShutdown(port: number, token: string): Promise<void> {
     });
     request.end();
   });
-}
-
-async function writeStartupLauncher(context: vscode.ExtensionContext, configPath: string, scriptPath: string, executable: string): Promise<void> {
-  await installRelayStartup(configPath, scriptPath, executable);
-  void context;
 }
 
 async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<void> {

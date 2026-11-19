@@ -31,8 +31,11 @@ Configure Codex or Claude to launch `codex-manager-mcp` over stdio, or run
 
 ## Browser and feedback rules
 
-`manager_browser` takes `projectPath` and `request`. Its pages appear in
-**+ → Browser** on the same host and project. Start with `list` or `open` and an
+`manager_browser` takes `projectPath`, an optional `targetDeviceId`, and
+`request`. Call `manager_state` first when the user names a remote PC, then copy
+its exact connected peer ID into `targetDeviceId`. Its pages appear in **+ →
+Browser** on that host and project, including pages opened by the user. Start
+with `list` or `open` and an
 HTTP(S) URL, then `snapshot` for accessibility, screenshot, logs, page ID and
 revision. Mutations require the current page ID and revision. Coordinates are
 viewport pixels. Keep `operationId` when checking the same attempt.

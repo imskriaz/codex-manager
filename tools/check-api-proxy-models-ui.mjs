@@ -19,20 +19,24 @@ const compiled = await build({ stdin: { contents: `
     const [catalogue,setCatalogue]=useState(models);
     const [warning,setWarning]=useState();
     const [loading,setLoading]=useState(false);
+    const [token,setToken]=useState();
+    const [tokenId,setTokenId]=useState();
     const [saved,setSaved]=useState();
+    window.keyRequests ??= [];
     const [pending,setPending]=useState(false);
     const [error,setError]=useState();
     const [notice,setNotice]=useState();
     window.failModels=()=>{setCatalogue([]);setWarning('Codex sign-in unavailable. Refresh models to retry.');};
     return <ApiWorkspace open tokens={[
       {id:'existing',name:'Existing key',permissions:['aiProxy'],createdAt:1},
-      {id:'other',name:'Other key',permissions:['aiProxy'],createdAt:1}
+      {id:'other',name:'Other key',permissions:['aiProxy'],createdAt:1},
+      {id:'legacy',name:'Legacy key',permissions:['aiProxy'],createdAt:1}
     ]} proxy={{capturedAt:Date.now(),requests:[],models:catalogue,modelDiscoveryWarning:warning,claudeMapping:saved}}
-      enabled connected pending={pending} loading={loading} error={error} notice={notice}
+      token={token} tokenId={tokenId} enabled connected pending={pending} loading={loading} error={error} notice={notice}
       onRefresh={()=>{setError(undefined);setLoading(true);setTimeout(()=>{setCatalogue(models);setWarning(undefined);setLoading(false);},30);}}
       onSaveMapping={mapping=>{setPending(true);setError(undefined);setTimeout(()=>{setPending(false);if(window.rejectSave){setError('Mapping storage unavailable');return;}setSaved(mapping);setNotice('Claude model mapping saved.');window.savedMapping=mapping;},30);}}
       onGenerate={()=>{throw new Error('Model discovery must not create a key');}}
-      onCopy={()=>{throw new Error('Model discovery must not retrieve a secret');}}
+      onCopy={id=>{window.keyRequests.push(id);setPending(true);setToken(undefined);setTokenId(undefined);setError(undefined);setTimeout(()=>{setPending(false);if(id==='legacy'){setError('This older key has only a saved hash and cannot be copied. Create a replacement key.');return;}if(window.rejectKey){setError('Key storage unavailable');return;}setToken('cm_'+(id==='existing'?'a':'b').repeat(64));setTokenId(id);},100);}}
       onEdit={()=>{}} onRevoke={()=>{}}/>;
   }
   render(<App/>,document.getElementById('app'));
@@ -60,13 +64,25 @@ try {
     await page.getByRole('tab', { name: 'Proxy', exact: true }).click();
     await page.getByRole('button', { name: 'Proxy connection settings' }).click();
     const dialog = page.getByRole('dialog', { name: 'Proxy connection' });
+    await dialog.getByRole('button', { name: 'Copy Codex launch command', exact: true }).click();
+    assert.ok((await page.evaluate(() => window.copied)).includes('cm_'+'a'.repeat(64)), 'Codex launch includes the selected key');
     await dialog.getByRole('tab', { name: 'Claude', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Claude configuration"]').textContent.includes('cm_'+'a'.repeat(64)));
+    assert.equal(await dialog.getByLabel('Key value', { exact: true }).count(), 0, 'No manual key field');
     const mapping = dialog.getByRole('region', { name: 'Claude model mapping' });
-    const opus = mapping.getByLabel('Proxy model for claude-opus-4-6', { exact: true });
+    const opus = mapping.getByLabel('Proxy model for claude-opus', { exact: true });
     await opus.waitFor();
     assert.deepEqual(await opus.locator('option').evaluateAll(rows => rows.map(row => row.value)), ['gpt-codex', 'gpt-fast']);
     await opus.selectOption('gpt-fast');
+    await page.evaluate(() => { window.rejectKey=true; });
     await dialog.getByLabel('Proxy API key', { exact: true }).selectOption('other');
+    await dialog.getByRole('alert').filter({ hasText: 'Key storage unavailable' }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Copy Claude configuration', exact: true }).isDisabled(), true, 'Cannot copy a placeholder after key load failure');
+    assert.ok(!(await dialog.getByLabel('Claude configuration', { exact: true }).textContent()).includes('cm_'+'a'.repeat(64)), 'Previous key is never used for a new selection');
+    assert.deepEqual(await page.evaluate(() => window.keyRequests), ['existing','other'], 'Failed key loads are not replayed');
+    await page.evaluate(() => { window.rejectKey=false; });
+    await dialog.getByRole('button', { name: 'Retry loading key', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Claude configuration"]').textContent.includes('cm_'+'b'.repeat(64)));
     assert.equal(await opus.inputValue(), 'gpt-fast', 'Changing existing keys retains available models and mapping');
     await page.evaluate(() => { window.rejectSave=true; });
     await mapping.getByRole('button', { name: 'Save model mapping', exact: true }).click();
@@ -78,17 +94,29 @@ try {
     assert.equal(await page.evaluate(() => window.savedMapping.opus), 'gpt-fast');
     assert.equal(await mapping.getByRole('button', { name: 'Save model mapping', exact: true }).isDisabled(), true);
     await dialog.getByRole('button', { name: 'Copy Claude configuration', exact: true }).click();
-    assert.equal(JSON.parse(await page.evaluate(() => window.copied)).env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'claude-opus-4-6');
+    const copied = JSON.parse(await page.evaluate(() => window.copied));
+    assert.equal(copied.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'claude-opus');
+    assert.equal(copied.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, 'claude-opus (GPT Fast)');
+    assert.equal(copied.modelOverrides['claude-opus-4-6'], 'claude-opus');
+    assert.equal(copied.env.ANTHROPIC_AUTH_TOKEN, 'cm_'+'b'.repeat(64), 'Ready-to-paste configuration includes the selected stored API key');
+    assert.ok(!JSON.stringify(copied).includes('YOUR_MANAGER_API_KEY'));
+    await dialog.getByLabel('Proxy API key', { exact: true }).selectOption('legacy');
+    await dialog.getByRole('alert').filter({ hasText: 'older key' }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Copy Claude configuration', exact: true }).isDisabled(), true);
+    await dialog.getByLabel('Proxy API key', { exact: true }).selectOption('existing');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Claude configuration"]').textContent.includes('cm_'+'a'.repeat(64)));
     await mapping.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, 'mapping-' + width + '.png') });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No page overflow');
     assert.ok(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 2), 'No modal overflow');
+    const keyLoadCount = await page.evaluate(() => window.keyRequests.length);
     await page.evaluate(() => window.failModels());
     await mapping.getByRole('alert').waitFor();
     await mapping.getByRole('button', { name: 'Refresh Codex models' }).click();
     await page.waitForFunction(() => !document.querySelector('[aria-label="Claude model mapping"] [role="alert"]'));
     assert.equal(await opus.locator('option').count(), 2, 'Refresh recovers the catalogue without a secret');
-    assert.deepEqual(apiRequests.filter(value => value !== '/favicon.ico'), [], 'No model API requests or secret fetches from the browser');
+    assert.deepEqual(apiRequests.filter(value => value !== '/favicon.ico'), [], 'No direct model or secret API calls from the browser');
+    assert.equal(await page.evaluate(() => window.keyRequests.length), keyLoadCount, 'Model refresh does not reload key secrets');
     assert.deepEqual(errors, []);
     results.push({ width, elapsedMs: Date.now() - started });
     await page.close();

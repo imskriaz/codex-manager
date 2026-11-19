@@ -11,7 +11,7 @@ import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
 import { startApiProxyLog } from "./aiProxyHistory";
 import { readClaudeProxyMapping } from './aiProxyModelMapping';
-import { CLAUDE_PROXY_MODELS, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
+import { CLAUDE_PROXY_MODELS, claudeProxyModelName, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
 import type { ApiProxyRequestLog } from "../domain/dashboard/apiProxy";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
 import { createSharedInspection, waitWithin } from "../utils/concurrency";
@@ -267,7 +267,7 @@ export class AiProxy {
           return {
             id: publicId,
             type: "model",
-            display_name: role ? `Claude ${role[0]!.toUpperCase()}${role.slice(1)}` : model.name,
+            display_name: role ? claudeProxyModelName(role, model) : model.name,
             description: model.claudeId ? `Codex Manager backend model: ${model.id}` : model.name,
             created_at: "1970-01-01T00:00:00Z"
           };

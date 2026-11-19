@@ -408,7 +408,7 @@ export class AccountsWorkbench {
         console.warn("[codexManager] Always-online relay startup failed", error);
         if (!this.alwaysOnlineStartupWarningShown) {
           this.alwaysOnlineStartupWarningShown = true;
-          void vscode.window.showWarningMessage(`Always Active could not register the Windows boot task. Run VS Code as administrator and retry. ${error instanceof Error ? error.message : String(error)}`);
+          void vscode.window.showWarningMessage(`The background host could not be prepared. ${error instanceof Error ? error.message : String(error)}`);
         }
       }).finally(() => { if (!this.disposed) this.scheduleAlwaysOnlinePreparation(60_000); });
     }, delay);

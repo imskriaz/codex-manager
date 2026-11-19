@@ -1,7 +1,8 @@
-import { CLAUDE_PROXY_MODELS } from "../src/domain/dashboard/apiProxy";
+import { spawn } from "node:child_process";
+import { CLAUDE_PROXY_MODEL_OVERRIDES, CLAUDE_PROXY_MODELS } from "../src/domain/dashboard/apiProxy";
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from "../src/services/aiProxyModelMapping";
 import { createServer, type Server } from "node:http";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type * as vscode from "vscode";
@@ -331,11 +332,11 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
   );
   expect(models.data.map((item: { id: string }) => item.id)).toEqual(["a", "b"]);
   const first = await fetch(origin + "/v1/models?limit=1", { headers: { "x-api-key": key } }).then((r) => r.json());
-  expect(first).toMatchObject({ has_more: true, first_id: "claude-opus-4-6", data: [{ type: "model", display_name: "Claude Opus" }] });
-  const next = await fetch(origin + "/v1/models?limit=1000&after_id=claude-opus-4-6", { headers: { "x-api-key": key } }).then(
+  expect(first).toMatchObject({ has_more: true, first_id: "claude-opus", data: [{ type: "model", display_name: "claude-opus (A)" }] });
+  const next = await fetch(origin + "/v1/models?limit=1000&after_id=claude-opus", { headers: { "x-api-key": key } }).then(
     (r) => r.json()
   );
-  expect(next).toMatchObject({ has_more: false, first_id: "claude-sonnet-4-6" });
+  expect(next).toMatchObject({ has_more: false, first_id: "claude-sonnet" });
   expect(
     (await fetch(origin + "/v1/models/a", { headers: { Authorization: `Bearer ${key}` } }).then((r) => r.json())).id
   ).toBe("a");
@@ -358,7 +359,7 @@ it("publishes Claude role names and maps them back to provider-qualified backend
       Response.json({
         models: [
           { id: "cx/sonnet", displayName: "Claude Sonnet" },
-          { id: "cx/opus", display_name: "Claude Opus" },
+          { id: "cx/opus", display_name: "claude-opus (a)" },
           { id: "cx/haiku", name: "Claude Haiku" },
           { id: "cx/fable", label: "Claude Fable" }
         ]
@@ -846,7 +847,7 @@ it.each(['x-api-key', 'bearer'])('discovers saved Claude mappings without upstre
   expect(result.data.map((model: {id: string}) => model.id)).toEqual(Object.values(CLAUDE_PROXY_MODELS));
   expect(result.data[0].description).toContain('gpt-fast');
   const detail = await fetch(origin + '/v1/models/' + CLAUDE_PROXY_MODELS.opus, { headers: { ...headers, 'anthropic-version': '2023-06-01' } });
-  expect(await detail.json()).toMatchObject({ id: CLAUDE_PROXY_MODELS.opus, display_name: 'Claude Opus' });
+  expect(await detail.json()).toMatchObject({ id: CLAUDE_PROXY_MODELS.opus, display_name: 'claude-opus (GPT fast)' });
   expect(upstream).not.toHaveBeenCalled();
 });
 it('persists mapping edits, rejects stale edits and unavailable targets, and preserves storage errors', async () => {
@@ -863,4 +864,43 @@ it('persists mapping edits, rejects stale edits and unavailable targets, and pre
   expect(readClaudeProxyMapping(context)).toEqual(savedRoutes);
   await saveClaudeProxyMapping(context, { ...savedRoutes, opus: 'gpt-codex' }, savedRoutes, available);
   expect(readClaudeProxyMapping(context)?.opus).toBe('gpt-codex');
+});
+
+it.runIf(process.env.CODEX_MANAGER_TEST_CLAUDE === '1').each(
+  (['opus', 'sonnet', 'haiku', 'fable'] as const).flatMap(role => (['x-api-key', 'bearer'] as const).map(scheme => ({ role, scheme })))
+)('installed Claude CLI uses the Manager gateway: $role / $scheme', async ({ role, scheme }) => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const cliRoot = await mkdtemp(join(root, 'claude-'));
+  await writeFile(join(cliRoot, 'settings.json'), JSON.stringify({ modelOverrides: CLAUDE_PROXY_MODEL_OVERRIDES }));
+  const seen: Array<{ path: string; authenticated: boolean }> = [];
+  server.on('request', request => seen.push({ path: request.url!, authenticated: scheme === 'bearer' ? request.headers.authorization === 'Bearer ' + key : request.headers['x-api-key'] === key }));
+  const child = spawn(process.env.ComSpec!, ['/d', '/s', '/c', 'claude --print --no-session-persistence --model ' + CLAUDE_PROXY_MODELS[role] + ' --output-format text "Say hello. Do not use tools."'], {
+    cwd: cliRoot,
+    env: { ...process.env, ANTHROPIC_BASE_URL: origin, ANTHROPIC_API_KEY: scheme === 'x-api-key' ? key : '', ANTHROPIC_AUTH_TOKEN: scheme === 'bearer' ? key : '', ANTHROPIC_MODEL: CLAUDE_PROXY_MODELS[role], CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CONFIG_DIR: cliRoot },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let output = '', errors = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { errors += data; });
+  const timer = setTimeout(() => child.kill(), 20_000);
+  const code = await new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }).finally(() => clearTimeout(timer));
+  expect({ code, output, errors }).toMatchObject({ code: 0, output: expect.stringContaining('Hello') });
+  expect(output + errors).not.toMatch(/unrecognized_model|isn't recognized|is not recognized/);
+  expect(seen.some(request => request.path.startsWith('/v1/models') && request.authenticated)).toBe(true);
+  expect(seen.some(request => request.path.startsWith('/v1/messages') && request.authenticated)).toBe(true);
+  expect(vi.mocked(upstream).mock.calls.some(call => JSON.parse(String(call[1]?.body)).model === savedRoutes[role])).toBe(true);
+}, 30_000);
+
+it('keeps Claude mid-conversation system reminders in order and omits empty control messages', () => {
+  const result = normalizeAiRequest({ model: 'claude-fable', max_tokens: 100, system: 'Initial instruction', messages: [
+    { role: 'user', content: 'First question' },
+    { role: 'assistant', content: 'First answer' },
+    { role: 'system', content: [{ type: 'text', text: 'New reminder' }] },
+    { role: 'system', content: [], output_config: { effort: 'high' } },
+    { role: 'user', content: 'Next question' }
+  ] }, 'claude');
+  expect(result.body.instructions).toBe('Initial instruction');
+  expect((result.body.input as Array<{ role: string }>).map(message => message.role)).toEqual(['user','assistant','developer','user']);
+  expect(result.body.input).toContainEqual({ role: 'developer', content: [{ type: 'input_text', text: 'New reminder' }] });
+  expect(() => normalizeAiRequest({ model: 'claude-fable', max_tokens: 100, messages: [{ role: 'invented', content: 'bad' }] }, 'claude')).toThrow('Invalid message role');
 });

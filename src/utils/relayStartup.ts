@@ -92,7 +92,7 @@ export async function installRelayStartup(configPath: string, scriptPath: string
     return;
   }
   const launcher = await writeBootLauncher(configPath, scriptPath, executable);
-  const taskAction = `cmd.exe /d /c \"\\\"${launcher}\\\"\"`;
+  const taskAction = `cmd.exe /d /s /c ""${launcher}""`;
   await command("schtasks.exe", ["/Create", "/TN", TASK, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", taskAction, "/F"]);
   // Confirm the scheduler accepted the task before removing older login-only
   // registrations. This also leaves a useful failure in the persistent log.
