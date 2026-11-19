@@ -18449,3 +18449,59 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .workspace-browser-comment-actions { display:flex; align-items:center; gap:1px; }
 .workspace-browser-inspector .workspace-browser-comment-actions button { flex:0 0 21px; width:21px; background:transparent; border:0; }
 @container (max-width:650px) { .workspace-browser-content > .workspace-browser-resizer.is-responsive { height:5px; width:100%; cursor:row-resize; } }
+
+/* Reuse the compact Git tab strip throughout workspaces; dashboard navigation keeps its own styles. */
+:is(
+  .cli-workspace .cli-context-tab-scroll,
+  .cli-workspace .cli-agent-tabs,
+  .task-board-header .task-view-tabs,
+  .task-detail-panel .task-detail-tabs,
+  .workspace-git .workspace-tool-tabs,
+  .workspace-github .workspace-tool-tabs,
+  .api-workspace-screen .api-token-tabs,
+  .api-proxy-connection .api-token-tabs,
+  .workspace-browser .workspace-browser-inspector-tabs,
+  .workspace-browser-inspector .workspace-browser-pane-tabs,
+  .workspace-browser-inspector nav.workspace-browser-source-tabs,
+  .workspace-browser-inspector nav.workspace-browser-network-types
+) {
+  display:flex; align-items:stretch; flex-wrap:nowrap; gap:1px!important; min-width:0;
+  min-height:28px!important; height:auto!important; padding:0!important; border-radius:0;
+  background:transparent; box-shadow:none; overflow-x:auto; overflow-y:hidden;
+  scrollbar-width:thin; overscroll-behavior-x:contain;
+
+  & > :is(button,span:has(> button)) {
+    position:relative; display:inline-flex; align-items:center; flex:0 0 auto;
+    min-width:0; max-width:180px; padding:0; border:0!important; border-radius:0!important;
+    background:transparent!important; color:var(--text-muted); box-shadow:none; transform:none;
+  }
+  & > button, & > span > button {
+    display:inline-flex; align-items:center; justify-content:flex-start; flex:0 0 auto; gap:5px;
+    box-sizing:border-box; min-width:0; min-height:28px!important; height:auto!important;
+    padding:2px 5px!important; border:0!important; border-radius:0!important;
+    background:transparent!important; color:inherit; box-shadow:none; transform:none;
+    font:400 calc(11px * var(--dashboard-text-scale, 1))/normal var(--font-family,Arial,sans-serif);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer;
+  }
+  & > span > button:first-child { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+  & > button { color:var(--text-muted); }
+  & > :is(button,span:has(> button)):hover { background:var(--bg-hover)!important; color:var(--text-primary); }
+  & > :is(button,span):is([aria-selected="true"],[aria-pressed="true"],.is-active,:has(> button.is-active)) {
+    background:color-mix(in srgb,var(--accent) 14%,var(--bg-selected))!important;
+    color:var(--text-primary); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 38%,var(--border-default));
+    &::after { position:absolute; right:0; bottom:0; left:0; height:2px; border-radius:0; background:var(--accent); content:""; pointer-events:none; }
+  }
+  & button:is([aria-selected="true"],[aria-pressed="true"],.is-active) { color:var(--text-primary)!important; font-weight:700; }
+  & > span[data-ai-browser-tab] { border-top:2px solid #a78bfa!important; background:color-mix(in srgb,#a78bfa 14%,var(--bg-base))!important; }
+  & > span[data-ai-browser-tab].is-active { background:color-mix(in srgb,#a78bfa 23%,var(--bg-base))!important; }
+  & > button svg, & > span > button svg { width:14px; height:14px; flex:0 0 14px; }
+  & > span > button + button { flex:0 0 22px; width:22px; min-width:22px; padding:0!important; justify-content:center; opacity:0; }
+  & > span:is(:hover,:focus-within,.is-active,:has(> button.is-active)) > button + button { opacity:.8; }
+  & > span > button + button svg { width:12px; height:12px; flex-basis:12px; }
+  & button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  & button:disabled { opacity:.45; cursor:default; }
+  @media (max-width:760px), (pointer:coarse) {
+    & > span > button + button { flex-basis:26px; width:26px; min-width:26px; opacity:1!important; }
+  }
+}
+.task-detail-panel .task-detail-tabs { padding-inline:14px!important; }

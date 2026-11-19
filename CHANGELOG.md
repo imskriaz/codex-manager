@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.121
+
+- Match workspace tabs and subtabs across tasks, agents, Git/GitHub, API, and Browser Inspector to the compact square Git tab strip, preserving dashboard navigation.
+
 ## 2.0.6-pre.119
 
 - Record first client output timing for tool calls and final-only responses, and avoid reporting buffered or omitted output as already delivered.
