@@ -37,7 +37,8 @@ function RequestTable({
           {requests.map((row) => (
             <tr key={row.id}>
               <td>
-                <strong>{row.model ?? "Model discovery / validation"}</strong>
+                <strong>{row.model ?? "Model discovery / validation"}</strong>{" "}
+                {row.upstreamModel && row.upstreamModel !== row.model ? <small>→ {row.upstreamModel}</small> : null}{" "}
                 <small>
                   {row.method} {row.path}
                 </small>
@@ -47,23 +48,23 @@ function RequestTable({
                   {row.accountEmail
                     ? getSensitiveDisplayValue(row.accountEmail, privacyMode, "email")
                     : row.path === "/v1/messages/count_tokens" ? "Local estimate" : "Account unavailable"}
-                </strong>
+                </strong>{" "}
                 <small>{row.apiKeyName ?? "Unknown API key"}</small>
               </td>
               <td class="api-proxy-tokens">
                 <span>{row.estimatedInputTokens === undefined ? tokens(row.inputTokens) : `~${tokens(row.estimatedInputTokens)} estimated`} ↑</span> <span>{tokens(row.outputTokens)} ↓</span>
               </td>
               <td>
-                <span class={`api-proxy-status is-${row.status}`}>{row.status}</span>
-                {row.httpStatus ? <small>HTTP {row.httpStatus}</small> : null}
+                <span class={`api-proxy-status is-${row.status}`} title={row.errorDetail ?? row.error}>{row.status}</span>
+                {row.errorStatus && row.errorStatus !== row.httpStatus ? <small title={`Transport HTTP ${row.httpStatus}`}> Error {row.errorStatus}</small> : row.httpStatus ? <small> HTTP {row.httpStatus}</small> : null}
               </td>
-              <td>{row.durationMs === undefined ? "In progress" : `${row.durationMs.toLocaleString()} ms`}</td>
+              <td title={row.firstOutputMs === undefined ? undefined : `First output: ${row.firstOutputMs.toLocaleString()} ms`}>{row.durationMs === undefined ? row.status === 'running' ? "In progress" : "—" : `${row.durationMs.toLocaleString()} ms`}</td>
               <td>
                 <time dateTime={new Date(row.startedAt).toISOString()}>{new Date(row.startedAt).toLocaleString()}</time>
               </td>
               {detailed ? (
                 <td>
-                  {row.error ? <p>{row.error}</p> : null}
+                  {row.error ? <span title={row.errorDetail ?? row.error}>{row.errorDetail ?? row.error}</span> : null}{" "}
                   <small>Request ID: {row.id}</small>
                 </td>
               ) : null}
@@ -97,12 +98,12 @@ export function ApiProxyPanel(props: {
   const refresh = useRef(props.onRefresh);
   refresh.current = props.onRefresh;
   useEffect(() => {
-    if (!props.connected || props.loading || connectionOpen || props.keyAccess.error || props.keyAccess.uncertain || props.keyAccess.pending) return;
+    if (!props.connected || props.loading || props.keyAccess.error || props.keyAccess.uncertain || props.keyAccess.pending) return;
     const timer = setInterval(() => {
       if (!document.hidden) refresh.current();
     }, 3000);
     return () => clearInterval(timer);
-  }, [props.connected, props.loading, connectionOpen, props.keyAccess.error, props.keyAccess.uncertain, props.keyAccess.pending]);
+  }, [props.connected, props.loading, props.keyAccess.error, props.keyAccess.uncertain, props.keyAccess.pending]);
   return (
     <section class="api-proxy-panel" aria-label="API proxy overview">
       <div class="api-proxy-split">

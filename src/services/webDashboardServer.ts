@@ -1,4 +1,5 @@
 import { getSystemStatus } from './systemStatus';
+import { apiViewFromPath } from '../domain/dashboard/apiRoutes';
 import { nextDashboardSnapshot, type DashboardSnapshotBaseline } from '../domain/confirmedSnapshot';
 import { normalizeSystemStatus } from '../domain/systemStatus';
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
@@ -1168,7 +1169,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (!apiAuthorized && !(await this.isAuthorized(request))) {
-      if (path.startsWith("/api/")) {
+      if (path.startsWith("/api/") && apiViewFromPath(path) === undefined) {
         response.statusCode = 401;
         this.sendJson(response, { error: "Dashboard session expired" });
         return;
@@ -3591,14 +3592,14 @@ export function normalizePersistedWebDashboardSessions(
 }
 
 export function isWebDashboardPagePath(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || pathname === "/api" || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
+  return pathname === "/" || pathname === "/tasks" || apiViewFromPath(pathname) !== undefined || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {
   try {
     const url = new URL(pathname, "http://localhost");
     if (!pathname.startsWith("/") || url.origin !== "http://localhost" || !isWebDashboardPagePath(url.pathname)) return "/";
-    const target = url.pathname === "/dash" ? "/" : ["/", "/api"].includes(url.pathname) || url.pathname.toLowerCase().startsWith("/workspace") ? url.pathname : `/workspace${url.pathname}`;
+    const target = url.pathname === "/dash" ? "/" : url.pathname === '/' || apiViewFromPath(url.pathname) !== undefined || url.pathname.toLowerCase().startsWith("/workspace") ? url.pathname : `/workspace${url.pathname}`;
     return `${target}${url.search}`;
   } catch { return "/"; }
 }

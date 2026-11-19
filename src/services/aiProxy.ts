@@ -315,11 +315,15 @@ export class AiProxy {
             : new AiProxyError(408, "The request body timed out.");
         }
       );
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        const model = (body as Json)['model'];
+        if (typeof model === 'string' && /^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(model)) log.model = model;
+      }
       if (path === "/v1/messages/count_tokens") {
         const countRequest = object(body, "request");
         const allowed = new Set(["model", "messages", "system", "tools", "tool_choice", "thinking", "output_config"]);
         for (const key of Object.keys(countRequest))
-          if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
+          if (!allowed.has(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`, 'invalid_request_error', 'Unsupported token-count parameter.');
         const normalizedCount = normalizeAiRequest({ ...countRequest, max_tokens: 1_000_000 }, "claude");
         log.model = String(normalizedCount.body["model"]);
         log.estimatedInputTokens = estimateClaudeInputTokens(countRequest);
@@ -330,9 +334,12 @@ export class AiProxy {
       const generationProtocol: AiProtocol =
         path === "/v1/messages" ? "claude" : path === "/v1/responses" ? "responses" : "chat";
       const normalized = normalizeAiRequest(body, generationProtocol);
+      if (generationProtocol === 'claude' && typeof (body as Json)['max_tokens'] === 'number' && ((body as Json)['max_tokens'] as number) < 16)
+        response.setHeader('x-manager-output-token-minimum', '16');
       const clientModel = String(normalized.body['model']);
+      log.model = clientModel;
       if (generationProtocol === 'claude') normalized.body['model'] = await this.resolveClaudeModel(clientModel, signal, log);
-      log.model = String(normalized.body["model"]);
+      log.upstreamModel = String(normalized.body["model"]);
       signal.throwIfAborted();
       const upstream = await this.fetchBackend("/responses", normalized.body, signal, log);
       acceptedGeneration = true;
@@ -345,7 +352,8 @@ export class AiProxy {
         generationProtocol,
         generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
         normalized.includeUsage,
-        normalized.omitThinking
+        normalized.omitThinking,
+        normalized.stopSequences
       );
       let completed = false;
       for await (const upstreamEvent of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
@@ -353,6 +361,8 @@ export class AiProxy {
           ? { ...upstreamEvent, response: { ...object(upstreamEvent['response'], 'AI response'), model: clientModel } } : upstreamEvent;
         signal.throwIfAborted();
         const type = event["type"];
+        if (log.firstOutputMs === undefined && typeof event['delta'] === 'string' && event['delta'].length)
+          log.firstOutputMs = Math.max(0, Date.now() - log.startedAt);
         if (type === "error" || type === "response.failed")
           throw new AiProxyError(
             502,
@@ -360,12 +370,13 @@ export class AiProxy {
             "api_error"
           );
         const final =
-          type === "response.completed" || type === "response.incomplete"
+          !normalized.stream && (type === "response.completed" || type === "response.incomplete")
             ? completedAiResponse(
                 object(event["response"], "AI response"),
                 generationProtocol,
                 generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
-                normalized.omitThinking
+                normalized.omitThinking,
+                normalized.stopSequences
               )
             : undefined;
         if (normalized.stream) {
@@ -429,8 +440,10 @@ export class AiProxy {
                 "api_error"
               );
         log.httpStatus = response.headersSent ? response.statusCode : failure.status;
-        // Validation messages can reflect client input; retain only the safe error category.
+        // Diagnostic messages exclude client-controlled field names and values.
         log.error = `Proxy request failed: ${failure.code} (${failure.status}). Check the API response for details.`;
+        log.errorDetail = failure.diagnostic;
+        log.errorStatus = failure.status;
         const envelope =
           protocol === "claude"
             ? { type: "error", error: { type: failure.code, message: failure.message }, request_id: requestId }

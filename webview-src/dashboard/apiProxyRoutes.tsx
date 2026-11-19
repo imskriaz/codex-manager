@@ -9,6 +9,7 @@ export function ApiProxyRoutes(props: { requests: ApiProxyRequestLog[]; connecte
   const routes = new Map<string, { account: string; key: string; running: boolean; count: number }>();
   for (const request of props.requests) {
     if (request.path === "/v1/messages/count_tokens") continue;
+    if (!request.accountId && !request.accountEmail) continue;
     const account = request.accountId ?? request.accountEmail ?? "unknown-account";
     const key = request.apiKeyId ?? request.apiKeyName ?? "unknown-key";
     if (!accounts.has(account)) accounts.set(account, request.accountEmail ?? "Account unavailable");

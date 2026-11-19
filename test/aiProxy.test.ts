@@ -820,6 +820,30 @@ it("translates Responses reasoning deltas into Claude thinking blocks", () => {
 });
 
 const savedRoutes = { opus: 'gpt-fast', sonnet: 'gpt-codex', haiku: 'gpt-fast', fable: 'gpt-codex' };
+it('adapts the Claude Desktop one-token Haiku probe to the backend minimum', async () => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const response = await post('/v1/messages', { ...chat({ model: 'claude-haiku' }), max_tokens: 1 });
+  expect(response.status).toBe(200);
+  expect(response.headers.get('x-manager-output-token-minimum')).toBe('16');
+  await response.text();
+  expect(JSON.parse(String(vi.mocked(upstream).mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'gpt-fast', max_output_tokens: 16 });
+});
+it.each([false, true])('accepts Claude classifier stop sequences through the real HTTP boundary (stream=%s)', async stream => {
+  await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
+  const response = await post('/v1/messages', { ...chat({ model: 'claude-opus' }), max_tokens: 100, stop_sequences: [' 🌍'], stream });
+  expect(response.status).toBe(200);
+  if (stream) {
+    const wire = await response.text();
+    const records = wire.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+    expect(records.filter(row => row.delta?.type === 'text_delta').map(row => row.delta.text).join('')).toBe('Hello');
+    expect(records.find(row => row.type === 'message_delta').delta).toMatchObject({ stop_reason: 'stop_sequence', stop_sequence: ' 🌍' });
+  } else {
+    expect(await response.json()).toMatchObject({ content: [{ type: 'text', text: 'Hello' }], stop_reason: 'stop_sequence', stop_sequence: ' 🌍' });
+  }
+  expect(upstream).toHaveBeenCalledOnce();
+  expect(JSON.parse(String(vi.mocked(upstream).mock.calls[0]?.[1]?.body))).not.toHaveProperty('stop_sequences');
+  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))).toMatchObject({ model: 'claude-opus', upstreamModel: 'gpt-fast', status: 'completed' });
+});
 it.each([false, true])('uses saved Codex routes and preserves recognized Claude identity (stream=%s)', async stream => {
   await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);
   const response = await post('/v1/messages', { ...chat({ model: CLAUDE_PROXY_MODELS.opus }), max_tokens: 100, stream });
@@ -829,7 +853,7 @@ it.each([false, true])('uses saved Codex routes and preserves recognized Claude 
   expect(wire).not.toContain('codex-test');
   expect(upstream).toHaveBeenCalledOnce();
   expect(JSON.parse(String(vi.mocked(upstream).mock.calls[0]?.[1]?.body)).model).toBe('gpt-fast');
-  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))?.model).toBe('gpt-fast');
+  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))).toMatchObject({ model: 'claude-opus', upstreamModel: 'gpt-fast' });
 });
 it('maps Claude role aliases through the saved route', async () => {
   await saveClaudeProxyMapping(context, savedRoutes, undefined, ['gpt-fast', 'gpt-codex']);

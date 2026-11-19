@@ -16,8 +16,11 @@ import { ApiProxyPanel } from "./apiProxyPanel";
 import { ApiDocsModal } from "./apiDocs";
 import { ApiChoicePicker } from "./apiChoicePicker";
 import { apiKeyUsage } from "../../src/domain/dashboard/apiProxy";
+import type { ApiView } from '../../src/domain/dashboard/apiRoutes';
 export function ApiWorkspace(props: {
   open: boolean;
+  view?: ApiView;
+  onViewChange?: (view: ApiView) => void;
   token?: string;
   tokenId?: string;
   tokens: DashboardApiToken[];
@@ -40,7 +43,8 @@ export function ApiWorkspace(props: {
   onCopy: (id: string) => void;
 }) {
   const [projectInput, setProjectInput] = useState("");
-  const [tab, setTab] = useState<"keys" | "explorer" | "proxy">("keys");
+  const [localTab, setTab] = useState<ApiView>('keys');
+  const tab = props.view ?? localTab;
   const [createOpen, setCreateOpen] = useState(false),
     [name, setName] = useState("");
   const [editing, setEditing] = useState<DashboardApiToken>();
@@ -333,6 +337,7 @@ export function ApiWorkspace(props: {
                   disabled={testing || props.pending}
                   onClick={() => {
                     setTab(item);
+                    props.onViewChange?.(item);
                     setRequestCopy("");
                     if (item !== "explorer" && props.connected && !props.loading) props.onRefresh();
                   }}

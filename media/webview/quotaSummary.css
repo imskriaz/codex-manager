@@ -15462,10 +15462,10 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .api-proxy-table-scroll { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-default); border-radius: 7px; }
 .api-proxy-log-pane .api-proxy-table-scroll { flex: 1; }
 .api-proxy-table { width: 100%; border-collapse: collapse; text-align: left; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
-.api-proxy-table :is(th,td) { padding: 13px 12px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; vertical-align: top; }
+.api-proxy-table :is(th,td) { padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; vertical-align: middle; }
 .api-proxy-table th { position: sticky; top: 0; z-index: 1; color: var(--text-muted); background: var(--bg-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); font-weight: 500; }
-.api-proxy-table strong { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; font: calc(11px * var(--dashboard-text-scale, 1)) var(--font-mono); }
-.api-proxy-table small { display: block; margin-top: 5px; font-size: calc(9px * var(--dashboard-text-scale, 1)); }
+.api-proxy-table strong { display: inline; font: calc(11px * var(--dashboard-text-scale, 1)) var(--font-mono); }
+.api-proxy-table small { display: inline; margin-left: 5px; font-size: calc(9px * var(--dashboard-text-scale, 1)); }
 .api-proxy-table td:last-child p { max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
 .api-proxy-tokens span:first-child,.api-proxy-status.is-incomplete { color: var(--accent-orange); }
 .api-proxy-tokens span:last-child,.api-proxy-status.is-completed { color: var(--accent-green); }

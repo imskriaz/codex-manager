@@ -1,5 +1,5 @@
 import { CLAUDE_PROXY_MODELS, CLAUDE_PROXY_MODEL_OVERRIDES, claudeProxyModelName, type ClaudeProxyMapping } from "../../src/domain/dashboard/apiProxy";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
 import { apiTokenProjects, type DashboardApiToken } from "../../src/domain/dashboard/apiActions";
 import {
@@ -36,7 +36,7 @@ export function ApiProxyConnection(props: {
   onClose: () => void;
 }) {
   const [notice, setNotice] = useState("");
-  const [client, setClient] = useState<"codex" | "claude">("codex");
+  const [client, setClient] = useState<"codex" | "claude">("claude");
   const [selectedId, setSelectedId] = useState("");
   const [waiting, setWaiting] = useState(false);
   const models = props.models ?? NO_MODELS;
@@ -109,9 +109,9 @@ export function ApiProxyConnection(props: {
     attemptedKey.current = selectedId;
     keyAccess.onLoad(selectedId);
   }, [props.open, selectedId, selectedKey?.id, freshKey, busy, keyAccess.enabled, keyAccess.uncertain]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setNotice("");
-    if (props.open) setClient("codex");
+    if (props.open) setClient("claude");
   }, [props.open]);
   const baseUrl = props.baseUrl?.replace(/\/+$/, "");
   const proxyUrl = baseUrl ? baseUrl + "/v1" : "";
@@ -177,7 +177,7 @@ export function ApiProxyConnection(props: {
       <div class="api-docs-content api-proxy-connection">
         <div class="api-connection-toolbar">
           <div class="api-token-tabs" role="tablist" aria-label="Proxy clients" onKeyDown={handleTabKeyDown}>
-            {(["codex", "claude"] as const).map((value) => (
+            {(["claude", "codex"] as const).map((value) => (
               <span key={value} class={client === value ? "is-active" : undefined}>
                 <button
                   type="button"

@@ -64,6 +64,9 @@ try {
     await page.getByRole('tab', { name: 'Proxy', exact: true }).click();
     await page.getByRole('button', { name: 'Proxy connection settings' }).click();
     const dialog = page.getByRole('dialog', { name: 'Proxy connection' });
+    assert.deepEqual(await dialog.getByRole('tab').allTextContents(), ['Claude', 'Codex'], 'Claude is the first proxy tab');
+    assert.equal(await dialog.getByRole('tab', { name: 'Claude', exact: true }).getAttribute('aria-selected'), 'true', 'Claude opens by default');
+    await dialog.getByRole('tab', { name: 'Codex', exact: true }).click();
     await dialog.getByRole('button', { name: 'Copy Codex launch command', exact: true }).click();
     assert.ok((await page.evaluate(() => window.copied)).includes('cm_'+'a'.repeat(64)), 'Codex launch includes the selected key');
     await dialog.getByRole('tab', { name: 'Claude', exact: true }).click();

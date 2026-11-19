@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { StopSequenceMatcher } from './aiProxyStopSequences';
 
 type Json = Record<string, unknown>;
 export type AiProtocol = "chat" | "responses" | "claude";
@@ -6,7 +7,8 @@ export class AiProxyError extends Error {
   constructor(
     public readonly status: number,
     message: string,
-    public readonly code = "invalid_request_error"
+    public readonly code = "invalid_request_error",
+    public readonly diagnostic = message
   ) {
     super(message);
   }
@@ -46,7 +48,7 @@ function cacheControl(value: unknown, label = "cache_control"): void {
 function metadata(value: unknown): void {
   const config = object(value, "metadata");
   for (const key of Object.keys(config))
-    if (key !== "user_id") throw new AiProxyError(400, `Unsupported metadata parameter: ${key}.`);
+    if (key !== "user_id") throw new AiProxyError(400, `Unsupported metadata parameter: ${key}.`, 'invalid_request_error', 'Unsupported metadata parameter.');
   if (config["user_id"] !== undefined && config["user_id"] !== null &&
       (typeof config["user_id"] !== "string" || config["user_id"].length > 512))
     throw new AiProxyError(400, "metadata.user_id must be a string of at most 512 characters or null.");
@@ -82,7 +84,7 @@ function content(value: unknown, assistant: boolean, claude: boolean): Json[] {
         )
       };
     }
-    throw new AiProxyError(400, `Unsupported content block: ${String(part["type"])}.`);
+    throw new AiProxyError(400, `Unsupported content block: ${String(part["type"])}.`, 'invalid_request_error', 'Unsupported content block.');
   });
 }
 function instruction(value: unknown): string {
@@ -113,7 +115,7 @@ function tool(raw: unknown, claude: boolean): Json {
 export function normalizeAiRequest(
   raw: unknown,
   protocol: AiProtocol
-): { body: Json; stream: boolean; includeUsage: boolean; omitThinking: boolean } {
+): { body: Json; stream: boolean; includeUsage: boolean; omitThinking: boolean; stopSequences: string[] } {
   const request = object(raw, "request");
   const allowed =
     protocol === "responses"
@@ -172,16 +174,18 @@ export function normalizeAiRequest(
             "output_config"
           ];
   for (const key of Object.keys(request))
-    if (!allowed.includes(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`);
+    if (!allowed.includes(key)) throw new AiProxyError(400, `Unsupported parameter: ${key}.`, 'invalid_request_error', 'Unsupported request parameter.');
   const model = string(request["model"], "model");
   if (!/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(model))
     throw new AiProxyError(400, "Invalid model identifier. Use GET /v1/models.");
   if (request["stream"] !== undefined && typeof request["stream"] !== "boolean")
     throw new AiProxyError(400, "stream must be a boolean.");
   if (request["n"] !== undefined && request["n"] !== 1) throw new AiProxyError(400, "Only n=1 is supported.");
-  for (const key of ["temperature", "top_p", "stop", "stop_sequences"])
+  for (const key of ["temperature", "top_p", "stop"])
     if (request[key] !== undefined)
       throw new AiProxyError(400, `${key} is not supported by the saved-account Codex backend.`);
+  const stopSequences = protocol === 'claude' && request['stop_sequences'] !== undefined
+    ? array(request['stop_sequences'], 'stop_sequences').map(value => string(value, 'stop sequence')) : [];
   if (protocol === "claude") {
     // Claude Code sends gateway controls alongside every request. Validate their shape and omit them.
     if (request["thinking"] !== undefined) object(request["thinking"], "thinking");
@@ -201,7 +205,7 @@ export function normalizeAiRequest(
     if (request["context_management"] !== undefined) {
       const context = object(request["context_management"], "context_management");
       for (const key of Object.keys(context))
-        if (key !== "edits") throw new AiProxyError(400, `Unsupported context_management parameter: ${key}.`);
+        if (key !== "edits") throw new AiProxyError(400, `Unsupported context_management parameter: ${key}.`, 'invalid_request_error', 'Unsupported context_management parameter.');
       if (context["edits"] !== undefined) for (const edit of array(context["edits"], "context_management.edits"))
         if (object(edit)["type"] !== "clear_thinking_20251015")
           throw new AiProxyError(400, "This backend supports only clear_thinking context management.");
@@ -247,7 +251,7 @@ export function normalizeAiRequest(
         else {
           const role = string(item["role"], "role");
           if (!["system", "developer", "user", "assistant"].includes(role))
-            throw new AiProxyError(400, `Invalid message role: ${role}.`);
+            throw new AiProxyError(400, `Invalid message role: ${role}.`, 'invalid_request_error', 'Invalid message role.');
           if (role === "system" || role === "developer")
             instructions.push(instruction(item["content"]));
           else input.push({ role, content: content(item["content"], role === "assistant", false) });
@@ -394,7 +398,7 @@ export function normalizeAiRequest(
   if (protocol === "claude" && request["output_config"] !== undefined) {
     const config = object(request["output_config"], "output_config"), effort = config["effort"];
     for (const key of Object.keys(config))
-      if (key !== "effort" && key !== "format") throw new AiProxyError(400, `Unsupported output_config parameter: ${key}.`);
+      if (key !== "effort" && key !== "format") throw new AiProxyError(400, `Unsupported output_config parameter: ${key}.`, 'invalid_request_error', 'Unsupported output_config parameter.');
     if (effort !== undefined) body["reasoning"] = { effort: string(effort, "output_config.effort") };
     if (config["format"] !== undefined) {
       const format = object(config["format"], "output_config.format");
@@ -420,7 +424,8 @@ export function normalizeAiRequest(
   if (max !== undefined) {
     if (!Number.isSafeInteger(max) || (max as number) < 1 || (max as number) > 1_000_000)
       throw new AiProxyError(400, "Token limit must be a positive integer up to 1000000.");
-    body["max_output_tokens"] = max;
+    // Claude Desktop probes with one token; this backend requires at least sixteen.
+    body["max_output_tokens"] = protocol === 'claude' ? Math.max(16, max as number) : max;
   }
   if (protocol === "claude" && max === undefined) throw new AiProxyError(400, "max_tokens is required.");
   if (request["include"] !== undefined) {
@@ -437,6 +442,7 @@ export function normalizeAiRequest(
     throw new AiProxyError(400, "Use stream_options.include_usage=true or false.");
   return {
     body,
+    stopSequences,
     stream: request["stream"] === true,
     includeUsage:
       protocol === "chat" &&
@@ -453,7 +459,7 @@ export function aiUsage(response: Json) {
   const cached = usage?.["input_tokens_details"] && object(usage["input_tokens_details"])["cached_tokens"];
   return { input, output, cached: Math.min(input, tokenCount(cached)) };
 }
-export function completedAiResponse(response: Json, protocol: AiProtocol, fallbackModel: string, omitThinking = false): Json {
+export function completedAiResponse(response: Json, protocol: AiProtocol, fallbackModel: string, omitThinking = false, stopSequences: readonly string[] = []): Json {
   if (protocol === "responses") return response;
   const output = Array.isArray(response["output"]) ? response["output"].map((item) => object(item)) : [];
   const text = output
@@ -531,14 +537,21 @@ export function completedAiResponse(response: Json, protocol: AiProtocol, fallba
         prompt_tokens_details: { cached_tokens: usage.cached }
       }
     };
+  const stop = new StopSequenceMatcher(stopSequences);
+  const stoppedContent: Json[] = [];
+  for (const block of claudeContent) {
+    if (block['type'] === 'text') stoppedContent.push({ ...block, text: stop.write(String(block['text'])) + stop.flush() });
+    else stoppedContent.push(block);
+    if (stop.matched !== undefined) break;
+  }
   return {
     id,
     type: "message",
     role: "assistant",
     model,
-    content: claudeContent,
-    stop_reason: limited ? "max_tokens" : tools.length ? "tool_use" : "end_turn",
-    stop_sequence: null,
+    content: stoppedContent,
+    stop_reason: stop.matched !== undefined ? 'stop_sequence' : limited ? "max_tokens" : tools.length ? "tool_use" : "end_turn",
+    stop_sequence: stop.matched ?? null,
     usage: {
       input_tokens: Math.max(0, usage.input - usage.cached),
       output_tokens: usage.output,
@@ -564,12 +577,14 @@ export class AiStream {
   private toolIds = new Map<string, number>();
   private textDeltas = new Map<number, string>();
   private reasoningDeltas = new Map<string, string>();
+  private readonly stop: StopSequenceMatcher;
   constructor(
     private readonly protocol: AiProtocol,
     private readonly model: string,
     private readonly includeUsage: boolean,
-    private readonly omitThinking = false
-  ) {}
+    private readonly omitThinking = false,
+    stopSequences: readonly string[] = []
+  ) { this.stop = new StopSequenceMatcher(protocol === 'claude' ? stopSequences : []); }
   private chat(delta: Json, finish: string | null = null): string {
     return `data: ${JSON.stringify({ id: this.id, object: "chat.completion.chunk", created: this.created, model: this.model, choices: [{ index: 0, delta, finish_reason: finish, logprobs: null }] })}\n\n`;
   }
@@ -583,14 +598,22 @@ export class AiStream {
   }
   private closeText(): string {
     if (!this.textBlock || this.textBlock.closed || this.protocol !== "claude") return "";
+    const pending = this.stop.flush();
     this.textBlock.closed = true;
-    return this.claude("content_block_stop", { index: this.textBlock.index });
+    return (pending ? this.claude('content_block_delta', { index: this.textBlock.index, delta: { type: 'text_delta', text: pending } }) : '') + this.claude("content_block_stop", { index: this.textBlock.index });
   }
   private finishTool(event: Json, outputIndex: number): string {
     const item = event["item"] ? object(event["item"]) : undefined;
-    if (!item || item["type"] !== "function_call" || item["arguments"] === undefined) return "";
+    if (!item || item["type"] !== "function_call") return "";
     if (typeof item["call_id"] === "string") outputIndex = this.toolIds.get(item["call_id"]) ?? outputIndex;
     const full = textString(item["arguments"], "tool arguments");
+    try {
+      object(JSON.parse(full), 'tool arguments');
+      string(item['call_id'], 'tool call id');
+      string(item['name'], 'tool name');
+    } catch {
+      throw new AiProxyError(502, 'The backend returned invalid tool arguments or identity.', 'api_error');
+    }
     const previous = this.toolArguments.get(outputIndex);
     if (previous === undefined) return this.event({ type: "response.output_item.added", output_index: outputIndex, item: { ...item, arguments: "" } }) + this.event({ type: "response.function_call_arguments.delta", output_index: outputIndex, delta: full });
     if (!full.startsWith(previous)) throw new AiProxyError(502, "The backend returned inconsistent tool arguments.", "api_error");
@@ -609,6 +632,7 @@ export class AiStream {
   }
   event(event: Json): string {
     if (this.protocol === "responses") return `event: ${String(event["type"])}\ndata: ${JSON.stringify(event)}\n\n`;
+    if (this.stop.matched !== undefined && event['type'] !== 'response.completed' && event['type'] !== 'response.incomplete') return '';
     let wire = "";
     if (!this.started) {
       this.started = true;
@@ -663,6 +687,7 @@ export class AiStream {
       this.textDeltas.set(outputIndex, (this.textDeltas.get(outputIndex) ?? "") + event["delta"]);
       if (this.protocol === "chat") wire += this.chat({ content: event["delta"] });
       else {
+        const text = this.stop.write(event['delta']);
         if (!this.textBlock || this.textBlock.closed) {
           this.textBlock = { index: this.nextBlock++, closed: false };
           this.textOutputIndex = outputIndex;
@@ -673,7 +698,7 @@ export class AiStream {
         }
         wire += this.claude("content_block_delta", {
           index: this.textBlock.index,
-          delta: { type: "text_delta", text: event["delta"] }
+          delta: { type: "text_delta", text }
         });
       }
     } else if (type === "response.output_item.added" && object(event["item"])["type"] === "function_call") {
@@ -737,6 +762,7 @@ export class AiStream {
         usage = aiUsage(response);
       const output = Array.isArray(response["output"]) ? response["output"] as unknown[] : [];
       for (const [index, raw] of output.entries()) {
+        if (this.stop.matched !== undefined) break;
         const item = object(raw);
         wire += this.finishTool({ item }, index);
         wire += this.finishReasoning(item, index);
@@ -759,10 +785,7 @@ export class AiStream {
         wire += "data: [DONE]\n\n";
       } else {
         wire += this.closeThinking();
-        if (this.textBlock && !this.textBlock.closed) {
-          this.textBlock.closed = true;
-          wire += this.claude("content_block_stop", { index: this.textBlock.index });
-        }
+        wire += this.closeText();
         for (const block of this.blocks.values())
           if (!block.closed) {
             block.closed = true;
@@ -770,8 +793,8 @@ export class AiStream {
           }
         wire += this.claude("message_delta", {
           delta: {
-            stop_reason: type === "response.incomplete" ? "max_tokens" : tools ? "tool_use" : "end_turn",
-            stop_sequence: null
+            stop_reason: this.stop.matched !== undefined ? 'stop_sequence' : type === "response.incomplete" ? "max_tokens" : tools ? "tool_use" : "end_turn",
+            stop_sequence: this.stop.matched ?? null
           },
           usage: {
             input_tokens: Math.max(0, usage.input - usage.cached),

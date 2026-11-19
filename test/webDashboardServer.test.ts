@@ -281,6 +281,11 @@ describe("isWebDashboardPagePath", () => {
     expect(isWebDashboardPagePath("/dash")).toBe(true);
     expect(isWebDashboardPagePath("/workspace")).toBe(true);
     expect(isWebDashboardPagePath("/api")).toBe(true);
+    for (const view of ['keys','explorer','proxy']) {
+      expect(isWebDashboardPagePath(`/api/${view}`)).toBe(true);
+      expect(isWebDashboardPagePath(`/api/${view}/extra`)).toBe(false);
+      expect(normalizeWebDashboardReturnPath(`/api/${view}?device=remote`)).toBe(`/api/${view}?device=remote`);
+    }
     expect(isWebDashboardPagePath("/api/not-a-page")).toBe(false);
     expect(isWebDashboardPagePath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
     expect(isWebDashboardPagePath("/workspace/not-a-session")).toBe(false);

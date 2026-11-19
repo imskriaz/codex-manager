@@ -1,11 +1,24 @@
 # Changelog
 
+## 2.0.6-pre.110
+
+- Give API keys, API Explorer, and Proxy dedicated URLs that survive refresh and browser history.
+- Accept Claude Desktop one-token Haiku inference probes by applying the backend minimum of sixteen output tokens and reporting the adjustment in a response header.
+
 ## 2.0.6-pre.109
 
 - Show newly opened browser tabs before navigation and preserve completed actions with a warning when preview capture fails.
 - Automatically show AI activity and its pointer in the shared browser, recover closed tabs, and prioritize direct tab commands in MCP and the browser skill.
 - Match inspector controls to compact top tabs and keep only control/element selection, pointer, rectangle, and freehand tools. Remove redundant typing/scrolling controls and the Comments shortcut; support direct keyboard input, paste, and wheel scrolling in the preview.
 - Avoid an expired-request warning for questions already confirmed as answered.
+
+## 2.0.6-pre.108
+
+- Place Claude first in Proxy connection and select it whenever the dialog opens.
+- Accept Claude classifier stop sequences with matching streaming and JSON response behavior, preserving prompts, tools, model routes, and reasoning settings.
+- Keep Claude aliases alongside their Codex targets in compact single-line request logs; expose safe failure details, stream error codes, and first-output timing.
+- Refresh request activity while connection settings are open and omit unavailable-account nodes from the route diagram.
+- Avoid duplicate final-response translation for streaming requests.
 
 ## 2.0.6-pre.107
 

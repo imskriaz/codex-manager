@@ -25,6 +25,7 @@ export interface ApiProxyRequestLog {
   method: string;
   path: string;
   model?: string;
+  upstreamModel?: string;
   apiKeyId?: string;
   apiKeyName?: string;
   accountId?: string;
@@ -32,11 +33,14 @@ export interface ApiProxyRequestLog {
   status: 'running' | 'completed' | 'incomplete' | 'failed' | 'cancelled';
   httpStatus?: number;
   durationMs?: number;
+  firstOutputMs?: number;
   inputTokens?: number;
   estimatedInputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
   error?: string;
+  errorDetail?: string;
+  errorStatus?: number;
 }
 
 export interface ApiProxySnapshot {

@@ -1,4 +1,5 @@
 import { retainOfflineAccounts } from './offlinePolicy';
+import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
 import { sessionFailureMessage } from '../../src/domain/sessionFailure';
 import { WorkspaceMenu } from './workspaceMenu';
@@ -154,7 +155,7 @@ function isCliSessionsPath(pathname: string): boolean {
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || pathname === "/api" || isCliSessionsPath(pathname);
+  return pathname === "/" || pathname === "/tasks" || apiViewFromPath(pathname) !== undefined || isCliSessionsPath(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -259,7 +260,8 @@ function App() {
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
   const [taskTitleItem, setTaskTitleItem] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
-  const apiTokenOpen = browserPath === "/api";
+  const apiView = apiViewFromPath(browserPath);
+  const apiTokenOpen = apiView !== undefined;
   useEffect(() => { if (!apiTokenOpen) { setApiToken(undefined); setApiTokenId(undefined); setApiNotice(undefined); } }, [apiTokenOpen, apiToken, apiTokenId, apiNotice]);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("agreement");
@@ -1829,8 +1831,8 @@ function App() {
 
   useEffect(() => {
     const workspaceRoute = isBrowserDashboard && isCliSessionsPath(browserPath);
-    const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || browserPath === "/api");
-    document.body.classList.toggle("is-api-workspace-route", browserPath === "/api");
+    const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || apiViewFromPath(browserPath) !== undefined);
+    document.body.classList.toggle("is-api-workspace-route", apiViewFromPath(browserPath) !== undefined);
     document.body.classList.toggle("is-cli-workspace-route", workspaceRoute);
     document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute);
     return () => {
@@ -3020,6 +3022,12 @@ function App() {
         <div hidden={!apiTokenOpen} class="api-page-container">
       <ApiWorkspace
         open={apiTokenOpen}
+        view={apiView}
+        onViewChange={view => {
+          const url = new URL(window.location.href);
+          url.pathname = API_VIEW_PATHS[view];
+          navigateDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
+        }}
         baseUrl={snapshot.apiBaseUrl}
         privacyMode={state.privacyMode}
         token={apiToken}
@@ -3049,7 +3057,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && browserPath !== '/api' ? dashboardContent : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? dashboardContent : null}
         </fieldset>
       </main>
 
@@ -3213,7 +3221,7 @@ function App() {
               apiActive={apiTokenOpen}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
               apiEnabled={snapshot?.settings.apiAccessEnabled === true}
-              onApi={() => navigateDashboardPath("/api", setBrowserPath)}
+              onApi={() => navigateDashboardPath(API_VIEW_PATHS.keys, setBrowserPath)}
               showLogout={isBrowserDashboard}
               privacyMode={state.privacyMode}
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
