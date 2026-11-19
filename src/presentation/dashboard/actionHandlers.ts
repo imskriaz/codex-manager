@@ -1,5 +1,5 @@
-import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
+import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
 import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
 import { workspaceTerminal } from '../../services/workspaceTerminalPty';
 import { workspaceBrowser } from '../../services/workspaceBrowser';
+import { workspaceSurface } from '../../services/workspaceSurfaces';
 import { workspaceGit } from '../../services/workspaceGit';
 import { workspaceGitHub } from '../../services/workspaceGitHub';
 import { createHash } from "node:crypto";
@@ -184,7 +185,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "unarchiveCodexCliSession",
   "deleteCodexCliSession",
   "getWorkspaceEnvironment",
-  "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
+  "workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
   "listWorkspaceFiles",
   "readWorkspaceFile",
   "saveWorkspaceFile",
@@ -286,7 +287,7 @@ async function executeDashboardActionMessageInTransport(
   // Routine reads and the console itself must not generate audit traffic.
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
     "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
-    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser"
+    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser", "workspacePanel"
   ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
@@ -416,6 +417,8 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case 'workspacePanel':
+      return { workspacePanel: await workspaceSurface(payload?.projectPath, payload?.panelRequest, payload?.panelLocalOnly) };
     case 'enableSystemStartup':
       await new AlwaysOnlineServer(ctx.context).enableSystemStartup();
       ctx.schedulePublishState();

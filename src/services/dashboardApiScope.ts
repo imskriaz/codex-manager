@@ -35,7 +35,7 @@ export async function authorizeApiMessage(token: DashboardApiToken, message: Das
   if (requestedProject && !projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(requestedProject))) throw new ApiPermissionError('This token cannot access another project.');
   const project = await resolveWorkspaceProjectPathAsync(requestedProject ?? sessionProject);
   if (!projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(project)) || sessionProject && projectTaskKey(sessionProject) !== projectTaskKey(project)) throw new ApiPermissionError('This token cannot access another project.');
-  return { ...message, payload: { ...message.payload, targetDeviceId: undefined, projectPath: project } };
+  return { ...message, payload: { ...message.payload, targetDeviceId: undefined, projectPath: project, ...(message.action === 'workspacePanel' ? { panelLocalOnly: true } : {}) } };
 }
 
 /** Mutations can return a global refreshed session list; never leak it through a project token. */
@@ -49,6 +49,10 @@ export function scopeApiResults(token: DashboardApiToken, messages: DashboardHos
     const input = message.payload;
     const payload: DashboardActionResultPayload = {};
     if (input.workspaceBrowser) payload.workspaceBrowser = input.workspaceBrowser;
+    if (input.workspacePanel) {
+      const surfaces = input.workspacePanel.surfaces.filter(surface => !surface.targetDeviceId && keys.has(projectTaskKey(surface.projectPath)));
+      payload.workspacePanel = { surfaces, ...(surfaces.length > 0 && surfaces.length === input.workspacePanel.surfaces.length ? { content: input.workspacePanel.content } : {}) };
+    }
     if (input.workspaceTerminals) payload.workspaceTerminals = input.workspaceTerminals.filter(terminal => terminal.cwd && keys.has(projectTaskKey(terminal.cwd)));
     if (input.workspaceTerminal?.cwd && keys.has(projectTaskKey(input.workspaceTerminal.cwd))) { payload.workspaceTerminal = input.workspaceTerminal; payload.terminalSnapshot = input.terminalSnapshot; }
     for (const key of ['cliSkills','notice','projectBoard','projectTaskDetails','projectShare','cliSessionMessages','cliSessionLive','workspaceEnvironment','workspaceFiles','workspaceFilesWarning','workspaceFile','deletedWorkspaceFilePath'] as const) {

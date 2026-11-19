@@ -50,9 +50,17 @@ export async function setupCodexManagerMcp(context: vscode.ExtensionContext, aut
     await fs.access(args[0]!);
     let tokenId = previous?.tokenId;
     let created = false;
-    if (token && !await readDashboardApiToken(context, token)) {
+    const storedToken = token ? await readDashboardApiToken(context, token) : undefined;
+    if (token && !storedToken) {
       if (automatic) throw new Error('The automatic MCP token was revoked. Run Codex Manager: Set Up MCP to create a replacement.');
       token = undefined;
+    }
+    // Upgrade only our unchanged automatic grant; never broaden a user-edited token.
+    const legacyPermissions = ['state', ...PROJECT_API_ACTIONS].filter(permission => permission !== 'workspacePanel');
+    if (storedToken && previous?.tokenId === storedToken.id && storedToken.name === 'Codex Manager MCP (automatic)' &&
+      storedToken.permissions.length === legacyPermissions.length && legacyPermissions.every(permission => storedToken.permissions.includes(permission))) {
+      await createDashboardApiToken(context, { id: storedToken.id, expected: storedToken, name: storedToken.name,
+        permissions: [...storedToken.permissions, 'workspacePanel'] });
     }
     if (!token) {
       const result = await createDashboardApiToken(context, { name: 'Codex Manager MCP (automatic)', permissions: ['state', ...PROJECT_API_ACTIONS] });

@@ -1,6 +1,8 @@
 import { SystemPicker, SystemStatusRows } from './systemPicker';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { useWorkspaceRequest } from "./workspaceRequest";
+import { useWorkspaceSurface } from './workspaceSurface';
+import { WORKSPACE_TOOL_KINDS, type WorkspaceToolKind } from '../../src/domain/workspaceSurface';
 import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
 import { workspaceRelativePath } from './workspaceFileLink';
 import { readCliSessionStarts, writeCliSessionStarts } from './cliSessionStarts';
@@ -1116,6 +1118,60 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       return { ...current, [contextProjectKey]: { ...entry, tabs: [...new Set([...entry.tabs.filter(tab => tab !== 'browser'), active])], active } };
     });
   };
+  useWorkspaceSurface(toolProjectPath && props.selectedSession && !props.dashboardMode ? {
+    projectPath: toolProjectPath, sessionId: props.selectedSession.id,
+    targetDeviceId: workspacePeer?.local === false ? workspacePeer.id : props.selectedSession.remote ? props.selectedSession.deviceId : undefined,
+    panelOpen: !toolsCollapsed, activeTab: activeContextTab,
+    tabs: contextTabs.map(id => ({ id, kind: workspaceTabKind(id), title: (id.startsWith('browser:') ? browserPages.find(page => page.id === workspaceTabPath(id))?.title : undefined) || id.slice(0, 512) })),
+    browserPages: browserPages.map(page => ({ ...page, title: page.title.slice(0, 512) })),
+    terminals: props.workspaceTerminals.map(terminal => ({ id: terminal.id, name: terminal.name }))
+  } : undefined, props.connected !== false, async (request, assertCurrent) => {
+    if (request.operation === 'hide') { setContextCollapsed(true); return; }
+    if (request.operation === 'read') {
+      if (request.includeContent === false) return undefined;
+      const kind = workspaceTabKind(activeContextTab);
+      if (kind === 'accounts') throw new Error('Account data requires separate Manager account permissions.');
+      if (kind === 'browser') {
+        const pageId = workspaceTabPath(activeContextTab);
+        if (!pageId) return { text: 'New browser tab. Enter a URL.' };
+        return (await workspaceDownloadRequest('workspaceBrowser', { browserRequest: { operation: 'snapshot', pageId } })).workspaceBrowser;
+      }
+      if (kind === 'terminal') {
+        const terminalId = workspaceRef.current?.querySelector<HTMLSelectElement>('[aria-label="Select terminal"]')?.value;
+        if (!terminalId) return { text: 'No terminal is selected.' };
+        return await workspaceDownloadRequest('workspaceTerminal', { terminalId, terminalRequest: { operation: 'read', clientId: `surface-${request.surfaceId}` } });
+      }
+      return { text: workspaceRef.current?.querySelector<HTMLElement>('.cli-context-body')?.innerText.slice(0, 16000) ?? '' };
+    }
+    if (request.operation === 'select') {
+      if (!request.tab) throw new Error('Choose a tab from the discovered surface.');
+      if (request.tab.startsWith('browser:')) {
+        const result = await workspaceDownloadRequest('workspaceBrowser', { browserRequest: { operation: 'list' } });
+        assertCurrent();
+        const pages = result.workspaceBrowser?.pages ?? [];
+        const pageId = request.tab.slice(8);
+        if (!pages.some(page => page.id === pageId)) throw new Error('That browser page is closed or belongs to another workspace.');
+        updateBrowserPages(pages); selectBrowserPage(pageId);
+      } else {
+        if (!contextTabs.includes(request.tab as WorkspaceTab)) throw new Error('That tab is no longer open. Read the surface again.');
+        selectContextTab(request.tab as WorkspaceTab);
+      }
+      setContextCollapsed(false); setRailCollapsed(true);
+      return;
+    }
+    if (request.operation === 'open') {
+      if (!WORKSPACE_TOOL_KINDS.includes(request.tab as WorkspaceToolKind) || request.tab === 'accounts') throw new Error('Choose Browser, Terminal, Files, Git, Reviews, Agents, or Env.');
+      if (request.tab === 'terminal' && props.composerConfig?.terminalSupported === false) throw new Error('Terminals are unavailable on this host.');
+      if (request.tab === 'browser') {
+        const response = await workspaceDownloadRequest('workspaceBrowser', { browserRequest: { operation: 'open', operationId: crypto.randomUUID(), url: request.url ?? 'about:blank', openedBy: 'ai' } });
+        assertCurrent();
+        if (!response.workspaceBrowser?.pageId) throw new Error('The browser did not confirm the new page. Inspect its page list before retrying.');
+        updateBrowserPages(response.workspaceBrowser.pages); selectBrowserPage(response.workspaceBrowser.pageId);
+      } else openContextTab(request.tab as WorkspaceToolTab);
+      setContextCollapsed(false); setRailCollapsed(true);
+    }
+    return undefined;
+  });
   const openSessionUrl = (url: string): void => {
     const opened = window.open(url, "_blank", "noopener,noreferrer");
     if (!opened) {

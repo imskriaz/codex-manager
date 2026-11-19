@@ -91,12 +91,25 @@ not a claim that every browser-wide or future experimental API is supported.
 | `manager_action` | Existing session, account, task, file, terminal, Git, backup, sharing and maintenance actions |
 | `manager_setting` | Existing global setting updates |
 | `manager_browser` | Shared pages, navigation, accessibility, screenshots, diagnostics, selectors, typing, keys, scroll, hover/select/wait, viewport, evaluation and saved feedback |
+| `manager_workspace` | Discover connected workspace views, read the visible browser or terminal, and open/select/hide right-panel tabs with dashboard acknowledgements |
 
 Example `manager_browser` arguments:
 
 ```json
 {"projectPath":"/path/to/project","request":{"operation":"open","url":"http://localhost:3000"}}
 ```
+
+To control the right panel on a phone or another browser, call `manager_workspace`
+with `request:{"operation":"list"}` first. Copy the matching `surfaceId`,
+`dashboardHostDeviceId` and session ID. Supply the dashboard host ID as
+`targetDeviceId`; it can differ from the PC executing browser or terminal work.
+`open` accepts `tab:"browser"` and a URL, or a tool such as `terminal`, `files`,
+`git`, `reviews`, `agents` or `env`. `select` takes an existing tab ID. `read`
+returns current panel metadata and browser snapshot or terminal screen content.
+Browser MCP calls may also supply `surfaceId` to present opened pages in that
+view. Commands do not report completion until that view acknowledges them.
+An absent, background, disconnected or changed workspace is never replaced
+with a local browser. Project-scoped tokens remain restricted to local execution.
 
 Use returned page IDs and revisions for mutations. Limits: four projects, eight
 pages per project, 100 feedback items per project, 1,024 remembered mutations per
@@ -106,8 +119,9 @@ A timeout/disconnection is an unknown outcome: inspect before retrying.
 Cancelling MCP does not prove the host cancelled a mutation.
 
 This version does not attach personal profiles or automate file
-uploads/downloads, stream continuous video, or host remote MCP. A local stdio
-process can use the existing authenticated HTTPS Manager API on another PC.
+uploads/downloads, stream continuous video, or host a remote MCP endpoint. A
+local stdio process uses the authenticated Manager API; peer WebSockets route
+workspace actions to another connected PC and its live dashboard views.
 Only existing Manager operations are exposed; private Codex/Claude APIs are not
 claimed.
 

@@ -45,11 +45,43 @@ it("requires initialization, negotiates a supported version, and discovers share
     expect(init.result.protocolVersion).toBe("2025-11-25");
     const list = await send("tools/list");
     expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_browser");
+    expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_workspace");
     const browser = list.result.tools.find((tool: any) => tool.name === "manager_browser");
     expect(browser.inputSchema.properties.request.properties.operation.enum).toContain("feedback");
     expect((await send("unknown/method")).error.code).toBe(-32601);
     expect((await send("tools/call", { name: "unknown", arguments: {} })).result.isError).toBe(true);
   });
+});
+
+it('uses the selected surface execution device and waits for visible tab confirmation', async () => {
+  const requests: any[] = [];
+  const surface = { surfaceId: 'mobile', projectPath: 'D:/demo', sessionId: 'chat', targetDeviceId: 'worker' };
+  let missing = false;
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', data => { body += data; });
+    request.on('end', () => {
+      const value = JSON.parse(body); requests.push(value);
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ messages: [{ type: 'dashboard:action-result', requestId: value.requestId, status: 'completed',
+        payload: value.action === 'workspacePanel' ? { workspacePanel: { surfaces: missing ? [] : [surface] } } : { workspaceBrowser: { pageId: 'new-page', pages: [], feedback: [] } } }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await withClient(async send => {
+      await send('initialize');
+      const call = () => send('tools/call', { name: 'manager_browser', arguments: { projectPath: 'D:/demo', targetDeviceId: 'dashboard-hub', surfaceId: 'mobile', sessionId: 'chat', request: { operation: 'open', url: 'https://example.test' } } });
+      expect((await call()).result.isError).not.toBe(true);
+      expect(requests.map(request => request.action)).toEqual(['workspacePanel', 'workspaceBrowser', 'workspacePanel']);
+      expect(requests[0].payload).toMatchObject({ targetDeviceId: 'dashboard-hub', panelRequest: { surfaceId: 'mobile', operation: 'read' } });
+      expect(requests[1].payload).toMatchObject({ targetDeviceId: 'worker', browserRequest: { operation: 'open' } });
+      expect(requests[2].payload).toMatchObject({ targetDeviceId: 'dashboard-hub', panelRequest: { surfaceId: 'mobile', sessionId: 'chat', operation: 'select', tab: 'browser:new-page' } });
+      missing = true; requests.length = 0;
+      expect((await call()).result.isError).toBe(true);
+      expect(requests.map(request => request.action)).toEqual(['workspacePanel']);
+    }, `http://127.0.0.1:${(server.address() as { port: number }).port}`);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 it("preserves Manager permissions/results, account targets and unknown-outcome errors", async () => {

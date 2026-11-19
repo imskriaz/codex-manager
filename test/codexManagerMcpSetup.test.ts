@@ -10,6 +10,7 @@ vi.mock('../src/utils/crossWindowOperations', () => ({ runCrossWindowExclusive: 
 vi.mock('../src/infrastructure/config/extensionSettings', () => ({ getCodexManagerConfiguration: () => mocks.config }));
 vi.mock('../src/services/dashboardApiToken', () => ({ createDashboardApiToken: (...args: any[]) => mocks.create(...args), readDashboardApiToken: (...args: any[]) => mocks.read(...args), revokeDashboardApiToken: (...args: any[]) => mocks.revoke(...args) }));
 import { registerCodexManagerMcpSetup, setupCodexManagerMcp } from '../src/services/codexManagerMcpSetup';
+import { PROJECT_API_ACTIONS } from '../src/domain/dashboard/apiActions';
 
 const key = 'codexManager.mcp.fixture';
 let context: vscode.ExtensionContext;
@@ -54,6 +55,16 @@ describe('automatic Codex Manager MCP setup', () => {
   it('updates an owned registration after extension upgrades while reusing the token', async () => {
     owned(); await setupCodexManagerMcp(context, true);
     expect(mocks.cli.mock.calls[1][1]).toEqual(expect.arrayContaining([expect.stringMatching(/extension[\\/]tools[\\/]codex-manager-mcp.mjs$/)]));
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it('adds surface control only to an unchanged automatic grant and preserves customized permissions', async () => {
+    owned();
+    const record = { id: 'token-id', name: 'Codex Manager MCP (automatic)', permissions: ['state', ...PROJECT_API_ACTIONS].filter(permission => permission !== 'workspacePanel') };
+    mocks.read.mockResolvedValue(record);
+    await setupCodexManagerMcp(context, true);
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith(context, expect.objectContaining({ id: record.id, expected: record, permissions: [...record.permissions, 'workspacePanel'] }));
+    mocks.create.mockClear(); mocks.read.mockResolvedValue({ ...record, permissions: ['workspaceBrowser'] });
+    await setupCodexManagerMcp(context, true);
     expect(mocks.create).not.toHaveBeenCalled();
   });
   it('does not silently re-enable explicitly disabled API access after setup', async () => {

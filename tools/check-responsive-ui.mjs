@@ -27,6 +27,7 @@ import { Script } from "node:vm";
 import { checkAccountShortcutsUi, checkInlineCopyUi, checkWorkspaceUi, checkScrollUi } from './check-workspace-ui.mjs';
 import { checkInspectorUi, checkReviewsUi } from "./check-inspector-ui.mjs";
 import { checkTerminalInputUi } from './check-terminal-input-ui.mjs';
+import { checkWorkspaceSurfaceUi } from './check-workspace-surface-ui.mjs';
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { prepareDocsSnapshot, captureDocsScreenshots } from './capture-docs-ui.mjs';
@@ -137,6 +138,7 @@ const mockHost = `(() => {
   const toolJobs = new Map();
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data:structuredClone(data)}));
   window.__uiActions = []; window.__uiSessions = sessions; window.__uiMessages = messages; window.__uiSnapshot = state; window.__uiSettingResults = [];
+  if (window.__fixtureSurfaceSocket) state.connectedPeers.push({ id: 'fixture-system', name: 'Remote workstation', connected: true, local: false, sessionCount: 1 });
   if(window.__tagFixture) { if(state.accounts[0]) state.accounts[0].enabled=true; try { const saved=JSON.parse(localStorage.getItem('fixture-account-tags')||'{}'); for(const account of state.accounts) if(saved[account.id]) account.tags=saved[account.id]; } catch {} }
   if(window.__tagTheme) state.settings.dashboardTheme=window.__tagTheme;
   if(window.__usageFixture) {
@@ -154,6 +156,10 @@ const mockHost = `(() => {
   };
   window.acquireVsCodeApi = () => ({postMessage(message) {
     window.__uiActions.push(message);
+    if (window.__fixtureSurfaceSocket && ['dashboard:workspace-surface', 'dashboard:workspace-command-result'].includes(message.type)) {
+      if (window.__fixtureSurfaceSocket.readyState === 1) window.__fixtureSurfaceSocket.send(JSON.stringify(message));
+      return;
+    }
     setTimeout(() => {
       if(message.type === 'dashboard:ready') {
         dispatch({type:'dashboard:snapshot',state});
@@ -368,6 +374,12 @@ const mockHost = `(() => {
             payload={workspaceGitHub:{repository:'example/project',url:'https://github.com/example/project',authenticated:true,canWrite:true,defaultBranch:'main',items:[item],page:query.page||1,hasMore:false,...(query.operation==='detail'?{detail:item,comments:[{id:1,author:'reviewer',body:'Reviewed fixture',createdAt:'2026-10-22T00:00:00Z'}],files:[{path:'src/app.ts',status:'modified',additions:1,deletions:1,patch:'-old\\n+new'}],checks:[{id:1,name:'CI',status:'success'}]}:{}),workflows:[{id:7,name:'Fixture workflow',state:'active'}]}};
             if(window.__failGithubAfterWrite && !['read','detail','connect'].includes(query.operation)) Object.assign(payload.workspaceGitHub,{items:[],refreshFailed:true,warning:'The action completed, but the updated list could not be read. Refresh before another action.'});
           }
+        }
+        else if(message.action === 'workspaceBrowser' && window.__fixtureSurfaceSocket) {
+          const query = message.payload.browserRequest, pages = window.__fixtureBrowserPages || (window.__fixtureBrowserPages = []);
+          if (query.operation === 'open') pages.push({ id: crypto.randomUUID(), title: pages.length ? 'Second fixture page' : 'First fixture page', url: query.url, revision: '1', openedBy: 'ai' });
+          const page = pages.find(page => page.id === query.pageId) || pages.at(-1);
+          payload = { workspaceBrowser: { pages: [...pages], feedback: [], ...(page ? { pageId: page.id, revision: page.revision, image: ${JSON.stringify(previewImage)}, text: page.title } : {}) } };
         }
         else if(message.action === 'workspaceTerminal') {
           const query=message.payload.terminalRequest;
@@ -662,7 +674,7 @@ const results = [];
 try {
   const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
   for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes('--mobile-polish') ? [[320,667],[360,800],[390,844],[760,1024],[1440,1000]] : process.argv.includes('--docs') ? [[1440,900],[390,844]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
-    const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
+    const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"], bypassCSP: process.argv.includes('--workspace-surface') });
     if (process.argv.includes('--storage-unavailable')) await context.addInitScript(() => {
       window.__workingIndexedDB=window.indexedDB;
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
@@ -705,6 +717,12 @@ try {
       await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--workspace-surface')) {
+      await checkWorkspaceSurfaceUi(page, { origin, width, output });
+      assert.deepEqual(errors, [], 'Remote surface commands have no browser errors');
+      results.push({ width, height, checks: 'Remote right panel, WebSocket acknowledgements, browser/terminal reads, tool tabs and no local fallback' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--system-startup')) {
       const started = performance.now();

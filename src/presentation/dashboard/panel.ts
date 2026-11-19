@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
+import { acknowledgeWorkspaceSurface, removeWorkspaceSurface, updateWorkspaceSurface } from '../../services/workspaceSurfaces';
 import { getDashboardCopy } from "../../application/dashboard/copy";
 import { buildDashboardState } from "../../application/dashboard/buildDashboardState";
 import type {
@@ -220,6 +221,7 @@ export class DashboardPanelController {
       }
 
       this.panel.onDidDispose(() => {
+        removeWorkspaceSurface(panelOwner);
         this.panelRevision++;
         if (!this.closingForRestart) {
           reopenAfterRestart = false;
@@ -244,7 +246,18 @@ export class DashboardPanelController {
         else this.stopCliSessionRealtime();
       });
 
+      const panelOwner = this.panel;
       this.panel.webview.onDidReceiveMessage((message: DashboardClientMessage) => {
+        if (message.type === 'dashboard:workspace-surface') {
+          if (!message.state) { removeWorkspaceSurface(panelOwner); return; }
+          try { updateWorkspaceSurface(panelOwner, message.state, command => { void panelOwner.webview.postMessage(command); }); }
+          catch (error) { void this.postNotice('error', error instanceof Error ? error.message : String(error)); }
+          return;
+        }
+        if (message.type === 'dashboard:workspace-command-result') {
+          acknowledgeWorkspaceSurface(panelOwner, message.requestId, message.state, message.error, message.content);
+          return;
+        }
         void dispatchDashboardClientMessage(message, {
           onReady: () => {
             this.webviewReady = true;

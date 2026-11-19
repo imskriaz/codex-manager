@@ -31,6 +31,22 @@ Configure Codex or Claude to launch `codex-manager-mcp` over stdio, or run
 
 ## Browser and feedback rules
 
+When the user asks to operate their right panel, start with `manager_workspace`
+and `{"projectPath":"/path/to/project","request":{"operation":"list"}}`.
+Discovery includes connected dashboard hosts. Choose the exact `surfaceId` and
+`dashboardHostDeviceId` matching the user's session and viewport; never replace a
+missing mobile view with a newly launched local browser. If several surfaces
+match, ask which to use. `read` returns that view's current tab and content;
+`open` adds a tool tab, `select` focuses an existing tab ID, and `hide` closes the
+panel. Keep the discovered session ID on commands to prevent following a user
+to another conversation. Completion requires the dashboard's WebSocket acknowledgement.
+
+Use `manager_browser` with `surfaceId` and the discovered dashboard host as
+`targetDeviceId` to operate its browser and visibly select newly opened pages.
+For existing user-opened pages, read the surface/browser list first. For terminal
+input, use the returned terminal ID and execution `targetDeviceId` with
+`manager_action`; preserve the terminal epoch, sequence and control lease.
+
 `manager_browser` takes `projectPath`, an optional `targetDeviceId`, and
 `request`. Call `manager_state` first when the user names a remote PC, then copy
 its exact connected peer ID into `targetDeviceId`. Its pages appear in **+ →

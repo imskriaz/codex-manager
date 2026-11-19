@@ -535,6 +535,7 @@ export interface DashboardPeerView {
 export type DashboardActionName =
   | "enableSystemStartup"
   | "workspaceBrowser"
+  | "workspacePanel"
   | "browseWorkspaceFolders"
   | "createWorkspaceProject"
   | "renameWorkspaceProject"
@@ -748,6 +749,9 @@ export interface DashboardActionPayload {
   gitHistory?: DashboardWorkspaceGitRequest;
   terminalRequest?: WorkspaceTerminalRequest;
   browserRequest?: import('../workspaceBrowser').WorkspaceBrowserRequest;
+  panelRequest?: import('../workspaceSurface').WorkspaceSurfaceRequest;
+  /** Enforced by project-scoped API authorization, not by the dashboard client. */
+  panelLocalOnly?: boolean;
   gitRequest?: WorkspaceGitRequest;
   githubRequest?: WorkspaceGitHubRequest;
   fileContent?: string;
@@ -1149,6 +1153,7 @@ export interface DashboardWorkspaceTerminalInfo {
 
 export interface DashboardActionResultPayload {
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
+  workspacePanel?: import('../workspaceSurface').WorkspaceSurfaceResult;
   workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };
   workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;
@@ -1255,6 +1260,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
+  | { type: 'dashboard:workspace-command'; requestId: string; projectPath: string; sessionId?: string; targetDeviceId?: string; request: import('../workspaceSurface').WorkspaceSurfaceRequest }
   | import("./hostReload").DashboardHostReload
   | { type: 'dashboard:maintenance-progress'; job: import('../maintenance').MaintenanceJob; deviceId?: string }
   | { type: 'dashboard:project-changed'; projectPath: string }
@@ -1307,6 +1313,8 @@ export type DashboardHostMessage =
   | { type: "dashboard:notification-dismissed"; notificationId: string };
 
 export type DashboardClientMessage =
+  | { type: 'dashboard:workspace-surface'; state?: import('../workspaceSurface').WorkspaceSurfaceState }
+  | { type: 'dashboard:workspace-command-result'; requestId: string; state?: import('../workspaceSurface').WorkspaceSurfaceState; error?: string; content?: unknown }
   | { type: "dashboard:ready" }
   | { type: "dashboard:retry-connection" }
   /** Browser workspace-viewer lease; used to gate CLI session monitoring. */

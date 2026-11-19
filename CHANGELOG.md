@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.101
+
+- Add MCP discovery and control of live workspace panels, including mobile dashboards, with browser snapshots and terminal screen reads.
+- Route commands to the selected dashboard and execution PC separately. Require that view's acknowledgement; report disconnected, changed, background, or unconfirmed views without substituting a local browser.
+- Preserve project scopes and custom token grants; upgrade the unchanged automatic MCP grant for workspace panel control.
+
 ## 2.0.6-pre.100
 
 - Require the Start with system setup dialog to register and verify Windows boot startup before enabling it; report permission errors and unconfirmed timeouts in the dialog. Confirm task removal before switching startup off.

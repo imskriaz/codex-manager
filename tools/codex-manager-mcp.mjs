@@ -112,6 +112,8 @@ const browserSchema = {
   additionalProperties: false,
   properties: {
     projectPath: { type: "string" },
+    surfaceId: { type: "string", description: "Exact surfaceId from manager_workspace. Uses that dashboard's execution device and presents opened pages in its right panel." },
+    sessionId: { type: "string", description: "Required with surfaceId: exact sessionId returned by workspace discovery." },
     targetDeviceId: {
       type: "string",
       description: "Optional connected remote device ID from manager_state.connectedPeers. Omit to use the MCP host."
@@ -166,6 +168,26 @@ const browserSchema = {
 };
 const tools = [
   {
+    name: 'manager_workspace',
+    description: 'Discover live browser/VS Code workspace surfaces, including mobile dashboards. List first and choose the exact surfaceId, dashboard host targetDeviceId and sessionId. Read returns the current right-panel tab and its browser snapshot or terminal screen. Open adds a visible tool tab; select chooses an existing tab ID; hide closes the right panel. Commands finish only after that dashboard acknowledges them. Never substitute a local dashboard when the requested surface is missing.',
+    inputSchema: {
+      type: 'object', required: ['projectPath', 'request'], additionalProperties: false,
+      properties: {
+        projectPath: { type: 'string' }, targetDeviceId: { type: 'string', description: 'Dashboard host device returned by discovery; differs from the surface execution device.' },
+        request: {
+          type: 'object', required: ['operation'], additionalProperties: false,
+          properties: {
+            operation: { type: 'string', enum: ['list', 'read', 'open', 'select', 'hide'] },
+            surfaceId: { type: 'string' }, sessionId: { type: 'string' },
+            includeContent: { type: 'boolean', description: 'Read metadata only when false; defaults to reading the selected tab content.' },
+            tab: { type: 'string', description: 'Open: env/browser/terminal/files/git/reviews/agents. Select: exact tab ID, including browser:<pageId>.' },
+            url: { type: 'string', description: 'URL for a new Browser tab.' }
+          }
+        }
+      }
+    }
+  },
+  {
     name: "manager_schema",
     description: "Discover permitted Manager actions and their request envelopes.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
@@ -204,7 +226,7 @@ const tools = [
   {
     name: "manager_browser",
     description:
-      "Control every tab in the shared Manager browser, including user-opened tabs. Start with list to discover all page IDs and revisions, then snapshot or screenshot. AI-opened tabs are labeled AI in the UI. All mutations need the current page revision; keep operationId when checking the same attempt. Read HTML, styles (params.action rules/listeners), loaded sources (html params.action resources/resource), network/console/events, storage/cookies; modify JavaScript/CSS/DOM via evaluate or page-scoped DevTools cdp commands. events uses an after cursor. Feedback is saved and visible in the panel. evaluate/cdp/storage changes require confirmed=true.",
+      "Control shared Manager browser tabs, including user-opened pages. For the user's visible right panel, FIRST call manager_workspace list and supply its surfaceId, sessionId and dashboard host targetDeviceId here; never assume the local host is the user's displayed view. Start with list for page IDs and revisions, then snapshot/screenshot. AI-opened tabs are labeled AI. Mutations need the current page revision; preserve operationId for the same attempt. Read HTML, styles (params.action rules/listeners), sources (html params.action resources/resource), events and storage; modify JavaScript/CSS/DOM with evaluate or page-scoped cdp. evaluate/cdp/storage changes require confirmed=true.",
     inputSchema: browserSchema
   }
 ];
@@ -216,6 +238,28 @@ async function tool(name, args, signal) {
       await api("/api/state" + (args.projectPath ? "?projectPath=" + encodeURIComponent(args.projectPath) : ""), signal)
     );
   if (name === "manager_action") return action(args, signal);
+  if (name === 'manager_workspace') {
+    if (typeof args.projectPath !== 'string' || !object(args.request)) throw new Error('Provide projectPath and request.');
+    const call = targetDeviceId => action({ action: 'workspacePanel', payload: { projectPath: args.projectPath, targetDeviceId, panelRequest: args.request } }, signal);
+    if (args.request.operation !== 'list' || args.targetDeviceId !== undefined) return workspaceImage(await call(args.targetDeviceId));
+    const local = await call(undefined);
+    if (local.isError) return local;
+    const result = JSON.parse(local.content[0].text);
+    const surfaces = (result.payload?.workspacePanel?.surfaces ?? []).map(surface => ({ ...surface, dashboardHostDeviceId: 'local' }));
+    const warnings = [];
+    // Discovery reads other hosts; mutations always require one explicit surface.
+    try {
+      const state = await api('/api/state?projectPath=' + encodeURIComponent(args.projectPath), signal);
+      const peers = (state.connectedPeers ?? []).filter(peer => !peer.local && peer.connected).slice(0, 16);
+      const reads = await Promise.allSettled(peers.map(async peer => {
+        const response = await call(peer.id);
+        if (response.isError) throw new Error(`Surface discovery on ${peer.id} failed: ${response.content[0].text}`);
+        return JSON.parse(response.content[0].text).payload?.workspacePanel?.surfaces?.map(surface => ({ ...surface, dashboardHostDeviceId: peer.id })) ?? [];
+      }));
+      for (const read of reads) { if (read.status === 'fulfilled') surfaces.push(...read.value); else warnings.push(read.reason.message); }
+    } catch (error) { warnings.push('Remote surface discovery was inconclusive: ' + error.message); }
+    return content({ surfaces, ...(warnings.length ? { warnings } : {}) });
+  }
   if (name === "manager_setting") {
     const response = await api("/api/message", signal, { type: "dashboard:setting", key: args.key, value: args.value });
     const notice = response.messages?.find((row) => row.type === "dashboard:notice");
@@ -225,12 +269,22 @@ async function tool(name, args, signal) {
   if (name === "manager_browser") {
     if (typeof args.projectPath !== "string" || !object(args.request))
       throw new Error("Provide projectPath and request.");
+    let executionDeviceId = args.targetDeviceId;
+    let surface;
+    if (args.surfaceId) {
+      if (typeof args.sessionId !== 'string' || !args.sessionId) throw new Error('Supply the exact sessionId from manager_workspace discovery with surfaceId. No browser operation was sent.');
+      const read = await action({ action: 'workspacePanel', payload: { projectPath: args.projectPath, targetDeviceId: args.targetDeviceId, panelRequest: { operation: 'read', surfaceId: args.surfaceId, sessionId: args.sessionId, includeContent: false } } }, signal);
+      if (read.isError) return read;
+      surface = JSON.parse(read.content[0].text).payload?.workspacePanel?.surfaces?.[0];
+      if (!surface) throw new Error('The requested dashboard did not return a workspace surface. No browser operation was sent.');
+      executionDeviceId = surface.targetDeviceId ?? args.targetDeviceId;
+    }
     const response = await action(
       {
         action: "workspaceBrowser",
         payload: {
           projectPath: args.projectPath,
-          ...(typeof args.targetDeviceId === "string" && args.targetDeviceId.trim() ? { targetDeviceId: args.targetDeviceId } : {}),
+          ...(typeof executionDeviceId === "string" && executionDeviceId.trim() ? { targetDeviceId: executionDeviceId } : {}),
           browserRequest: { operationId: randomUUID(), ...args.request }
         }
       },
@@ -239,6 +293,11 @@ async function tool(name, args, signal) {
     if (response.isError) return response;
     const result = JSON.parse(response.content[0].text),
       state = result.payload?.workspaceBrowser;
+    if (surface && state?.pageId && ['open', 'navigate'].includes(args.request.operation)) {
+      const presented = await action({ action: 'workspacePanel', payload: { projectPath: args.projectPath, targetDeviceId: args.targetDeviceId,
+        panelRequest: { operation: 'select', surfaceId: args.surfaceId, sessionId: surface.sessionId, tab: `browser:${state.pageId}` } } }, signal);
+      if (presented.isError) return failure('The browser operation completed, but the requested dashboard did not confirm showing its tab. Inspect before retrying. ' + presented.content[0].text);
+    }
     if (state?.image || state?.feedbackImage) {
       const image = state.image || state.feedbackImage;
       delete state.feedbackImage;
@@ -253,6 +312,17 @@ async function tool(name, args, signal) {
     return response;
   }
   throw new Error("Unknown tool. Call tools/list.");
+}
+
+function workspaceImage(response) {
+  if (response.isError) return response;
+  const result = JSON.parse(response.content[0].text);
+  const contentValue = result.payload?.workspacePanel?.content;
+  if (contentValue?.image?.startsWith('data:image/jpeg;base64,')) {
+    const image = contentValue.image; delete contentValue.image;
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }, { type: 'image', mimeType: 'image/jpeg', data: image.split(',')[1] }] };
+  }
+  return response;
 }
 async function handle(message, signal) {
   if (message.method === "initialize") {

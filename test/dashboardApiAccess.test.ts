@@ -63,6 +63,17 @@ it('filters global refreshed state and secret-bearing fields from scoped mutatio
   expect(payload).not.toHaveProperty('authJson'); expect(payload).not.toHaveProperty('apiTokens'); expect(payload).not.toHaveProperty('apiToken');
 });
 
+it('pins project-scoped surface requests to local execution and strips foreign view content', async () => {
+  const { record } = await createDashboardApiToken(context, { name: 'Panel', projectPath: process.cwd(), permissions: ['workspacePanel'] });
+  await expect(authorizeApiMessage(record, message('workspacePanel', { panelLocalOnly: false, panelRequest: { operation: 'list' } }))).resolves.toMatchObject({ payload: { panelLocalOnly: true, projectPath: process.cwd() } });
+  await expect(authorizeApiMessage(record, message('workspacePanel', { targetDeviceId: 'peer', panelRequest: { operation: 'list' } }))).rejects.toThrow(/outside/);
+  const result = scopeApiResults(record, [{ type: 'dashboard:action-result', action: 'workspacePanel', requestId: 'panel', status: 'completed', payload: { workspacePanel: {
+    surfaces: [{ projectPath: root } as never], content: { text: 'private view' }
+  } } }]);
+  expect(result[0]).toMatchObject({ payload: { workspacePanel: { surfaces: [] } } });
+  expect(JSON.stringify(result)).not.toContain('private view');
+});
+
 it('requires state permission for appended snapshots even when an operation token allows every project', () => {
   const token = { id: 'a', name: 'Rename only', permissions: ['renameCodexCliSession'], createdAt: 1 };
   const messages: DashboardHostMessage[] = [

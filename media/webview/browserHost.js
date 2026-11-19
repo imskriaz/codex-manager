@@ -387,6 +387,8 @@
         return;
       }
       const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+      // Surface leases and command acknowledgements belong to this socket, never HTTP or a later connection.
+      if (message?.type === 'dashboard:workspace-surface' || message?.type === 'dashboard:workspace-command-result') return;
       if (message?.type === "dashboard:action" && message.requestId) {
         httpRequestId = message.requestId;
         pendingHttpActions.add(httpRequestId);

@@ -4,6 +4,8 @@ import { normalizeSystemStatus } from '../domain/systemStatus';
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
 import { AiProxy, isAiProxyPath } from './aiProxy';
 import { disposeWorkspaceBrowsers } from './workspaceBrowser';
+import { acknowledgeWorkspaceSurface, removeWorkspaceSurface, updateWorkspaceSurface } from './workspaceSurfaces';
+import { isWorkspaceSurfaceState } from '../domain/workspaceSurface';
 import { isCodexSessionAccess } from '../domain/codexSessionAccess';
 import { chatUploadTimeoutMs, MAX_CHAT_WIRE_BYTES } from "../domain/chatAttachments";
 import { notificationTargetUrl } from '../domain/notificationTarget';
@@ -629,6 +631,7 @@ export class WebDashboardServer implements vscode.Disposable {
         this.webSocketClients.add(socket);
         if (query.get('updates') === '1') this.incrementalClients.add(socket);
         const removeClient = (): void => {
+          removeWorkspaceSurface(socket);
           const expiryTimer = this.browserSocketExpiryTimers.get(socket);
           if (expiryTimer) {
             clearTimeout(expiryTimer);
@@ -1664,7 +1667,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "saveApiProxyModelMapping", "generateApiToken", "editApiToken", "copyApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "saveApiProxyModelMapping", "generateApiToken", "editApiToken", "copyApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -2240,6 +2243,18 @@ export class WebDashboardServer implements vscode.Disposable {
       message = parsed;
       if (message.type === "dashboard:workspace-presence") {
         this.updateWorkspaceViewer(socket, message.viewing, message.targetDeviceId);
+        return;
+      }
+      if (message.type === 'dashboard:workspace-surface') {
+        if (!message.state) { removeWorkspaceSurface(socket); return; }
+        updateWorkspaceSurface(socket, message.state, command => {
+          if (socket.readyState !== WebSocket.OPEN) throw new Error('The dashboard WebSocket is unavailable.');
+          sendDashboardSocketMessage(socket, JSON.stringify(command));
+        });
+        return;
+      }
+      if (message.type === 'dashboard:workspace-command-result') {
+        acknowledgeWorkspaceSurface(socket, message.requestId, message.state, message.error, message.content);
         return;
       }
       const result = await this.processClientMessage(message);
@@ -3613,6 +3628,12 @@ function isDashboardClientMessage(value: unknown): value is DashboardClientMessa
     case "dashboard:workspace-presence":
       return typeof candidate["viewing"] === "boolean" && (candidate["targetDeviceId"] === undefined ||
         typeof candidate["targetDeviceId"] === "string" && candidate["targetDeviceId"].length > 0 && candidate["targetDeviceId"].length <= 256);
+    case 'dashboard:workspace-surface':
+      return candidate['state'] === undefined || isWorkspaceSurfaceState(candidate['state']);
+    case 'dashboard:workspace-command-result':
+      return typeof candidate['requestId'] === 'string' && candidate['requestId'].length <= 128 &&
+        (candidate['error'] === undefined || typeof candidate['error'] === 'string' && candidate['error'].length <= 8192) &&
+        (candidate['state'] === undefined || isWorkspaceSurfaceState(candidate['state']));
     case "dashboard:usage-history":
       return Array.isArray(candidate["samples"]) && candidate["samples"].length <= 10_000;
     case "dashboard:action":
