@@ -15431,27 +15431,13 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .api-proxy-panel { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
 .api-proxy-update { display: block; margin-top: 5px; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
 .api-log-title { flex: 1; min-width: 110px; }
-.api-log-actions { display: flex; align-items: center; gap: 6px; }
+.api-log-actions { display: flex; align-items: center; gap: 6px; margin-left:auto; }
 .api-log-actions svg { width: 15px; height: 15px; }
-.api-proxy-log-pane > .api-section-heading { align-items: flex-start; }
-.api-proxy-split { flex: 1; display: grid; grid-template-columns: minmax(260px,.65fr) minmax(0,1.35fr); grid-template-rows: minmax(0,1fr); gap: 12px; min-width: 0; min-height: 0; }
-.api-proxy-split > section { min-width: 0; min-height: 0; padding: 14px; overflow: hidden; border: 1px solid var(--border-default); border-radius: 9px; background: var(--bg-surface); }
-.api-proxy-diagram-pane,.api-proxy-log-pane { display: flex; flex-direction: column; gap: 12px; }
-.api-proxy-split > .api-proxy-diagram-pane { overflow: auto; overscroll-behavior: contain; }
-.api-proxy-split .api-section-heading { flex: none; }
-.api-proxy-routes { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px; border-radius: 7px; background-color: var(--bg-base); background-image: radial-gradient(var(--border-default) 1px,transparent 1px); background-size: 18px 18px; }
-.api-route-headings { display: flex; justify-content: space-between; padding: 2px 4px 8px; color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); }
-.api-route-canvas { position: relative; min-height: 106px; }
-.api-route-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--accent-blue); overflow: visible; }
-.api-route-node { position: absolute; transform: translateY(-50%); display: grid; gap: 6px; width: 38%; min-height: 60px; padding: 10px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); box-sizing: border-box; }
-.api-route-node.is-account { left: 0; }
-.api-route-node.is-key { right: 0; border-color: var(--accent-blue); }
-.api-route-node strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: calc(11px * var(--dashboard-text-scale, 1)); font-weight: 500; line-height: 1.5; }
-.api-route-node small { font-size: calc(9px * var(--dashboard-text-scale, 1)); }
-.api-route-edge { fill: none; stroke: var(--text-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; opacity: .55; }
-.api-route-edge.is-running { stroke: var(--accent-blue); stroke-width: 2; stroke-dasharray: 7 5; opacity: 1; animation: api-route-flow 1s linear infinite; }
-@keyframes api-route-flow { to { stroke-dashoffset: -24; } }
-@media (prefers-reduced-motion: reduce) { .api-route-edge.is-running { animation: none; stroke-dasharray: none; } }
+.api-log-actions button { display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+.api-proxy-clear-notice { margin:0; color:var(--accent-green); font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.api-proxy-log-pane > .api-section-heading { align-items: flex-start; flex-wrap:wrap; row-gap:8px; }
+.api-proxy-log-pane { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; padding: 14px; overflow: hidden; border: 1px solid var(--border-default); border-radius: 9px; background: var(--bg-surface); }
+.api-proxy-log-pane .api-section-heading { flex: none; }
 .api-proxy-table-scroll { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-default); border-radius: 7px; }
 .api-proxy-log-pane .api-proxy-table-scroll { flex: 1; }
 .api-proxy-table { width: 100%; border-collapse: collapse; text-align: left; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
@@ -15472,12 +15458,6 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 @media (max-width: 1150px) {
   .api-keys-layout.is-creating { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(100px,.36fr) minmax(0,.64fr); }
   .api-playground-layout { grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-rows: minmax(0,1fr); }
-  .api-proxy-split { grid-template-columns: minmax(230px,.7fr) minmax(0,1fr); }
-}
-@media (max-width: 900px) {
-  .api-proxy-split { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
-  .api-proxy-routes { flex: 0 1 auto; max-height: 120px; min-height: 88px; }
-  .api-route-node { padding: 7px; }
 }
 .api-payload-actions { display: inline-flex; align-items: center; gap: 6px; }
 .api-docs-modal { width: min(660px, calc(100vw - 24px)); max-height: calc(var(--dashboard-viewport-height,100dvh) - 24px); }
@@ -15490,15 +15470,12 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
   .api-workspace-screen { --api-space: 10px; padding: 10px; }
   .api-playground-layout { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(0,1.3fr) minmax(0,1fr); }
   .api-playground-layout > .api-response-pane { border-left: 0; border-top: 1px solid var(--border-default); }
-  .api-key-create-panel,.api-playground-layout > section,.api-proxy-split > section { padding: 14px; }
+  .api-key-create-panel,.api-playground-layout > section,.api-proxy-log-pane { padding: 14px; }
   .api-permissions > div { grid-template-columns: minmax(0,1fr); }
   .api-pane-heading { gap: 6px; }
   .api-pane-heading > span { gap: 6px; }
   .api-pane-heading button { padding: 6px 8px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
   .api-pane-heading h2 { font-size: calc(12px * var(--dashboard-text-scale, 1)); }
-}
-@media (max-height: 600px) and (min-width: 761px) {
-  .api-proxy-split { grid-template-columns: minmax(230px,.7fr) minmax(0,1fr); grid-template-rows: minmax(0,1fr); }
 }
 
 .about-entry-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }

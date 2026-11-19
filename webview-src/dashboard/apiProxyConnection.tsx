@@ -321,20 +321,6 @@ export function ApiProxyConnection(props: {
           class="api-connection-guide"
         >
           <section>
-            <h3>Claude Desktop gateway</h3>
-            <p>In Claude Desktop, open Configure third-party inference and choose Gateway.</p>
-            <ul class="api-model-list">
-              <li>
-                Gateway base URL: <code>{baseUrl || "https://YOUR_MANAGER_HOST"}</code> (without <code>/v1</code>)
-              </li>
-              <li>Gateway API key: use the selected Manager key above</li>
-              <li>
-                Gateway auth scheme: <code>x-api-key</code> or <code>Authorization: Bearer</code>
-              </li>
-              <li>Model discovery: enable it so Claude Desktop loads the mapped Claude names below</li>
-            </ul>
-          </section>
-          <section>
             <h3>Host URL</h3>
             <div class="api-connection-field">
               <input
@@ -406,30 +392,10 @@ export function ApiProxyConnection(props: {
             <button type="button" disabled={busy || keyAccess.loading || !!keyAccess.uncertain || !keyAccess.enabled || !props.onSaveMapping || !Object.values(claudeMapping).every(id => models.some(model => model.id === id)) || savedMappingKey === JSON.stringify(claudeMapping)} onClick={() => { setNotice(""); props.onSaveMapping?.(claudeMapping); }}>
               {keyAccess.pending ? "Saving..." : "Save model mapping"}
             </button>
-            <p>Save these host-wide routes before connecting Claude Desktop or Claude Code. Sonnet is the default.</p>
-            {models.length ? (
-                <details>
-                  <summary>Available models ({models.length})</summary>
-                  <ul class="api-model-list">
-                    {models.map((model) => (
-                      <li key={model.id}>
-                        <code>{model.id}</code>
-                        {model.name !== model.id ? ` — ${model.name}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-            ) : !keyAccess.loading && !props.modelsWarning ? (
+            {!models.length && !keyAccess.loading && !props.modelsWarning ? (
               <p>No Codex models available. Refresh models to retry.</p>
             ) : null}
-            <small>
-              Claude model names stay in the <code>claude-*</code> format; each maps to a selected Codex model.
-            </small>
           </section>
-          <p>
-            The settings.json block is for Claude Code. Claude Desktop uses the Gateway fields above and does not read
-            this env block.
-          </p>
           <p>
             This proxy serves Codex models through the Claude-compatible protocol. It does not provide Anthropic models.
           </p>

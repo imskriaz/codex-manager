@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest';
-import { readApiProxyHistory, startApiProxyLog } from '../src/services/aiProxyHistory';
+import { afterEach, expect, it } from 'vitest';
+import { clearApiProxyHistory, readApiProxyHistory, startApiProxyLog } from '../src/services/aiProxyHistory';
 
 it('bounds host metadata, normalizes untrusted paths, and returns isolated snapshots', () => {
   for (let index = 0; index < 105; index++) startApiProxyLog('GET', '/v1/models', String(index));
@@ -32,4 +32,19 @@ it('summarizes each key separately and keeps missing usage distinct from zero', 
   expect(apiKeyUsage(snapshot, 'missing')).toMatchObject({ requests: 1, input: undefined, output: undefined, cached: undefined });
   expect(apiKeyUsage(undefined, 'key')).toBeUndefined();
   expect(apiKeyUsage({ capturedAt: 20, requests: [{ ...base, id: 'count', apiKeyId: 'key', path: '/v1/messages/count_tokens', status: 'completed', estimatedInputTokens: 999 }] }, 'key')).toMatchObject({ requests: 1, input: undefined, output: undefined });
+});
+
+afterEach(() => clearApiProxyHistory());
+
+it('deletes recorded entries and does not restore them when an in-flight request finishes', () => {
+  const running = startApiProxyLog('POST', '/v1/messages', 'in-flight');
+  startApiProxyLog('GET', '/v1/models', 'discovery').status = 'completed';
+  expect(clearApiProxyHistory().requests).toEqual([]);
+  expect(running.status).toBe('running');
+  running.status = 'completed';
+  expect(readApiProxyHistory().requests).toEqual([]);
+  startApiProxyLog('POST', '/v1/messages', 'new-request');
+  expect(readApiProxyHistory().requests.map(row => row.id)).toEqual(['new-request']);
+  expect(clearApiProxyHistory().requests).toEqual([]);
+  expect(clearApiProxyHistory().requests).toEqual([]);
 });

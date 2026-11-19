@@ -577,6 +577,7 @@ export type DashboardActionName =
   | "copyApiToken"
   | "saveApiProxyModelMapping"
   | "listApiTokens"
+  | "clearApiProxyLogs"
   | "revokeApiToken"
   | "getProjectBoard"
   | "getProjectTaskDetails"

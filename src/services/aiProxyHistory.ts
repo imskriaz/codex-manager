@@ -12,3 +12,8 @@ export function startApiProxyLog(method: string, path: string, id: string): ApiP
 export function readApiProxyHistory(): ApiProxySnapshot {
   return { capturedAt: Date.now(), requests: requests.map(entry => ({ ...entry })) };
 }
+
+export function clearApiProxyHistory(): ApiProxySnapshot {
+  requests.length = 0;
+  return readApiProxyHistory();
+}

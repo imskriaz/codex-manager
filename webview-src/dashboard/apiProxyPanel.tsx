@@ -1,7 +1,6 @@
 import type { ApiProxySnapshot, ApiProxyRequestLog } from "../../src/domain/dashboard/apiProxy";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiProxyConnection, type ApiProxyKeyAccess } from "./apiProxyConnection";
-import { ApiProxyRoutes } from "./apiProxyRoutes";
 import { getSensitiveDisplayValue } from "./helpers";
 
 function RequestTable({
@@ -91,6 +90,9 @@ export function ApiProxyPanel(props: {
   privacyMode?: boolean;
   loading?: boolean;
   onRefresh: () => void;
+  onClear?: () => void;
+  clearing?: boolean;
+  clearNotice?: string;
 }) {
   const [allLogs, setAllLogs] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
@@ -106,10 +108,51 @@ export function ApiProxyPanel(props: {
   }, [props.connected, props.loading, props.keyAccess.error, props.keyAccess.uncertain, props.keyAccess.pending]);
   return (
     <section class="api-proxy-panel" aria-label="API proxy overview">
-      <div class="api-proxy-split">
-        <section class="api-proxy-diagram-pane" aria-label="Proxy route" tabIndex={0}>
-          <div class="api-section-heading">
-            <h4>Request route</h4>
+      <section class="api-proxy-log-pane" aria-label="Recent proxy logs">
+        <div class="api-section-heading">
+          <div class="api-log-title">
+            <h4 title="Latest 100 external requests. Cleared on host restart.">
+              {allLogs ? "All request logs" : "Recent logs"}
+            </h4>
+            <span class="api-proxy-update" role="status">
+              {props.loading
+                ? "Loading proxy activity…"
+                : props.snapshot
+                  ? `Updated ${new Date(props.snapshot.capturedAt).toLocaleTimeString()}`
+                  : "Proxy activity unavailable. Refresh to retry; the host may need an update."}
+            </span>
+          </div>
+          <div class="api-log-actions">
+            <button
+              type="button"
+              aria-label="Clear proxy logs"
+              title="Delete recorded request logs"
+              disabled={!props.connected || props.keyAccess.pending || props.keyAccess.uncertain || props.clearing || !requests.length || !props.onClear}
+              onClick={props.onClear}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
+              {props.clearing ? 'Clearing…' : 'Clear'}
+            </button>
+            <button
+              type="button"
+              aria-label="Refresh proxy"
+              title="Refresh proxy"
+              disabled={!props.connected || props.loading}
+              onClick={props.onRefresh}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path d="M20 7v5h-5M4 17v-5h5" />
+                <path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              aria-label={allLogs ? "Show recent" : "Show all logs"}
+              aria-pressed={allLogs}
+              onClick={() => setAllLogs((value) => !value)}
+            >
+              {allLogs ? "Recent" : "All logs"}
+            </button>
             <button
               type="button"
               aria-label="Proxy connection settings"
@@ -122,54 +165,16 @@ export function ApiProxyPanel(props: {
               </svg>
             </button>
           </div>
-          <ApiProxyRoutes requests={requests} connected={props.connected} privacyMode={props.privacyMode ?? false} />
-        </section>
-        <section class="api-proxy-log-pane" aria-label="Recent proxy logs">
-          <div class="api-section-heading">
-            <div class="api-log-title">
-              <h4 title="Latest 100 external requests. Cleared on host restart.">
-                {allLogs ? "All request logs" : "Recent logs"}
-              </h4>
-              <span class="api-proxy-update" role="status">
-                {props.loading
-                  ? "Loading proxy activity…"
-                  : props.snapshot
-                    ? `Updated ${new Date(props.snapshot.capturedAt).toLocaleTimeString()}`
-                    : "Proxy activity unavailable. Refresh to retry; the host may need an update."}
-              </span>
-            </div>
-            <div class="api-log-actions">
-              <button
-                type="button"
-                aria-label="Refresh proxy"
-                title="Refresh proxy"
-                disabled={!props.connected || props.loading}
-                onClick={props.onRefresh}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7">
-                  <path d="M20 7v5h-5M4 17v-5h5" />
-                  <path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                aria-label={allLogs ? "Show recent" : "Show all logs"}
-                aria-pressed={allLogs}
-                onClick={() => setAllLogs((value) => !value)}
-              >
-                {allLogs ? "Recent" : "All logs"}
-              </button>
-            </div>
-          </div>
-          {props.snapshot ? (
-            <RequestTable
-              requests={allLogs ? requests : requests.slice(0, 8)}
-              detailed={allLogs}
-              privacyMode={props.privacyMode ?? false}
-            />
-          ) : null}
-        </section>
-      </div>
+        </div>
+        {props.clearNotice ? <p class="api-proxy-clear-notice" role="status">{props.clearNotice}</p> : null}
+        {props.snapshot ? (
+          <RequestTable
+            requests={allLogs ? requests : requests.slice(0, 8)}
+            detailed={allLogs}
+            privacyMode={props.privacyMode ?? false}
+          />
+        ) : null}
+      </section>
       <ApiProxyConnection
         open={connectionOpen}
         models={props.snapshot?.models}

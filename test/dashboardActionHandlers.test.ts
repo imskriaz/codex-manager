@@ -16,6 +16,7 @@ import { readNativeCodexSessionRunning } from '../src/services/codexNativeSessio
 import * as workspaceTools from "../src/services/workspaceTools";
 import * as autoResume from "../src/services/codexSessionAutoResume";
 import * as apiTokens from '../src/services/dashboardApiToken';
+import { readApiProxyHistory, startApiProxyLog } from '../src/services/aiProxyHistory';
 
 const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.hoisted(() => ({
   consumeResetCreditMock: vi.fn().mockResolvedValue(undefined),
@@ -116,6 +117,17 @@ afterAll(async () => {
 });
 
 describe('proxy Codex model discovery', () => {
+  it('clears proxy records immediately without model discovery or account flushes', async () => {
+    startApiProxyLog('POST', '/v1/messages', 'clear-fixture');
+    const discovery = vi.spyOn(sessionEditors, 'readCodexCliComposerConfig').mockImplementation(() => new Promise(() => undefined));
+    const ctx = createContext();
+    const flush = vi.fn(() => new Promise<void>(() => undefined));
+    ctx.repo = { flush } as never;
+    expect(await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'clearApiProxyLogs', requestId: 'clear-proxy-records' })).toMatchObject({ status: 'completed', payload: { apiProxy: { requests: [] }, notice: { message: 'Proxy request logs cleared.' } } });
+    expect(readApiProxyHistory().requests).toEqual([]);
+    expect(discovery).not.toHaveBeenCalled();
+    expect(flush).not.toHaveBeenCalled();
+  });
   it('saves mappings through the shared host action and returns confirmed routes', async () => {
     const mapping = { opus: 'gpt-test', sonnet: 'gpt-test', haiku: 'gpt-test', fable: 'gpt-test' };
     vi.spyOn(apiTokens, 'listDashboardApiTokens').mockResolvedValue([]);

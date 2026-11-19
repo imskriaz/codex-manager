@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6-pre.116
+
+- Remove the proxy route panel, expand request logs to full width, and place connection settings after All logs.
+- Add Clear logs with visible feedback and remove redundant Claude connection explanations.
+
 ## 2.0.6-pre.115
 
 - Remove the exhausted-usage upsell banner and compact message settings into two columns, with session Auto Resume and queue priority controls.

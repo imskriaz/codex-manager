@@ -70,6 +70,7 @@ try {
     await dialog.getByRole('button', { name: 'Copy Codex launch command', exact: true }).click();
     assert.ok((await page.evaluate(() => window.copied)).includes('cm_'+'a'.repeat(64)), 'Codex launch includes the selected key');
     await dialog.getByRole('tab', { name: 'Claude', exact: true }).click();
+    assert.ok(!/Claude Desktop gateway|Save these host-wide routes|Available models \(|Claude model names stay/.test(await dialog.innerText()), 'Removed setup explanations stay absent');
     await page.waitForFunction(() => document.querySelector('[aria-label="Claude configuration"]').textContent.includes('cm_'+'a'.repeat(64)));
     assert.equal(await dialog.getByLabel('Key value', { exact: true }).count(), 0, 'No manual key field');
     const mapping = dialog.getByRole('region', { name: 'Claude model mapping' });

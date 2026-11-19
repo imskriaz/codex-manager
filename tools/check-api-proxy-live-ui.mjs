@@ -22,9 +22,12 @@ const compiled = await build({ stdin: { contents: `
   ];
   function App(){
     const [snapshot,setSnapshot]=useState({capturedAt:now,requests});
+    const [clearing,setClearing]=useState(false),[notice,setNotice]=useState(),[error,setError]=useState();
+    window.repopulate=()=>{setSnapshot({capturedAt:Date.now(),requests});setNotice(undefined);};
     window.refreshCount=window.refreshCount??0;
-    return <ApiProxyPanel snapshot={snapshot} connected baseUrl={location.origin} keyAccess={{tokens:[],enabled:true,pending:false,onCreate:()=>{},onLoad:()=>{},onRefresh:()=>{}}}
-      onRefresh={()=>{window.refreshCount++;setSnapshot({capturedAt:Date.now(),requests:requests.map(row=>row.id==='claude'?{...row,status:'completed',httpStatus:200,durationMs:1250,firstOutputMs:350,inputTokens:900,outputTokens:100}:row)});}}/>;
+    return <>{error?<p role="alert">{error}</p>:null}<ApiProxyPanel snapshot={snapshot} connected baseUrl={location.origin} clearing={clearing} clearNotice={notice} keyAccess={{tokens:[],enabled:true,pending:false,onCreate:()=>{},onLoad:()=>{},onRefresh:()=>{}}}
+      onClear={()=>{window.clearCount=(window.clearCount??0)+1;setClearing(true);setNotice(undefined);setError(undefined);setTimeout(()=>{setClearing(false);if(window.failClear){setError('Proxy logs could not be cleared. Retry.');return;}setSnapshot({capturedAt:Date.now(),requests:[]});setNotice('Proxy request logs cleared.');},100);}}
+      onRefresh={()=>{window.refreshCount++;setSnapshot(current=>({capturedAt:Date.now(),requests:current.requests.map(row=>row.id==='claude'?{...row,status:'completed',httpStatus:200,durationMs:1250,firstOutputMs:350,inputTokens:900,outputTokens:100}:row)}));}}/></>;
   }
   render(<App/>,document.getElementById('app'));
 `, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
@@ -48,11 +51,18 @@ try {
     const rows=page.locator('.api-proxy-table tbody tr');
     assert.equal(await rows.count(),4);
     assert.ok(await rows.evaluateAll(rows=>rows.every(row=>row.getBoundingClientRect().height<=36)),'Request rows use one compact line');
-    const route=page.getByRole('img',{name:'Proxy routes from saved accounts to API keys'});
-    assert.equal(await route.locator('.is-account').count(),1,'Only actual account routes are shown');
-    assert.ok(!(await route.innerText()).includes('Account unavailable'));
+    assert.equal(await page.locator('.api-proxy-diagram-pane,.api-proxy-routes').count(),0,'The route panel is removed');
+    assert.equal(await page.getByRole('heading',{name:'Request route',exact:true}).count(),0);
+    assert.equal(await page.locator('.api-log-actions button').last().getAttribute('aria-label'),'Proxy connection settings','Settings follows All logs');
+    assert.equal(await page.locator('.api-log-actions button').nth(2).getAttribute('aria-label'),'Show all logs');
     assert.ok((await rows.first().innerText()).includes('claude-opus'));
     assert.ok((await rows.first().innerText()).includes('gpt-codex'));
+    const bounds=await page.locator('.api-log-actions').boundingBox();
+    const pane=await page.locator('.api-proxy-log-pane').boundingBox();
+    const panel=await page.locator('.api-proxy-panel').boundingBox();
+    assert.ok(Math.abs(pane.x-panel.x)<2 && Math.abs(pane.width-panel.width)<2,'Logs span the full proxy panel');
+    assert.ok(bounds.x>=pane.x && bounds.x+bounds.width<=pane.x+pane.width,'All log actions fit inside the card at every width');
+    await page.screenshot({path:path.join(output,'proxy-running-'+theme+'-'+width+'.png')});
     await page.getByRole('button',{name:'Proxy connection settings'}).click();
     const dialog=page.getByRole('dialog',{name:'Proxy connection'});
     assert.deepEqual(await dialog.getByRole('tab').allTextContents(),['Claude','Codex']);
@@ -72,6 +82,22 @@ try {
     assert.ok(await rows.evaluateAll(rows=>rows.every(row=>row.getBoundingClientRect().height<=36)),'Details retain a single line');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Horizontal overflow stays inside the request table');
     await page.screenshot({path:path.join(output,'proxy-'+theme+'-'+width+'.png')});
+    const clear=page.getByRole('button',{name:'Clear proxy logs'});
+    await page.evaluate(()=>{window.failClear=true;});
+    await clear.click();
+    assert.equal(await clear.isDisabled(),true,'Clear cannot be submitted twice while pending');
+    await page.getByRole('alert').filter({hasText:'could not be cleared'}).waitFor();
+    assert.equal(await rows.count(),4,'A failed clear preserves recorded rows');
+    await page.evaluate(()=>{window.failClear=false;});
+    await clear.click();
+    await page.getByRole('status').filter({hasText:'Proxy request logs cleared.'}).waitFor();
+    assert.equal(await rows.count(),0);
+    assert.equal(await clear.isDisabled(),true,'Clearing an empty log is disabled');
+    await page.getByRole('button',{name:'Refresh proxy'}).click();
+    assert.equal(await rows.count(),0,'Refreshing does not restore deleted rows');
+    await page.evaluate(()=>window.repopulate());
+    assert.equal(await rows.count(),4,'New traffic can appear after clearing');
+    assert.equal(await page.evaluate(()=>window.clearCount),2,'A failed action only retries on the next click');
     assert.deepEqual(errors,[]);
     results.push({theme,width,elapsedMs:Date.now()-started});
     await page.close();

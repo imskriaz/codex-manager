@@ -33,6 +33,8 @@ export function ApiWorkspace(props: {
   uncertain?: boolean;
   loading?: boolean;
   onRefresh: () => void;
+  onClearProxyLogs?: () => void;
+  clearingProxyLogs?: boolean;
   onSaveMapping?: (mapping: import("../../src/domain/dashboard/apiProxy").ClaudeProxyMapping) => void;
   enabled: boolean;
   connected: boolean;
@@ -370,6 +372,9 @@ export function ApiWorkspace(props: {
         {tab === "proxy" ? (
           <div role="tabpanel" id="api-panel-proxy" aria-labelledby="api-tab-proxy">
             <ApiProxyPanel
+              onClear={props.onClearProxyLogs}
+              clearing={props.clearingProxyLogs}
+              clearNotice={props.notice === 'Proxy request logs cleared.' ? props.notice : undefined}
               snapshot={props.proxy}
               onSaveMapping={props.onSaveMapping}
               baseUrl={baseUrl}

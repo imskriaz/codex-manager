@@ -120,12 +120,12 @@ import {
 } from "../workbench/windowRuntimeAccount";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
 import { homedir } from "node:os";
-import { readApiProxyHistory } from '../../services/aiProxyHistory';
+import { readApiProxyHistory, clearApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "enableSystemStartup",
   "addAccount",
-  "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
+  "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "clearApiProxyLogs", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -445,6 +445,8 @@ async function runDashboardAction(
       return undefined;
     case 'copyApiToken':
       return { apiToken: await copyDashboardApiToken(ctx.context, payload?.tokenId), apiTokenId: payload?.tokenId, apiTokens: await listDashboardApiTokens(ctx.context) };
+    case 'clearApiProxyLogs':
+      return { apiProxy: clearApiProxyHistory(), notice: { level: 'info', message: 'Proxy request logs cleared.' } };
     case 'editApiToken':
     case "generateApiToken": {
       if (action === 'editApiToken' && (!payload?.tokenId || !payload.expectedApiToken)) throw new Error('Refresh and choose an API key to edit.');
