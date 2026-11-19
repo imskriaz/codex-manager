@@ -46,6 +46,7 @@ export type BrowserOperation = (typeof BROWSER_OPERATIONS)[number];
 export type WorkspaceBrowserRequest = {
   operation: BrowserOperation;
   operationId?: string;
+  sessionId?: string;
   openedBy?: 'ai' | 'user';
   pageId?: string;
   revision?: string;
@@ -82,6 +83,14 @@ export type WorkspaceBrowserState = {
   fileDownload?: { filename: string; mimeType: string; data: string };
 };
 
+export function isWorkspaceBrowserChange<T>(value: T): value is T & { projectPath: string; sessionId?: string; deviceId?: string } {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Record<string, unknown>;
+  return typeof row['projectPath'] === 'string' && row['projectPath'].length > 0 && row['projectPath'].length <= 4096 &&
+    (row['sessionId'] === undefined || typeof row['sessionId'] === 'string' && /^[a-zA-Z0-9:-]{1,100}$/.test(row['sessionId'])) &&
+    (row['deviceId'] === undefined || typeof row['deviceId'] === 'string' && row['deviceId'].length > 0 && row['deviceId'].length <= 256);
+}
+
 /** Coordinates are viewport pixels; the image revision fences human and AI input. */
 export function validateBrowserRequest(value: unknown): WorkspaceBrowserRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a browser operation.");
@@ -89,7 +98,7 @@ export function validateBrowserRequest(value: unknown): WorkspaceBrowserRequest 
   if (row['openedBy'] !== undefined && row['openedBy'] !== 'ai' && row['openedBy'] !== 'user') throw new Error('Invalid browser tab origin.');
   if (JSON.stringify(value).length > 128_000) throw new Error("Browser request exceeds 128 KB.");
   if (!BROWSER_OPERATIONS.includes(row["operation"] as BrowserOperation)) throw new Error("Unknown browser operation.");
-  for (const key of ["pageId", "revision", "operationId", "feedbackId"])
+  for (const key of ["pageId", "revision", "operationId", "feedbackId", "sessionId"])
     if (row[key] !== undefined && (typeof row[key] !== "string" || !/^[a-zA-Z0-9:-]{1,100}$/.test(row[key])))
       throw new Error(`Invalid browser ${key}.`);
   for (const key of ["url", "selector", "text", "key"])

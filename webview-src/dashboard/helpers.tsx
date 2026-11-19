@@ -1,5 +1,11 @@
 import type { DashboardAccountViewModel, DashboardSettings, DashboardState } from "../../src/domain/dashboard/types";
 import { formatResetRelativeTime } from "../../src/utils/resetTime";
+import { normalizeNativePath } from '../../src/utils/nativePaths';
+
+export function canonicalWebPath(value: string): string {
+  const normalized = normalizeNativePath(value.trim()).replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
 
 type SensitiveKind = "email" | "id" | "name";
 

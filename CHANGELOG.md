@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.106
+
+- Keep browser pages and feedback scoped to the owning session while mirroring changes to every client viewing that session over the authenticated WebSocket.
+- Make panel reads and reconnects immediate, preserve exact requester and session targeting, and add a close control for the base Browser tab.
+- Bundle and verify the browser runtime for both VS Code and standalone hosts.
+
 ## 2.0.6-pre.105
 
 - Recover standalone dashboard requests for stale hashed lazy chunks after an extension update by resolving them through the current dashboard manifest.

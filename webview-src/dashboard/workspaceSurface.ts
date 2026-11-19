@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { DashboardHostMessage } from '../../src/domain/dashboard/types';
 import type { WorkspaceSurfaceRequest, WorkspaceSurfaceState } from '../../src/domain/workspaceSurface';
 import { postMessageToHost } from './host';
@@ -17,10 +17,9 @@ export function useWorkspaceSurface(
     host: document.documentElement.dataset['dashboardHost'] === 'browser' ? 'browser' : 'webview'
   });
   const encoded = JSON.stringify(state);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!connected) return;
     const publish = () => postMessageToHost({ type: 'dashboard:workspace-surface', state: snapshot() });
-    publish();
     const timer = setInterval(publish, 10000);
     document.addEventListener('visibilitychange', publish);
     window.addEventListener('resize', publish);
@@ -39,9 +38,12 @@ export function useWorkspaceSurface(
           if (running.current) throw new Error('A workspace command is already running.');
           running.current = true; started = true;
           content = await latest.current.command(message.request, assertCurrent);
-          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+          // Reads do not change the UI; only mutations need to reach the next rendered frame.
+          if (message.request.operation !== 'read') await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          assertCurrent();
           const after = snapshot();
           if (!before || !after || after.projectPath !== before.projectPath || after.sessionId !== before.sessionId || after.targetDeviceId !== before.targetDeviceId) throw new Error('The selected workspace changed. Check the previous command outcome before retrying.');
+          if (message.request.operation === 'read' && (after.activeTab !== before.activeTab || after.panelOpen !== before.panelOpen)) throw new Error('The visible panel changed while reading. Read the current panel again.');
           if (message.request.operation === 'hide' && after.panelOpen || ['open', 'select'].includes(message.request.operation) && !after.panelOpen) throw new Error('The panel did not reach the requested visibility. Inspect before retrying.');
           if (message.request.operation === 'select' && after.activeTab !== message.request.tab) throw new Error('The requested tab was not selected. Inspect before retrying.');
         } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
@@ -50,6 +52,13 @@ export function useWorkspaceSurface(
       })();
     };
     window.addEventListener('message', receive);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', publish); window.removeEventListener('resize', publish); window.removeEventListener('message', receive); };
+    return () => {
+      clearInterval(timer); document.removeEventListener('visibilitychange', publish); window.removeEventListener('resize', publish); window.removeEventListener('message', receive);
+      postMessageToHost({ type: 'dashboard:workspace-surface' });
+    };
+  }, [connected]);
+  // Publish committed tab/session changes immediately, without reinstalling the command listener.
+  useLayoutEffect(() => {
+    if (connected) postMessageToHost({ type: 'dashboard:workspace-surface', state: snapshot() });
   }, [connected, encoded]);
 }

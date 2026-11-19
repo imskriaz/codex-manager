@@ -15,7 +15,8 @@ import { isSessionConnectionFailure, sessionFailureMessage } from '../../src/dom
 import { useComposerCommands } from './composerCommands';
 import { agentActivityLabel, formatActivityArguments, formatActivityCode, messageAgentIds } from '../../src/domain/sessionMessagePresentation';
 import { useSessionResume } from './sessionResume';
-import { codexModelLabel, formatTokenCount } from "./helpers";
+import { canonicalWebPath, codexModelLabel, formatTokenCount } from "./helpers";
+export { canonicalWebPath } from './helpers';
 import { useSessionAccess } from './sessionAccess';
 import { activeSessionQuestion, answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
 import { useCliMessageQueue, queuedMessageView, withAcceptedQueuedMessages } from './cliMessageQueue';
@@ -59,7 +60,6 @@ import { isCliTurnActive, isCliLiveStateCurrent, isCliTranscriptRunning, reconci
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
-import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
@@ -502,7 +502,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
   const selectedDevice = props.selectedSession?.deviceId ?? props.selectedPeerId ?? props.peers?.find(peer => peer.local)?.id;
-  const workspaceDownloadRequest = useWorkspaceRequest(props.selectedSession?.projectPath ?? newChatProject ?? projectPath, selectedDevice === 'local' ? undefined : selectedDevice, props.connected !== false);
+  const workspaceDownloadRequest = useWorkspaceRequest(props.selectedSession?.projectPath ?? newChatProject ?? projectPath, selectedDevice === 'local' ? undefined : selectedDevice, props.connected !== false, props.selectedSession?.id);
   const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath, props.browser && window.self !== window.top);
   const currentDraftKey = useRef(draftKey);
   currentDraftKey.current = draftKey;
@@ -921,7 +921,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
   const contextProjectPath = props.selectedSession || newChatProject !== undefined ? toolProjectPath : undefined;
   // Discovery replaces the local placeholder ID without changing this workspace.
-  const contextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(contextProjectPath ?? '__workspace__')]);
+  const legacyContextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(contextProjectPath ?? '__workspace__')]);
+  const contextProjectKey = JSON.stringify([legacyContextProjectKey, props.selectedSession?.id ?? null]);
   const workspacePeer = props.peers?.find(peer => peer.id === (props.selectedSession?.deviceId ?? props.selectedPeerId)) ?? props.peers?.find(peer => peer.local);
   const workspaceSystemName = getSensitiveDisplayValue(props.selectedSession?.deviceName ?? workspacePeer?.name ?? (props.selectedSession?.remote ? 'Remote PC' : 'This PC'), props.privacyMode, 'name');
   const contextProjectState = contextTabsByProject[contextProjectKey] ?? emptyWorkspaceProject();
@@ -929,7 +930,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   useEffect(() => {
     if (!props.browser || restoredFileDraftKeys.includes(contextProjectKey)) return;
     let disposed = false;
-    void readBrowserCache<Record<string, WorkspaceFileDraft>>(`workspace-drafts:${contextProjectKey}`, Infinity).then(saved => {
+    void readBrowserCache<Record<string, WorkspaceFileDraft>>(`workspace-drafts:${contextProjectKey}`, Infinity).then(saved => saved ?? readBrowserCache<Record<string, WorkspaceFileDraft>>(`workspace-drafts:${legacyContextProjectKey}`, Infinity)).then(saved => {
       if (disposed) return;
       const valid = saved && typeof saved === 'object' && !Array.isArray(saved) ? Object.fromEntries(Object.entries(saved).filter(([path, value]) => !touchedFileDrafts.current.has(JSON.stringify([contextProjectKey, path])) && value && typeof value.text === 'string' && typeof value.revision === 'string')) : {};
       setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), fileDrafts: { ...valid, ...current[contextProjectKey]?.fileDrafts } } }));
@@ -1809,6 +1810,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onAdd={openContextTab}
           onCloseTab={(tab) => {
             if (tab === 'env') return;
+            if (tab === 'browser') {
+              const next = contextTabs.filter((item) => item !== tab);
+              setContextTabs(next);
+              if (activeContextTab === tab) setActiveContextTab('env');
+              return;
+            }
             if (tab.startsWith('browser:')) {
               setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), browserClosePageId: workspaceTabPath(tab) } }));
               return;
@@ -2830,11 +2837,11 @@ function WorkspaceContextPanel(props: {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'accounts' ? 'Dashboard' : kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'browser' && path ? props.browserPages.find(page => page.id === path)?.title || props.browserPages.find(page => page.id === path)?.url || 'Browser' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
       const aiOpened = kind === 'browser' && props.browserPages.find(page => page.id === path)?.openedBy === 'ai';
-      return <span data-ai-browser-tab={aiOpened || undefined} class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'accounts' ? <DashboardIcon /> : kind === 'browser' ? <BrowserIcon /> : kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span>{aiOpened ? <span class="cli-browser-ai-label">AI</span> : null}</button>{tab !== 'env' && !(kind === 'browser' && !path) ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
+      return <span data-ai-browser-tab={aiOpened || undefined} class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'accounts' ? <DashboardIcon /> : kind === 'browser' ? <BrowserIcon /> : kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'git' ? <WorkspaceToolIcon kind="branch" /> : kind === 'agents' ? <WorkspaceToolIcon kind="agents" /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span>{aiOpened ? <span class="cli-browser-ai-label">AI</span> : null}</button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{addTabs.map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'accounts' ? <DashboardIcon /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{tab === 'accounts' ? 'Dashboard' : capitalize(tab)}</span></button>)}{!addTabs.length ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {!props.collapsed && props.activeTab === 'accounts' ? <section class="workspace-dashboard" aria-label="Dashboard" ref={props.onDashboardTarget} /> : null}
-    <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}><WorkspaceBrowser key={props.scopeKey} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === "browser" ? activePath ?? "" : undefined} closePageId={props.browserClosePageId} initialUrl={props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} openPageNonce={props.browserOpenNonce} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /></div>
+    <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}><WorkspaceBrowser key={props.scopeKey} sessionId={props.session?.id} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === "browser" ? activePath ?? "" : undefined} closePageId={props.browserClosePageId} initialUrl={props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} openPageNonce={props.browserOpenNonce} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /></div>
     {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView hideTerminal={props.hideTerminal} standalone={props.standalone} targetDeviceId={props.targetDeviceId} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} systemInfoEnabled={props.systemInfoEnabled} systemStatus={props.systemStatus} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} standalone={props.standalone && !props.targetDeviceId} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
@@ -3396,10 +3403,6 @@ export function projectDisplayName(value: string): string {
 function sessionMeta(session: DashboardCliSessionSummary): string {
   const project = session.projectPath ? projectDisplayName(session.projectPath) : "Workspace";
   return project;
-}
-export function canonicalWebPath(value: string): string {
-  const normalized = normalizeNativePath(value.trim()).replace(/\\/g, "/").replace(/\/+$/, "");
-  return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
 }
 function clamp(value: number, minimum: number, maximum = Number.POSITIVE_INFINITY): number { return Math.min(maximum, Math.max(minimum, value)); }
 function loadWorkspaceLayout(): WorkspaceLayout {

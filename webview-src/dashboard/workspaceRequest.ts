@@ -14,7 +14,8 @@ import { offlineReadCacheKey } from './offlinePolicy';
 export function useWorkspaceRequest(
   projectPath: string | undefined,
   targetDeviceId: string | undefined,
-  connected: boolean
+  connected: boolean,
+  sessionId?: string
 ) {
   const pending = useRef(new Map<string, { cancel: () => void; persistent: boolean }>());
   useEffect(() => {
@@ -25,7 +26,7 @@ export function useWorkspaceRequest(
         }
       }
     };
-  }, [projectPath, targetDeviceId]);
+  }, [projectPath, targetDeviceId, sessionId]);
   return useCallback(
     (action: DashboardActionName, payload: DashboardActionPayload = {}, onCached?: (result: DashboardActionResultPayload) => void): Promise<DashboardActionResultPayload> => {
       const systemId = cacheSystemId(targetDeviceId);
@@ -89,7 +90,7 @@ export function useWorkspaceRequest(
             type: "dashboard:action",
             requestId: id,
             action,
-            payload: { ...payload, projectPath, targetDeviceId, automatic: true }
+            payload: { ...payload, ...(action === 'workspaceBrowser' && payload.browserRequest ? { browserRequest: { ...payload.browserRequest, sessionId } } : {}), projectPath, targetDeviceId, automatic: true }
           });
         } catch (error) {
           finish();
@@ -97,6 +98,6 @@ export function useWorkspaceRequest(
         }
       });
     },
-    [projectPath, targetDeviceId, connected]
+    [projectPath, targetDeviceId, connected, sessionId]
   );
 }

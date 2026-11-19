@@ -3,7 +3,8 @@ import { BrowserInspectorContent, BrowserResizeHandle } from './workspaceBrowser
 import type { JSX } from "preact";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { ToolIcon } from "./icons";
-import type { DashboardNotice } from "../../src/domain/dashboard/types";
+import type { DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
+import { canonicalWebPath } from './helpers';
 import type {
   BrowserFeedback,
   BrowserPoint,
@@ -13,6 +14,7 @@ import type {
 
 export default function WorkspaceBrowser(props: {
   projectPath?: string;
+  sessionId?: string;
   targetDeviceId?: string;
   initialUrl?: string;
   downloadUrl?: string;
@@ -28,7 +30,9 @@ export default function WorkspaceBrowser(props: {
   onFeedback: (notice: DashboardNotice) => void;
   onInstruction?: (text: string, image?: string, images?: string[]) => void;
 }) {
-  const request = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected);
+  const request = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected, props.sessionId);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const refreshedTick = useRef(0);
   const [state, setState] = useState<WorkspaceBrowserState>({ pages: [], feedback: [] });
   const [selected, setSelected] = useState(props.initialPageId ?? ""),
     [url, setUrl] = useState(props.initialUrl ?? "");
@@ -206,9 +210,23 @@ export default function WorkspaceBrowser(props: {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible" && !drawing.current && !points.length)
         void run({ operation: selected && props.active !== false ? "screenshot" : "list", pageId: props.active !== false ? selected || undefined : undefined }, true);
-    }, 2500);
+    }, props.active !== false ? 1000 : 2500);
     return () => clearInterval(timer);
   }, [selected, props.connected, props.active, request, points.length]);
+  useEffect(() => {
+    const changed = (event: MessageEvent<DashboardHostMessage>) => {
+      const message = event.data;
+      if (message?.type === 'dashboard:browser-changed' && message.deviceId === props.targetDeviceId &&
+        message.sessionId === props.sessionId && props.projectPath && canonicalWebPath(message.projectPath) === canonicalWebPath(props.projectPath)) setRefreshTick(value => value + 1);
+    };
+    window.addEventListener('message', changed);
+    return () => window.removeEventListener('message', changed);
+  }, [props.projectPath, props.targetDeviceId, props.sessionId]);
+  useEffect(() => {
+    if (refreshTick === refreshedTick.current || !props.connected || busy || drawing.current || points.length || document.visibilityState !== 'visible') return;
+    refreshedTick.current = refreshTick;
+    void run({ operation: selected && props.active !== false ? 'screenshot' : 'list', pageId: props.active !== false ? selected || undefined : undefined }, true);
+  }, [refreshTick, props.connected, busy, selected, props.active, request, points.length]);
   const command = (value: Partial<WorkspaceBrowserRequest> & Pick<WorkspaceBrowserRequest, "operation">): void => {
     if (
       points.length &&

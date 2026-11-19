@@ -61,3 +61,22 @@ it('validates surface envelopes and does not allow another connection to reuse a
   updateWorkspaceSurface(phone, state(), vi.fn());
   expect(() => updateWorkspaceSurface(desktop, state(), vi.fn())).toThrow('already connected');
 });
+
+it.each([{ sessionId: 'other' }, { targetDeviceId: 'other' }, { visible: false }])('fails a pending command immediately when its live context changes: %o', async change => {
+  vi.useFakeTimers(); const send = vi.fn();
+  updateWorkspaceSurface(phone, state(), send);
+  const command = workspaceSurface('D:/demo', { operation: 'open', surfaceId: 'phone', sessionId: 'session', tab: 'browser' });
+  const rejected = expect(command).rejects.toThrow('outcome is unknown');
+  updateWorkspaceSurface(phone, { ...state(), ...change }, send);
+  await rejected;
+  expect(send).toHaveBeenCalledOnce();
+  acknowledgeWorkspaceSurface(phone, send.mock.calls[0]![0].requestId, { ...state(), panelOpen: true });
+  expect((await workspaceSurface('D:/demo', { operation: 'list' })).surfaces[0]).toMatchObject(change);
+});
+
+it('rejects an acknowledgement with a different surface identity on the same socket', async () => {
+  const send = vi.fn(); updateWorkspaceSurface(phone, state(), send);
+  const rejected = expect(workspaceSurface('D:/demo', { operation: 'read', surfaceId: 'phone', sessionId: 'session' })).rejects.toThrow('changed');
+  acknowledgeWorkspaceSurface(phone, send.mock.calls[0]![0].requestId, state('replacement'));
+  await rejected;
+});

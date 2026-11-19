@@ -4,6 +4,7 @@ import { normalizeSystemStatus } from '../domain/systemStatus';
 import { DashboardAuth, DASHBOARD_PASSPHRASE_KEY } from "./dashboardAuth";
 import { AiProxy, isAiProxyPath } from './aiProxy';
 import { disposeWorkspaceBrowsers } from './workspaceBrowser';
+import { isWorkspaceBrowserChange } from '../domain/workspaceBrowser';
 import { acknowledgeWorkspaceSurface, removeWorkspaceSurface, updateWorkspaceSurface } from './workspaceSurfaces';
 import { isWorkspaceSurfaceState } from '../domain/workspaceSurface';
 import { isCodexSessionAccess } from '../domain/codexSessionAccess';
@@ -238,6 +239,7 @@ type PeerCodexSessionLiveMessage = {
   state: DashboardCodexSessionLiveState;
 };
 type PeerCodexSessionAccessMessage = { type: 'peer:codex-session-access'; deviceId: string; sessionId: string; access: import('../domain/codexSessionAccess').CodexSessionAccess };
+type PeerBrowserChangedMessage = { type: 'peer:browser-changed'; deviceId: string; projectPath: string; sessionId?: string };
 type PeerMaintenanceProgressMessage = { type: 'peer:maintenance-progress'; deviceId: string; job: MaintenanceJob };
 type PeerHostReloadMessage = { type: 'peer:host-reload'; deviceId: string; reload: DashboardHostReload };
 type LocalPeerState = Pick<PeerSessionMessage, "sessions" | "accounts" | "enablementRegistry">;
@@ -362,6 +364,7 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
 }
 
 const DASHBOARD_CHUNK_PATH = /^\/assets\/chunks\/[A-Za-z0-9_-]+\.js$/;
+const DASHBOARD_CHUNK_FILE = /^([A-Za-z0-9_-]+)-[A-Za-z0-9_-]+\.js$/;
 const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: string }> = {
   '/assets/projectShare.js': { parts: ['media', 'webview', 'projectShare.js'], contentType: 'text/javascript; charset=utf-8' },
   '/offline-dashboard.html': { parts: ['media', 'webview', 'pwaDashboard.html'], contentType: 'text/html; charset=utf-8' },
@@ -568,6 +571,7 @@ export class WebDashboardServer implements vscode.Disposable {
     );
     this.encryptedSync?.setRealtimeSyncPublisher?.(() => this.publishPeerVault(true));
     this.dashboardRealtimeSubscription = subscribeDashboardRealtime((message) => {
+      if (message.type === 'dashboard:browser-changed') { this.publishBrowserChanged(message); return; }
       if (message.type === 'dashboard:host-reload') { this.publishHostReload(message); return; }
       if (message.type === 'dashboard:codex-session-access') { this.publishSessionAccess(message); return; }
       if (message.type === 'dashboard:maintenance-progress') {
@@ -1914,6 +1918,17 @@ export class WebDashboardServer implements vscode.Disposable {
     for (const socket of this.webSocketClients) sendDashboardSocketMessage(socket, JSON.stringify(reload));
   }
 
+  private publishBrowserChanged(message: Extract<DashboardHostMessage, { type: 'dashboard:browser-changed' }>): void {
+    if (!isWorkspaceBrowserChange(message)) return;
+    const origin = message.deviceId ?? this.deviceId;
+    const peerMessage = JSON.stringify({ ...message, type: 'peer:browser-changed', deviceId: origin } satisfies PeerBrowserChangedMessage);
+    if (!message.deviceId && this.peerSocket?.readyState === UndiciWebSocket.OPEN) sendDashboardSocketMessage(this.peerSocket, peerMessage);
+    for (const [id, socket] of this.peerSockets) {
+      if (id !== origin && this.authenticatedPeerSockets.has(socket)) sendDashboardSocketMessage(socket, peerMessage);
+    }
+    for (const socket of this.webSocketClients) sendDashboardSocketMessage(socket, JSON.stringify(message));
+  }
+
   private publishMaintenanceProgress(message: Extract<DashboardHostMessage, { type: 'dashboard:maintenance-progress' }>): void {
     if (!isMaintenanceJob(message.job)) return;
     const origin = message.deviceId ?? this.deviceId;
@@ -2883,7 +2898,7 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerTerminalOutputMessage> &
         Partial<PeerTerminalCompleteMessage> &
         Partial<PeerCodexRequestMessage> &
-        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerNotification>;
+        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerBrowserChangedMessage> & Partial<PeerNotification>;
       if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, sourceSocket); return; }
       if (await this.acceptPeerVaultAcknowledgment(message)) return;
       if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
@@ -2924,6 +2939,12 @@ export class WebDashboardServer implements vscode.Disposable {
         if (!this.authenticatedPeerSockets.has(sourceSocket) || typeof message.deviceId !== 'string' ||
           message.deviceId === this.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket || !isMaintenanceJob(message.job)) return;
         publishDashboardRealtime({ type: 'dashboard:maintenance-progress', deviceId: message.deviceId, job: message.job });
+        return;
+      }
+      if (message.type === 'peer:browser-changed') {
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || typeof message.deviceId !== 'string' ||
+          message.deviceId === this.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket || !isWorkspaceBrowserChange(message)) return;
+        publishDashboardRealtime({ type: 'dashboard:browser-changed', deviceId: message.deviceId, projectPath: message.projectPath, sessionId: message.sessionId });
         return;
       }
       if (message.type === 'peer:codex-session-access') {
@@ -3219,7 +3240,7 @@ export class WebDashboardServer implements vscode.Disposable {
             Partial<PeerTerminalOutputMessage> &
             Partial<PeerTerminalCompleteMessage> &
             Partial<PeerCodexRequestMessage> &
-            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerNotification>;
+            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionAccessMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerHostReloadMessage> & Partial<PeerBrowserChangedMessage> & Partial<PeerNotification>;
           if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, socket); return; }
           if (message.type === "peer:action") void this.executePeerAction(message, (value) => socket.send(value));
           if (message.type === "peer:action-result" && typeof message.requestId === "string") {
@@ -3237,6 +3258,10 @@ export class WebDashboardServer implements vscode.Disposable {
           if (message.type === 'peer:maintenance-progress' && typeof message.deviceId === 'string' &&
             message.deviceId !== this.deviceId && this.peerSessions.has(message.deviceId) && isMaintenanceJob(message.job)) {
             publishDashboardRealtime({ type: 'dashboard:maintenance-progress', deviceId: message.deviceId, job: message.job });
+          }
+          if (message.type === 'peer:browser-changed' && typeof message.deviceId === 'string' &&
+            message.deviceId !== this.deviceId && this.peerSessions.has(message.deviceId) && isWorkspaceBrowserChange(message)) {
+            publishDashboardRealtime({ type: 'dashboard:browser-changed', deviceId: message.deviceId, projectPath: message.projectPath, sessionId: message.sessionId });
           }
           if (message.type === "peer:terminal-output" && message.output && message.deviceId !== this.deviceId) {
             if (message.output.raw && !isRawWorkspaceTerminalOutput(message.output)) return;
@@ -3463,7 +3488,22 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       let cached = this.assetCache.get(requestPath);
       if (!cached) {
-        const content = await fs.readFile(path.join(this.context.extensionUri.fsPath, ...asset.parts));
+        let content: Buffer;
+        try {
+          content = await fs.readFile(path.join(this.context.extensionUri.fsPath, ...asset.parts));
+        } catch (error) {
+          if (!DASHBOARD_CHUNK_PATH.test(requestPath) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          const requestedFile = requestPath.slice("/assets/chunks/".length);
+          const requestedMatch = requestedFile.match(DASHBOARD_CHUNK_FILE);
+          if (!requestedMatch) throw error;
+          const manifestPath = path.join(this.context.extensionUri.fsPath, "media", "webview", "dashboard", "dashboard-manifest.json");
+          const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<string, { file?: unknown }>;
+          const currentFile = Object.values(manifest)
+            .map(module => typeof module.file === "string" ? path.basename(module.file) : undefined)
+            .find(file => file?.startsWith(`${requestedMatch[1]}-`) && DASHBOARD_CHUNK_FILE.test(file));
+          if (!currentFile) throw error;
+          content = await fs.readFile(path.join(this.context.extensionUri.fsPath, "media", "webview", "dashboard", "chunks", currentFile));
+        }
         cached = {
           content,
           gzip: await new Promise<Buffer>((resolve, reject) => gzip(content, { level: 6 }, (error, data) => error ? reject(error) : resolve(data))),

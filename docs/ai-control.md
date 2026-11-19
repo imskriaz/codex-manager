@@ -108,6 +108,10 @@ with `request:{"operation":"list"}` first. Copy the matching `surfaceId`,
 returns current panel metadata and browser snapshot or terminal screen content.
 Browser MCP calls may also supply `surfaceId` to present opened pages in that
 view. Commands do not report completion until that view acknowledges them.
+Panel and session changes are pushed immediately; the periodic heartbeat only
+renews the view's lease. Reads do not wait for animation frames. A workspace
+switch, background transition or disconnect fails pending commands promptly,
+without retrying a mutation on another connection.
 An absent, background, disconnected or changed workspace is never replaced
 with a local browser. Project-scoped tokens remain restricted to local execution.
 

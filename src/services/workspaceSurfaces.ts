@@ -11,6 +11,9 @@ export function updateWorkspaceSurface(owner: object, state: unknown, send: Conn
   if (!isWorkspaceSurfaceState(state)) throw new Error('Invalid workspace surface state.');
   if ([...connections.entries()].some(([other, value]) => other !== owner && value.state.surfaceId === state.surfaceId)) throw new Error('This workspace surface is already connected. Refresh this dashboard.');
   connections.set(owner, { state, seenAt: Date.now(), send });
+  for (const item of pending.values()) if (item.owner === owner && (!sameContext(item.context, state) || !state.visible)) {
+    item.reject(new Error('The dashboard workspace changed or moved to the background. The panel command outcome is unknown; inspect before retrying.'));
+  }
 }
 
 export function removeWorkspaceSurface(owner: object): void {
@@ -19,7 +22,7 @@ export function removeWorkspaceSurface(owner: object): void {
 }
 
 function sameContext(left: WorkspaceSurfaceState, right: WorkspaceSurfaceState): boolean {
-  return projectTaskKey(left.projectPath) === projectTaskKey(right.projectPath) && left.sessionId === right.sessionId && left.targetDeviceId === right.targetDeviceId;
+  return left.surfaceId === right.surfaceId && projectTaskKey(left.projectPath) === projectTaskKey(right.projectPath) && left.sessionId === right.sessionId && left.targetDeviceId === right.targetDeviceId;
 }
 
 export function acknowledgeWorkspaceSurface(owner: object, requestId: string, state: unknown, error?: string, content?: unknown): void {

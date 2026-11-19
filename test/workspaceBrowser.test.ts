@@ -141,6 +141,14 @@ it('lists user and AI tabs together and preserves provenance when either client 
   expect((await workspaceBrowser(project, { operation: 'list' })).pages.find(page => page.id === ai.pageId)?.openedBy).toBe('ai');
   expect(() => validateBrowserRequest({ operation: 'open', openedBy: 'unknown' })).toThrow('origin');
 });
+it('keeps browser tabs isolated by session while sharing them within that session', async () => {
+  const first = await workspaceBrowser(project, { operation: 'open', operationId: 'session-a-open', sessionId: 'session-a', url: 'http://localhost:3000' });
+  const second = await workspaceBrowser(project, { operation: 'open', operationId: 'session-b-open', sessionId: 'session-b', url: 'http://localhost:3000' });
+  expect((await workspaceBrowser(project, { operation: 'list', sessionId: 'session-a' })).pages.map(page => page.id)).toEqual([first.pageId]);
+  expect((await workspaceBrowser(project, { operation: 'list', sessionId: 'session-b' })).pages.map(page => page.id)).toEqual([second.pageId]);
+  expect(first.pageId).not.toBe(second.pageId);
+  expect((await workspaceBrowser(project, { operation: 'list' })).pages).toHaveLength(0);
+});
 it("stores feedback before acknowledging it, reports disk failures, and preserves feedback after browser reboot", async () => {
   const page = await open();
   const feedback = {
@@ -194,7 +202,7 @@ it("bounds page count and rejects concurrent work instead of queuing manual acti
 it('releases project capacity when the last page closes itself', async () => {
   await open();
   for (let index = 1; index < 4; index++) await workspaceBrowser(`C:/browser-${index}`, { operation: 'open', operationId: `open-${index}`, url: 'http://localhost:3000' });
-  await expect(workspaceBrowser('C:/browser-five', { operation: 'open', operationId: 'too-many', url: 'http://localhost:3000' })).rejects.toThrow('Four projects');
+  await expect(workspaceBrowser('C:/browser-five', { operation: 'open', operationId: 'too-many', url: 'http://localhost:3000' })).rejects.toThrow('Four browser sessions');
   const page = await m.contexts[0].newPage.mock.results[0].value;
   await page.close();
   expect((await workspaceBrowser('C:/browser-five', { operation: 'open', operationId: 'after-close', url: 'http://localhost:3000' })).pages).toHaveLength(1);

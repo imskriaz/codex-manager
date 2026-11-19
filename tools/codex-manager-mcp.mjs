@@ -113,7 +113,7 @@ const browserSchema = {
   properties: {
     projectPath: { type: "string" },
     surfaceId: { type: "string", description: "Exact surfaceId from manager_workspace. Uses that dashboard's execution device and presents opened pages in its right panel." },
-    sessionId: { type: "string", description: "Required with surfaceId: exact sessionId returned by workspace discovery." },
+    sessionId: { type: "string", description: "Session owning the shared browser tabs. Required with surfaceId: exact sessionId returned by workspace discovery." },
     targetDeviceId: {
       type: "string",
       description: "Optional connected remote device ID from manager_state.connectedPeers. Omit to use the MCP host."
@@ -285,7 +285,7 @@ async function tool(name, args, signal) {
         payload: {
           projectPath: args.projectPath,
           ...(typeof executionDeviceId === "string" && executionDeviceId.trim() ? { targetDeviceId: executionDeviceId } : {}),
-          browserRequest: { operationId: randomUUID(), ...args.request }
+          browserRequest: { operationId: randomUUID(), ...args.request, sessionId: surface?.sessionId ?? args.sessionId }
         }
       },
       signal

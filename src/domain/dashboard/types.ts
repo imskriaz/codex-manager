@@ -1260,6 +1260,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
+  | { type: 'dashboard:browser-changed'; projectPath: string; sessionId?: string; deviceId?: string }
   | { type: 'dashboard:workspace-command'; requestId: string; projectPath: string; sessionId?: string; targetDeviceId?: string; request: import('../workspaceSurface').WorkspaceSurfaceRequest }
   | import("./hostReload").DashboardHostReload
   | { type: 'dashboard:maintenance-progress'; job: import('../maintenance').MaintenanceJob; deviceId?: string }

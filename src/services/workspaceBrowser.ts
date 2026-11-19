@@ -12,9 +12,10 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { projectTaskKey } from "./projectTasks";
 import { waitWithin } from "../utils/concurrency";
 import { browserDebugCommand, createBrowserDebugger, type BrowserDebugger } from './workspaceBrowserDebug';
+import { publishDashboardRealtime } from './dashboardRealtime';
 
-type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; debug?: Promise<BrowserDebugger> };
-type Session = { context: BrowserContext; pages: Map<string, ManagedPage> };
+type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
+type Session = { context: BrowserContext; pages: Map<string, ManagedPage>; projectPath: string; sessionId?: string; scope: string };
 const sessions = new Map<string, Session>();
 const busy = new Set<string>();
 const attempts = new Map<string, { fingerprint: string; promise: Promise<string | undefined> }>();
@@ -86,8 +87,8 @@ async function state(project: string, pageId?: string, image = false): Promise<W
   );
   const item = pageId ? session?.pages.get(pageId) : undefined;
   const revision = item?.revision;
-  const screenshot =
-    image && item ? await item.page.screenshot({ type: "jpeg", quality: 65, timeout: 5000 }) : undefined;
+  // Concurrent mirrors share the same in-flight capture; no old frame is cached.
+  const screenshot = image && item ? await (item.capture ??= item.page.screenshot({ type: "jpeg", quality: 65, timeout: 5000 }).finally(() => { item.capture = undefined; })) : undefined;
   if (screenshot && screenshot.length > 2 * 1024 * 1024)
     throw new Error("Browser image exceeded 2 MiB. Reduce the viewport.");
   if (item && item.revision !== revision)
@@ -104,7 +105,7 @@ async function state(project: string, pageId?: string, image = false): Promise<W
 
 export function workspaceBrowser(projectPath: string, raw: unknown): Promise<WorkspaceBrowserState> {
   const request = validateBrowserRequest(raw),
-    project = projectTaskKey(projectPath);
+    project = request.sessionId ? JSON.stringify([projectTaskKey(projectPath), request.sessionId]) : projectTaskKey(projectPath);
   const read = ["list", "snapshot", "screenshot", "readFeedback", "html", "styles", "events"].includes(request.operation) || (request.operation === 'storage' && (!request.params?.['action'] || request.params['action'] === 'read'));
   if (!read && !request.operationId) return Promise.reject(new Error("A unique browser operationId is required."));
   const key = `${project}:${request.operationId ?? ""}`;
@@ -123,7 +124,12 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
       new Error("Browser operation history is full. Restart the host after checking pending work.")
     );
   if (!read) busy.add(project);
-  const promise = run(project, request).finally(() => { if (!read) busy.delete(project); });
+  const promise = run(project, request, projectPath).finally(() => {
+    if (!read) {
+      busy.delete(project);
+      publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: request.sessionId });
+    }
+  });
   if (!read) {
     const remembered = promise.then((value) => value.pageId);
     void remembered.catch(() => undefined);
@@ -132,7 +138,7 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
   return promise;
 }
 
-async function run(project: string, r: WorkspaceBrowserRequest): Promise<WorkspaceBrowserState> {
+async function run(project: string, r: WorkspaceBrowserRequest, projectPath: string): Promise<WorkspaceBrowserState> {
   // Verify durable storage before launching or modifying a page.
   feedbackFor(project);
   let session = sessions.get(project);
@@ -153,7 +159,7 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
   if (r.operation === "open") {
     const url = r.url === undefined || r.url === "about:blank" ? "about:blank" : browserUrl(r.url);
     if (!session) {
-      if (sessions.size >= 4) throw new Error("Four projects already have browser sessions. Close their pages first.");
+      if (sessions.size >= 4) throw new Error("Four browser sessions are already open. Close their pages first.");
       const instance = await engine();
       // Recheck after launch because other projects can start concurrently.
       if (sessions.size >= 4) throw new Error("Browser session capacity reached. Close another session.");
@@ -164,7 +170,7 @@ async function run(project: string, r: WorkspaceBrowserRequest): Promise<Workspa
       }
       context.setDefaultTimeout(10_000);
       context.setDefaultNavigationTimeout(15_000);
-      session = { context, pages: new Map() };
+      session = { context, pages: new Map(), projectPath, sessionId: r.sessionId, scope: project };
       sessions.set(project, session);
       context.on("page", (page) => {
         if (session!.pages.size >= 8) {
@@ -363,6 +369,9 @@ function register(session: Session, page: Page): string {
   const id = randomUUID(),
     item: ManagedPage = { page, revision: randomUUID(), logs: [] };
   session.pages.set(id, item);
+  const changed = () => {
+    if (!busy.has(session.scope)) publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath: session.projectPath, sessionId: session.sessionId });
+  };
   if (typeof page.opener === 'function') void page.opener().then(opener => {
     if (opener && !item.openedBy) item.openedBy = [...session.pages.values()].find(parent => parent.page === opener)?.openedBy;
   }).catch(() => undefined);
@@ -372,10 +381,12 @@ function register(session: Session, page: Page): string {
       for (const [project, current] of sessions) if (current === session) sessions.delete(project);
       void session.context.close().catch(() => undefined);
     }
+    changed();
   });
   page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) item.revision = randomUUID();
+    if (frame === page.mainFrame()) { item.revision = randomUUID(); changed(); }
   });
+  changed();
   const log = (message: string): void => {
     item.logs.push(message.slice(0, 2000));
     if (item.logs.length > 100) item.logs.shift();
