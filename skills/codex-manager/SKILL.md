@@ -43,6 +43,17 @@ to another conversation. Completion requires the dashboard's WebSocket acknowled
 
 Use `manager_browser` with `surfaceId` and the discovered dashboard host as
 `targetDeviceId` to operate its browser and visibly select newly opened pages.
+Send a direct open, close, or navigate command immediately after the required
+surface/revision checks, before audit preparation or optional screenshots. Reuse
+the verified surface within the same session rather than repeating global discovery.
+For "close these tabs and open this URL", list current pages, close the requested
+pages with their revisions, then open the URL on that surface. Inspect each result.
+Opening selects the tab before navigation. A preview warning means the action
+ran; read its current state instead of opening a duplicate. On failure or a missing
+visible tab, read the exact surface and select the existing page before continuing
+the audit. Do not claim the user can see a page until that surface acknowledges it.
+AI interactions display a pointer in the shared preview; prefer selector-based
+click/hover/fill for an accurate target and use coordinate hover when needed.
 For existing user-opened pages, read the surface/browser list first. For terminal
 input, use the returned terminal ID and execution `targetDeviceId` with
 `manager_action`; preserve the terminal epoch, sequence and control lease.

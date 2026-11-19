@@ -1,4 +1,6 @@
 export type BrowserPoint = { x: number; y: number };
+export type BrowserAgentPointer = BrowserPoint & { action: string; updatedAt: number };
+export type BrowserAgentActivity = { operation: string; status: 'running' | 'completed' | 'failed'; updatedAt: number };
 export type BrowserFeedback = {
   id: string;
   pageId: string;
@@ -73,6 +75,8 @@ export type WorkspaceBrowserState = {
   revision?: string;
   image?: string;
   feedbackImage?: string;
+  agentPointer?: BrowserAgentPointer;
+  agentActivity?: BrowserAgentActivity;
   text?: string;
   value?: unknown;
   logs?: string[];

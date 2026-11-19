@@ -43,7 +43,6 @@ export default function WorkspaceBrowser(props: {
   const [points, setPoints] = useState<BrowserPoint[]>([]),
     [text, setText] = useState(""),
     [reference, setReference] = useState("");
-  const [input, setInput] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [dock] = useState<'left' | 'right' | 'bottom'>('right');
   const [responsive, setResponsive] = useState(false);
@@ -62,6 +61,15 @@ export default function WorkspaceBrowser(props: {
   const [theme, setTheme] = useState('auto'), [wrap, setWrap] = useState(false);
   const [size, setSize] = useState({ width: 1280, height: 800 });
   const [cursor, setCursor] = useState<BrowserPoint>({ x: 20, y: 20 });
+  const [agentVisible, setAgentVisible] = useState(false);
+  const pageInput = useRef<Array<{ pageId: string; operation: 'type' | 'press'; text?: string; key?: string }>>([]);
+  const [inputTick, setInputTick] = useState(0);
+  const queuePageInput = (value: typeof pageInput.current[number]) => {
+    const previous = pageInput.current.at(-1);
+    if (value.operation === 'type' && previous?.operation === 'type' && previous.pageId === value.pageId && (previous.text?.length ?? 0) + (value.text?.length ?? 0) <= 16000) previous.text = (previous.text ?? '') + (value.text ?? '');
+    else pageInput.current.push(value);
+    setInputTick(tick => tick + 1);
+  };
   const [hoverRect, setHoverRect] = useState<{ x: number; y: number; width: number; height: number }>();
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
   const locked = useRef(false),
@@ -81,6 +89,16 @@ export default function WorkspaceBrowser(props: {
   const revision = state.pageId === selected ? state.revision : undefined;
   const current = state.pages.find((page) => page.id === selected);
   const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
+  useEffect(() => {
+    const activity = state.agentActivity;
+    const remaining = activity ? Math.max(0, activity.updatedAt + 1800 - Date.now()) : 0;
+    setAgentVisible(activity?.status === 'running' || remaining > 0);
+    if (activity?.status !== 'running' && remaining) {
+      const timer = setTimeout(() => setAgentVisible(false), remaining);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [state.agentActivity?.updatedAt, state.agentActivity?.status]);
   useEffect(() => {
     if (draftPage.current !== selected) {
       setActiveFeedback(''); setInspect(false);
@@ -104,6 +122,7 @@ export default function WorkspaceBrowser(props: {
     else { locked.current = true; setBusy(true); setNotice(''); operationGeneration.current++; }
     const version = generation.current;
     const operationVersion = operationGeneration.current;
+    let recoverPreview = false;
     try {
       const response = await request("workspaceBrowser", {
         browserRequest: { operationId: crypto.randomUUID(), ...value, pageId: value.pageId || undefined }
@@ -115,6 +134,7 @@ export default function WorkspaceBrowser(props: {
         ...response.workspaceBrowser!,
         ...(['list', 'deleteFeedback'].includes(value.operation) && response.workspaceBrowser!.pages.some(page => page.id === previous.pageId) ? { pageId: previous.pageId, revision: previous.revision, image: previous.image } : {}),
         image:
+          response.workspaceBrowser!.warning ? undefined :
           response.workspaceBrowser!.image ??
           (response.workspaceBrowser!.pageId === previous.pageId || ['list', 'deleteFeedback'].includes(value.operation) && response.workspaceBrowser!.pages.some(page => page.id === previous.pageId) ? previous.image : undefined)
       }));
@@ -138,21 +158,35 @@ export default function WorkspaceBrowser(props: {
       if (!quiet) {
         setFailed(false);
         setNotice(next.warning ?? (next.fileDownload ? `${next.fileDownload.filename} downloaded.` : 'Done.'));
+        if (next.warning || !['list', 'snapshot', 'screenshot', 'type', 'press'].includes(value.operation)) props.onFeedback({ level: next.warning ? 'warning' : 'info', message: next.warning ?? (value.operation === 'close' ? 'Browser tab closed.' : 'Browser action completed.') });
       }
     } catch (error) {
       if (version !== generation.current) return;
       const detail = error instanceof Error ? error.message : String(error);
       const message = detail.includes('Unsupported dashboard action: workspaceBrowser') ? 'This host is running an older Manager. Restart that host with the installed version, then reconnect.' : detail;
-      if (!quiet) { setNotice(message); setFailed(true); props.onFeedback({ level: "error", message }); }
+      if (!quiet) { setNotice(message); setFailed(true); pageInput.current = []; props.onFeedback({ level: "error", message }); }
+      recoverPreview = !quiet && !!value.pageId && !draftPoints.current.length && !['list', 'snapshot', 'screenshot', 'close'].includes(value.operation);
+      if (quiet && value.pageId && message.includes('no longer open')) {
+        // A closed selection cannot refresh itself. Reconcile tabs without replaying any action.
+        reading.current = false;
+        void run({ operation: 'list' }, true);
+      }
       if (value.operation === 'evaluate') setConsoleOutcome({ pageId: value.pageId ?? '', message, failed: true });
     } finally {
       if (quiet) reading.current = false;
       else if (version === generation.current) {
         locked.current = false;
         setBusy(false);
+        if (recoverPreview) void run({ operation: 'screenshot', pageId: value.pageId }, true);
       }
     }
   };
+  useEffect(() => {
+    if (busy || locked.current || !pageInput.current.length || !props.connected || !revision) return;
+    pageInput.current = pageInput.current.filter(value => value.pageId === selected);
+    const next = pageInput.current.shift();
+    if (next) void run({ ...next, revision });
+  }, [inputTick, busy, props.connected, selected, revision]);
   useEffect(() => {
     if (props.initialPageId === undefined || props.initialPageId === selected || busy) return;
     setSelected(props.initialPageId);
@@ -209,10 +243,10 @@ export default function WorkspaceBrowser(props: {
     if (!props.connected) return;
     const timer = setInterval(() => {
       if (document.visibilityState === "visible" && !drawing.current && !points.length)
-        void run({ operation: selected && props.active !== false ? "screenshot" : "list", pageId: props.active !== false ? selected || undefined : undefined }, true);
+        void run({ operation: selected && props.active !== false && state.agentActivity?.status !== 'running' ? "screenshot" : "list", pageId: props.active !== false ? selected || undefined : undefined }, true);
     }, props.active !== false ? 1000 : 2500);
     return () => clearInterval(timer);
-  }, [selected, props.connected, props.active, request, points.length]);
+  }, [selected, props.connected, props.active, request, points.length, state.agentActivity?.status]);
   useEffect(() => {
     const changed = (event: MessageEvent<DashboardHostMessage>) => {
       const message = event.data;
@@ -225,7 +259,7 @@ export default function WorkspaceBrowser(props: {
   useEffect(() => {
     if (refreshTick === refreshedTick.current || !props.connected || busy || drawing.current || points.length || document.visibilityState !== 'visible') return;
     refreshedTick.current = refreshTick;
-    void run({ operation: selected && props.active !== false ? 'screenshot' : 'list', pageId: props.active !== false ? selected || undefined : undefined }, true);
+    void run({ operation: 'list', pageId: props.active !== false ? selected || undefined : undefined }, true);
   }, [refreshTick, props.connected, busy, selected, props.active, request, points.length]);
   const command = (value: Partial<WorkspaceBrowserRequest> & Pick<WorkspaceBrowserRequest, "operation">): void => {
     if (
@@ -360,14 +394,10 @@ export default function WorkspaceBrowser(props: {
     );
   };
   const browserControls = <div class="workspace-browser-inspector-tools" role="toolbar" aria-label="Feedback tools">
-    <button type="button" class="workspace-browser-icon-button" aria-label="Inspect page elements" title="Select an element on the page" aria-pressed={inspect} disabled={busy || !current || !props.connected || !!points.length} onClick={() => { setInspect(value => !value); setMode('interact'); setInspectorOpen(true); setInspectorTab('elements'); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6M8 8l11 5-5 1-1 5z" /></svg></button>
-    {(['interact', 'pointer', 'area', 'draw', 'comment'] as const).map(tool => <button type="button" class="workspace-browser-icon-button" aria-label={tool} title={tool === 'interact' ? 'Control page' : tool === 'draw' ? 'Freehand pen' : tool} aria-pressed={!inspect && mode === tool} disabled={busy || !props.connected || !revision} onClick={() => chooseTool(tool)}><BrowserMarkIcon tool={tool} /></button>)}
-    <button class="workspace-browser-compact-button" type="button" aria-label={showMarks ? 'Hide marks' : 'Show marks'} title={showMarks ? 'Hide marks' : 'Show marks'} aria-pressed={showMarks} onClick={() => setShowMarks(value => !value)}><ToolIcon kind="eye" /></button>
-    <input aria-label="Type into focused browser field" value={input} onInput={event => setInput(event.currentTarget.value)} />
-    <button class="workspace-browser-compact-button" type="button" aria-label="Type" title="Type" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'type', text: input })}><ToolIcon kind="edit" /></button>
-    <button class="workspace-browser-compact-button" type="button" aria-label="Press Enter" title="Press Enter" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'press', key: 'Enter' })}><ToolIcon kind="play" /></button>
-    <button class="workspace-browser-compact-button" type="button" aria-label="Scroll up" title="Scroll up" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: -500 })}><ToolIcon kind="up" /></button>
-    <button class="workspace-browser-compact-button" type="button" aria-label="Scroll down" title="Scroll down" disabled={busy || !current || !props.connected} onClick={() => command({ operation: 'scroll', y: 500 })}><ToolIcon kind="down" /></button>
+    {(['interact', 'pointer', 'area', 'draw'] as const).map(tool => <button type="button" class="workspace-browser-icon-button" aria-label={tool === 'interact' ? 'Control page / select element' : tool} title={tool === 'interact' ? (inspect ? 'Return to page control' : 'Control page / select an element') : tool === 'draw' ? 'Freehand pen' : tool === 'area' ? 'Rectangle' : 'Pointer'} aria-pressed={mode === tool} disabled={busy || !props.connected || !revision || !!points.length} onClick={() => {
+      chooseTool(tool);
+      if (tool === 'interact') { setInspect(!inspect); if (!inspect) { setInspectorOpen(true); setInspectorTab('elements'); } }
+    }}><BrowserMarkIcon tool={tool} /></button>)}
   </div>;
   return (
     <section class="workspace-browser" aria-label="Development browser">
@@ -380,12 +410,12 @@ export default function WorkspaceBrowser(props: {
       <div class="workspace-browser-actions">
         <button class="workspace-browser-icon-button" type="button" aria-label="Toggle responsive viewport" title="Toggle responsive viewport" aria-pressed={responsive} onClick={() => setResponsive(value => !value)}><ToolIcon kind="split" /></button>
         <button class="workspace-browser-icon-button" type="button" aria-label={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} title={inspectorOpen ? "Close browser inspector" : "Open browser inspector"} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((value) => !value)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 20" /></svg></button>
-        <button class="workspace-browser-icon-button" type="button" aria-label="Comments" title="Comments" aria-pressed={inspectorOpen && inspectorTab === 'feedback'} onClick={() => { setInspectorOpen(true); setInspectorTab('feedback'); }}><ToolIcon kind="comment" /></button>
       </div>
       </form>
       {!props.connected ? (
         <p role="status">Offline. Reconnect to control the browser. Unsaved feedback stays in this panel.</p>
       ) : null}
+      {agentVisible && state.agentActivity ? <p class="workspace-browser-agent-activity" role="status">AI · {state.agentActivity.operation} · {state.agentActivity.status}</p> : null}
       <div class={`workspace-browser-content dock-${dock}`}>
       <div class="workspace-browser-page">
       {responsive ? <form class="workspace-browser-viewport" aria-label="Responsive viewport" onSubmit={event => { event.preventDefault(); command({ operation: 'resize', ...viewport }); }}>
@@ -403,7 +433,7 @@ export default function WorkspaceBrowser(props: {
         <button type="submit" disabled={busy || !current || !props.connected}>Apply</button>
         <button class="workspace-browser-icon-button" type="button" aria-label="Rotate viewport" title="Rotate viewport" disabled={busy || !current || !props.connected || viewport.height < 320 || viewport.width > 2160} onClick={() => { const next = { width: viewport.height, height: viewport.width }; setViewport(next); command({ operation: 'resize', ...next }); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 3-6 6 12 12 6-6zM3 3v5h5M21 21v-5h-5" /></svg></button>
       </form> : null}
-      <div class="workspace-browser-stage" style={{ '--browser-viewport-width': `${size.width}px`, '--browser-preview-ratio': String(size.width / size.height) }}>
+      <div class="workspace-browser-stage" data-browser-revision={revision} style={{ '--browser-viewport-width': `${size.width}px`, '--browser-preview-ratio': String(size.width / size.height) }}>
       {state.image && current && current.url !== 'about:blank' && state.pageId === selected ? (
         <div class="workspace-browser-preview">
           <img
@@ -415,11 +445,17 @@ export default function WorkspaceBrowser(props: {
           />
           <svg
             viewBox={`0 0 ${size.width} ${size.height}`}
-            aria-label="Browser preview. Arrow keys move the pointer, Enter clicks or marks, Shift and arrow keys extend an area or drawing."
+            aria-label="Browser preview. Type or paste into the focused page field. Arrow keys move the pointer; Enter marks in annotation mode. Shift and arrow keys extend an area or drawing."
             role="application"
             tabindex={0}
             onKeyDown={(event) => {
-              if (busy || !props.connected || !revision) return;
+              if (!props.connected || !revision) return;
+              if (mode === 'interact' && !inspect && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || ['Backspace', 'Delete', 'Tab', 'Enter'].includes(event.key))) {
+                event.preventDefault();
+                queuePageInput({ pageId: selected, operation: event.key.length === 1 ? 'type' : 'press', ...(event.key.length === 1 ? { text: event.key } : { key: event.shiftKey ? `Shift+${event.key}` : event.key }) });
+                return;
+              }
+              if (busy) return;
               if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
                 event.preventDefault();
                 const point = {
@@ -451,9 +487,16 @@ export default function WorkspaceBrowser(props: {
               }
             }}
             style={{ touchAction: "none" }}
+            onPaste={event => {
+              if (mode !== 'interact' || inspect || !props.connected || !revision) return;
+              const text = event.clipboardData?.getData('text/plain');
+              if (text) { event.preventDefault(); queuePageInput({ pageId: selected, operation: 'type', text }); }
+            }}
+            onWheel={event => { if (mode === 'interact' && !inspect && !busy && props.connected && revision) { event.preventDefault(); command({ operation: 'scroll', x: event.deltaX, y: event.deltaY }); } }}
             onPointerDown={(event) => {
               if (busy || !props.connected || !revision) return;
               const point = coordinate(event);
+              event.currentTarget.focus();
               if (inspect) { void pickElement(point); return; }
               if (points.length) { setFailed(true); setNotice('Save or cancel the current mark first.'); return; }
               setActiveFeedback('');
@@ -498,6 +541,12 @@ export default function WorkspaceBrowser(props: {
               stroke-width="2"
             />
             {inspect && hoverRect ? <rect class="workspace-browser-element-hover" x={hoverRect.x} y={hoverRect.y} width={hoverRect.width} height={hoverRect.height} fill="#1a73e822" stroke="#1a73e8" stroke-width="2" stroke-dasharray="5 3" /> : null}
+            {agentVisible && state.agentPointer ? <g class="workspace-browser-agent-pointer" role="img" aria-label={`AI pointer: ${state.agentPointer.action}`} pointer-events="none" transform={`translate(${state.agentPointer.x} ${state.agentPointer.y})`} style={{ transition: 'transform 160ms ease-out' }}>
+              <circle r="18" fill="#6366f122" stroke="#6366f1" stroke-width="2" />
+              <path d="M0 0 4 23 10 16 20 15Z" fill="#6366f1" stroke="white" stroke-width="2" />
+              <rect x="19" y="18" width="78" height="24" rx="6" fill="#4338ca" />
+              <text x="25" y="34" fill="white" font-size="12">AI · {state.agentPointer.action}</text>
+            </g> : null}
           </svg>
           {anchor && (points.length > 0 || visibleNote) ? <div class="workspace-browser-inline-comment" role="dialog" aria-label={visibleNote ? 'Saved comment' : 'Comment on mark'} style={{ left: `${Math.min(65, Math.max(2, anchor.x / size.width * 100))}%`, top: `${Math.min(70, Math.max(2, anchor.y / size.height * 100))}%` }}>
             <header><strong>{visibleNote ? 'Comment' : 'New comment'}</strong><button type="button" aria-label="Close comment" onClick={() => { if (visibleNote) setActiveFeedback(''); else { setPoints([]); setText(''); setReference(''); noticeAction('Mark cancelled.'); } }}>×</button></header>

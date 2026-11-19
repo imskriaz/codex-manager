@@ -55,6 +55,14 @@ beforeEach(() => {
 afterEach(() => { harness.cleanups.forEach(cleanup => cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("session request routing and recovery", () => {
+  it('does not report an answered question as an expired request', () => {
+    render(); emit({ type: 'dashboard:codex-request', request: request() });
+    emit({ type: 'dashboard:codex-request-resolved', requestId: 'question', deviceId: 'worker', answered: true });
+    expect(render().active).toBeUndefined(); expect(notice).not.toHaveBeenCalled();
+    emit({ type: 'dashboard:codex-request', request: { ...request(), id: 'expired-question' } });
+    emit({ type: 'dashboard:codex-request-resolved', requestId: 'expired-question', deviceId: 'worker' });
+    expect(notice).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
+  });
   it('quietly removes permission requests handled by Manager Auto approval', () => {
     render(); emit({ type: 'dashboard:codex-request', request: { ...request(), kind: 'command' } });
     emit({ type: 'dashboard:codex-request-resolved', requestId: 'question', deviceId: 'worker', automatic: true });

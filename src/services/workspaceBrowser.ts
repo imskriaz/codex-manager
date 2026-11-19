@@ -14,7 +14,7 @@ import { waitWithin } from "../utils/concurrency";
 import { browserDebugCommand, createBrowserDebugger, type BrowserDebugger } from './workspaceBrowserDebug';
 import { publishDashboardRealtime } from './dashboardRealtime';
 
-type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
+type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; agentPointer?: WorkspaceBrowserState['agentPointer']; agentActivity?: WorkspaceBrowserState['agentActivity']; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
 type Session = { context: BrowserContext; pages: Map<string, ManagedPage>; projectPath: string; sessionId?: string; scope: string };
 const sessions = new Map<string, Session>();
 const busy = new Set<string>();
@@ -99,8 +99,18 @@ async function state(project: string, pageId?: string, image = false): Promise<W
     revision,
     image: screenshot ? `data:image/jpeg;base64,${screenshot.toString("base64")}` : undefined,
     feedback: feedbackFor(project).map(({ image: _image, ...feedback }) => feedback),
-    logs: item?.logs
+    logs: item?.logs,
+    agentPointer: item?.agentPointer,
+    agentActivity: item?.agentActivity
   };
+}
+
+async function actionState(project: string, pageId: string): Promise<WorkspaceBrowserState> {
+  try { return await state(project, pageId, true); }
+  catch (error) {
+    // The action already ran; a preview failure must not hide its page or invite a replay.
+    return { ...(await state(project, pageId)), warning: `Browser action completed, but the preview is unavailable: ${error instanceof Error ? error.message : String(error)} Read a fresh snapshot before interacting.` };
+  }
 }
 
 export function workspaceBrowser(projectPath: string, raw: unknown): Promise<WorkspaceBrowserState> {
@@ -115,7 +125,7 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
     return existing.fingerprint === fingerprint
       ? existing.promise.then((pageId) => state(project, pageId))
       : Promise.reject(new Error("This browser operationId was already used for a different operation."));
-  if (busy.has(project))
+  if (busy.has(project) && request.operation !== 'list')
     return Promise.reject(
       new Error("A browser operation is running. Wait for its result, then refresh; nothing was queued.")
     );
@@ -124,11 +134,16 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
       new Error("Browser operation history is full. Restart the host after checking pending work.")
     );
   if (!read) busy.add(project);
-  const promise = run(project, request, projectPath).finally(() => {
-    if (!read) {
-      busy.delete(project);
-      publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: request.sessionId });
-    }
+  const activity: WorkspaceBrowserState['agentActivity'] = request.operation !== 'list' && request.openedBy === 'ai' ? { operation: request.operation, status: 'running', updatedAt: Date.now() } : undefined;
+  const promise = run(project, request, projectPath, activity, read).then(value => {
+    if (activity) { activity.status = 'completed'; activity.updatedAt = Date.now(); }
+    return value;
+  }, error => {
+    if (activity) { activity.status = 'failed'; activity.updatedAt = Date.now(); }
+    throw error;
+  }).finally(() => {
+    if (!read) busy.delete(project);
+    if (!read || activity) publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: request.sessionId });
   });
   if (!read) {
     const remembered = promise.then((value) => value.pageId);
@@ -138,11 +153,15 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
   return promise;
 }
 
-async function run(project: string, r: WorkspaceBrowserRequest, projectPath: string): Promise<WorkspaceBrowserState> {
+async function run(project: string, r: WorkspaceBrowserRequest, projectPath: string, activity?: WorkspaceBrowserState['agentActivity'], read = false): Promise<WorkspaceBrowserState> {
   // Verify durable storage before launching or modifying a page.
   feedbackFor(project);
   let session = sessions.get(project);
-  if (r.operation === "list") return state(project);
+  if (r.operation === "list") return state(project, r.pageId);
+  const startActivity = (item: ManagedPage) => {
+    item.agentActivity = activity;
+    if (activity) publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: r.sessionId });
+  };
   if (r.operation === "readFeedback") {
     const feedback = feedbackFor(project).find((row) => row.id === r.feedbackId);
     if (!feedback) throw new Error("This feedback was deleted. Refresh the feedback list.");
@@ -186,6 +205,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     catch (error) { if (!session.pages.size) { sessions.delete(project); await session.context.close().catch(() => undefined); } throw error; }
     const id = [...session.pages].find(([, item]) => item.page === page)?.[0] ?? register(session, page);
     session.pages.get(id)!.openedBy = r.openedBy;
+    startActivity(session.pages.get(id)!);
     if (url !== "about:blank") {
       try {
         await debuggerFor(session.pages.get(id)!);
@@ -196,12 +216,13 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
         );
       }
     }
-    return state(project, id, url !== "about:blank");
+    return url === 'about:blank' ? state(project, id) : actionState(project, id);
   }
   const item = r.pageId ? session?.pages.get(r.pageId) : undefined;
   if (!item || item.page.isClosed())
     throw new Error("This browser page is no longer open, or the host restarted. Refresh the page list.");
   const page = item.page;
+  if (read && activity) startActivity(item);
   if (r.operation === 'events') {
     const debug = await debuggerFor(item);
     return { ...(await state(project, r.pageId)), events: debug.events.filter(event => event.sequence > (r.after ?? 0)), eventSequence: debug.sequence,
@@ -222,6 +243,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   }
   if (r.revision !== item.revision)
     throw new Error("This page changed. Refresh the preview before interacting; no action was started.");
+  startActivity(item);
   if (['cdp', 'storage'].includes(r.operation)) {
     item.revision = randomUUID();
     const value = await boundedDebug(page, await debuggerFor(item), r);
@@ -306,6 +328,23 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     }
     return state(project);
   }
+  if (['navigate', 'reload', 'back', 'forward', 'resize', 'scroll'].includes(r.operation)) item.agentPointer = undefined;
+  if (['click', 'hover', 'fill', 'select', 'press', 'type'].includes(r.operation)) {
+    item.agentPointer = undefined;
+    if (r.openedBy === 'ai') {
+      let point = r.x !== undefined && r.y !== undefined ? { x: r.x, y: r.y } : undefined;
+      if (r.selector) {
+        const locator = page.locator(r.selector);
+        await locator.scrollIntoViewIfNeeded();
+        const rect = await locator.boundingBox();
+        if (rect) point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      }
+      if (point) {
+        item.agentPointer = { ...point, action: r.operation, updatedAt: Date.now() };
+        publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: r.sessionId });
+      }
+    }
+  }
   if (r.operation === "navigate") await page.goto(browserUrl(r.url), { waitUntil: "domcontentloaded" });
   else if (r.operation === "reload") await page.reload({ waitUntil: "domcontentloaded" });
   else if (r.operation === "back") await page.goBack({ waitUntil: "domcontentloaded" });
@@ -338,9 +377,10 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   } else if (r.operation === "scroll") await page.mouse.wheel(r.x ?? 0, r.y ?? 500);
   else if (r.operation === "type") await page.keyboard.insertText(r.text ?? "");
   else if (r.operation === "press" && !r.selector) await page.keyboard.press(r.key ?? "Enter");
-  else if (r.operation === "click" && !r.selector) {
+  else if ((r.operation === "click" || r.operation === 'hover') && !r.selector) {
     if (r.x === undefined || r.y === undefined) throw new Error("Choose a selector or click coordinates.");
-    await page.mouse.click(r.x, r.y);
+    if (r.operation === 'hover') await page.mouse.move(r.x, r.y);
+    else await page.mouse.click(r.x, r.y);
   } else {
     if (!r.selector) throw new Error("Choose a browser selector.");
     const locator = page.locator(r.selector);
@@ -352,7 +392,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     else if (r.operation === "wait") await locator.waitFor({ state: "visible" });
   }
   item.revision = randomUUID();
-  return state(project, r.pageId, true);
+  return actionState(project, r.pageId!);
 }
 
 async function debuggerFor(item: ManagedPage): Promise<BrowserDebugger> {
@@ -384,7 +424,7 @@ function register(session: Session, page: Page): string {
     changed();
   });
   page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) { item.revision = randomUUID(); changed(); }
+    if (frame === page.mainFrame()) { item.revision = randomUUID(); item.agentPointer = undefined; changed(); }
   });
   changed();
   const log = (message: string): void => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -43,6 +43,7 @@ const operations = [
   "readFeedback"
 ];
 const calls = new Map();
+const browserOpens = new Map();
 let initialized = false,
   ending = false,
   buffer = "";
@@ -226,7 +227,7 @@ const tools = [
   {
     name: "manager_browser",
     description:
-      "Control shared Manager browser tabs, including user-opened pages. For the user's visible right panel, FIRST call manager_workspace list and supply its surfaceId, sessionId and dashboard host targetDeviceId here; never assume the local host is the user's displayed view. Start with list for page IDs and revisions, then snapshot/screenshot. AI-opened tabs are labeled AI. Mutations need the current page revision; preserve operationId for the same attempt. Read HTML, styles (params.action rules/listeners), sources (html params.action resources/resource), events and storage; modify JavaScript/CSS/DOM with evaluate or page-scoped cdp. evaluate/cdp/storage changes require confirmed=true.",
+      "Control shared Manager browser tabs, including user-opened pages. For the user's visible right panel, FIRST call manager_workspace list and supply its surfaceId, sessionId and dashboard host targetDeviceId here; never assume the local host is the user's displayed view. Execute direct open/close/navigate requests before audit or optional inspection. Reuse a verified surface while its session is current. Open presents the tab before navigation; a preview warning does not mean the action failed. Start with list for page IDs and revisions; snapshot/screenshot only when needed. AI-opened tabs and the agent pointer are visible. Mutations need the current page revision; preserve operationId for the same attempt. On failure inspect current state, never replay blindly. Read HTML, styles (params.action rules/listeners), sources (html params.action resources/resource), events and storage; modify JavaScript/CSS/DOM with evaluate or page-scoped cdp. evaluate/cdp/storage changes require confirmed=true.",
     inputSchema: browserSchema
   }
 ];
@@ -279,24 +280,43 @@ async function tool(name, args, signal) {
       if (!surface) throw new Error('The requested dashboard did not return a workspace surface. No browser operation was sent.');
       executionDeviceId = surface.targetDeviceId ?? args.targetDeviceId;
     }
-    const response = await action(
-      {
-        action: "workspaceBrowser",
-        payload: {
-          projectPath: args.projectPath,
-          ...(typeof executionDeviceId === "string" && executionDeviceId.trim() ? { targetDeviceId: executionDeviceId } : {}),
-          browserRequest: { operationId: randomUUID(), ...args.request, sessionId: surface?.sessionId ?? args.sessionId }
-        }
-      },
-      signal
-    );
+    const operationId = args.request.operationId ?? randomUUID();
+    const presentBeforeNavigation = surface && args.request.operation === 'open' && args.request.url && args.request.url !== 'about:blank';
+    const openKey = JSON.stringify([args.projectPath, args.targetDeviceId, args.surfaceId, args.sessionId, operationId]);
+    const rememberedOpen = browserOpens.get(openKey);
+    const openFingerprint = JSON.stringify(args.request);
+    if (presentBeforeNavigation) {
+      // Validate before creating a tab; the backend still enforces its own URL boundary.
+      if (typeof args.request.url !== 'string' || args.request.url.length > 2000) throw new Error('Enter an http or https URL of at most 2,000 characters.');
+      const url = new URL(args.request.url);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an http or https URL without embedded credentials.');
+      if (rememberedOpen && rememberedOpen.fingerprint !== openFingerprint) throw new Error('This browser operationId was already used for a different operation.');
+      if (!rememberedOpen && browserOpens.size >= 1024) throw new Error('Browser operation history is full. Inspect pending work before restarting MCP.');
+    }
+    const execute = browserRequest => action({ action: 'workspaceBrowser', payload: {
+      projectPath: args.projectPath,
+      ...(typeof executionDeviceId === 'string' && executionDeviceId.trim() ? { targetDeviceId: executionDeviceId } : {}),
+      browserRequest: { operationId, ...browserRequest, sessionId: surface?.sessionId ?? args.sessionId }
+    } }, signal);
+    let response = await execute(presentBeforeNavigation ? { ...args.request, url: 'about:blank' } : args.request);
     if (response.isError) return response;
-    const result = JSON.parse(response.content[0].text),
+    let result = JSON.parse(response.content[0].text),
       state = result.payload?.workspaceBrowser;
-    if (surface && state?.pageId && ['open', 'navigate'].includes(args.request.operation)) {
+    if (presentBeforeNavigation && state?.pageId && !rememberedOpen) browserOpens.set(openKey, {
+      fingerprint: openFingerprint,
+      navigation: { operation: 'navigate', operationId: createHash('sha256').update(`${operationId}:navigate`).digest('hex'), pageId: state.pageId, revision: state.revision, url: args.request.url }
+    });
+    const tabToPresent = state?.pageId && ['open', 'navigate'].includes(args.request.operation) ? `browser:${state.pageId}` :
+      args.request.operation === 'close' && surface?.activeTab === `browser:${args.request.pageId}` ? (state?.pages?.[0] ? `browser:${state.pages[0].id}` : 'env') : undefined;
+    if (surface && tabToPresent) {
       const presented = await action({ action: 'workspacePanel', payload: { projectPath: args.projectPath, targetDeviceId: args.targetDeviceId,
-        panelRequest: { operation: 'select', surfaceId: args.surfaceId, sessionId: surface.sessionId, tab: `browser:${state.pageId}` } } }, signal);
+        panelRequest: { operation: 'select', surfaceId: args.surfaceId, sessionId: surface.sessionId, tab: tabToPresent } } }, signal);
       if (presented.isError) return failure('The browser operation completed, but the requested dashboard did not confirm showing its tab. Inspect before retrying. ' + presented.content[0].text);
+    }
+    if (presentBeforeNavigation && state?.pageId) {
+      response = await execute(browserOpens.get(openKey).navigation);
+      if (response.isError) return response;
+      result = JSON.parse(response.content[0].text); state = result.payload?.workspaceBrowser;
     }
     if (state?.image || state?.feedbackImage) {
       const image = state.image || state.feedbackImage;

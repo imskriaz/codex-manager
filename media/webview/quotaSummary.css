@@ -18367,3 +18367,16 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .cli-workspace .cli-context-tab-scroll > span > button { min-height:28px; padding:2px 5px; border-radius:0; }
 .cli-workspace .cli-context-tab-scroll > span > button svg { width:14px; height:14px; flex-basis:14px; }
 .cli-workspace .cli-context-tab-scroll > span.is-active::after { right:0; left:0; border-radius:0; }
+
+/* Inspector controls share the flat top-tab treatment. */
+.workspace-browser-inspector :is(.workspace-browser-pane-toolbar,.workspace-browser-network-types,.workspace-browser-network-details > nav,.workspace-browser-source-tabs,.workspace-browser-styles > nav) button {
+  min-height:27px!important; height:27px; padding:2px 7px!important; border:0; border-bottom:2px solid transparent; border-radius:0; box-shadow:none; background:transparent; color:var(--devtools-text); font:11px Arial,sans-serif; white-space:nowrap;
+}
+.workspace-browser-inspector :is(.workspace-browser-pane-toolbar,.workspace-browser-network-types,.workspace-browser-network-details > nav,.workspace-browser-source-tabs,.workspace-browser-styles > nav) button:is(.is-active,[aria-pressed="true"]) {
+  border-bottom-color:var(--devtools-accent); color:var(--devtools-accent); background:color-mix(in srgb,var(--devtools-accent) 10%,transparent);
+}
+.workspace-browser-inspector :is(.workspace-browser-pane-toolbar,.workspace-browser-network-types,.workspace-browser-network-details > nav,.workspace-browser-source-tabs,.workspace-browser-styles > nav) button:disabled { opacity:.45; }
+.workspace-browser-network-types { gap:0; overflow-x:auto; flex-wrap:nowrap; }
+.workspace-browser-agent-activity { flex:0 0 auto; margin:0; padding:2px 8px; color:var(--text-muted); font-size:11px; border-bottom:1px solid var(--border-default); }
+.workspace-browser-inspector-tools { gap:1px; }
+.workspace-browser-inspector-tools .workspace-browser-icon-button { width:25px!important; flex-basis:25px; }

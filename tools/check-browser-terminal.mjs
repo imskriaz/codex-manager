@@ -22,10 +22,12 @@ const { createWorkspaceTerminal, listWorkspaceTerminals } = require('../out/serv
 const store = await SqliteStateStore.open(path.join(root, 'manager.sqlite'));
 configureSqliteStateStore(store);
 let uiBrowser;
+let typedName = '';
 const server = createServer((_request, response) => {
+  if (_request.url.startsWith('/name?')) { typedName = new URL(_request.url, 'http://fixture.test').searchParams.get('value'); response.statusCode = 204; response.end(); return; }
   if (_request.url === '/api/data') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ ok: true })); return; }
   response.setHeader('Content-Type', 'text/html');
-  response.end('<!doctype html><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name">');
+  response.end('<!doctype html><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name" oninput="fetch(\'/name?value=\'+encodeURIComponent(this.value))">');
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
@@ -119,12 +121,39 @@ try {
   assert.ok(inspectorBounds.x >= previewBounds.x + previewBounds.width - 2, 'Browser Inspector docks beside the preview');
   const toolStrip = inspector.locator('.workspace-browser-inspector-tools');
   await toolStrip.waitFor();
-  assert.ok(await toolStrip.getByRole('button', { name: 'Inspect page elements', exact: true }).count());
-  assert.ok(await toolStrip.getByRole('button', { name: 'Scroll down', exact: true }).count());
+  assert.equal(await toolStrip.getByRole('button').count(), 4, 'Only control/selector, pointer, rectangle and freehand remain');
+  assert.ok(await toolStrip.getByRole('button', { name: 'Control page / select element', exact: true }).count());
+  for (const name of ['Inspect page elements', 'Type', 'Press Enter', 'Scroll up', 'Scroll down', 'Comments', 'Show AI cursor', 'Hide marks', 'Show marks', 'comment']) assert.equal(await ui.getByRole('button', { name, exact: true }).count(), 0, `${name} has no redundant toolbar control`);
+  assert.equal(await ui.getByRole('textbox', { name: 'Type into focused browser field', exact: true }).count(), 0);
+  await toolStrip.getByRole('button', { name: 'Control page / select element', exact: true }).click();
+  const elementPreview = ui.locator('.workspace-browser-preview > svg');
+  await elementPreview.click({ position: { x: 4, y: 5 } });
+  await ui.getByRole('tab', { name: 'Elements', exact: true }).waitFor();
+  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  const pointerPage = await workspaceBrowser(root, { operation: 'list', pageId: opened.pageId });
+  await workspaceBrowser(root, { operation: 'hover', operationId: randomUUID(), openedBy: 'ai', pageId: opened.pageId, revision: pointerPage.revision, selector: 'button' });
+  await ui.evaluate(projectPath => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:browser-changed', projectPath } })), root);
+  await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor();
+  await ui.locator('.workspace-browser-agent-activity').waitFor();
+  await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor({ state: 'hidden' });
+  const field = (await workspaceBrowser(root, { operation: 'styles', pageId: opened.pageId, selector: 'input' })).value.rect;
+  const inputPreview = ui.locator('.workspace-browser-preview > svg');
+  const inputBounds = await inputPreview.boundingBox();
+  await inputPreview.click({ position: { x: (field.x + field.width / 2) / 1280 * inputBounds.width, y: (field.y + field.height / 2) / 800 * inputBounds.height } });
+  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.keyboard.type('Ada Lovelace');
+  for (let attempt = 0; attempt < 100 && typedName !== 'Ada Lovelace'; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(typedName, 'Ada Lovelace', 'Rapid direct keyboard input is preserved while screenshots complete');
   for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory', 'Comments']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
+    if (name === 'Network') {
+      const topStyle = await tab.evaluate(element => ({ radius: getComputedStyle(element).borderRadius, height: element.getBoundingClientRect().height }));
+      const filterStyle = await inspector.getByRole('button', { name: 'Fetch/XHR', exact: true }).evaluate(element => ({ radius: getComputedStyle(element).borderRadius, height: element.getBoundingClientRect().height }));
+      assert.equal(filterStyle.radius, topStyle.radius, 'Network filters match flat top tabs');
+      assert.ok(Math.abs(filterStyle.height - topStyle.height) < 0.5, 'Network filters match compact top tab height');
+    }
   }
   await inspector.getByRole('tab', { name: 'Console', exact: true }).click();
   await inspector.getByLabel('Console starter script', { exact: true }).selectOption('document.title');
@@ -132,8 +161,10 @@ try {
   await inspector.getByLabel('Console result', { exact: true }).filter({ hasText: 'Browser fixture' }).waitFor();
   assert.equal(evaluationCount, 1, 'Console runs once through the shared mutation path');
   await inspector.getByLabel('Console JavaScript', { exact: true }).fill('throw new Error("Console fixture failure")');
+  const beforeFailure = await ui.locator('.workspace-browser-stage').getAttribute('data-browser-revision');
   await inspector.getByRole('button', { name: 'Run', exact: true }).click();
   await inspector.getByRole('alert').filter({ hasText: 'Console fixture failure' }).waitFor();
+  await ui.waitForFunction(previous => document.querySelector('.workspace-browser-stage').dataset.browserRevision !== previous, beforeFailure);
   assert.equal(await inspector.getByLabel('Console JavaScript', { exact: true }).inputValue(), 'throw new Error("Console fixture failure")');
   rejectEvaluate = true;
   await inspector.getByRole('button', { name: 'Run', exact: true }).click();
@@ -179,7 +210,8 @@ try {
   assert.equal(await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).inputValue(), 'Improve this layout');
   rejectSave = false;
   await ui.getByRole('button', { name: 'Save feedback' }).click();
-  await ui.getByRole('dialog', { name: 'Comment on mark', exact: true }).waitFor({ state: 'detached' });
+  try { await ui.getByRole('dialog', { name: 'Comment on mark', exact: true }).waitFor({ state: 'detached' }); }
+  catch (error) { console.log('Feedback recovery notices:', await ui.getByRole('alert').allTextContents()); throw error; }
   console.log('Storage failure preserves the draft; saving after recovery passed.');
   await inspector.getByRole('tab', { name: 'Comments', exact: true }).click();
   const note = ui.locator('.workspace-browser article').filter({ hasText: 'Improve this layout' });
@@ -205,6 +237,9 @@ try {
   assert.ok(address.x + address.width - actions.x - actions.width < 10, 'Browser actions reach the right edge');
   assert.ok((await ui.getByRole('textbox', { name: 'Browser URL', exact: true }).boundingBox()).width > 100, 'Address field uses remaining width');
   await ui.locator('.workspace-browser').screenshot({ path: path.join(artifacts, 'feedback-mobile.png') });
+  const mobileTools = await toolStrip.getByRole('button').evaluateAll(buttons => buttons.map(button => { const rect = button.getBoundingClientRect(); return { width: rect.width, height: rect.height }; }));
+  assert.equal(mobileTools.length, 4);
+  assert.ok(mobileTools.every(rect => Math.abs(rect.width - mobileTools[0].width) < 1 && Math.abs(rect.height - mobileTools[0].height) < 1), 'The four tools remain equally sized on mobile');
   const layout = await ui.evaluate(() => ({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>innerWidth+2).map(element=>({tag:element.tagName,className:element.className,width:element.getBoundingClientRect().width,right:element.getBoundingClientRect().right})).slice(0,12)}));
   assert.ok(layout.scrollWidth <= layout.width + 2, JSON.stringify(layout));
   await ui.getByRole('button', { name: 'Choose system', exact: true }).click();

@@ -57,6 +57,7 @@ it('uses the selected surface execution device and waits for visible tab confirm
   const requests: any[] = [];
   const surface = { surfaceId: 'mobile', projectPath: 'D:/demo', sessionId: 'chat', targetDeviceId: 'worker' };
   let missing = false;
+  let revision = 'current';
   const server = createServer((request, response) => {
     let body = '';
     request.on('data', data => { body += data; });
@@ -64,22 +65,63 @@ it('uses the selected surface execution device and waits for visible tab confirm
       const value = JSON.parse(body); requests.push(value);
       response.setHeader('Content-Type', 'application/json');
       response.end(JSON.stringify({ messages: [{ type: 'dashboard:action-result', requestId: value.requestId, status: 'completed',
-        payload: value.action === 'workspacePanel' ? { workspacePanel: { surfaces: missing ? [] : [surface] } } : { workspaceBrowser: { pageId: 'new-page', pages: [], feedback: [] } } }] }));
+        payload: value.action === 'workspacePanel' ? { workspacePanel: { surfaces: missing ? [] : [surface] } } : { workspaceBrowser: { pageId: 'new-page', revision, pages: [], feedback: [] } } }] }));
     });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     await withClient(async send => {
       await send('initialize');
-      const call = () => send('tools/call', { name: 'manager_browser', arguments: { projectPath: 'D:/demo', targetDeviceId: 'dashboard-hub', surfaceId: 'mobile', sessionId: 'chat', request: { operation: 'open', url: 'https://example.test' } } });
+      const call = () => send('tools/call', { name: 'manager_browser', arguments: { projectPath: 'D:/demo', targetDeviceId: 'dashboard-hub', surfaceId: 'mobile', sessionId: 'chat', request: { operation: 'open', url: 'https://example.test', operationId: 'open-attempt' } } });
       expect((await call()).result.isError).not.toBe(true);
-      expect(requests.map(request => request.action)).toEqual(['workspacePanel', 'workspaceBrowser', 'workspacePanel']);
+      expect(requests.map(request => request.action)).toEqual(['workspacePanel', 'workspaceBrowser', 'workspacePanel', 'workspaceBrowser']);
       expect(requests[0].payload).toMatchObject({ targetDeviceId: 'dashboard-hub', panelRequest: { surfaceId: 'mobile', operation: 'read' } });
-      expect(requests[1].payload).toMatchObject({ targetDeviceId: 'worker', browserRequest: { operation: 'open' } });
+      expect(requests[1].payload).toMatchObject({ targetDeviceId: 'worker', browserRequest: { operation: 'open', url: 'about:blank' } });
       expect(requests[2].payload).toMatchObject({ targetDeviceId: 'dashboard-hub', panelRequest: { surfaceId: 'mobile', sessionId: 'chat', operation: 'select', tab: 'browser:new-page' } });
+      expect(requests[3].payload).toMatchObject({ targetDeviceId: 'worker', browserRequest: { operation: 'navigate', pageId: 'new-page', revision: 'current', url: 'https://example.test' } });
+      const originalNavigation = requests[3].payload.browserRequest;
+      revision = 'after-navigation';
+      requests.length = 0;
+      expect((await call()).result.isError).not.toBe(true);
+      expect(requests[3].payload.browserRequest).toEqual(originalNavigation);
       missing = true; requests.length = 0;
       expect((await call()).result.isError).toBe(true);
       expect(requests.map(request => request.action)).toEqual(['workspacePanel']);
+    }, `http://127.0.0.1:${(server.address() as { port: number }).port}`);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+it.each(['navigation-failure', 'preview-warning', 'close'] as const)('keeps panel presentation correct for %s', async scenario => {
+  const requests: any[] = [];
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', data => { body += data; });
+    request.on('end', () => {
+      const value = JSON.parse(body); requests.push(value);
+      const operation = value.payload.browserRequest?.operation;
+      const failed = scenario === 'navigation-failure' && operation === 'navigate';
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ messages: [{ type: 'dashboard:action-result', requestId: value.requestId,
+        status: failed ? 'failed' : 'completed', error: failed ? 'Navigation was not confirmed' : undefined,
+        payload: value.action === 'workspacePanel' ? { workspacePanel: { surfaces: [{ surfaceId: 'phone', sessionId: 'chat', activeTab: 'browser:page' }] } } :
+          { workspaceBrowser: operation === 'close' ? { pages: [], feedback: [] } : { pageId: 'page', revision: 'revision', pages: [{ id: 'page' }], feedback: [], ...(scenario === 'preview-warning' && operation === 'navigate' ? { warning: 'Preview unavailable after redirect' } : {}) } }
+      }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await withClient(async send => {
+      await send('initialize');
+      const result = (await send('tools/call', { name: 'manager_browser', arguments: { projectPath: 'D:/demo', surfaceId: 'phone', sessionId: 'chat', request: scenario === 'close' ? { operation: 'close', pageId: 'page', revision: 'revision' } : { operation: 'open', url: 'https://example.test', operationId: 'review-open' } } })).result;
+      expect(requests[2].payload.panelRequest).toMatchObject({ operation: 'select', tab: scenario === 'close' ? 'env' : 'browser:page' });
+      if (scenario === 'navigation-failure') {
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain('Navigation was not confirmed');
+      } else {
+        expect(result.isError).not.toBe(true);
+        if (scenario === 'preview-warning') expect(JSON.parse(result.content[0].text).payload.workspaceBrowser.warning).toContain('Preview unavailable');
+      }
+      expect(requests.filter(value => value.payload.browserRequest?.operation === 'open')).toHaveLength(scenario === 'close' ? 0 : 1);
     }, `http://127.0.0.1:${(server.address() as { port: number }).port}`);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

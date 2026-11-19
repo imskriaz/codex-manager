@@ -47,14 +47,14 @@ vi.mock("playwright-core", () => ({
                   url = value;
                   events.get("framenavigated")?.(page);
                 }),
-                screenshot: async () => Buffer.from("image"),
+                screenshot: vi.fn(async () => Buffer.from("image")),
                 isClosed: () => closed,
                 close: vi.fn(async () => {
                   closed = true;
                   events.get("close")?.();
                 }),
-                locator: () => ({ ariaSnapshot: async () => '- button "Save"', click: vi.fn(async () => undefined) }),
-                mouse: { click: vi.fn(async () => undefined) },
+                locator: () => ({ ariaSnapshot: async () => '- button "Save"', click: vi.fn(async () => undefined), hover: vi.fn(async () => undefined), scrollIntoViewIfNeeded: vi.fn(async () => undefined), boundingBox: async () => ({ x: 10, y: 20, width: 80, height: 40 }) }),
+                mouse: { click: vi.fn(async () => undefined), move: vi.fn(async () => undefined) },
                 keyboard: { insertText: vi.fn(async () => undefined) }
               };
               handlers.get("page")?.(page);
@@ -215,4 +215,64 @@ it('never labels HTML from an earlier navigation with the current page revision'
     return 'earlier document';
   });
   await expect(workspaceBrowser(project, { operation: 'html', pageId: first.pageId })).rejects.toThrow('changed during inspection');
+});
+
+it('returns the opened tab and a warning when navigation changes during preview capture', async () => {
+  const first = await open();
+  const page = await m.contexts[0].newPage.mock.results[0].value;
+  page.screenshot.mockImplementationOnce(async () => { await page.goto('https://example.com/login'); return Buffer.from('old'); });
+  const result = await workspaceBrowser(project, { operation: 'navigate', operationId: 'redirect', pageId: first.pageId, revision: first.revision, url: 'https://example.com' });
+  expect(result.pageId).toBe(first.pageId);
+  expect(result.pages[0]?.url).toBe('https://example.com/login');
+  expect(result.image).toBeUndefined();
+  expect(result.warning).toContain('action completed');
+  expect(page.goto).toHaveBeenCalledTimes(3);
+  expect((await workspaceBrowser(project, { operation: 'snapshot', pageId: first.pageId })).image).toBeDefined();
+});
+
+it('keeps successful clicks visible when screenshot capture fails without replaying the click', async () => {
+  const first = await open();
+  const page = await m.contexts[0].newPage.mock.results[0].value;
+  page.screenshot.mockRejectedValueOnce(new Error('Capture timed out'));
+  const result = await workspaceBrowser(project, { operation: 'click', operationId: 'capture-failure', pageId: first.pageId, revision: first.revision, x: 22, y: 33 });
+  expect(result.warning).toContain('Capture timed out');
+  expect(result.pageId).toBe(first.pageId);
+  expect(page.mouse.click).toHaveBeenCalledOnce();
+});
+
+it('shares only AI pointer coordinates and operation names, clears them on navigation and human input', async () => {
+  const first = await open();
+  const hovered = await workspaceBrowser(project, { operation: 'hover', operationId: 'agent-hover', openedBy: 'ai', pageId: first.pageId, revision: first.revision, selector: 'button' });
+  expect(hovered.agentPointer).toEqual({ x: 50, y: 40, action: 'hover', updatedAt: expect.any(Number) });
+  expect((await workspaceBrowser(project, { operation: 'screenshot', pageId: first.pageId })).agentPointer).toEqual(hovered.agentPointer);
+  const moved = await workspaceBrowser(project, { operation: 'hover', operationId: 'coordinate-hover', openedBy: 'ai', pageId: first.pageId, revision: hovered.revision, x: 8, y: 9 });
+  expect(moved.agentPointer).toMatchObject({ x: 8, y: 9, action: 'hover' });
+  const human = await workspaceBrowser(project, { operation: 'click', operationId: 'human-click', pageId: first.pageId, revision: moved.revision, x: 2, y: 3 });
+  expect(human.agentPointer).toBeUndefined();
+  const agent = await workspaceBrowser(project, { operation: 'click', operationId: 'agent-click', openedBy: 'ai', pageId: first.pageId, revision: human.revision, x: 2, y: 3 });
+  const nav = await workspaceBrowser(project, { operation: 'navigate', operationId: 'pointer-nav', pageId: first.pageId, revision: agent.revision, url: 'https://example.com/new' });
+  expect(nav.agentPointer).toBeUndefined();
+});
+
+it('reports live AI activity and pointer while a click is pending without allowing concurrent mutations', async () => {
+  const first = await open();
+  const page = await m.contexts[0].newPage.mock.results[0].value;
+  let complete!: () => void;
+  page.mouse.click.mockImplementationOnce(() => new Promise<void>(resolve => { complete = resolve; }));
+  const click = workspaceBrowser(project, { operation: 'click', operationId: 'live-click', openedBy: 'ai', pageId: first.pageId, revision: first.revision, x: 12, y: 34 });
+  await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
+  const live = await workspaceBrowser(project, { operation: 'list', pageId: first.pageId });
+  expect(live.agentActivity).toMatchObject({ operation: 'click', status: 'running' });
+  expect(live.agentPointer).toMatchObject({ x: 12, y: 34 });
+  await expect(workspaceBrowser(project, { operation: 'close', operationId: 'conflict', pageId: first.pageId, revision: first.revision })).rejects.toThrow('running');
+  complete();
+  expect((await click).agentActivity?.status).toBe('completed');
+});
+
+it('shows AI inspection activity without clearing it during a human preview read', async () => {
+  const first = await open();
+  const result = await workspaceBrowser(project, { operation: 'snapshot', openedBy: 'ai', pageId: first.pageId });
+  expect(result.agentActivity).toMatchObject({ operation: 'snapshot', status: 'completed' });
+  const mirrored = await workspaceBrowser(project, { operation: 'screenshot', pageId: first.pageId });
+  expect(mirrored.agentActivity).toEqual(result.agentActivity);
 });

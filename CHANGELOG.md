@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.6-pre.109
+
+- Show newly opened browser tabs before navigation and preserve completed actions with a warning when preview capture fails.
+- Automatically show AI activity and its pointer in the shared browser, recover closed tabs, and prioritize direct tab commands in MCP and the browser skill.
+- Match inspector controls to compact top tabs and keep only control/element selection, pointer, rectangle, and freehand tools. Remove redundant typing/scrolling controls and the Comments shortcut; support direct keyboard input, paste, and wheel scrolling in the preview.
+- Avoid an expired-request warning for questions already confirmed as answered.
+
 ## 2.0.6-pre.107
 
 - Keep the mobile Browser URL field readable with compact controls and no automatic input scaling.

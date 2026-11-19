@@ -71,7 +71,7 @@ export function useCodexSessionPrompts(props: {
       } else if (message?.type === "dashboard:codex-request-resolved") {
         const key = codexPromptKey({ id: message.requestId, deviceId: message.deviceId });
         const entry = current.current.entries.find(item => codexPromptKey(item.request) === key);
-        if (entry && !message.automatic && !Object.values(current.current.responses).includes(key)) options.current.onNotice({ level: "warning", message: "The Codex request closed. It may have expired, been cancelled, or been answered elsewhere." });
+        if (entry && !message.automatic && !message.answered && !Object.values(current.current.responses).includes(key)) options.current.onNotice({ level: "warning", message: "The Codex request closed. It may have expired, been cancelled, or been answered elsewhere." });
         if (checkTarget.current === key) stopCheck();
         update({ type: "resolved", key });
       } else if (message?.type === "dashboard:action-result" && message.action === "respondCodexServerRequest" && Object.hasOwn(current.current.responses, message.requestId)) {
