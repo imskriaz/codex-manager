@@ -874,14 +874,15 @@ it.runIf(process.env.CODEX_MANAGER_TEST_CLAUDE === '1').each(
   await writeFile(join(cliRoot, 'settings.json'), JSON.stringify({ modelOverrides: CLAUDE_PROXY_MODEL_OVERRIDES }));
   const seen: Array<{ path: string; authenticated: boolean }> = [];
   server.on('request', request => seen.push({ path: request.url!, authenticated: scheme === 'bearer' ? request.headers.authorization === 'Bearer ' + key : request.headers['x-api-key'] === key }));
-  const child = spawn(process.env.ComSpec!, ['/d', '/s', '/c', 'claude --print --no-session-persistence --model ' + CLAUDE_PROXY_MODELS[role] + ' --output-format text "Say hello. Do not use tools."'], {
+  const child = spawn(process.env.ComSpec!, ['/d', '/s', '/c', 'claude --print --no-session-persistence --model ' + CLAUDE_PROXY_MODELS[role] + ' --output-format text'], {
     cwd: cliRoot,
     env: { ...process.env, ANTHROPIC_BASE_URL: origin, ANTHROPIC_API_KEY: scheme === 'x-api-key' ? key : '', ANTHROPIC_AUTH_TOKEN: scheme === 'bearer' ? key : '', ANTHROPIC_MODEL: CLAUDE_PROXY_MODELS[role], CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CONFIG_DIR: cliRoot },
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe']
   });
   let output = '', errors = '';
   child.stdout.on('data', data => { output += data; });
   child.stderr.on('data', data => { errors += data; });
+  child.stdin.end('Say hello. Do not use tools.');
   const timer = setTimeout(() => child.kill(), 20_000);
   const code = await new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }).finally(() => clearTimeout(timer));
   expect({ code, output, errors }).toMatchObject({ code: 0, output: expect.stringContaining('Hello') });
@@ -889,6 +890,7 @@ it.runIf(process.env.CODEX_MANAGER_TEST_CLAUDE === '1').each(
   expect(seen.some(request => request.path.startsWith('/v1/models') && request.authenticated)).toBe(true);
   expect(seen.some(request => request.path.startsWith('/v1/messages') && request.authenticated)).toBe(true);
   expect(vi.mocked(upstream).mock.calls.some(call => JSON.parse(String(call[1]?.body)).model === savedRoutes[role])).toBe(true);
+  expect(vi.mocked(upstream).mock.calls.some(call => JSON.stringify(JSON.parse(String(call[1]?.body)).input).includes('Say hello. Do not use tools.'))).toBe(true);
 }, 30_000);
 
 it('keeps Claude mid-conversation system reminders in order and omits empty control messages', () => {
