@@ -18293,6 +18293,29 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .workspace-browser { gap:0!important; padding:0!important; }
 .workspace-browser-address { gap:1px!important; padding:3px 4px!important; min-height:30px; }
 .workspace-browser-address input { height:25px!important; }
+/* Keep mobile URL entry readable without browser auto-zoom or oversized inherited scaling. */
+@media (max-width:560px) {
+  .workspace-browser-address { gap:1px!important; padding:3px 4px!important; }
+  .workspace-browser-address input {
+    min-width:0!important;
+    height:30px!important;
+    padding:4px 10px!important;
+    font-size:16px!important;
+    line-height:1.1!important;
+    zoom:1!important;
+  }
+  .workspace-browser-address .workspace-browser-icon-button {
+    width:24px!important;
+    height:30px!important;
+    min-height:30px!important;
+    flex-basis:24px;
+    padding:3px!important;
+  }
+  .workspace-browser-address .workspace-browser-go {
+    width:30px!important;
+    flex-basis:30px;
+  }
+}
 .workspace-browser-content { gap:0!important; }
 .workspace-browser-page { gap:0!important; }
 .workspace-browser-stage { padding:0!important; margin:0!important; }

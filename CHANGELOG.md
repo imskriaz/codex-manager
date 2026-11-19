@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.107
+
+- Keep the mobile Browser URL field readable with compact controls and no automatic input scaling.
+
 ## 2.0.6-pre.106
 
 - Keep browser pages and feedback scoped to the owning session while mirroring changes to every client viewing that session over the authenticated WebSocket.
