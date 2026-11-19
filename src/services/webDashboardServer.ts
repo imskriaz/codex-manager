@@ -22,6 +22,7 @@ import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import * as http from "http";
 import * as path from "path";
+import * as pathLib from "path";
 import * as os from "os";
 import { gzip } from "zlib";
 import * as vscode from "vscode";
@@ -79,7 +80,7 @@ import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState, combineCliLiveMessages } from "../domain/codexSessionLive";
 import { isMaintenanceJob, type MaintenanceJob } from '../domain/maintenance';
 import { readStoredSessionLive } from '../storage/sqliteSessions';
-import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
+import { createDashboardApiToken, isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { ApiPermissionError, authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
 import { normalizeAccountTags } from '../domain/accountTags';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
@@ -92,6 +93,18 @@ import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterrup
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isDashboardHostReload, type DashboardHostReload } from "../domain/dashboard/hostReload";
+import {
+  authenticateOfficeUser,
+  createOfficeUser,
+  deleteOfficeUser,
+  getOfficeUser,
+  listOfficeUsers,
+  listOfficeMcpServers,
+  updateOfficeUser,
+  saveOfficeMcpServers,
+  type OfficeRole,
+  type OfficeUser
+} from "./officeUsers";
 
 const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
@@ -173,6 +186,7 @@ function decodeWebSocketMessage(data: RawData): string {
 export type WebDashboardOpenResult = "opened" | "cancelled" | "unavailable";
 
 type LoginAttempt = { count: number; resetAt: number };
+type OfficeSession = { userId: string; role: OfficeRole };
 type PeerSessionMessage = {
   type: "peer:sessions";
   systemStatus?: import("../domain/systemStatus").SystemStatus;
@@ -509,10 +523,13 @@ export class WebDashboardServer implements vscode.Disposable {
   private deviceId: string;
   private peerStopped = true;
   private readonly sessions = new Map<string, number>();
+  private officeSessions = new Map<string, OfficeSession>();
+  private readonly officeProxyTokens = new Map<string, string>();
   private readonly browserSocketExpiresAt = new WeakMap<WebSocket, number>();
   private readonly browserSocketExpiryTimers = new WeakMap<WebSocket, NodeJS.Timeout>();
   private readonly browserSocketSessionFingerprint = new WeakMap<WebSocket, string>();
   private readonly browserSocketPassphraseFingerprint = new WeakMap<WebSocket, string>();
+  private browserSocketOfficeUser = new WeakMap<WebSocket, OfficeUser>();
   private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly publicProjectRequests = new Map<string, { until: number; reads: number; writes: number }>();
   private publicProjectInflight = 0;
@@ -1178,6 +1195,69 @@ export class WebDashboardServer implements vscode.Disposable {
       this.sendHtml(response, loginPage(Boolean(await this.auth.hasDashboardPassphrase()), "", returnPath));
       return;
     }
+    const officeUser = apiAuthorized ? undefined : await this.officeUserForRequest(request);
+    if (method === "GET" && path === "/api/office/users") {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      this.sendJson(response, { users: listOfficeUsers() });
+      return;
+    }
+    if (method === "GET" && path === "/api/office/mcp") {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      this.sendJson(response, { servers: listOfficeMcpServers() }); return;
+    }
+    if (method === "PUT" && path === "/api/office/mcp") {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      try { const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as { servers?: unknown }; if (!Array.isArray(body.servers)) throw new Error("Choose a valid MCP list."); saveOfficeMcpServers(body.servers as never[]); this.sendJson(response, { servers: listOfficeMcpServers() }); }
+      catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "MCP settings could not be saved." }); }
+      return;
+    }
+    if (method === "POST" && path === "/api/office/users") {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      try {
+        const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as Record<string, unknown>;
+        const workspaceRoot = this.settingsStore.getDashboardSettings().officeWorkspaceRoot?.trim() || pathLib.join(getCodexManagerStorageRoot(), "office-workspaces");
+        const username = typeof body["username"] === "string" ? body["username"] : "";
+        const workspacePath = typeof body["workspacePath"] === "string" && body["workspacePath"].trim() ? body["workspacePath"].trim() : pathLib.join(workspaceRoot, username.toLowerCase().replace(/[^a-z0-9._-]/g, "-"));
+        const user = await createOfficeUser({ username, password: typeof body["password"] === "string" ? body["password"] : "", displayName: typeof body["displayName"] === "string" ? body["displayName"] : undefined, role: body["role"] === "admin" || body["role"] === "unrestricted-admin" ? body["role"] : "user", features: Array.isArray(body["features"]) ? body["features"] as never[] : undefined, defaultPrompt: typeof body["defaultPrompt"] === "string" ? body["defaultPrompt"] : undefined, workspacePath, mcpServers: Array.isArray(body["mcpServers"]) ? body["mcpServers"].filter((item): item is string => typeof item === "string") : undefined });
+        this.sendJson(response, { user });
+      } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be created." }); }
+      return;
+    }
+    if (method === "PATCH" && path.startsWith("/api/office/users/")) {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      try { const id = decodeURIComponent(path.slice("/api/office/users/".length)); const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as Record<string, unknown>; const user = await updateOfficeUser(id, { ...body, password: typeof body["password"] === "string" && body["password"] ? body["password"] : undefined } as never); this.sendJson(response, { user }); }
+      catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be updated." }); }
+      return;
+    }
+    if (method === "DELETE" && path.startsWith("/api/office/users/")) {
+      if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
+      try { await deleteOfficeUser(decodeURIComponent(path.slice("/api/office/users/".length))); this.sendJson(response, { ok: true }); }
+      catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be deleted." }); }
+      return;
+    }
+    if (method === "POST" && path === "/api/office/chat") {
+      if (!officeUser || officeUser.role !== "user" || !officeUser.features.includes("generalChat")) { response.statusCode = 403; this.sendJson(response, { error: "General chat is not enabled for this workspace." }); return; }
+      try {
+        const body = JSON.parse(await readDashboardRequestBody(request, 256 * 1024)) as { messages?: unknown; model?: unknown };
+        if (!Array.isArray(body.messages) || body.messages.length > 100) throw new Error("Send a valid conversation.");
+        const messages = body.messages.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+        if (officeUser.defaultPrompt) messages.unshift({ role: "system", content: officeUser.defaultPrompt });
+        const token = await this.officeProxyToken(officeUser.id);
+        const upstream = await undiciFetch(this.getUrl("/v1/chat/completions"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : "gpt-4o-mini", messages, stream: false }) });
+        const text = await upstream.text();
+        if (!upstream.ok) {
+          const generic = upstream.status === 429 || upstream.status === 402 || /quota|credit|capacity|rate.?limit/i.test(text) ? "Out of credits. We'll retry when capacity is available." : "General chat is temporarily unavailable. Retry shortly.";
+          response.statusCode = upstream.status === 401 || upstream.status === 403 ? 503 : upstream.status;
+          response.setHeader("Retry-After", "5");
+          this.sendJson(response, { error: generic, retryAfterMs: 5_000 });
+          return;
+        }
+        let parsed: unknown;
+        try { parsed = JSON.parse(text); } catch { throw new Error("The chat response was unavailable."); }
+        this.sendJson(response, { response: parsed });
+      } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "General chat could not be started." }); }
+      return;
+    }
     if (method === "POST" && path === "/logout") {
       await this.browserPush.revokeOwner(fingerprintWebDashboardSession(readDashboardSessionToken(request) ?? "local"));
       await this.forgetSession(readDashboardSessionToken(request));
@@ -1197,7 +1277,7 @@ export class WebDashboardServer implements vscode.Disposable {
           this.sendJson(response, await readProjectBoard(projectPath)); return;
         }
       }
-      await this.sendState(response);
+      await this.sendState(response, await this.officeUserForRequest(request));
       return;
     }
     if (method === 'GET' && path === '/api/schema') {
@@ -1294,6 +1374,14 @@ export class WebDashboardServer implements vscode.Disposable {
     response.end("Not found");
   }
 
+  private async officeProxyToken(userId: string): Promise<string> {
+    const current = this.officeProxyTokens.get(userId);
+    if (current) return current;
+    const created = await createDashboardApiToken(this.context, { name: `Office user ${userId.slice(0, 8)}`, permissions: ["aiProxy"] });
+    this.officeProxyTokens.set(userId, created.token);
+    return created.token;
+  }
+
   private async handleLogin(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -1318,7 +1406,9 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       throw error;
     }
-    const password = new URLSearchParams(body).get("password") ?? "";
+    const form = new URLSearchParams(body);
+    const username = form.get("username") ?? "";
+    const password = form.get("password") ?? "";
     if (this.loginInFlight >= 4) {
       response.statusCode = 429;
       response.setHeader("Retry-After", "1");
@@ -1329,7 +1419,8 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       const credential = await this.auth.getDashboardPassphraseFingerprint();
       const configured = Boolean(await this.auth.hasDashboardPassphrase());
-      if (!configured || !(await this.auth.verifyDashboardPassphrase(password))) {
+      const officeUser = await authenticateOfficeUser(username, password, () => this.auth.verifyDashboardPassphrase(password));
+      if (!configured || !officeUser) {
         this.loginAttempts.set(ip, {
           count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1,
           resetAt: attempt && attempt.resetAt > now ? attempt.resetAt : now + LOGIN_WINDOW_MS
@@ -1340,7 +1431,7 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       const token = crypto.randomBytes(32).toString("hex");
-      await this.rememberSession(token, now + SESSION_TTL_MS, credential);
+      await this.rememberSession(token, now + SESSION_TTL_MS, credential, officeUser);
       response.statusCode = 303;
       const secure = isForwardedHttpsRequest(request) ? "; Secure" : "";
       response.setHeader(
@@ -1365,6 +1456,22 @@ export class WebDashboardServer implements vscode.Disposable {
     return this.isAuthorizedSessionToken(token);
   }
 
+  private async officeUserForRequest(request: http.IncomingMessage): Promise<OfficeUser | undefined> {
+    if (isLocalWebDashboardRequest(request) && !readDashboardSessionToken(request)) {
+      return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
+    }
+    const token = readDashboardSessionToken(request);
+    if (!token || !(await this.isAuthorizedSessionToken(token))) return undefined;
+    const cached = this.officeSessions?.get(token);
+    if (cached) return cached.userId === "master" ? this.officeUserForRequest({ headers: { host: "localhost" } } as http.IncomingMessage) : getOfficeUser(cached.userId);
+    const persisted = normalizePersistedWebDashboardSessions(await this.auth.readSessions(), Date.now()).find(item => item.fingerprint === fingerprintWebDashboardSession(token));
+    const userId = persisted?.officeUserId;
+    if (!userId) return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
+    const user = getOfficeUser(userId);
+    if (user) (this.officeSessions ??= new Map()).set(token, { userId, role: user.role });
+    return user;
+  }
+
   private async isAuthorizedSessionToken(token: string): Promise<boolean> {
     if (!token || !/^[a-f0-9]{64}$/i.test(token)) return false;
     const persisted = normalizePersistedWebDashboardSessions(
@@ -1383,15 +1490,16 @@ export class WebDashboardServer implements vscode.Disposable {
     return true;
   }
 
-  private async rememberSession(token: string, expiresAt: number, credential?: string): Promise<void> {
+  private async rememberSession(token: string, expiresAt: number, credential?: string, office?: OfficeUser): Promise<void> {
     await runCrossWindowExclusive("state:dashboard-sessions", "Dashboard login", async () => {
     const sessions = normalizePersistedWebDashboardSessions(
       await this.auth.readSessions(),
       Date.now()
     ).filter((session) => session.fingerprint !== fingerprintWebDashboardSession(token));
-    sessions.push({ fingerprint: fingerprintWebDashboardSession(token), expiresAt });
+    sessions.push({ fingerprint: fingerprintWebDashboardSession(token), expiresAt, ...(office ? { officeUserId: office.id, role: office.role } : {}) });
     await this.auth.writeSessions(JSON.stringify(sessions.slice(-MAX_PERSISTED_SESSIONS)), credential);
     this.sessions.set(token, expiresAt);
+    if (office) (this.officeSessions ??= new Map()).set(token, { userId: office.id, role: office.role });
     }, { waitMs: 2_000 });
   }
 
@@ -1401,6 +1509,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     await runCrossWindowExclusive("state:dashboard-sessions", "Dashboard logout", async () => {
     this.sessions.delete(token);
+    this.officeSessions?.delete(token);
     const fingerprint = fingerprintWebDashboardSession(token);
     const sessions = normalizePersistedWebDashboardSessions(
       await this.auth.readSessions(),
@@ -1411,14 +1520,31 @@ export class WebDashboardServer implements vscode.Disposable {
     }, { waitMs: 2_000 });
   }
 
-  private async sendState(response: http.ServerResponse): Promise<void> {
+  private async sendState(response: http.ServerResponse, office?: OfficeUser): Promise<void> {
     try {
-      this.sendJson(response, await waitWithin(this.buildState(), 5_000, "Dashboard state is still loading. Retry shortly."));
+      const state = await waitWithin(this.buildState(), 5_000, "Dashboard state is still loading. Retry shortly.");
+      this.sendJson(response, this.stateForOfficeUser(state, office));
     } catch (error) {
       response.statusCode = 503;
       response.setHeader("Retry-After", "2");
       this.sendJson(response, { error: error instanceof Error ? error.message : "Dashboard state is unavailable. Retry shortly." });
     }
+  }
+
+  private stateForOfficeUser(state: DashboardState, office?: OfficeUser): DashboardState {
+    if (!office || office.role !== "user") return office ? { ...state, office: this.officeView(office) } : state;
+    return {
+      ...state,
+      office: this.officeView(office),
+      // User snapshots must not carry account identities, quota, peer, or host controls.
+      accounts: [], peerAccounts: {}, connectedPeers: [], tokenAutomation: { enabled: false },
+      indexHealth: { status: "healthy", availableBackups: 0 },
+      settings: { ...state.settings, privacyMode: true, apiAccessEnabled: false, cliIntegrationEnabled: true, codexAppPath: "", resolvedCodexAppPath: "", codexCliPath: "", cloudflaredDomain: "", officePostgresUrl: "", encryptedSyncEnabled: false, encryptedSyncClaimAllAccountsEnabled: false, fullCrossPcAccountSyncEnabled: false, persistentLoggingEnabled: false }
+    };
+  }
+
+  private officeView(user: OfficeUser): import("../domain/dashboard/types").DashboardOfficeView {
+    return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, features: user.features, defaultPrompt: user.defaultPrompt, workspacePath: user.role === "user" ? "" : user.workspacePath, mcpServers: user.role === "user" ? [] : user.mcpServers };
   }
 
   private async handleClientMessage(request: http.IncomingMessage, response: http.ServerResponse, apiToken?: DashboardApiToken): Promise<void> {
@@ -1454,7 +1580,20 @@ export class WebDashboardServer implements vscode.Disposable {
       }
     }
 
-    const { messages, reloadAfterResponse } = await this.processClientMessage(message);
+    const officeUser = apiToken ? undefined : await this.officeUserForRequest(request);
+    if (officeUser?.role === "user" && !this.officeActionAllowed(officeUser, message)) {
+      if (message.type === "dashboard:action") this.sendJson(response, { messages: [{ type: "dashboard:action-result", requestId: message.requestId, action: message.action, status: "failed", error: "This feature is not enabled for your workspace." }] });
+      else this.sendJson(response, { messages: [{ type: "dashboard:notice", level: "warning", message: "This setting is managed by your office administrator." }] });
+      return;
+    }
+    if (officeUser?.role === "user" && message.type === "dashboard:action") {
+      const scoped = this.scopeOfficeAction(officeUser, message);
+      if (!scoped) { response.statusCode = 403; this.sendJson(response, { error: "This workspace path is outside your assigned office folder." }); return; }
+      message = scoped;
+    }
+    const processed = await this.processClientMessage(message);
+    const messages = officeUser?.role === "user" ? this.sanitizeOfficeMessages(processed.messages) : processed.messages;
+    const reloadAfterResponse = processed.reloadAfterResponse;
     this.sendJson(response, { messages: apiToken ? scopeApiResults(apiToken, messages) : messages });
     this.publishProcessedSnapshot(messages);
     if (reloadAfterResponse) {
@@ -1466,6 +1605,46 @@ export class WebDashboardServer implements vscode.Disposable {
         message.type === "dashboard:action" && message.action === "switch"
       );
     }
+  }
+
+  private officeActionAllowed(user: OfficeUser, message: DashboardClientMessage): boolean {
+    if (message.type === "dashboard:setting") return message.key === "dashboardTheme" || message.key === "displayLanguage";
+    if (message.type !== "dashboard:action") return true;
+    if (["openDashboard", "openWebDashboard", "copyText", "openExternalUrl", "refreshView", "listCodexCliSessions", "getCodexCliSessionMessages", "sendCodexCliSessionMessage", "startCodexCliSession", "cancelCodexCliSessionTurn", "steerCodexCliSessionTurn", "respondCodexServerRequest", "getCodexSkills", "getCodexSubAgentMessages", "openCodexCliSession", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "resumeCodexSessions", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceProject", "browseWorkspaceFolders", "renameWorkspaceProject", "removeWorkspaceProject", "workspaceBrowser", "workspacePanel"].includes(message.action)) {
+      if (message.action.includes("Workspace") || message.action.includes("workspace") || message.action === "browseWorkspaceFolders" || message.action === "createWorkspaceProject" || message.action === "renameWorkspaceProject" || message.action === "removeWorkspaceProject") return user.features.includes("files") || user.features.includes("tasks");
+      return user.features.includes("tasks");
+    }
+    if (["runWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "cancelWorkspaceTerminalCommand"].includes(message.action)) return user.features.includes("terminal");
+    if (["workspaceGit", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(message.action)) return user.features.includes("git");
+    if (message.action === "workspaceGitHub") return user.features.includes("github");
+    return false;
+  }
+
+  private sanitizeOfficeMessages(messages: DashboardHostMessage[]): DashboardHostMessage[] {
+    return messages.map(message => {
+      if (message.type === "dashboard:notice") {
+        const generic = /quota|credit|capacity|account|token|authentication|provider|rate.?limit/i.test(message.message);
+        return generic ? { ...message, message: "Out of credits. We'll retry when capacity is available." } : message;
+      }
+      if (message.type === "dashboard:action-result" && message.error && /quota|credit|capacity|account|token|authentication|provider|rate.?limit/i.test(message.error)) return { ...message, error: "Out of credits. We'll retry when capacity is available." };
+      return message;
+    });
+  }
+
+  private scopeOfficeAction(user: OfficeUser, message: Extract<DashboardClientMessage, { type: "dashboard:action" }>): Extract<DashboardClientMessage, { type: "dashboard:action" }> | undefined {
+    if (!user.workspacePath) return message;
+    const workspaceActions = new Set(["getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceProject", "renameWorkspaceProject", "removeWorkspaceProject", "workspaceBrowser", "workspacePanel", "startCodexCliSession", "sendCodexCliSessionMessage"]);
+    if (!workspaceActions.has(message.action)) return message;
+    const payload = { ...(message.payload ?? {}) } as Record<string, unknown>;
+    if (payload["targetDeviceId"] && payload["targetDeviceId"] !== "local") return undefined;
+    const candidate = typeof payload["projectPath"] === "string" && payload["projectPath"].trim() ? payload["projectPath"].trim() : user.workspacePath;
+    const root = pathLib.resolve(user.workspacePath);
+    const resolved = pathLib.resolve(candidate);
+    const relative = pathLib.relative(root, resolved);
+    if (relative.startsWith("..") || pathLib.isAbsolute(relative)) return undefined;
+    payload["projectPath"] = resolved;
+    if (user.defaultPrompt && message.action === "startCodexCliSession" && typeof payload["text"] === "string") payload["text"] = `${user.defaultPrompt}\n\n${payload["text"]}`.slice(0, 32_000);
+    return { ...message, payload: payload as never };
   }
 
   /** Publish the newest dashboard state immediately to connected browser clients. */
@@ -1873,7 +2052,9 @@ export class WebDashboardServer implements vscode.Disposable {
       socket.destroy();
       return;
     }
+    const browserOfficeUser = !isPeer ? await this.officeUserForRequest(request) : undefined;
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      if (browserOfficeUser) (this.browserSocketOfficeUser ??= new WeakMap()).set(client, browserOfficeUser);
       if (!isPeer && !localBrowser) {
         const token = readDashboardSessionToken(request);
         const expiresAt = token ? this.sessions.get(token) : undefined;
@@ -2276,10 +2457,20 @@ export class WebDashboardServer implements vscode.Disposable {
         acknowledgeWorkspaceSurface(socket, message.requestId, message.state, message.error, message.content);
         return;
       }
+      const officeUser = this.browserSocketOfficeUser?.get(socket);
+      if (officeUser?.role === "user" && !this.officeActionAllowed(officeUser, message)) {
+        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:notice", level: "warning", message: "This feature is not enabled for your workspace." } satisfies DashboardHostMessage));
+        return;
+      }
+      if (officeUser?.role === "user" && message.type === "dashboard:action") {
+        const scoped = this.scopeOfficeAction(officeUser, message);
+        if (!scoped) { sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:notice", level: "warning", message: "This workspace path is outside your assigned office folder." } satisfies DashboardHostMessage)); return; }
+        message = scoped;
+      }
       const result = await this.processClientMessage(message);
       for (const hostMessage of result.messages) {
         if (hostMessage.type === 'dashboard:snapshot') this.sendClientSnapshot(socket, hostMessage.state);
-        else sendDashboardSocketMessage(socket, JSON.stringify(hostMessage));
+        else sendDashboardSocketMessage(socket, JSON.stringify(officeUser?.role === "user" ? this.sanitizeOfficeMessages([hostMessage])[0] : hostMessage));
       }
       const completedPasswordChangeRequestId =
         message.type === "dashboard:action" && message.action === "configureEncryptedSync"
@@ -2384,6 +2575,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private sendClientSnapshot(socket: WebSocket, state: DashboardState, full = false): void {
+    state = this.stateForOfficeUser(state, this.browserSocketOfficeUser?.get(socket));
     if (!this.incrementalClients?.has(socket)) {
       sendDashboardSocketMessage(socket, JSON.stringify({ type: 'dashboard:snapshot', state }));
       return;
@@ -3559,6 +3751,8 @@ class RequestBodyTooLargeError extends Error {}
 export interface PersistedWebDashboardSession {
   fingerprint: string;
   expiresAt: number;
+  officeUserId?: string;
+  role?: OfficeRole;
 }
 
 export function fingerprintWebDashboardSession(token: string): string {
@@ -3582,7 +3776,9 @@ export function normalizePersistedWebDashboardSessions(
           /^[a-f0-9]{64}$/.test(candidate.fingerprint) &&
           typeof candidate.expiresAt === "number" &&
           Number.isFinite(candidate.expiresAt) &&
-          candidate.expiresAt > now
+          candidate.expiresAt > now &&
+          (candidate.officeUserId === undefined || typeof candidate.officeUserId === "string") &&
+          (candidate.role === undefined || candidate.role === "admin" || candidate.role === "user" || candidate.role === "unrestricted-admin")
         );
       })
       .slice(-MAX_PERSISTED_SESSIONS);
@@ -3637,7 +3833,7 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
 
 function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-username">Office username (optional for the master account)</label><input id="dashboard-username" name="username" type="text" autocomplete="username" autofocus><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
 }
 
 function versionPublicAssets(html: string, version: string): string {

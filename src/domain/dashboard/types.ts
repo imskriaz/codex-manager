@@ -53,6 +53,9 @@ export type DashboardSettingKey =
   | "alwaysActive"
   | "alwaysActiveStartWithSystem"
   | "cloudflaredDomain"
+  | "officeWorkspaceRoot"
+  | "officeDatabaseProvider"
+  | "officePostgresUrl"
   | "displayLanguage";
 
 export interface DashboardSettings {
@@ -121,7 +124,22 @@ export interface DashboardSettings {
   alwaysActiveStartWithSystem?: boolean;
   /** Optional public HTTPS origin used when the dashboard is exposed by Cloudflared. */
   cloudflaredDomain?: string;
+  /** Root folder for per-user office workspaces. SQLite remains the fallback store. */
+  officeWorkspaceRoot?: string;
+  officeDatabaseProvider?: "sqlite" | "postgres";
+  officePostgresUrl?: string;
   displayLanguage: DashboardLanguageOption;
+}
+
+export interface DashboardOfficeView {
+  id: string;
+  username: string;
+  displayName: string;
+  role: "admin" | "user" | "unrestricted-admin";
+  features: string[];
+  defaultPrompt: string;
+  workspacePath: string;
+  mcpServers: string[];
 }
 
 export type DashboardThemeOption = "auto" | "dark" | "light";
@@ -503,6 +521,8 @@ export interface DashboardState {
   /** Durable extension-owned marker; unlike webview storage, survives extension updates. */
   onboardingCompleted?: boolean;
   settings: DashboardSettings;
+  /** Authenticated office identity. User dashboards receive a reduced state. */
+  office?: DashboardOfficeView;
   encryptedSyncNeedsConfiguration?: boolean;
   encryptedSyncNeedsSettingsSync?: boolean;
   encryptedSyncLastCompletedAt?: number;

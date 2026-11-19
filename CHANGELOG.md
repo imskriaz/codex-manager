@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.1
+
+- Add office users, role-aware workspaces, per-user folders, admin feature/MCP controls, General proxy chat, and reduced Task work for users.
+- Add office workspace root and SQLite/PostgreSQL settings with SQLite fallback, generic quota recovery notices, and Windows-style user workspace theming.
+
 ## 2.0.7
 
 - Refine the shared browser with a Windows-style AI pointer, visible typing caret, natural tool cursors, stable tab order, and descriptive tab tooltips.

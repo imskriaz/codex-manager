@@ -110,6 +110,19 @@ export async function handleDashboardSettingUpdate(
         }
       }
       break;
+    case "officeWorkspaceRoot":
+    case "officePostgresUrl":
+      if (typeof value === "string") {
+        await updateDashboardConfiguration(config, key, value.trim(), target);
+        updated = true;
+      }
+      break;
+    case "officeDatabaseProvider":
+      if (value === "sqlite" || value === "postgres") {
+        await updateDashboardConfiguration(config, key, value, target);
+        updated = true;
+      }
+      break;
     case "codexAppRestartMode":
       if (value === "auto" || value === "manual") {
         await updateDashboardConfiguration(config, key, value, target);

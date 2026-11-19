@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "2.0.7",
+  "version": "3.0.0-pre.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -345,6 +345,22 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Optional HTTPS dashboard address for other PCs; set a shared password before sharing."
+        },
+        "codexManager.officeWorkspaceRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Root folder for isolated office user workspaces. Users receive a folder below this path."
+        },
+        "codexManager.officeDatabaseProvider": {
+          "type": "string",
+          "enum": ["sqlite", "postgres"],
+          "default": "sqlite",
+          "markdownDescription": "Office data store. SQLite is the default; PostgreSQL is used only when a valid connection is configured."
+        },
+        "codexManager.officePostgresUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "PostgreSQL connection URL for office data. Keep credentials in a protected machine setting."
         },
         "codexManager.encryptedSyncClaimAllAccountsEnabled": {
           "type": "boolean",

@@ -130,6 +130,7 @@ import { scheduleDashboardReopen } from "./reopenView";
 import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 import { ConnectionRecovery, receiveReload, reconcileReloads, reloadStage, type Reloads, type ConnectionStage } from './connectionRecovery';
+import { OfficeUserWorkspace } from './officeUserWorkspace';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 type AccountSort =
@@ -633,6 +634,10 @@ function App() {
   }, [isBrowserDashboard, sendAction, showNotice]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
+  useEffect(() => {
+    document.documentElement.classList.toggle("office-user-theme", snapshot?.office?.role === "user");
+    return () => document.documentElement.classList.remove("office-user-theme");
+  }, [snapshot?.office?.role]);
   const localCacheSystemId = snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
   useEffect(() => {
@@ -2878,6 +2883,7 @@ function App() {
                 </span>
                 {snapshot.encryptedSyncNeedsConfiguration ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
               </button>
+              {snapshot.office && snapshot.office.role !== "user" ? <button id="officeAdminButton" class="settings-btn action-btn icon-only" type="button" title="Office administration" aria-label="Office administration" onClick={() => dispatch({ type: "open-settings" })}><span class="button-face"><span class="button-icon">▦</span></span></button> : null}
               <button
                 id="aboutOpenButton"
                 class="settings-btn action-btn about-btn"
@@ -3061,7 +3067,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? dashboardContent : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/tasks', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
         </fieldset>
       </main>
 
@@ -3076,6 +3082,7 @@ function App() {
         copy={snapshot.copy}
         lang={snapshot.lang}
         settings={snapshot.settings}
+        office={snapshot.office}
         tokenAutomation={snapshot.tokenAutomation}
         encryptedSyncNeedsConfiguration={Boolean(snapshot.encryptedSyncNeedsConfiguration)}
         encryptedSyncNeedsSettingsSync={Boolean(snapshot.encryptedSyncNeedsSettingsSync)}
@@ -3211,7 +3218,7 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
+      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && (snapshot.office?.role !== "user" || browserPath === "/tasks")
         ? createPortal(
             <CliSessionsPage
               hostConnected={!connectionUnavailable && !reloadInProgress}

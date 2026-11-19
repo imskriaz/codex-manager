@@ -63,6 +63,19 @@
   --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
+:root.office-user-theme {
+  --bg-base: #f3f6fb;
+  --bg-surface: #ffffff;
+  --bg-elevated: #e9eef7;
+  --border-default: #c7d1e0;
+  --border-muted: #aebbd0;
+  --text-primary: #172033;
+  --text-secondary: #42506a;
+  --text-muted: #64748b;
+  --accent-blue: #2563eb;
+  --accent: #2563eb;
+  color-scheme: light;
+}
 
 html[data-theme="light"],
 html[data-theme="auto"] body.vscode-light {
