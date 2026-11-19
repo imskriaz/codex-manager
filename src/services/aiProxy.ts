@@ -361,7 +361,11 @@ export class AiProxy {
           ? { ...upstreamEvent, response: { ...object(upstreamEvent['response'], 'AI response'), model: clientModel } } : upstreamEvent;
         signal.throwIfAborted();
         const type = event["type"];
-        if (log.firstOutputMs === undefined && typeof event['delta'] === 'string' && event['delta'].length)
+        const contentDelta = typeof event['delta'] === 'string' && event['delta'].length > 0 &&
+          !(normalized.omitThinking && typeof type === 'string' && type.startsWith('response.reasoning'));
+        const item = event['item'] as Json | undefined;
+        const toolStart = type === 'response.output_item.added' && item?.['type'] === 'function_call';
+        if (normalized.stream && log.firstOutputMs === undefined && (contentDelta || toolStart))
           log.firstOutputMs = Math.max(0, Date.now() - log.startedAt);
         if (type === "error" || type === "response.failed")
           throw new AiProxyError(
@@ -413,6 +417,9 @@ export class AiProxy {
             log.inputTokens !== undefined
           )
             log.cachedInputTokens = Math.min(log.inputTokens, cached);
+          // Some backends deliver content only in the final event, without deltas.
+          if (log.firstOutputMs === undefined && log.outputTokens !== undefined && log.outputTokens > 0)
+            log.firstOutputMs = Math.max(0, Date.now() - log.startedAt);
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;

@@ -552,6 +552,73 @@ it("does not replay blocked quota, network uncertainty or accepted partial failu
   expect(upstream).toHaveBeenCalledOnce();
 });
 
+it.each([true, false])('times the first client output for tool calls with stream=%s', async (stream) => {
+  let now = 10_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  let feed!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start(controller) { feed = controller; } });
+  const send = (event: unknown) => feed.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+  vi.mocked(upstream).mockResolvedValueOnce(new Response(body, { headers: { 'content-type': 'text/event-stream' } }) as never);
+  const pending = post('/v1/messages', { ...chat(), max_tokens: 100, stream });
+  await vi.waitFor(() => expect(upstream).toHaveBeenCalledOnce());
+  const id = readApiProxyHistory().requests[0]!.id;
+  const log = () => readApiProxyHistory().requests.find(row => row.id === id)!;
+  now += 250;
+  const tool = { type: 'function_call', call_id: 'call-timing', name: 'lookup', arguments: '{}' };
+  send({ type: 'response.output_item.added', output_index: 0, item: { ...tool, arguments: '' } });
+  if (stream) await vi.waitFor(() => expect(log().firstOutputMs).toBe(250));
+  else {
+    // Wait for translation to consume the start without sending a buffered response.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(log().firstOutputMs).toBeUndefined();
+  }
+  now += 250;
+  send({ type: 'response.completed', response: { ...completed, output: [tool] } });
+  feed.close();
+  const response = await pending;
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('lookup');
+  expect(log()).toMatchObject({ status: 'completed', firstOutputMs: stream ? 250 : 500, durationMs: 500 });
+});
+
+it.each([true, false])('records first output for final-only responses with stream=%s', async (stream) => {
+  let now = 10_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.mocked(upstream).mockImplementationOnce(async () => {
+    now += 500;
+    return events({ type: 'response.completed', response: completed }) as never;
+  });
+  const response = await post('/v1/messages', { ...chat(), max_tokens: 100, stream });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('Hello');
+  expect(readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))).toMatchObject({
+    status: 'completed', firstOutputMs: 500, durationMs: 500
+  });
+});
+
+it('does not count omitted thinking as the first client output', async () => {
+  let now = 10_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  let feed!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start(controller) { feed = controller; } });
+  const send = (event: unknown) => feed.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+  vi.mocked(upstream).mockResolvedValueOnce(new Response(body, { headers: { 'content-type': 'text/event-stream' } }) as never);
+  const pending = post('/v1/messages', { ...chat(), max_tokens: 100, stream: true, thinking: { type: 'adaptive', display: 'omitted' } });
+  await vi.waitFor(() => expect(upstream).toHaveBeenCalledOnce());
+  now += 250;
+  send({ type: 'response.reasoning_summary_text.delta', output_index: 1, delta: 'Private summary' });
+  const response = await pending;
+  const log = () => readApiProxyHistory().requests.find(row => row.id === response.headers.get('x-request-id'))!;
+  expect(log().firstOutputMs).toBeUndefined();
+  now += 250;
+  send({ type: 'response.output_text.delta', output_index: 0, delta: 'Hello 🌍' });
+  await vi.waitFor(() => expect(log().firstOutputMs).toBe(500));
+  send({ type: 'response.completed', response: completed });
+  feed.close();
+  expect(await response.text()).not.toContain('Private summary');
+  expect(log().status).toBe('completed');
+});
+
 it("rejects missing, disabled and foreign-owned accounts without upstream access", async () => {
   allowed = false;
   expect((await post("/v1/chat/completions", chat())).status).toBe(503);

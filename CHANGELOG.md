@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.119
+
+- Record first client output timing for tool calls and final-only responses, and avoid reporting buffered or omitted output as already delivered.
+
 ## 2.0.6-pre.117
 
 - Use natural page cursors, editable draggable/resizable marks, Escape cancellation, and compact comment tables with icon actions.
