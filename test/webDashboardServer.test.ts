@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, renameSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type * as http from "http";
@@ -61,6 +61,11 @@ it("serves lazy module assets and rejects traversal, source maps, and missing ch
   const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-modules-"));
   mkdirSync(join(directory, "media", "webview", "dashboard", "chunks"), { recursive: true });
   writeFileSync(join(directory, "media", "webview", "dashboard", "chunks", "editor-123.js"), "export const ready = true;");
+  writeFileSync(join(directory, "media", "webview", "dashboard", "dashboard-manifest.json"), JSON.stringify({
+    editor: { file: "chunks/editor-456.js" },
+    terminal: { file: "chunks/workspaceTerminal-456.js" }
+  }));
+  renameSync(join(directory, "media", "webview", "dashboard", "chunks", "editor-123.js"), join(directory, "media", "webview", "dashboard", "chunks", "editor-456.js"));
   const server = Object.assign(Object.create(WebDashboardServer.prototype), {
     context: { extensionUri: { fsPath: directory } }, assetCache: new Map(), assetVersion: "test", getUrl: () => "http://127.0.0.1:39875"
   }) as { sendAsset: (path: string, request: unknown, response: unknown) => Promise<void> };
