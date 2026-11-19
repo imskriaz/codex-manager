@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.6-pre.115
+
+- Remove the exhausted-usage upsell banner and compact message settings into two columns, with session Auto Resume and queue priority controls.
+
 ## 2.0.6-pre.114
 
 - Keep blocking Codex questions visible in the browser until the owning session resolves them, and deliver async question answers immediately to a verified waiting turn.

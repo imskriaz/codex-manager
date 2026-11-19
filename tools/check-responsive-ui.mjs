@@ -28,6 +28,7 @@ import { checkAccountShortcutsUi, checkInlineCopyUi, checkWorkspaceUi, checkScro
 import { checkInspectorUi, checkReviewsUi } from "./check-inspector-ui.mjs";
 import { checkTerminalInputUi } from './check-terminal-input-ui.mjs';
 import { checkWorkspaceSurfaceUi } from './check-workspace-surface-ui.mjs';
+import { checkMessageSettingsUi } from './check-message-settings-ui.mjs';
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { prepareDocsSnapshot, captureDocsScreenshots } from './capture-docs-ui.mjs';
@@ -939,6 +940,13 @@ try {
       await checkSessionQuestionUi(page, { parentId, width, output });
       assert.deepEqual(errors, [], 'Question prompts have no browser runtime errors');
       results.push({ width, height, checks: 'question timeout, at-message Answer, new activity, immediate queue, offline, duplicate submission, composer preservation, reconnect' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--message-settings')) {
+      await page.goto(origin + '/workspace/' + parentId);
+      await checkMessageSettingsUi(page, width, height, output);
+      assert.deepEqual(errors, [], 'Message settings have no browser runtime errors');
+      results.push({ width, height, checks: 'compact settings, body fonts, queue and auto resume, failure feedback' });
       await context.close(); continue;
     }
     if (process.argv.includes('--workspace-ui') || process.argv.includes('--scroll-ui')) {

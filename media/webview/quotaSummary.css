@@ -12397,13 +12397,6 @@ select:focus-visible,
 
 /* Project new-chat layout and usage notice. */
 .cli-conversation.has-new-chat { grid-template-rows: minmax(0, 1fr) auto auto; }
-.cli-usage-banner { display: flex; align-items: center; gap: 9px; margin: 0 auto 7px; width: min(740px, calc(100% - 28px)); box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--border-default); border-radius: 11px; background: color-mix(in srgb, var(--bg-surface) 94%, transparent); box-shadow: 0 4px 14px rgb(0 0 0 / 7%); }
-.cli-usage-icon { display: grid; place-items: center; width: 19px; height: 19px; color: var(--warning); }
-.cli-usage-icon svg { width: 15px; height: 15px; }
-.cli-usage-banner > div { display: grid; min-width: 0; flex: 1; gap: 2px; }
-.cli-usage-banner strong { font-size: calc(10px * var(--dashboard-text-scale, 1)); }
-.cli-usage-banner small { color: var(--text-muted); font-size: calc(8px * var(--dashboard-text-scale, 1)); }
-.cli-usage-banner .cli-secondary-button { min-height: 25px; font-size: calc(9px * var(--dashboard-text-scale, 1)); }
 
 /* Mobile dashboard polish: keep the two primary destinations readable on a
    narrow viewport while preserving the desktop density and card hierarchy. */
@@ -17508,6 +17501,17 @@ html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.155; }
   .cli-composer-options > label { grid-template-columns: 72px minmax(0, 1fr); gap: 6px; }
   .cli-composer-options > label select { min-height: 36px; height: 36px; padding-block: 3px; }
 }
+.cli-composer-options.is-compact { gap: 6px; padding: 8px; font: calc(14px * var(--dashboard-text-scale, 1))/1.35 var(--font-family); }
+.cli-composer-options.is-compact .cli-options-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
+.cli-workspace .cli-composer-options.is-compact header button { width: 32px; height: 32px; min-height: 32px; padding: 4px; }
+.cli-composer-options.is-compact header,
+.cli-composer-options.is-compact .cli-options-grid label { font: inherit; }
+.cli-composer-options.is-compact .cli-options-grid label { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.cli-composer-options.is-compact .cli-options-grid label > span:first-child { font: inherit; letter-spacing: 0; text-transform: none; }
+.cli-workspace .cli-composer-options.is-compact .cli-options-grid select,
+.cli-composer-options.is-compact .cli-approval-control > span:last-child { height: 34px; min-height: 34px; font: inherit; }
+.cli-composer-options.is-compact .cli-options-grid > .cli-access-status { grid-column: 1 / -1; }
+@media (max-width: 600px) { .cli-composer-options.is-compact { font-size: calc(12px * var(--dashboard-text-scale, 1)); } }
 .cli-image-lightbox { grid-template-rows: minmax(0, 1fr); gap: 0; padding: 0; overflow: hidden; }
 .cli-image-lightbox-toolbar { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); z-index: 1; width: auto; min-height: 0; padding: 4px; border-radius: 8px; }
 .cli-image-lightbox-toolbar .cli-image-lightbox-actions { gap: 2px; padding: 0; border: 0; background: transparent; }

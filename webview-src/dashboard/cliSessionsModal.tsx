@@ -1664,6 +1664,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   permissionProfile={access.profile}
                   autoApprove={access.autoApprove} onAutoApprove={enabled => access.change(undefined, enabled)}
                   followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })}
+                  sessionSettings={<ComposerSessionSettings session={props.selectedSession} autoResume={props.autoResumeEnabled ? props.selectedSession.autoResumeEnabled !== false : props.selectedSession.autoResumeEnabled === true} disabled={props.connected === false || (props.isSessionPending?.(props.selectedSession) ?? props.mutating)} running={currentTurnRunning} onAutoResume={props.onAutoResume} onQueue={props.onQueue} />}
                   fullAccessOnly={standaloneLocal}
                   accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}
                   accessStatus={access.status ?? (standaloneLocal ? 'Standalone uses Full access. Auto approve applies to the next turn.' : undefined)}
@@ -1706,7 +1707,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           ) : newChatProject !== undefined ? (
             <>
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
-              <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
               {legacyDraftWarning}
               <Composer onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
@@ -1891,11 +1891,27 @@ export function ConversationHeader(props: {
   </header>;
 }
 
+export function ComposerSessionSettings(props: {
+  session: DashboardCliSessionSummary; autoResume: boolean; disabled: boolean; running: boolean;
+  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
+  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
+}) {
+  const { session } = props;
+  const disabled = props.disabled || session.archived || session.subAgent || !!session.parentSessionId;
+  const priority = session.queuePriority ?? 3;
+  return <>
+    <label class="cli-approval-control"><span>Auto resume</span><span><input type="checkbox" aria-label="Auto resume session" checked={!session.queueEnabled && props.autoResume} disabled={disabled || session.goal?.status === 'complete' || session.goal?.status === 'paused' || (!props.autoResume && !!session.queueError)} onChange={event => props.onAutoResume(session, event.currentTarget.checked)} />{!session.queueEnabled && props.autoResume ? 'On' : 'Off'}</span></label>
+    <label><span>Session queue</span><select aria-label="Session queue" title="Lower priorities run first after active work finishes. Queuing turns off auto resume." value={session.queueEnabled ? String(priority) : 'off'} disabled={disabled || props.running} onChange={event => { const value = event.currentTarget.value; props.onQueue(session, value !== 'off', value === 'off' ? undefined : Number(value)); }}><option value="off">Off</option>{[1, 2, 3, ...(![1, 2, 3].includes(priority) ? [priority] : [])].map(value => <option key={value} value={String(value)}>Priority {value}</option>)}</select></label>
+    {session.queueError ? <small class="cli-access-status" role="status">{session.queueError}</small> : null}
+  </>;
+}
+
 export function Composer(props: {
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
   draft: string; deviceId?: string; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean; onAutoApprove?: (enabled: boolean) => void;
   followUpMode?: 'queue' | 'steer'; onFollowUpMode?: (mode: 'queue' | 'steer') => void;
+  sessionSettings?: JSX.Element;
   permissionProfile?: string; fullAccessOnly?: boolean; accessDisabled?: boolean; accessStatus?: string;
   projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
@@ -1980,15 +1996,16 @@ export function Composer(props: {
     </div><div class="cli-composer-submit">
       <div class="cli-composer-options-wrap" ref={optionsRef}>
         <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[props.feedback?.level !== "info" ? props.feedback?.message : undefined, codexModelLabel(selectedModel?.label) ?? "Default model", reasoningLabel, accessLabel].filter(Boolean).join(" · ")} onClick={() => setOptionsOpen((open) => !open)}><ContextMeter usage={props.tokenUsage} inButton /><span class="cli-composer-model">{codexModelLabel(selectedModel?.label) ?? "Default"}</span><small class="cli-composer-effort">{reasoningLabel}</small><span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span>{props.feedback && props.feedback.level !== "info" ? <span class="cli-composer-warning" aria-label={props.feedback.message}><WarningIcon /></span> : <ChevronIcon />}</button>
-        {optionsOpen ? <div ref={optionsPanelRef} id={optionsId} class="cli-composer-options" popover="manual" role="group" aria-label="Message settings">
+        {optionsOpen ? <div ref={optionsPanelRef} id={optionsId} class="cli-composer-options is-compact" popover="manual" role="group" aria-label="Message settings">
           <header><strong>Message settings</strong><button type="button" aria-label="Close message settings" onClick={closeOptions}><CloseIcon /></button></header>
           <div class="cli-options-grid">
             <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
             <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
-          </div>
         <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled || props.fullAccessOnly} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
           <label class="cli-approval-control"><span>Auto approve</span><span><input type="checkbox" aria-label="Auto approve" checked={props.autoApprove === true} disabled={props.accessDisabled || !props.onAutoApprove} onChange={event => props.onAutoApprove?.(event.currentTarget.checked)} />{props.autoApprove ? 'On' : 'Off'}</span></label>
           {props.onFollowUpMode ? <label><span>Follow-up</span><select name="follow-up-mode" aria-label="Follow-up mode" value={props.followUpMode ?? 'steer'} onChange={event => props.onFollowUpMode?.(event.currentTarget.value as 'queue' | 'steer')}><option value="steer">Steer now</option><option value="queue">Queue until turn completes</option></select></label> : null}
+          {props.sessionSettings}
+          </div>
           {props.feedback && props.feedback.level !== 'info' && props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}
           {props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
@@ -3382,11 +3399,6 @@ function activityLabel(message: DashboardCliSessionMessage): string {
 function EmptySessions(props: { search: boolean; section: CliSessionSection }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? "Try another title or session ID." : props.section === "active" ? "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }
 function ConversationEmpty({ archived, logoUri }: { archived: boolean; logoUri?: string }) { return <div class="cli-conversation-empty">{logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<h2>No messages yet</h2><p>{archived ? "This archived transcript has no readable messages." : "Send a message below to continue this session."}</p></div>; }
 function WorkspaceEmpty(props: { running: number; active: number; archived: number; logoUri?: string; onNewChat: () => void }) { return <div class="cli-workspace-empty"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h1>What should we build?</h1><p>Choose a session from the sidebar, or start a new chat.</p><button type="button" class="cli-empty-new-chat" onClick={props.onNewChat}>Start a new chat</button></div>; }
-function UsageBanner(props: { account?: DashboardAccountViewModel; onAction: (message: string) => void }) {
-  const metric = props.account?.metrics.find((item) => item.visible && typeof item.percentage === "number");
-  if (!metric || (metric.percentage ?? 100) > 5) return null;
-  return <div class="cli-usage-banner"><span class="cli-usage-icon"><WarningIcon /></span><div><strong>You’re out of Codex and Work usage</strong><small>Add credits or upgrade your plan — or wait for usage to reset.</small></div><button type="button" class="cli-secondary-button" onClick={() => props.onAction("Upgrade is available from the Codex account dashboard.")}>Upgrade</button><button type="button" class="cli-secondary-button" onClick={() => props.onAction("Add credits is available from the Codex account dashboard.")}>Add credits</button></div>;
-}
 function SessionRailSkeleton() { return <div class="cli-skeleton-list" aria-label="Loading sessions"><i /><i /><i /><i /></div>; }
 function MessageSkeleton() { return <div class="cli-message-skeleton" aria-label="Loading messages"><i /><i /><i /></div>; }
 function IconButton(props: { label: string; title?: string; disabled?: boolean; danger?: boolean; className?: string; pressed?: boolean; onClick: () => void; children: preact.ComponentChildren }) { return <button type="button" class={`cli-icon-button ${props.className ?? ""} ${props.danger ? "is-danger" : ""}`} disabled={props.disabled} aria-label={props.label} aria-pressed={props.pressed} title={props.title ?? props.label} onClick={props.onClick}>{props.children}</button>; }
