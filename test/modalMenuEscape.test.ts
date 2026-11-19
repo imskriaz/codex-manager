@@ -40,3 +40,21 @@ it('still routes Escape from body to the last visible dialog', () => {
   capture!({ key: 'Escape', target: new Target(), stopPropagation() {}, preventDefault() {} } as unknown as KeyboardEvent);
   expect(close).toHaveBeenCalledOnce();
 });
+
+it('leaves focused terminal keys to xterm while another dialog is open', () => {
+  class Target { closest(selector: string) { return selector === '.workspace-terminal-screen' ? {} : null; } }
+  vi.stubGlobal('Element', Target);
+  let capture: ((event: KeyboardEvent) => void) | undefined;
+  const modal = { contains: () => false, getClientRects: () => [{}] };
+  vi.stubGlobal('document', { addEventListener: (_type: string, listener: typeof capture) => { capture = listener; }, removeEventListener() {}, querySelectorAll: () => [modal] });
+  const close = vi.fn(), accessibility = useModalAccessibility(true, close);
+  accessibility.modalRef.current = modal as unknown as HTMLDivElement;
+  effects[1]!();
+  for (const key of ['Escape', 'Tab', 'ArrowDown', 'c']) {
+    const stopPropagation = vi.fn(), preventDefault = vi.fn();
+    capture!({ key, target: new Target(), stopPropagation, preventDefault } as unknown as KeyboardEvent);
+    expect(close).not.toHaveBeenCalled();
+    expect(stopPropagation).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  }
+});

@@ -31,6 +31,19 @@ it('preserves the vault after a wrong password, tampered ciphertext or concurren
   values.set('browser-credentials:one', 'changed');
   await expect(call('one', { action: 'list' })).rejects.toThrow('another host');
 });
+
+it('edits one login while preserving an omitted password without returning it', async () => {
+  const result = await saved(), id = result.entries[0].id;
+  const edited = await call('one', { action: 'save', id, name: 'Edited', origin: 'https://example.test', username: 'changed', password: '' });
+  expect(edited.entries).toHaveLength(1);
+  expect(edited.entries[0]).toMatchObject({ id, name: 'Edited', username: 'changed' });
+  expect(edited.entries[0]).not.toHaveProperty('password');
+  await expect(call('one', { action: 'save', id: 'missing' })).rejects.toThrow('no longer');
+  await expect(call('one', { action: 'save', id, name: 'AI edit' }, { openedBy: 'ai' })).rejects.toThrow('dashboard');
+  const page = { url: () => 'https://example.test', evaluate: vi.fn(async () => undefined) } as any;
+  await fillBrowserCredential('one', page, { operation: 'credentials', confirmed: true, params: { id } });
+  expect(page.evaluate.mock.calls[0][1].login.password).toBe(password);
+});
 it('requires user vault management, confirmation and project ownership', async () => {
   await expect(call('one', { action: 'unlock', masterPassword }, { confirmed: false })).rejects.toThrow('confirmed');
   await expect(call('one', { action: 'unlock', masterPassword }, { openedBy: 'ai' })).rejects.toThrow('dashboard');

@@ -1,4 +1,5 @@
 import { useTaskViewPosition } from './taskViewPosition';
+import { isWorkspaceTerminalKeyboardEvent } from './keyboardScope';
 import { showsCodexSessionAutoResume } from '../../src/domain/codexSessionState';
 import { CreateProjectModal, CREATE_PROJECT_OPTION } from './createProjectModal';
 import { codexModelLabel } from "./helpers";
@@ -75,11 +76,10 @@ export function TaskBoard(props: {
   const [hiddenOpen, setHiddenOpen] = useState(false), [hiddenSearch, setHiddenSearch] = useState(''), [hiddenLimit, setHiddenLimit] = useState(100);
   const [view, setView] = useState(() => props.shared ? props.shared.board.boardConfig?.view ?? 'board' : loadTaskBoardView());
   const [localVisibleStages, setVisibleStages] = useState<TaskStage[]>(() => loadTaskBoardColumns());
-  const [sharedVisibleStages, setSharedVisibleStages] = useState<TaskStage[]>(stages);
   const [localStageFilter, setStageFilter] = useState<TaskStage | 'all'>('all');
   const showArchive = props.shared ? props.shared.board.boardConfig?.showArchive === true : localShowArchive;
-  const visibleStages = props.shared ? sharedVisibleStages : localVisibleStages;
-  const stageFilter = props.shared ? 'all' : localStageFilter;
+  const visibleStages = props.shared ? props.shared.board.boardConfig?.columns ?? stages : localVisibleStages;
+  const stageFilter = props.shared ? props.shared.board.boardConfig?.stageFilter ?? 'all' : localStageFilter;
   const [tab, setTab] = useState<DetailTab | 'agents'>('overview'), [cursor, setCursor] = useState<string>();
   const [savedDetails, setSavedDetails] = useState(false);
   const [details, setDetails] = useState<ProjectTaskDetails>(), [detailLoading, setDetailLoading] = useState(false);
@@ -527,8 +527,7 @@ export function TaskBoard(props: {
       <TaskMenu label="Board actions">
         {!props.shared ? <><strong class="task-menu-label">Show columns</strong>{stages.map(stage => <button type="button" role="menuitemcheckbox" aria-checked={visibleStages.includes(stage)} disabled={visibleStages.length === 1 && visibleStages.includes(stage)} onClick={() => {
           const next = stages.filter(value => value === stage ? !visibleStages.includes(stage) : visibleStages.includes(value));
-          if (props.shared) setSharedVisibleStages(next);
-          else { setVisibleStages(next); if (!saveTaskBoardColumns(next)) setStatus('Column choices are kept in this tab only. Browser storage is unavailable.'); }
+          setVisibleStages(next); if (!saveTaskBoardColumns(next)) setStatus('Column choices are kept in this tab only. Browser storage is unavailable.');
         }}>{visibleStages.includes(stage) ? '✓ ' : ''}{label(stage)}</button>)}</> : null}
         {!props.shared ? <details class="task-status-options"><summary>Status filter</summary>{(['all',...stages] as const).map(value => <button type="button" role="menuitemradio" aria-checked={stageFilter === value} onClick={() => setStageFilter(value)}>{stageFilter === value ? '✓ ' : ''}{label(value)}</button>)}</details> : null}
 
@@ -548,7 +547,7 @@ export function TaskBoard(props: {
         {!props.shared ? <button type="button" role="menuitem" disabled={!project || !props.connected || busy} onClick={() => { setStatus(''); setShareOpen(true); }}><ShareIcon /> Share project</button> : null}
       </TaskMenu>
     </div></header>
-    {status && (statusLevel !== 'info' || props.shared) && (props.shared || !props.onActionFeedback) ? createPortal(<div class="dashboard-notice-stack task-feedback" aria-live="polite"><div class={`dashboard-notice is-${statusLevel}`} role={statusLevel === 'error' ? 'alert' : 'status'}><span>{status}</span><button type="button" aria-label="Dismiss task notification" onClick={() => setStatus('')}>×</button></div></div>, document.body) : null}
+    {status && (statusLevel === 'info' || props.shared || !props.onActionFeedback) ? createPortal(<div class="dashboard-notice-stack task-feedback" aria-live="polite"><div class={`dashboard-notice is-${statusLevel}`} role={statusLevel === 'error' ? 'alert' : 'status'}><span>{status}</span><button type="button" aria-label="Dismiss task notification" onClick={() => setStatus('')}>×</button></div></div>, document.body) : null}
     {view !== 'board' ? <TaskAlternateView key={`${scope}:${search}:${stageFilter}:${showArchive}`} view={view} tasks={visibleCards} stages={effectiveStages} onOpen={open} readOnly={!!props.shared} connected={props.connected} busy={busy} pendingIds={pendingIds} onSessionAction={sessionAction} onMove={(task, stage) => { void action('moveProjectTask', { taskId: task.id, taskRevision: task.revision, taskStage: stage }); }} /> : <div class="task-board-columns" style={{gridTemplateColumns:`repeat(${visibleStages.length},minmax(240px,1fr))`}}>{visibleStages.map(stage => <TaskColumn readOnly={!!props.shared} key={`${scope}:${stage}:${search}:${stageFilter}`} stage={stage} tasks={roots.filter(task => effectiveStages.get(task.id) === stage)} children={search.trim() ? new Map() : children} pendingIds={pendingIds} onOpen={open} systemName={props.systemName} agentCounts={agentCounts} connected={props.connected} busy={busy} onSessionAction={sessionAction} onMove={(task, stage) => { void action('moveProjectTask', { taskId: task.id, taskRevision: task.revision, taskStage: stage }); }} onAdd={can('submissions') && (!props.shared || stage === 'idea') ? () => open({ id: '', title: '', prompt: '', stage: props.shared ? 'idea' : stage, revision: 0, createdAt: 0, updatedAt: 0 }) : undefined} onGroup={(parentId, event) => { void groupDropped(parentId, event); }} onDrop={(stage, event) => { void moveDropped(stage, event); }} isDropTarget={dropStage === stage} onDragOver={() => setDropStage(stage)} onDragLeave={() => setDropStage(undefined)} />)}</div>}
     {legacyRows.length ? <details class="task-sync-conflicts"><summary>Saved changes need a system ({legacyRows.length})</summary>{legacyRows.map(row => <article key={row.key}><p>{row.value.project} · Original system unavailable</p><pre>{JSON.stringify(row.value.task ?? row.value.comment, (key: string, value: unknown) => key === 'data' ? undefined : value, 2)}</pre><button type="button" disabled={!ownerDeviceId || ownerDeviceId === 'local' || busy} onClick={() => setConfirmation({ title: 'Assign saved change?', danger: false, description: `Assign this change to ${props.systemName || 'this system'}? It will sync there when connected. The original system could not be verified.`, confirm: 'Assign to this system', run: () => { void writeBrowserCache(row.key, { ...row.value, device: ownerDeviceId, lastError: undefined }).then(async saved => { if (!saved) { setStatus('Browser storage did not confirm the assignment. The saved change was kept.'); return; } setOutbox(await listBrowserOutbox<Outbox>()); setStatus('System assigned.', 'info'); void sync(); }); } })}>Assign to this system</button></article>)}</details> : null}
     {rows.some(row => syncErrors[row.key]) ? <details class="task-sync-conflicts"><summary>Review unsynced changes</summary>{rows.filter(row => syncErrors[row.key]).map(row => <article key={row.key}><p>{syncErrors[row.key]}</p><pre>{JSON.stringify(row.value.task ?? row.value.comment, (key: string, value: unknown) => key === 'data' ? undefined : value, 2)}</pre><button type="button" onClick={() => { setConfirmation({ title: 'Discard local change?', description: 'The host version will be kept. This removes only the unsynced change on this browser.', confirm: 'Discard change', run: () => { void deleteBrowserCache(row.key).then(async removed => { if (removed) { setOutbox(await listBrowserOutbox<Outbox>()); setStatus('Local change discarded. Host version kept.', 'info'); } else setStatus('Browser storage did not confirm removal. Local change kept.'); }).catch(error => setStatus(String(error))); } }); }}>Discard local change</button></article>)}</details> : null}
@@ -715,6 +714,7 @@ function TaskMenu(props: { label: string; children: ComponentChildren }) {
     (panel.current?.querySelector<HTMLElement>('button:not(:disabled), summary') ?? panel.current)?.focus({ preventScroll: true });
     const outside = (event: Event) => { if (!panel.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setOpen(false); };
     const key = (event: KeyboardEvent) => {
+      if (isWorkspaceTerminalKeyboardEvent(event)) return;
       if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus({ preventScroll: true }); }
       if (['ArrowDown','ArrowUp','Home','End'].includes(event.key) && !(event.target instanceof HTMLInputElement)) {
         const items = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),summary') ?? [])].filter(item => item.getClientRects().length);

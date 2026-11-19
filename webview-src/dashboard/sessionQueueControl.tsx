@@ -3,6 +3,7 @@ import { createPortal } from 'preact/compat';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardCliSessionSummary } from '../../src/domain/dashboard/types';
 import { isSessionQueuePriority } from '../../src/domain/sessionQueuePriority';
+import { isWorkspaceTerminalKeyboardEvent } from './keyboardScope';
 
 export function SessionQueueControl(props: {
   session: DashboardCliSessionSummary; disabled: boolean;
@@ -25,6 +26,7 @@ export function SessionQueueControl(props: {
     panel.current.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true });
     const outside = (event: Event) => { const target = event.target as Node; if (!panel.current?.contains(target) && !trigger.current?.contains(target)) close(); };
     const keydown = (event: KeyboardEvent) => {
+      if (isWorkspaceTerminalKeyboardEvent(event)) return;
       if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); close(true); }
       if (event.key === 'Tab' && panel.current) {
         const items = [...panel.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')];

@@ -162,6 +162,7 @@ export function SettingsOverlay(props: {
                   return;
                 }
                 event.preventDefault();
+                event.stopPropagation();
                 const nextTab = tabs[nextIndex]!;
                 setActiveTab(nextTab.id);
                 event.currentTarget.parentElement

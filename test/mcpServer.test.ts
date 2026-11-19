@@ -128,6 +128,31 @@ it.each(['navigation-failure', 'preview-warning', 'close'] as const)('keeps pane
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+it.each([false, true])('delivers browser downloads only to the selected viewer and reports delivery failure: %s', async failed => {
+  const requests: any[] = [];
+  const fileDownload = { filename: 'fixture.txt', mimeType: 'text/plain', data: 'dmVyaWZpZWQ=' };
+  const server = createServer((request, response) => {
+    let body = ''; request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      const value = JSON.parse(body); requests.push(value);
+      const delivery = value.payload.panelRequest?.operation === 'download';
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ messages: [{ type:'dashboard:action-result',requestId:value.requestId,status:delivery && failed ? 'failed' : 'completed',error:delivery && failed ? 'Viewer disconnected' : undefined,
+        payload:value.action === 'workspacePanel' ? {workspacePanel:{surfaces:[{surfaceId:'viewer',sessionId:'chat',targetDeviceId:'worker'}]}} : {workspaceBrowser:{pageId:'page',revision:'r',pages:[],feedback:[],fileDownload}} }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0,'127.0.0.1',resolve));
+  try { await withClient(async send => {
+    await send('initialize');
+    const result = (await send('tools/call',{name:'manager_browser',arguments:{projectPath:'D:/demo',surfaceId:'viewer',sessionId:'chat',targetDeviceId:'hub',request:{operation:'download',pageId:'page',revision:'r',url:'https://example.test/file'}}})).result;
+    expect(requests[2].payload).toMatchObject({targetDeviceId:'hub',panelRequest:{operation:'download',surfaceId:'viewer',sessionId:'chat',fileDownload}});
+    expect(requests.filter(row=>row.action === 'workspaceBrowser')).toHaveLength(1);
+    if (failed) { expect(result.isError).toBe(true); expect(result.content[0].text).toContain('not confirmed'); }
+    else { expect(result.isError).not.toBe(true); const state=JSON.parse(result.content[0].text).payload.workspaceBrowser; expect(state.downloadDelivery).toContain('selected viewer'); expect(state.fileDownload).toBeUndefined(); }
+  },`http://127.0.0.1:${(server.address() as {port:number}).port}`); }
+  finally { await new Promise<void>(resolve=>server.close(()=>resolve())); }
+});
+
 it("preserves Manager permissions/results, account targets and unknown-outcome errors", async () => {
   const requests: any[] = [];
   const server = createServer((request, response) => {

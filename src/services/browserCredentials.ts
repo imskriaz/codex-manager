@@ -59,7 +59,7 @@ function field(params: Record<string, unknown>, key: string, max: number, fallba
 
 export async function browserCredentials(project: string, request: WorkspaceBrowserRequest): Promise<unknown> {
   const params = request.params ?? {}, action = params['action'] ?? 'list', store = storage();
-  if (request.openedBy === 'ai' && !['list', 'fill', 'lock'].includes(String(action))) throw new Error('Manage vault passwords and saved logins in the dashboard credential manager. Automation can list or fill unlocked logins.');
+  if (request.openedBy === 'ai' && (typeof action !== 'string' || !['list', 'fill', 'lock'].includes(action))) throw new Error('Manage vault passwords and saved logins in the dashboard credential manager. Automation can list or fill unlocked logins.');
   if (action !== 'list' && request.confirmed !== true) throw new Error('Credential changes require confirmed=true.');
   if (action === 'lock') { lock(project); return { locked: true, exists: !!store.get(namespace, project), entries: [] }; }
   if (action === 'unlock') {
@@ -85,15 +85,18 @@ export async function browserCredentials(project: string, request: WorkspaceBrow
   }
   const { vault, rows } = opened(project);
   if (action === 'save') {
-    if (rows.length >= 32) throw new Error('This project vault holds 32 logins. Delete one first.');
+    const existing = params['id'] === undefined ? undefined : rows.find(row => row.id === params['id']);
+    if (params['id'] !== undefined && !existing) throw new Error('This login no longer exists. Refresh the vault.');
+    if (!existing && rows.length >= 32) throw new Error('This project vault holds 32 logins. Delete one first.');
     const login: Login = {
-      id: randomUUID(), name: field(params, 'name', 128), origin: new URL(browserUrl(field(params, 'origin', 2000))).origin,
-      username: field(params, 'username', 1024), password: field(params, 'password', 4096),
+      id: existing?.id ?? randomUUID(), name: field(params, 'name', 128), origin: new URL(browserUrl(field(params, 'origin', 2000))).origin,
+      username: field(params, 'username', 1024), password: field({ ...params, password: params['password'] || existing?.password }, 'password', 4096),
       usernameSelector: field(params, 'usernameSelector', 2000, 'input[autocomplete="username"],input[type="email"]'),
       passwordSelector: field(params, 'passwordSelector', 2000, 'input[type="password"]')
     };
-    secrets.add(login.password); commit(project, vault, [...rows, login]);
-    return { locked: false, exists: true, entries: [...rows, login].map(({ password: _password, ...row }) => row), message: 'Login saved.' };
+    const next = existing ? rows.map(row => row.id === existing.id ? login : row) : [...rows, login];
+    secrets.add(login.password); commit(project, vault, next);
+    return { locked: false, exists: true, entries: next.map(({ password: _password, ...row }) => row), message: existing ? 'Login updated.' : 'Login saved.' };
   }
   if (action === 'delete') {
     if (!rows.some(row => row.id === params['id'])) throw new Error('This login no longer exists. Refresh the vault.');

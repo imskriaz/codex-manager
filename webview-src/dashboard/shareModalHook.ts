@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
 import { createShareFileName } from "./helpers";
@@ -12,9 +12,9 @@ export function useShareModal(params: {
   const [shareModalFilename, setShareModalFilename] = useState("codex-manager-share.json");
   const [sharePreviewExpanded, setSharePreviewExpanded] = useState(false);
 
+  const pendingCopy = useRef<string>();
   const handleCopyShareJson = (): void => {
-    params.sendAction("copyText", undefined, { text: shareModalJson });
-    params.showCopyFeedback("share-json");
+    pendingCopy.current = params.sendAction("copyText", undefined, { text: shareModalJson }) || undefined;
   };
 
   const handleDownloadShareJson = (filename: string, text: string): void => {
@@ -22,7 +22,13 @@ export function useShareModal(params: {
   };
 
   const applyActionResult = (message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>): boolean => {
-    if (message.status === "failed") {
+    if (pendingCopy.current && message.action === "copyText" && message.requestId === pendingCopy.current) {
+      pendingCopy.current = undefined;
+      if (message.status !== "completed") return false;
+      params.showCopyFeedback("share-json");
+      return true;
+    }
+    if (message.status !== "completed") {
       return false;
     }
     if ((message.action === "shareTokens" || message.action === "exportBackup") && message.payload?.sharedJson) {

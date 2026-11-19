@@ -89,12 +89,12 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   const queue={items:[item],ready:true,connected:true} as unknown as Parameters<typeof QueuedMessages>[0]['queue'];
   const node=QueuedMessages({queue,onRefresh:()=>{}}) as VNode<any>;
   expect(node.props.class).toBe('cli-local-queue');
-  const row=node.props.children[0];
+  const row=node.props.children.flat(Infinity).find((child: VNode<any>) => child?.props?.class?.includes('cli-queued-message'));
   expect(row.props.class).toContain('cli-queued-message');
   const details = row;
   expect(row.props.class).toContain('cli-goal-strip');
   expect(details.type).toBe('details');
-  expect(details.props.open).not.toBe(true);
+  expect(details.props.open).toBe(true);
   expect(details.props.children[1].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
   const css = readFileSync('media/webview/quotaSummary.css', 'utf8');

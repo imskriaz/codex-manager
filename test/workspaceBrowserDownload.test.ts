@@ -34,8 +34,11 @@ function render(overrides: Partial<Parameters<typeof WorkspaceBrowser>[0]> = {})
 }
 beforeEach(() => {
   fixture.slots = []; fixture.effects = []; fixture.cleanups = []; fixture.request.mockReset(); fixture.click.mockReset(); onFeedback.mockReset();
-  fixture.link = { click: fixture.click };
-  vi.stubGlobal("document", { visibilityState: "visible", createElement: () => fixture.link });
+  fixture.link = { click: fixture.click, remove: vi.fn() };
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-download');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  vi.stubGlobal("document", { visibilityState: "visible", body: { append: vi.fn() }, createElement: () => fixture.link });
+  vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
 });
 afterEach(() => { fixture.cleanups.splice(0).forEach(cleanup => cleanup()); vi.unstubAllGlobals(); });
 
@@ -49,8 +52,8 @@ it("downloads a link through a blank page once, then reports the saved filename"
   expect(requests.map(request => request.operation)).toEqual(["open", "download"]);
   expect(requests[0].url).toBeUndefined();
   expect(requests[1]).toMatchObject({ pageId: page.id, revision: page.revision, url: target });
-  expect(fixture.link).toMatchObject({ download: "theme.zip", href: "data:application/zip;base64,emlw" });
-  expect(JSON.stringify(render())).toContain("theme.zip downloaded.");
+  expect(fixture.link).toMatchObject({ download: "theme.zip", href: "blob:test-download" });
+  expect(JSON.stringify(render())).toContain("theme.zip: download started in this viewer.");
   expect(onFeedback).not.toHaveBeenCalled();
   expect(fixture.request).toHaveBeenCalledTimes(2);
 });
@@ -61,10 +64,11 @@ it("preserves download failures in the panel and dashboard feedback without repl
     return { workspaceBrowser: browserState };
   });
   render();
-  await vi.waitFor(() => { render(); expect(onFeedback).toHaveBeenCalledWith({ level: "error", message: "The remote download was not saved. Retry the link." }); });
+  await vi.waitFor(() => expect(JSON.stringify(render())).toContain("The remote download was not saved. Retry the link."));
   expect(JSON.stringify(render())).toContain("The remote download was not saved. Retry the link.");
   expect(fixture.click).not.toHaveBeenCalled();
-  expect(fixture.request).toHaveBeenCalledTimes(2);
+  expect(fixture.request.mock.calls.filter(([, payload]) => payload.browserRequest.operation === 'download')).toHaveLength(1);
+  expect(fixture.request.mock.calls.map(([, payload]) => payload.browserRequest.operation)).toEqual(['open', 'download', 'screenshot']);
 });
 
 it('opens a separate blank page per add request and preserves the blank URL on submission', async () => {
@@ -84,9 +88,24 @@ it('opens a separate blank page per add request and preserves the blank URL on s
   expect(normalizeBrowserInput('about:blank')).toBe('about:blank');
 });
 
-it('reports an offline add immediately and does not replay it on reconnect', () => {
+it('keeps an undispatched page intent until the host reconnects', async () => {
+  fixture.request.mockResolvedValue({ workspaceBrowser: browserState });
   render({ downloadUrl: undefined, openPageNonce: 1, connected: false });
-  expect(JSON.stringify(render({ downloadUrl: undefined, openPageNonce: 1, connected: false }))).toContain('Offline. The new browser page was not opened.');
+  expect(fixture.request).not.toHaveBeenCalled();
   render({ downloadUrl: undefined, openPageNonce: 1, connected: true });
-  expect(fixture.request.mock.calls.every(([, payload]) => payload.browserRequest.operation === 'list')).toBe(true);
+  await vi.waitFor(() => expect(fixture.request.mock.calls.some(([, payload]) => payload.browserRequest.operation === 'open')).toBe(true));
+  render({ downloadUrl: undefined, openPageNonce: 1, connected: true });
+  expect(fixture.request.mock.calls.filter(([, payload]) => payload.browserRequest.operation === 'open')).toHaveLength(1);
+});
+
+it('consumes a page-open intent before dispatch so a remount cannot replay it', async () => {
+  fixture.request.mockResolvedValue({ workspaceBrowser: browserState });
+  let pending = 1;
+  const onOpenPageHandled = vi.fn(() => { pending = 0; });
+  render({downloadUrl:undefined,openPageNonce:pending,onOpenPageHandled});
+  expect(onOpenPageHandled).toHaveBeenCalledWith(1);
+  await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledOnce());
+  fixture.cleanups.splice(0).forEach(cleanup => cleanup()); fixture.slots=[];
+  render({downloadUrl:undefined,openPageNonce:pending,onOpenPageHandled});
+  expect(fixture.request.mock.calls.filter(([,payload])=>payload.browserRequest.operation === 'open')).toHaveLength(1);
 });

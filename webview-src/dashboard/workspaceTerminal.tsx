@@ -465,6 +465,11 @@ function TerminalScreen(props: {
       }
       term.attachCustomKeyEventHandler((event) => {
         event.stopPropagation();
+        if (event.type === "keydown" && event.key === "Escape" && event.shiftKey) {
+          event.preventDefault();
+          element.current?.closest('.workspace-terminal')?.querySelector<HTMLElement>('select,button:not(:disabled)')?.focus();
+          return false;
+        }
         if (event.type !== "keydown" || (!event.ctrlKey && !event.metaKey) || event.altKey) {
           return true;
         }
@@ -480,6 +485,10 @@ function TerminalScreen(props: {
           return false;
         }
         return true;
+      });
+      // Screen reader mode leaves Tab's browser focus navigation enabled.
+      const key = term.onKey(({ domEvent }) => {
+        if (domEvent.key === "Tab") domEvent.preventDefault();
       });
       terminal.current = term;
       search.current = finder;
@@ -525,6 +534,7 @@ function TerminalScreen(props: {
       });
       dispose = () => {
         observer.disconnect();
+        key.dispose();
         queryHandlers.forEach((item) => item.dispose());
         term.dispose();
         terminal.current = undefined;
@@ -822,7 +832,12 @@ function TerminalScreen(props: {
     }
   }));
   return (
-    <div class="workspace-terminal-screen">
+    <div
+      class="workspace-terminal-screen"
+      onKeyDown={(event) => event.stopPropagation()}
+      onKeyPress={(event) => event.stopPropagation()}
+      onKeyUp={(event) => event.stopPropagation()}
+    >
       {find !== undefined ? (
         <form
           class="workspace-terminal-find"
@@ -889,7 +904,7 @@ function TerminalScreen(props: {
       <div
         ref={element}
         class="workspace-xterm"
-        aria-label={`${props.name} terminal screen`}
+        aria-label={`${props.name} terminal screen. Press Shift+Escape to leave terminal input.`}
         onPointerDown={(event) => {
           if (event.button === 0 && event.target === event.currentTarget) {
             event.preventDefault();

@@ -3,6 +3,15 @@ import type { DashboardHostMessage } from '../../src/domain/dashboard/types';
 import type { WorkspaceSurfaceRequest, WorkspaceSurfaceState } from '../../src/domain/workspaceSurface';
 import { postMessageToHost } from './host';
 
+export function downloadInViewer(file: NonNullable<WorkspaceSurfaceRequest['fileDownload']>): void {
+  const bytes = Uint8Array.from(atob(file.data), char => char.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType }));
+  const link = document.createElement('a');
+  link.href = url; link.download = file.filename; link.hidden = true;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 export function useWorkspaceSurface(
   state: Omit<WorkspaceSurfaceState, 'surfaceId' | 'visible' | 'viewport' | 'host'> | undefined,
   connected: boolean,
@@ -37,7 +46,10 @@ export function useWorkspaceSurface(
           assertCurrent();
           if (running.current) throw new Error('A workspace command is already running.');
           running.current = true; started = true;
-          content = await latest.current.command(message.request, assertCurrent);
+          if (message.request.operation === 'download' && message.request.fileDownload) {
+            downloadInViewer(message.request.fileDownload);
+            content = { message: 'Download started in the selected viewer.' };
+          } else content = await latest.current.command(message.request, assertCurrent);
           // Reads do not change the UI; only mutations need to reach the next rendered frame.
           if (message.request.operation !== 'read') await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
           assertCurrent();

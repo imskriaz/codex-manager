@@ -27,12 +27,12 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 import { isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
-  it("uses the shared workspace icon toolbar and anchored Browser actions flyout", () => {
+  it("uses the compact browser toolbar and anchored three-dot menu", () => {
     const source = readFileSync("webview-src/dashboard/workspaceBrowser.tsx", "utf8");
-    expect(source).toContain('import { WorkspaceMenu } from "./workspaceMenu";');
-    expect(source).toContain('label="Browser actions"');
+    expect(source).toMatch(/import \{ WorkspaceMenu \} from ['"]\.\/workspaceMenu['"]/);
+    expect(source).toContain('label="Browser menu"');
     expect(source).toContain('class="workspace-browser-icon-button"');
-    expect(source).toContain('<BrowserMenuIcon />');
+    expect(source).toContain('Control page / select element');
   });
   it("normalizes browser addresses before native navigation", () => {
     const source = readFileSync("webview-src/dashboard/workspaceBrowser.tsx", "utf8");
@@ -43,7 +43,7 @@ describe("sessions sidebar layout", () => {
   it("keeps Browser out of the default tool tabs and labels opened pages by title", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });");
-    expect(source).toContain("const retained = entry.tabs.filter(tab => workspaceTabKind(tab) !== \"browser\");");
+    expect(source).toContain("const retained = entry.tabs.flatMap");
     expect(source).toContain("props.browserPages.find(page => page.id === path)?.title");
     expect(source).toContain("if (tab.startsWith('browser:'))");
     expect(source).toContain("window.open(url, \"_blank\", \"noopener,noreferrer\")");
@@ -158,18 +158,19 @@ describe("sessions sidebar layout", () => {
     }
   });
 
-  it("blocks unverified session actions and labels the status without claiming readiness", () => {
+  it("blocks unverified access changes and checks running state when sending", () => {
     expect(isCodexSessionRunning({ status: "unknown" })).toBe(true);
     expect(isCodexSessionRunningForDisplay({ status: "running" })).toBe(true);
     expect(isCodexSessionRunningForDisplay({ status: "running", statusError: "Session status is stale." })).toBe(false);
     expect(isCodexSessionRunningForDisplay({ status: "unknown" })).toBe(false);
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
-    expect(source).toContain("Checking running state");
+    expect(source).toContain("Running state will be checked when sending");
     expect(source).toContain('placeholder="Message Codex…"');
     expect(source).toContain('onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
-    expect(source).toContain("props.selectedSession.status !== 'unknown' && !props.stopping");
+    expect(source).toContain('accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}');
+    expect(source).toContain('stopDisabled={props.connected === false || !ownedLiveTurn && !props.selectedSession.canStop}');
   });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
@@ -193,7 +194,7 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain("items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending')");
     expect(source).not.toContain('> <span>Steering…</span>');
-    expect(source).toContain('(!props.sending || canSteer) && !access.pending');
+    expect(source).toContain('canDispatch: queueDispatchReady && (followUpMode');
     expect(css).toContain("@media (max-width: 480px)");
     expect(css).toContain(".cli-turn-quota small { display: none; }");
     expect(source).toContain("item.state !== 'sending' ? <button type=\"button\" class=\"cli-icon-button cli-goal-control\" aria-label=\"Edit queued message\"");
@@ -621,8 +622,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("steeringTurnId");
     expect(source).toContain("Starting new session…");
     expect(source).toContain('class="cli-session-row is-starting"');
-    expect(taskBoard).toContain("const [sharedVisibleStages, setSharedVisibleStages] = useState<TaskStage[]>(stages)");
-    expect(taskBoard).toContain("if (props.shared) setSharedVisibleStages(next)");
+    expect(taskBoard).toContain("const visibleStages = props.shared ? props.shared.board.boardConfig?.columns ?? stages : localVisibleStages");
+    expect(taskBoard).toContain('!props.shared ? <><strong');
     expect(source).not.toContain('<strong>Running elsewhere</strong>');
     expect(source).not.toContain('class="cli-account-footer-type"');
     expect(source).not.toContain('class="cli-running-quota-inline"');
@@ -783,7 +784,7 @@ describe("sessions sidebar layout", () => {
 
   it("keeps transient session verification waits compact and recoverable", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    expect(source).toContain("Reconnecting to Codex… your message is saved and will continue automatically.");
+    expect(source).toContain("Reconnecting… your message is saved and will continue automatically.");
     expect(source).toContain("verifyStatus.current(); delay = Math.min(delay * 2, 15_000)");
     expect(source).toContain("connectionInterrupted || status === 'running'");
     expect(source).toContain("A lost live stream can leave the last tool call looking active");
@@ -879,7 +880,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
     expect(source).toContain('if (!isBrowserDashboard || connectionUnavailable) return;');
-    expect(source).toContain('const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || browserPath === "/api");');
+    expect(source).toContain('const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks" || apiViewFromPath(browserPath) !== undefined);');
     expect(source).toContain("if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("(sessionId || hasBrowserWorkspaceShell(path))) requestCliSessions(true);");
     expect(source).toContain('setSelectedPeerId(deviceId);');

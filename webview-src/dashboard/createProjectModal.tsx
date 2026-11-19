@@ -64,7 +64,6 @@ export function CreateProjectModal(props: {
   }, [props.deviceId]);
   const browse = (parentFolder?: string) => {
     if (browseRequest.current || pending || props.disabled) return;
-    if (!navigator.onLine) { props.onFeedback({ level: 'warning', message: 'Reconnect before browsing folders on the selected system.' }); return; }
     setBrowsing(true); setLocation(parentFolder ?? '');
     const id = createActionRequestId(true);
     const timer = setTimeout(() => {
@@ -85,7 +84,6 @@ export function CreateProjectModal(props: {
       <form class="workspace-dialog-fields create-project-form" onSubmit={event => {
         event.preventDefault();
         if (request.current || browserOpen || props.disabled || !folder.trim()) return;
-        if (!navigator.onLine) { props.onFeedback({ level: 'warning', message: 'Reconnect before adding a project. Nothing was sent or queued.' }); return; }
         const id = createActionRequestId(true); setPending(true);
         const timer = setTimeout(() => {
           if (request.current?.id !== id) return;

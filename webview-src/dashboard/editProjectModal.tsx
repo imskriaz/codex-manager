@@ -57,7 +57,6 @@ export function EditProjectModal(props: {
 
   const submit = (action: "renameWorkspaceProject" | "removeWorkspaceProject", payload: Record<string, unknown>) => {
     if (request.current || props.disabled) return;
-    if (!navigator.onLine) { feedback({ level: 'warning', message: 'Reconnect before editing this project. The change was not sent.' }); return; }
     const id = createActionRequestId(true);
     const timer = setTimeout(() => {
       if (request.current?.id !== id) return;

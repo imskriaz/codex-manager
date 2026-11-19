@@ -29,7 +29,7 @@ it('sends once, blocks closing while pending, and refreshes after a confirmed re
   reply('completed', 'renameWorkspaceProject', { workspaceProject: props.project });
   expect(props.onChanged).toHaveBeenCalledOnce(); expect(props.onClose).toHaveBeenCalledOnce();
 });
-it.each(['failed', 'cancelled', 'incomplete', 'timeout', 'offline', 'send-error'])('retains the editor and shows feedback on %s', outcome => {
+it.each(['failed', 'cancelled', 'incomplete', 'timeout', 'send-error'])('retains the editor and shows feedback on %s', outcome => {
   if (outcome === 'offline') vi.stubGlobal('navigator', { onLine: false });
   if (outcome === 'send-error') fixture.send.mockImplementation(() => { throw new Error('Disconnected'); });
   button('Save').props.onClick();
@@ -46,4 +46,8 @@ it('requires confirmation before removing the project entry', () => {
   button('Remove project').props.onClick();
   expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'removeWorkspaceProject', payload: expect.objectContaining({ confirmed: true }) }));
   reply('completed', 'removeWorkspaceProject'); expect(props.onClose).toHaveBeenCalledOnce();
+});
+
+it('allows a reachable host while the browser reports no Internet', () => {
+ vi.stubGlobal('navigator', { onLine: false }); button('Save').props.onClick(); expect(fixture.send).toHaveBeenCalledOnce();
 });

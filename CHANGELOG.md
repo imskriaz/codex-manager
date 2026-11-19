@@ -1,12 +1,33 @@
 # Changelog
 
+## 2.0.7
+
+- Refine the shared browser with a Windows-style AI pointer, visible typing caret, natural tool cursors, stable tab order, and descriptive tab tooltips.
+- Add right-aligned Inspector controls, double-click CSS editing, resizable storage details, and reliable Inspector polling and Console drafts.
+- Deliver page-link and automation downloads to the viewer; prevent repeated blank tabs.
+- Add compact encrypted credential dialogs with saved-login tables and separate Add/Edit forms.
+- Move Comments into the browser menu and use a minimal feedback composer with an embedded send icon, Escape and outside-click dismissal.
+- Improve modal keyboard handling, terminal focus exit, task feedback, clipboard acknowledgements, project controls, and shared-board import consistency.
+- Keep agent subtabs transparent with a bottom-border active state, condense queued session messages into a one-line modal entry point, and prevent CSS edits from shifting the Inspector layout.
+
 ## 2.0.6-pre.121
 
 - Match workspace tabs and subtabs across tasks, agents, Git/GitHub, API, and Browser Inspector to the compact square Git tab strip, preserving dashboard navigation.
 
+## 2.0.6-pre.120
+
+- Fix file-delete view preservation, settings tab keys, terminal focus exit (Shift+Escape), task completion feedback, acknowledged clipboard copying, shared-board configuration, import-read races, and reachable local-host actions.
+- Preserve per-page Browser Console drafts and history, serialize Inspector polling, honor source wrapping and Info filtering, expose Inspector controls, and retain new-page intents until dispatch.
+- Scope typography regression checks to dashboard text while retaining fixed Browser control sizing.
+
 ## 2.0.6-pre.119
 
 - Record first client output timing for tool calls and final-only responses, and avoid reporting buffered or omitted output as already delivered.
+
+## 2.0.6-pre.118
+
+- Keep the AI pointer visible between actions, follow focused fields and drag destinations, and clear it when the user takes control.
+- Align inspector pane controls to the right, keep overflowing tabs scrollable, and show selected storage values in a resizable detail panel below each table.
 
 ## 2.0.6-pre.117
 
@@ -27,6 +48,10 @@
 ## 2.0.6-pre.114
 
 - Keep blocking Codex questions visible in the browser until the owning session resolves them, and deliver async question answers immediately to a verified waiting turn.
+
+## 2.0.6-pre.113
+
+- Hide filenames beside composer image thumbnails while preserving accessible preview and remove controls.
 
 ## 2.0.6-pre.110
 

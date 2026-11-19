@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { createPortal } from "preact/compat";
+import { isWorkspaceTerminalKeyboardEvent } from "./keyboardScope";
 
 const MODAL_FOCUSABLE = [
   "a[href]",
@@ -92,6 +93,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     // Removed or disabled controls can leave focus on body. Route keys to the
     // top dialog without refocusing it on every background render.
     const route = (event: KeyboardEvent) => {
+      if (isWorkspaceTerminalKeyboardEvent(event)) return;
       const modal = modalRef.current;
       if (!modal || modal.contains(event.target as Node)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"][aria-modal="true"]')) return;

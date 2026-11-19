@@ -17,13 +17,14 @@ export interface WorkspaceSurfaceState {
 }
 
 export interface WorkspaceSurfaceRequest {
-  operation: 'list' | 'read' | 'open' | 'select' | 'hide';
+  operation: 'list' | 'read' | 'open' | 'select' | 'hide' | 'download';
   surfaceId?: string;
   /** The context returned by discovery; never silently follow a user to another session. */
   sessionId?: string;
   tab?: string;
   url?: string;
   includeContent?: boolean;
+  fileDownload?: { filename: string; mimeType: string; data: string };
 }
 
 export interface WorkspaceSurfaceResult {
@@ -49,7 +50,10 @@ export function isWorkspaceSurfaceState(value: unknown): value is WorkspaceSurfa
 }
 
 export function isWorkspaceSurfaceRequest(value: unknown): value is WorkspaceSurfaceRequest {
-  return record(value) && ['list', 'read', 'open', 'select', 'hide'].includes(String(value['operation'])) &&
+  return record(value) && ['list', 'read', 'open', 'select', 'hide', 'download'].includes(String(value['operation'])) &&
     optional(value['surfaceId'], 128) && optional(value['sessionId'], 256) && optional(value['tab'], 4096) && optional(value['url'], 8192) &&
-    (value['includeContent'] === undefined || typeof value['includeContent'] === 'boolean');
+    (value['includeContent'] === undefined || typeof value['includeContent'] === 'boolean') &&
+    (value['operation'] !== 'download' || record(value['fileDownload']) && text(value['fileDownload']['filename'], 180) &&
+      !/[\\/:*?"<>|\u0000-\u001f]/.test(value['fileDownload']['filename']) && text(value['fileDownload']['mimeType'], 128) &&
+      typeof value['fileDownload']['data'] === 'string' && value['fileDownload']['data'].length <= 22369624 && /^[A-Za-z0-9+/]*={0,2}$/.test(value['fileDownload']['data']));
 }

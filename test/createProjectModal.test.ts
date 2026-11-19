@@ -54,11 +54,8 @@ it('requires a project folder', () => {
   expect(button('Add project').props.disabled).toBe(true);
   submit(); expect(fixture.send).not.toHaveBeenCalled();
 });
-it('retains a nameless draft offline and lets the user retry after reconnecting', () => {
+it('uses verified host connectivity rather than the browser Internet hint', () => {
   vi.stubGlobal('navigator', { onLine: false }); submit();
-  expect(fixture.send).not.toHaveBeenCalled();
-  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
-  vi.stubGlobal('navigator', { onLine: true }); submit();
   expect(fixture.send).toHaveBeenCalledOnce();
 });
 it('ignores a late nameless result after timeout and accepts only the explicit retry', () => {
@@ -81,9 +78,8 @@ it('reports an unconfirmed timeout and ignores late replies without replaying cr
   reply('create-id', { workspaceProject: { path: 'late' } });
   expect(fixture.send).toHaveBeenCalledOnce(); expect(props.onCreated).not.toHaveBeenCalled();
 });
-it('blocks offline submission without discarding the draft', () => {
-  vi.stubGlobal('navigator', { onLine: false }); submit(); expect(fixture.send).not.toHaveBeenCalled();
-  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Reconnect') }));
+it('blocks disconnected host submission without discarding the draft', () => {
+  props.disabled = true; submit(); expect(fixture.send).not.toHaveBeenCalled();
   expect(find('input')[0]?.props.value).toBe('D:\\Projects');
   modal().props.onClose(); expect(props.onClose).toHaveBeenCalledOnce();
 });
@@ -123,8 +119,7 @@ it('reports browse timeout and offline failure with input preserved', () => {
   expect(button('Select folder').props.disabled).toBe(true);
   button('Cancel', 'Select project folder').props.onClick();
   vi.stubGlobal('navigator', { onLine: false }); button('Browse folders…').props.onClick();
-  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Reconnect') }));
-  expect(fixture.send).toHaveBeenCalledOnce(); expect(find('input')[0]?.props.value).toBe('D:\\Projects');
+  expect(fixture.send).toHaveBeenCalledTimes(2); expect(find('input')[0]?.props.value).toBe('D:\\Projects');
 });
 it('does not select a stale listing after typed navigation fails and retains refresh for recovery', () => {
   button('Browse folders…').props.onClick(); reply('create-id', listing());

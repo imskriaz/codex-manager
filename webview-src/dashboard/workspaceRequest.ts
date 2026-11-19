@@ -32,7 +32,7 @@ export function useWorkspaceRequest(
       const systemId = cacheSystemId(targetDeviceId);
       const cacheable = action === 'getWorkspaceEnvironment' || (action === 'workspaceGit' && ['read', 'diff'].includes(payload.gitRequest?.operation ?? '')) || (action === 'workspaceGitHub' && ['read', 'detail'].includes(payload.githubRequest?.operation ?? ''));
       const cacheKey = document.documentElement.dataset['dashboardHost'] === 'browser' && systemId && projectPath && cacheable ? offlineReadCacheKey(action, undefined, { ...payload, projectPath, targetDeviceId: systemId }) : undefined;
-      if (!connected || !navigator.onLine) {
+      if (!connected) {
         return (cacheKey ? readBrowserCache<DashboardActionResultPayload>(cacheKey) : Promise.resolve(undefined)).then(saved => { if (saved) return { ...saved, notice: { level: 'warning' as const, message: 'Offline · Saved snapshot' } }; throw new Error(cacheable ? 'No saved snapshot. Connect to load this view.' : 'Offline. This action was not sent or queued.'); });
       }
       if (!projectPath) {

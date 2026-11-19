@@ -15,21 +15,36 @@ export async function checkTerminalInputUi(page, { origin, parentId, width, outp
   await page.waitForFunction(() => document.querySelector('.workspace-xterm textarea')?.readOnly === false);
   assert.equal(await input.evaluate(element => element === document.activeElement), true, 'Opening a terminal focuses its keyboard input');
 
+  await page.evaluate(() => {
+    window.__escapedTerminalKeys = [];
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      window.addEventListener(type, event => {
+        if (event.target.closest?.('.workspace-terminal-screen')) window.__escapedTerminalKeys.push({ type, key: event.key });
+      });
+    }
+  });
+
   const received = () => page.evaluate(() => window.__uiActions.filter(action => action.action === 'workspaceTerminal' && action.payload?.terminalRequest?.operation === 'input').map(action => action.payload.terminalRequest.data).join(''));
   let expected = '';
   for (const [key, data] of [
     ['a', 'a'], ['ArrowDown', '\x1b[B'], ['ArrowUp', '\x1b[A'], ['Enter', '\r'],
-    ['Escape', '\x1b'], ['Tab', '\t'], ['Backspace', '\x7f'],
+    ['Escape', '\x1b'], ['Tab', '\t'], ['Shift+Tab', '\x1b[Z'], ['Backspace', '\x7f'],
     ['Control+c', '\x03'], ['Control+f', '\x06'], ['Control+l', '\x0c']
   ]) {
     await page.keyboard.press(key);
     expected += data;
     await page.waitForFunction(expected => window.__uiActions.filter(action => action.action === 'workspaceTerminal' && action.payload?.terminalRequest?.operation === 'input').map(action => action.payload.terminalRequest.data).join('') === expected, expected);
     assert.ok(await page.locator('.workspace-xterm').isVisible(), `${key} keeps the terminal open`);
+    assert.equal(await input.evaluate(element => element === document.activeElement), true, `${key} keeps focus in the terminal`);
   }
+  assert.deepEqual(await page.evaluate(() => window.__escapedTerminalKeys), [], 'Terminal keydown, keypress and keyup do not reach dashboard shortcuts');
   assert.equal(await received(), expected, 'Each key reaches the terminal exactly once');
   assert.equal(await page.getByRole('textbox', { name: 'Message Codex', exact: true }).inputValue(), '', 'Terminal typing never reaches the composer');
 
+  await page.keyboard.press('Shift+Escape');
+  assert.equal(await input.evaluate(element => element === document.activeElement), false, 'Shift+Escape exits terminal focus');
+  assert.equal(await received(), expected, 'Focus exit sends no shell input');
+  await input.focus();
   await page.keyboard.press('Control+Shift+f');
   const find = page.getByRole('textbox', { name: 'Find terminal text', exact: true });
   await find.waitFor();
@@ -38,6 +53,23 @@ export async function checkTerminalInputUi(page, { origin, parentId, width, outp
   await find.waitFor({ state: 'detached' });
   assert.equal(await input.evaluate(element => element === document.activeElement), true, 'Closing search restores terminal focus');
   assert.equal(await received(), expected, 'Search stays out of shell input');
+  assert.deepEqual(await page.evaluate(() => window.__escapedTerminalKeys), [], 'Search keys stay inside the terminal too');
+
+  // A retained menu's capture listener must not steal terminal prompt keys.
+  await page.locator('.cli-session-row-menu-wrap button').first().evaluate(button => button.click());
+  const menu = page.locator('.cli-session-menu');
+  await menu.waitFor({ state: 'attached' });
+  await input.focus();
+  await page.keyboard.press('Escape');
+  expected += '\x1b';
+  await page.waitForFunction(expected => window.__uiActions.filter(action => action.action === 'workspaceTerminal' && action.payload?.terminalRequest?.operation === 'input').map(action => action.payload.terminalRequest.data).join('') === expected, expected);
+  assert.equal(await input.evaluate(element => element === document.activeElement), true, 'Other menus leave terminal Escape and focus alone');
+  assert.equal(await menu.count(), 1, 'Terminal Escape does not close another menu');
+  await menu.locator('button:not(:disabled)').first().focus();
+  await page.keyboard.press('Escape');
+  await menu.waitFor({ state: 'detached' });
+  assert.equal(await received(), expected, 'Menu Escape still works outside the terminal');
+  await input.focus();
 
   await input.evaluate(element => {
     const clipboardData = new DataTransfer();

@@ -7,7 +7,10 @@ describe("mobile dashboard header", () => {
     const finalRules = css.lastIndexOf("/* Final compact layout rules");
     expect(finalRules).toBeGreaterThan(css.lastIndexOf("/* Requests stay with their session"));
     expect(css.slice(finalRules)).toContain('html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.155; }');
-    expect(css).not.toMatch(/\bfont-size\s*:\s*[\d.]+px\b/);
+    // Fixed Browser/DevTools chrome is independent of dashboard text scaling.
+    const dashboardRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(([, selector]) => !selector.includes('.workspace-browser'));
+    for (const [, , declarations] of dashboardRules) expect(declarations).not.toMatch(/\bfont-size\s*:\s*[\d.]+px\b/);
     expect(css).toContain("font-size: calc(16px * var(--dashboard-text-scale, 1))");
     expect(css.slice(finalRules)).toContain(".cli-workspace .cli-composer.is-empty { display: grid;");
     expect(css.slice(finalRules)).toContain(".cli-workspace .cli-account-footer .cli-account-footer-account { display: flex;");

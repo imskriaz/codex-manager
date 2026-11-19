@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
 import { reduceSharedImportActionResult, type SharedImportState } from "./sessionModalState";
@@ -7,23 +7,47 @@ export function useSharedImportModal(params: { sendAction: SendAction; importJso
   const [importJsonText, setImportJsonText] = useState("");
   const [importState, setImportState] = useState<SharedImportState>({});
 
+  const pendingRead = useRef<{ reader: FileReader; timer: ReturnType<typeof setTimeout> }>();
+  const invalidateRead = (): void => {
+    const pending = pendingRead.current;
+    pendingRead.current = undefined;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.reader.onload = pending.reader.onerror = pending.reader.onabort = null;
+    if (pending.reader.readyState === 1) pending.reader.abort();
+  };
+  useEffect(() => () => invalidateRead(), []);
+
   const clearImportFeedback = (): void => {
+    invalidateRead();
     setImportState({});
   };
 
   const handleImportFileSelected = (file: File): void => {
+    clearImportFeedback();
     const reader = new FileReader();
-    reader.onload = () => {
-      clearImportFeedback();
-      setImportJsonText(typeof reader.result === "string" ? reader.result : "");
-    };
-    reader.onerror = () => {
+    const fail = (): void => {
+      if (pendingRead.current?.reader !== reader) return;
+      invalidateRead();
       setImportState((current) => ({
         ...current,
         importJsonError: params.importJsonFileReadError
       }));
     };
-    reader.readAsText(file);
+    pendingRead.current = { reader, timer: setTimeout(fail, 15000) };
+    reader.onload = () => {
+      if (pendingRead.current?.reader !== reader) return;
+      const text = typeof reader.result === "string" ? reader.result : "";
+      invalidateRead();
+      setImportState({});
+      setImportJsonText(text);
+    };
+    reader.onerror = reader.onabort = fail;
+    try {
+      reader.readAsText(file);
+    } catch {
+      fail();
+    }
   };
 
   const handleImportTextChange = (value: string): void => {

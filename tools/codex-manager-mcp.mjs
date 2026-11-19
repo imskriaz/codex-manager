@@ -323,6 +323,14 @@ async function tool(name, args, signal) {
       if (response.isError) return response;
       result = JSON.parse(response.content[0].text); state = result.payload?.workspaceBrowser;
     }
+    if (surface && state?.fileDownload) {
+      const delivery = await action({ action: 'workspacePanel', payload: { projectPath: args.projectPath, targetDeviceId: args.targetDeviceId,
+        panelRequest: { operation: 'download', surfaceId: args.surfaceId, sessionId: surface.sessionId, fileDownload: state.fileDownload } } }, signal);
+      if (delivery.isError) return failure('The file was fetched, but download delivery to the selected viewer was not confirmed. Do not repeat the website action. ' + delivery.content[0].text);
+      state.downloadDelivery = 'Download started in the selected viewer.';
+      delete state.fileDownload;
+      response = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
     if (state?.image || state?.feedbackImage) {
       const image = state.image || state.feedbackImage;
       delete state.feedbackImage;

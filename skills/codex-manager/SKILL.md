@@ -62,6 +62,9 @@ visible tab, read the exact surface and select the existing page before continui
 the audit. Do not claim the user can see a page until that surface acknowledges it.
 AI interactions display a pointer in the shared preview; prefer selector-based
 click/hover/fill for an accurate target and use coordinate hover when needed.
+The last AI pointer stays visible between operations until the user takes control.
+Downloads requested with a verified surface are delivered to that viewer. If
+delivery is unconfirmed, inspect the outcome before repeating the website action.
 For existing user-opened pages, read the surface/browser list first. For terminal
 input, use the returned terminal ID and execution `targetDeviceId` with
 `manager_action`; preserve the terminal epoch, sequence and control lease.

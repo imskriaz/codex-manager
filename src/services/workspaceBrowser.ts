@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Page, Download } from "playwright-core";
 import {
   browserUrl,
   validateBrowserRequest,
@@ -90,7 +90,7 @@ async function state(project: string, pageId?: string, image = false): Promise<W
   const item = pageId ? session?.pages.get(pageId) : undefined;
   const revision = item?.revision;
   // Concurrent mirrors share the same in-flight capture; no old frame is cached.
-  const screenshot = image && item ? await (item.capture ??= item.page.screenshot({ type: "jpeg", quality: 65, timeout: 5000 }).finally(() => { item.capture = undefined; })) : undefined;
+  const screenshot = image && item ? await (item.capture ??= item.page.screenshot({ type: "jpeg", quality: 65, caret: 'initial', timeout: 5000 }).finally(() => { item.capture = undefined; })) : undefined;
   if (screenshot && screenshot.length > 2 * 1024 * 1024)
     throw new Error("Browser image exceeded 2 MiB. Reduce the viewport.");
   if (item && item.revision !== revision)
@@ -275,17 +275,9 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
       20_000,
       "The remote download did not start. Check the link and retry."
     );
-    const path = await waitWithin(download.path(), 5_000, "The remote download path was unavailable.");
-    if (!path) throw new Error("The remote download was not saved. Retry the link.");
-    const file = await readFile(path);
-    if (file.byteLength > 16 * 1024 * 1024) throw new Error("The remote download is larger than 16 MiB.");
     return {
       ...(await state(project, r.pageId)),
-      fileDownload: {
-        filename: download.suggestedFilename().replace(/[\\/:*?\"<>|\u0000-\u001f]/g, "_").slice(0, 180) || "download",
-        mimeType: "application/octet-stream",
-        data: file.toString("base64")
-      }
+      fileDownload: await browserDownload(download)
     };
   }
   if (r.operation === "feedback" || r.operation === 'updateFeedback') {
@@ -345,14 +337,14 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     return state(project);
   }
   if (['navigate', 'reload', 'back', 'forward', 'resize', 'scroll'].includes(r.operation)) item.agentPointer = undefined;
-  if (['click', 'hover', 'fill', 'select', 'press', 'type'].includes(r.operation)) {
+  if (['click', 'hover', 'fill', 'select', 'press', 'type', 'drag'].includes(r.operation)) {
     item.agentPointer = undefined;
     if (r.openedBy === 'ai') {
       let point = r.x !== undefined && r.y !== undefined ? { x: r.x, y: r.y } : undefined;
-      if (r.selector) {
-        const locator = page.locator(r.selector);
-        await locator.scrollIntoViewIfNeeded();
-        const rect = await locator.boundingBox();
+      if (r.selector || ['press', 'type'].includes(r.operation)) {
+        const locator = page.locator(r.selector ?? ':focus');
+        if (r.selector) await locator.scrollIntoViewIfNeeded();
+        const rect = r.selector || await locator.count() ? await locator.boundingBox() : null;
         if (rect) point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
       }
       if (point) {
@@ -361,6 +353,23 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
       }
     }
   }
+  let fileDownload: WorkspaceBrowserState['fileDownload'];
+  const interact = async (action: () => Promise<unknown>) => {
+    let download: Download | undefined;
+    let announce!: () => void;
+    const started = new Promise<void>(resolve => { announce = resolve; });
+    const capture = (value: Download) => { download = value; announce(); };
+    page.on('download', capture);
+    try {
+      await action();
+      // Native download events can arrive after the input acknowledgement.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([started, new Promise<void>(resolve => { timer = setTimeout(resolve, 500); })]);
+      clearTimeout(timer);
+      if (download) fileDownload = await browserDownload(download);
+    }
+    finally { page.off('download', capture); }
+  };
   if (r.operation === "navigate") await page.goto(browserUrl(r.url), { waitUntil: "domcontentloaded" });
   else if (r.operation === "reload") await page.reload({ waitUntil: "domcontentloaded" });
   else if (r.operation === "back") await page.goBack({ waitUntil: "domcontentloaded" });
@@ -406,7 +415,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     return { ...(await state(project, r.pageId)), value };
   } else if (r.operation === "scroll") await page.mouse.wheel(r.x ?? 0, r.y ?? 500);
   else if (r.operation === "type") await page.keyboard.insertText(r.text ?? "");
-  else if (r.operation === "press" && !r.selector) await page.keyboard.press(r.key ?? "Enter");
+  else if (r.operation === "press" && !r.selector) await interact(() => page.keyboard.press(r.key ?? "Enter"));
   else if (r.operation === 'drag') {
     const toX = r.params?.['toX'], toY = r.params?.['toY'];
     if (r.x === undefined || r.y === undefined || typeof toX !== 'number' || typeof toY !== 'number' || !Number.isFinite(toX) || !Number.isFinite(toY) || toX < 0 || toY < 0 || toX > 3840 || toY > 2160) throw new Error('Choose drag start coordinates and params.toX/toY in viewport pixels.');
@@ -414,23 +423,32 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     await page.mouse.down();
     try { await page.mouse.move(toX, toY, { steps: 8 }); }
     finally { await page.mouse.up(); }
+    if (r.openedBy === 'ai') item.agentPointer = { x: toX, y: toY, action: 'drag', updatedAt: Date.now() };
   }
   else if ((r.operation === "click" || r.operation === 'hover') && !r.selector) {
     if (r.x === undefined || r.y === undefined) throw new Error("Choose a selector or click coordinates.");
     if (r.operation === 'hover') await page.mouse.move(r.x, r.y);
-    else await page.mouse.click(r.x, r.y);
+    else await interact(() => page.mouse.click(r.x!, r.y!));
   } else {
     if (!r.selector) throw new Error("Choose a browser selector.");
     const locator = page.locator(r.selector);
-    if (r.operation === "click") await locator.click();
+    if (r.operation === "click") await interact(() => locator.click());
     else if (r.operation === "fill") await locator.fill(r.text ?? "");
-    else if (r.operation === "press") await locator.press(r.key ?? "Enter");
+    else if (r.operation === "press") await interact(() => locator.press(r.key ?? "Enter"));
     else if (r.operation === "hover") await locator.hover();
     else if (r.operation === "select") await locator.selectOption(r.text ?? "");
     else if (r.operation === "wait") await locator.waitFor({ state: "visible" });
   }
   item.revision = randomUUID();
-  return actionState(project, r.pageId!);
+  return { ...(await actionState(project, r.pageId!)), ...(fileDownload ? { fileDownload } : {}) };
+}
+
+async function browserDownload(download: Download): Promise<NonNullable<WorkspaceBrowserState['fileDownload']>> {
+  const path = await waitWithin(download.path(), 5000, 'The remote download path was unavailable. Check the browser before retrying.');
+  if (!path) throw new Error('The remote download was not saved.');
+  const file = await readFile(path);
+  if (file.byteLength > 16 * 1024 * 1024) throw new Error('The remote download is larger than 16 MiB.');
+  return { filename: download.suggestedFilename().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 180) || 'download', mimeType: 'application/octet-stream', data: file.toString('base64') };
 }
 
 async function debuggerFor(item: ManagedPage): Promise<BrowserDebugger> {

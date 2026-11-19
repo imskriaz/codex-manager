@@ -40,6 +40,7 @@ vi.mock("playwright-core", () => ({
               let closed = false;
               const page = {
                 on: (name: string, fn: any) => events.set(name, fn),
+                off: (name: string) => events.delete(name),
                 mainFrame: () => page,
                 url: () => url,
                 title: async () => "Development",
@@ -53,7 +54,7 @@ vi.mock("playwright-core", () => ({
                   closed = true;
                   events.get("close")?.();
                 }),
-                locator: () => ({ ariaSnapshot: async () => '- button "Save"', click: vi.fn(async () => undefined), hover: vi.fn(async () => undefined), scrollIntoViewIfNeeded: vi.fn(async () => undefined), boundingBox: async () => ({ x: 10, y: 20, width: 80, height: 40 }) }),
+                locator: () => ({ count: async () => 1, ariaSnapshot: async () => '- button "Save"', click: vi.fn(async () => undefined), hover: vi.fn(async () => undefined), scrollIntoViewIfNeeded: vi.fn(async () => undefined), boundingBox: async () => ({ x: 10, y: 20, width: 80, height: 40 }) }),
                 mouse: { click: vi.fn(async () => undefined), move: vi.fn(async () => undefined) },
                 keyboard: { insertText: vi.fn(async () => undefined) }
               };
@@ -245,10 +246,14 @@ it('shares only AI pointer coordinates and operation names, clears them on navig
   const hovered = await workspaceBrowser(project, { operation: 'hover', operationId: 'agent-hover', openedBy: 'ai', pageId: first.pageId, revision: first.revision, selector: 'button' });
   expect(hovered.agentPointer).toEqual({ x: 50, y: 40, action: 'hover', updatedAt: expect.any(Number) });
   expect((await workspaceBrowser(project, { operation: 'screenshot', pageId: first.pageId })).agentPointer).toEqual(hovered.agentPointer);
+  expect((await workspaceBrowser(project, { operation: 'screenshot', pageId: first.pageId })).agentActivity).toEqual(hovered.agentActivity);
+  const capturedPage = await m.contexts[0].newPage.mock.results[0].value;
+  expect(capturedPage.screenshot).toHaveBeenCalledWith(expect.objectContaining({ caret: 'initial' }));
   const moved = await workspaceBrowser(project, { operation: 'hover', operationId: 'coordinate-hover', openedBy: 'ai', pageId: first.pageId, revision: hovered.revision, x: 8, y: 9 });
   expect(moved.agentPointer).toMatchObject({ x: 8, y: 9, action: 'hover' });
   const human = await workspaceBrowser(project, { operation: 'click', operationId: 'human-click', pageId: first.pageId, revision: moved.revision, x: 2, y: 3 });
   expect(human.agentPointer).toBeUndefined();
+  expect(human.agentActivity).toBeUndefined();
   const agent = await workspaceBrowser(project, { operation: 'click', operationId: 'agent-click', openedBy: 'ai', pageId: first.pageId, revision: human.revision, x: 2, y: 3 });
   const nav = await workspaceBrowser(project, { operation: 'navigate', operationId: 'pointer-nav', pageId: first.pageId, revision: agent.revision, url: 'https://example.com/new' });
   expect(nav.agentPointer).toBeUndefined();

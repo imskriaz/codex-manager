@@ -26,8 +26,9 @@ let typedName = '';
 const server = createServer((_request, response) => {
   if (_request.url.startsWith('/name?')) { typedName = new URL(_request.url, 'http://fixture.test').searchParams.get('value'); response.statusCode = 204; response.end(); return; }
   if (_request.url === '/api/data') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ ok: true })); return; }
+  if (_request.url === '/file') { response.setHeader('Content-Disposition', 'attachment; filename="viewer-test.txt"'); response.end('Viewer download verified'); return; }
   response.setHeader('Content-Type', 'text/html');
-  response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name" autocomplete="username" oninput="fetch(\'/name?value=\'+encodeURIComponent(this.value))"><input type="password" aria-label="Password" oninput="console.log(this.value)">');
+  response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name" autocomplete="username" oninput="fetch(\'/name?value=\'+encodeURIComponent(this.value))"><input type="password" aria-label="Password" oninput="console.log(this.value)"><a id="fixture-download" href="/file" download>Download</a>');
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
@@ -106,6 +107,8 @@ try {
   await debugCommand({ operation:'reload' });
   console.log('Encrypted credential persistence, real field fill, locking and diagnostic redaction passed.');
   console.log('Real HTML/CSS, JS modification/injection, console/events, network response body/interception, storage/cookies passed.');
+  const remoteDownload = await debugCommand({operation:'click',selector:'#fixture-download'});
+  assert.equal(Buffer.from(remoteDownload.fileDownload.data,'base64').toString(),'Viewer download verified');
   const frontend = await build({ stdin: { contents: `
     import { render } from 'preact';
     import Browser from './webview-src/dashboard/workspaceBrowser';
@@ -126,7 +129,8 @@ try {
     try {
       if (rejectSave && message.payload.browserRequest.operation === 'feedback') throw new Error('Fixture storage full');
       if (message.payload.browserRequest.operation === 'evaluate') { evaluationCount++; if (rejectEvaluate) throw new Error('Evaluation outcome is unknown. Check state before retrying.'); }
-      return { type: 'dashboard:action-result', requestId: message.requestId, status: 'completed', payload: { workspaceBrowser: await workspaceBrowser(root, message.payload.browserRequest) } };
+      const browserState = await workspaceBrowser(root, message.payload.browserRequest);
+      return { type: 'dashboard:action-result', requestId: message.requestId, status: 'completed', payload: { workspaceBrowser: browserState } };
     } catch (error) { return { type: 'dashboard:action-result', requestId: message.requestId, status: 'failed', error: error.message }; }
   });
   await ui.addInitScript(() => { window.acquireVsCodeApi = () => ({ postMessage: message => { void window.browserAction(message).then(reply => window.postMessage(reply, '*')); } }); });
@@ -142,6 +146,14 @@ try {
   await ui.getByRole('menuitemcheckbox', { name: 'Browser inspector', exact: true }).click();
   const inspector = ui.getByRole('complementary', { name: 'Browser inspector', exact: true });
   await inspector.waitFor();
+  const assertRightActions = async () => {
+    const misplaced = await inspector.locator('.workspace-browser-pane-actions').evaluateAll(groups => groups.filter(group => {
+      const bounds = group.getBoundingClientRect(), parent = group.parentElement.getBoundingClientRect();
+      return bounds.width && bounds.right < parent.right - 8;
+    }).map(group => group.parentElement.outerHTML.slice(0, 200)));
+    assert.deepEqual(misplaced, [], 'Inspector action groups stay at the right edge');
+  };
+  await assertRightActions();
   assert.equal(await inspector.evaluate(element => getComputedStyle(element).position), 'static', 'Browser Inspector stays in the workspace layout');
   const previewBounds = await ui.locator('.workspace-browser-preview').boundingBox();
   const inspectorBounds = await inspector.boundingBox();
@@ -162,6 +174,13 @@ try {
   assert.ok(await ui.locator('.workspace-browser-content.dock-right').count());
   const toolStrip = ui.locator('.workspace-browser-address .workspace-browser-inspector-tools');
   await toolStrip.waitFor();
+  const downloadRect = (await workspaceBrowser(root, { operation:'styles',pageId:opened.pageId,selector:'#fixture-download' })).value.rect;
+  const downloadPreview = ui.locator('.workspace-browser-preview > svg'), downloadBounds = await downloadPreview.boundingBox();
+  const deliveredDownload = ui.waitForEvent('download');
+  await downloadPreview.click({position:{x:(downloadRect.x+downloadRect.width/2)/1280*downloadBounds.width,y:(downloadRect.y+downloadRect.height/2)/800*downloadBounds.height}});
+  const delivered = await deliveredDownload;
+  assert.equal(delivered.suggestedFilename(),'viewer-test.txt');
+  assert.equal(await readFile(await delivered.path(),'utf8'),'Viewer download verified','A page-link download reaches the viewer filesystem');
   assert.equal(await toolStrip.getByRole('button').count(), 4, 'Only control/selector, pointer, rectangle and freehand remain');
   assert.ok(await toolStrip.getByRole('button', { name: 'Control page / select element', exact: true }).count());
   for (const name of ['Inspect page elements', 'Type', 'Press Enter', 'Scroll up', 'Scroll down', 'Comments', 'Show AI cursor', 'Hide marks', 'Show marks', 'comment']) assert.equal(await ui.getByRole('button', { name, exact: true }).count(), 0, `${name} has no redundant toolbar control`);
@@ -179,7 +198,8 @@ try {
   const animation = await ui.locator('.workspace-browser-agent-ripple').evaluate(element => getComputedStyle(element).animationName);
   assert.equal(animation, 'workspace-agent-ripple', 'AI operations display an animated pointer');
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-agent-pointer.png') });
-  await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor({ state: 'hidden' });
+  await ui.waitForTimeout(5000);
+  assert.ok(await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).isVisible(), 'The last AI pointer stays visible between operations');
   const field = (await workspaceBrowser(root, { operation: 'styles', pageId: opened.pageId, selector: 'input[aria-label="Name"]' })).value.rect;
   const inputPreview = ui.locator('.workspace-browser-preview > svg');
   const inputBounds = await inputPreview.boundingBox();
@@ -197,20 +217,34 @@ try {
   await ui.getByRole('button', { name:'Browser menu',exact:true }).click(); await ui.getByRole('menuitem', { name:/Reset zoom/ }).click();
   assert.equal(await ui.locator('.workspace-browser-stage').getAttribute('data-zoomed'),'false');
   await ui.getByRole('button', { name:'Browser menu',exact:true }).click(); await ui.getByRole('menuitem', { name:'Credentials',exact:true }).click();
-  const credentials = ui.getByRole('region', { name:'Credential manager',exact:true });
+  const credentials = ui.getByRole('dialog', { name:'Credentials',exact:true });
   await credentials.getByLabel('Vault master password', { exact:true }).fill('fixture-master-password');
   await credentials.getByRole('button', { name:'Unlock vault',exact:true }).click();
-  await credentials.getByRole('button', { name:'Fill Fixture login',exact:true }).waitFor();
+  try { await credentials.getByRole('button', { name:'Fill Fixture login',exact:true }).waitFor(); }
+  catch (error) { console.log('Credential panel outcome:',await credentials.innerText()); throw error; }
+  await credentials.getByRole('button', { name:'Add login',exact:true }).click();
+  const loginEditor = ui.getByRole('dialog', {name:'Add login',exact:true});
+  await loginEditor.getByLabel('Login name', {exact:true}).fill('Temporary login');
+  await loginEditor.getByLabel('Login username', {exact:true}).fill('temporary');
+  await loginEditor.getByLabel('Login password', {exact:true}).fill('Temporary-test-password!');
+  await loginEditor.getByRole('button', {name:'Save login',exact:true}).click();
+  await credentials.getByRole('button', {name:'Edit Temporary login',exact:true}).click();
+  const editLogin = ui.getByRole('dialog', {name:'Edit login',exact:true});
+  assert.equal(await editLogin.getByLabel('Login password', {exact:true}).inputValue(), '', 'Editing never returns the saved password to the UI');
+  await editLogin.getByLabel('Login name', {exact:true}).fill('Edited login');
+  await editLogin.getByRole('button', {name:'Save login',exact:true}).click();
+  await credentials.getByRole('button', {name:'Delete Edited login',exact:true}).click();
   await credentials.getByRole('button', { name:'Fill Fixture login',exact:true }).click();
   await credentials.getByRole('status').filter({hasText:'Login filled'}).waitFor();
   await credentials.getByRole('button', { name:'Lock vault',exact:true }).click();
   await credentials.getByRole('button', { name:'Unlock vault',exact:true }).waitFor();
   await credentials.getByRole('button', { name:'Close credential manager',exact:true }).click();
   assert.equal(await ui.locator('body > [role="alert"]').count(),0,'Browser actions use inline feedback instead of global toasts');
-  for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory', 'Comments']) {
+  for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
+    await assertRightActions();
     if (name === 'Network') {
       const heights = await inspector.locator('table tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
       assert.ok(heights.every(height => height <= 22), 'Network rows remain a single compact line even when cells contain buttons');
@@ -223,11 +257,21 @@ try {
       await inspector.locator('.workspace-browser-storage-data table tbody tr').first().waitFor();
       const rows = await inspector.locator('.workspace-browser-storage-data table tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
       assert.ok(rows.every(height => height <= 23), 'Long cookie values never create wrapped rows');
+      const cookie = inspector.locator('.workspace-browser-storage-data table tbody tr').first();
+      await cookie.click();
+      const details = inspector.getByRole('region', { name: 'Storage entry details', exact: true });
+      await details.waitFor();
+      assert.ok((await details.boundingBox()).y > (await cookie.boundingBox()).y, 'Selected cookie details open below the table');
+      await assertRightActions();
+      await details.getByRole('button', { name: 'Close storage details', exact: true }).click();
+      await details.waitFor({state:'hidden'});
+      await cookie.focus(); await ui.keyboard.press('Enter'); await details.waitFor();
       await ui.locator('.workspace-browser').screenshot({ path:path.resolve('output/browser-storage-compact.png') });
       for (const section of ['IndexedDB', 'Cache storage', 'Service workers']) {
         await inspector.getByRole('button', { name: section, exact: true }).click();
         assert.equal(await inspector.locator('.workspace-browser-storage-data table').count(), 1, `${section} uses a table`);
         assert.equal(await inspector.locator('.workspace-browser-storage-data > pre').count(), 0);
+        await details.waitFor({state:'hidden'});
       }
     }
   }
@@ -277,6 +321,17 @@ try {
   if (await dismissMessage.isVisible()) await dismissMessage.click();
   await inspector.getByRole('tab', { name: 'Elements', exact: true }).click();
   await inspector.getByRole('tree', { name: 'Page elements', exact: true }).waitFor();
+  const cssRule = inspector.locator('.workspace-browser-style-rule pre').first();
+  await cssRule.waitFor(); await cssRule.dblclick();
+  const cssEditor = inspector.getByRole('textbox',{name:'CSS declarations',exact:true});
+  await cssEditor.fill('color: rgb(18, 52, 86);'); await cssEditor.press('Enter');
+  await cssEditor.waitFor({state:'hidden'});
+  const cssSelector = await inspector.locator('.workspace-browser-breadcrumb').innerText();
+  assert.equal((await workspaceBrowser(root,{operation:'styles',pageId:opened.pageId,selector:cssSelector})).value.styles.color,'rgb(18, 52, 86)','Double-click CSS edits change the actual selected element');
+  await cssRule.dblclick(); await cssEditor.fill('invalid-css'); await cssEditor.press('Enter');
+  await inspector.getByRole('alert').filter({hasText:'valid CSS'}).waitFor();
+  assert.equal(await cssEditor.inputValue(),'invalid-css','Invalid CSS keeps the editor draft');
+  await cssEditor.press('Escape'); await cssEditor.waitFor({state:'hidden'});
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-desktop.png') });
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-menu.png') });
   await ui.getByRole('button', { name: 'area', exact: true }).click();
@@ -287,7 +342,10 @@ try {
   await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).fill('Improve this layout');
   assert.equal(await preview.locator('.workspace-browser-draft-mark rect').count(), 1, 'Keyboard selection must create the current area mark.');
   const comment = ui.getByRole('dialog', { name: 'Comment on mark', exact: true });
-  const commentBefore = await comment.boundingBox(), commentHeader = await comment.locator('header strong').boundingBox();
+  assert.equal(await comment.getByRole('textbox').count(),1,'The comment composer contains only the feedback field');
+  assert.equal(await comment.getByRole('button').count(),1,'Only the embedded send action remains');
+  assert.equal(await comment.locator('header,input').count(),0,'The title, reference URL and Cancel control are removed');
+  const commentBefore = await comment.boundingBox(), commentHeader = {x:commentBefore.x-8,y:commentBefore.y-6};
   await ui.mouse.move(commentHeader.x + 10, commentHeader.y + 8); await ui.mouse.down(); await ui.mouse.move(commentHeader.x + 10, commentHeader.y + 150, { steps: 5 }); await ui.mouse.up();
   assert.ok((await comment.boundingBox()).y > commentBefore.y + 80, 'Comment box can be repositioned by dragging its header');
   const oldRect = await preview.locator('.workspace-browser-draft-mark rect').boundingBox();
@@ -299,6 +357,8 @@ try {
   assert.ok((await preview.locator('.workspace-browser-draft-mark rect').boundingBox()).x > rectBeforeMove.x + 25, 'A rectangle can be dragged to a new position');
   await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).focus(); await ui.keyboard.press('Escape');
   await comment.waitFor({ state:'hidden' });
+  await ui.getByRole('button',{name:'area',exact:true}).click(); await preview.focus(); await ui.keyboard.press('Enter'); await comment.waitFor();
+  await ui.getByRole('textbox',{name:'Browser URL',exact:true}).click(); await comment.waitFor({state:'hidden'});
   assert.equal(await ui.getByRole('button', { name:'area',exact:true }).getAttribute('aria-pressed'),'false','Escape cancels the selected tool and current mark');
   await ui.getByRole('button', { name:'area',exact:true }).click(); await ui.getByRole('button', { name:'area',exact:true }).click();
   assert.equal(await ui.getByRole('button', { name:'area',exact:true }).getAttribute('aria-pressed'),'false','Clicking an active tool returns to page control');
@@ -315,16 +375,18 @@ try {
   try { await ui.getByRole('dialog', { name: 'Comment on mark', exact: true }).waitFor({ state: 'detached' }); }
   catch (error) { console.log('Feedback recovery notices:', await ui.getByRole('alert').allTextContents()); throw error; }
   console.log('Storage failure preserves the draft; saving after recovery passed.');
-  await inspector.getByRole('tab', { name: 'Comments', exact: true }).click();
+  await ui.getByRole('button',{name:'Browser menu',exact:true}).click(); await ui.getByRole('menuitem',{name:'Comments',exact:true}).click();
   const note = ui.getByRole('table', { name:'Comments',exact:true }).locator('tbody tr').filter({ hasText: 'Improve this layout' });
   await note.getByRole('button', { name: 'Add to instruction' }).click();
   await ui.waitForFunction(() => document.querySelector('#instruction').value.includes('Improve this layout') && document.querySelector('#instruction-image').src.startsWith('data:image/jpeg'));
-  console.log('Marked feedback screenshot added to the instruction composer.');
+  console.log('Marked feedback screenshot added to the instruction composer.'); await ui.getByRole('button',{name:'Close comments',exact:true}).click();
+  const beforeAdd = (await workspaceBrowser(root,{operation:'list'})).pages;
+  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
   await ui.locator('#add-browser').click();
-  await ui.waitForFunction(() => document.querySelector('#page-count').textContent === '3');
+  await ui.waitForFunction(count => Number(document.querySelector('#page-count').textContent) === count,beforeAdd.length+1);
   await ui.locator('#add-browser').click();
-  await ui.waitForFunction(() => document.querySelector('#page-count').textContent === '4');
-  assert.equal((await workspaceBrowser(root, { operation: 'list' })).pages.filter(page => page.url === 'about:blank').length, 2, 'Repeated Browser actions open separate blank pages');
+  await ui.waitForFunction(count => Number(document.querySelector('#page-count').textContent) === count,beforeAdd.length+2);
+  assert.equal((await workspaceBrowser(root, { operation: 'list' })).pages.filter(page => page.url === 'about:blank').length, beforeAdd.filter(page=>page.url === 'about:blank').length+2, 'Each Browser action adds exactly one blank page');
   console.log('Repeated Browser add actions create separate pages.');
   assert.deepEqual(errors, []);
   const artifacts = path.resolve('output/browser-check'); await mkdir(artifacts, { recursive: true });
