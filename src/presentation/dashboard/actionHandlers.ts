@@ -1,3 +1,4 @@
+import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
@@ -121,6 +122,7 @@ import { homedir } from "node:os";
 import { readApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
+  "enableSystemStartup",
   "addAccount",
   "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
@@ -414,6 +416,10 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case 'enableSystemStartup':
+      await new AlwaysOnlineServer(ctx.context).enableSystemStartup();
+      ctx.schedulePublishState();
+      return { notice: { level: 'info', message: 'Windows boot startup verified and enabled.' } };
     case 'workspaceBrowser':
       return { workspaceBrowser: await workspaceBrowser(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.browserRequest) };
     case "setCrossPcSyncEnabled": {

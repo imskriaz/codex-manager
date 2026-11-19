@@ -16,6 +16,7 @@ import { checkSteerUi } from './check-steer-ui.mjs';
 import { checkSendRecoveryUi } from './check-send-recovery-ui.mjs';
 import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
+import { checkSystemStartupUi } from './check-system-startup-ui.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
 import { mkdir, readFile } from "node:fs/promises";
@@ -100,6 +101,7 @@ if(process.argv.includes('--docs'))prepareDocsSnapshot(snapshot,sessions,message
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "danger-full-access" };
 const mockHost = `(() => {
   const state = ${JSON.stringify(snapshot)};
+  if(window.__startupFixture) Object.assign(state.settings,{alwaysActive:false,alwaysActiveStartWithSystem:false});
   if(window.__historyFixture) state.usageSummary={revision:1,count:3};
   const sessions = ${JSON.stringify(sessions)};
   const messages = ${JSON.stringify(messages)};
@@ -164,6 +166,7 @@ const mockHost = `(() => {
         dispatch({type:'dashboard:snapshot',state});
         window.__uiSettingResults.push({key:message.key,value:message.value});
       } else if(message.type === 'dashboard:action') {
+        if(window.__startupFixture && message.action==='enableSystemStartup') {window.__startupRequest=message;return;}
         if(window.__holdMetadata && ['setAccountQueuePriority','setAccountTags'].includes(message.action)) { window.__heldMetadata = message; return; }
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
@@ -665,6 +668,7 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    if(process.argv.includes('--system-startup')) await page.addInitScript(()=>{window.__startupFixture=true;});
     const fixtureGoto = page.goto.bind(page);
     page.goto = async (url, options) => {
       const response = await fixtureGoto(url, {waitUntil:'domcontentloaded',...options});
@@ -701,6 +705,13 @@ try {
       await context.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
       await context.route(`${origin}/**`, route => route.request().isNavigationRequest()
         ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
+    if (process.argv.includes('--system-startup')) {
+      const started = performance.now();
+      await checkSystemStartupUi(page, { origin, width, output });
+      assert.deepEqual(errors, [], 'Startup setup has no browser runtime errors');
+      results.push({ width, height, readyMs: Math.round(performance.now() - started), checks: 'Independent startup, cancellation, verification failure, timeout, stale result, verified success' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--recovery-toasts')) {
       await checkRecoveryToastUi(page, { origin, parentId, width, output });

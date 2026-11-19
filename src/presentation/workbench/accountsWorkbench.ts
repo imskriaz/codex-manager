@@ -12,6 +12,7 @@ import { registerAutoRefreshScheduler, registerTokenRefreshScheduler } from "./s
 import { EncryptedSyncManager } from "../../services/encryptedSync";
 import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
+import { startHostLifecycle, recordHostLifecycle } from '../../services/hostLifecycle';
 import { waitWithin } from "../../utils/concurrency";
 import { registerQuotaRecoveryAutoResume } from "../../services/quotaRecoveryAutoResume";
 import { registerStandaloneCapacityRetry } from '../../services/standaloneCapacityRetry';
@@ -145,6 +146,7 @@ export class AccountsWorkbench {
     );
 
     registerDebugOutput(this.context);
+    void startHostLifecycle(this.context, 'vscode').catch(error => console.warn('[codexManager] host close tracking could not initialize', error));
     initAutoSwitchRuntimeState(this.context);
     const completedAutoSwitchNotice = consumeAutoSwitchNotice();
     if (completedAutoSwitchNotice) {
@@ -347,6 +349,7 @@ export class AccountsWorkbench {
 
   async shutdown(): Promise<void> {
     if (this.disposed) return;
+    void recordHostLifecycle(this.context, 'closing').catch(error => console.warn('[codexManager] shutdown start could not be recorded', error));
     const handoffDeadline = Date.now() + 3_000;
     const handoff = this.alwaysOnlineServer.prepareForShutdown().catch(error => {
       console.error("[codexManager] shutdown background preparation failed", error);
@@ -370,15 +373,25 @@ export class AccountsWorkbench {
       }
     }
     this.encryptedSync.shutdown();
-    try { await waitWithin(this.repo.flush(), 1500, "Final account save did not finish before shutdown."); }
+    let accountsSaved = false;
+    let dashboardStopped = false;
+    try {
+      await waitWithin(this.repo.flush(), 1500, "Final account save did not finish before shutdown.");
+      accountsSaved = true;
+    }
     finally {
       // Context subscriptions are disposed after deactivate closes SQLite.
       try {
         await waitWithin(handoff, Math.max(1, handoffDeadline - Date.now()), "Background host preparation did not finish before shutdown.").catch(error => console.error("[codexManager] shutdown background preparation unconfirmed", error));
         this.alwaysOnlineServer.dispose();
         await this.webDashboard.stop();
+        dashboardStopped = true;
       }
-      finally { this.dispose(); }
+      finally {
+        this.dispose();
+        await waitWithin(recordHostLifecycle(this.context, accountsSaved && dashboardStopped ? 'closed' : 'failed'), 500, 'Shutdown completion log was not confirmed.')
+          .catch(error => console.warn('[codexManager] shutdown completion could not be recorded', error));
+      }
     }
   }
 

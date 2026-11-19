@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6-pre.100
+
+- Require the Start with system setup dialog to register and verify Windows boot startup before enabling it; report permission errors and unconfirmed timeouts in the dialog. Confirm task removal before switching startup off.
+- Record VS Code and standalone shutdown progress, handoff, completion, and failures. Detect unconfirmed closes on the next startup without flagging other running windows.
+- Keep test startup traces in disposable storage instead of the user's diagnostic log.
+
 ## 2.0.6-pre.99
 
 - Separate Always Active (keep running after VS Code closes) from Start with system (Windows boot). Boot-task failures report their error without blocking the shutdown handoff; no sign-in fallback replaces Windows boot.

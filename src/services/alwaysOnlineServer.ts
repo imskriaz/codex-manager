@@ -10,6 +10,10 @@ import type { EncryptedSyncManager } from "./encryptedSync";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { runCrossWindowExclusive, CrossWindowOperationBusyError } from '../utils/crossWindowOperations';
+import { recordHostLifecycle } from './hostLifecycle';
+
+const STARTUP_OPERATION = 'host:windows-startup';
 
 /** Reuses the normal dashboard port; the detached relay takes over when the
  * VS Code-managed server releases it. */
@@ -101,6 +105,14 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
   isWaitingForConfiguration(): boolean {
     return this.waitingForConfiguration;
+  }
+
+  async enableSystemStartup(): Promise<void> {
+    if (process.platform !== 'win32') throw new Error('Start with system currently requires Windows.');
+    if (!getCodexManagerConfiguration().get<boolean>('webDashboardEnabled', true)) throw new Error('Enable Web Dashboard before setting up Windows startup.');
+    await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+      await this.prepareRelay(await this.getLocalHostKey(true), true);
+    });
   }
 
   async prepareForShutdown(): Promise<void> {
@@ -216,9 +228,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     return JSON.stringify([this.configurationKey(), getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false)]);
   }
 
-  private async getLocalHostKey(): Promise<string | undefined> {
+  private async getLocalHostKey(requested = false): Promise<string | undefined> {
     const config = getCodexManagerConfiguration();
-    if (!config.get<boolean>("alwaysActive", false) && !config.get<boolean>("alwaysActiveStartWithSystem", false)) return undefined;
+    if (!requested && !config.get<boolean>("alwaysActive", false) && !config.get<boolean>("alwaysActiveStartWithSystem", false)) return undefined;
     let key = await this.context.secrets.get(LOCAL_HOST_KEY_SECRET);
     if (!key) {
       key = crypto.randomBytes(32).toString("base64url");
@@ -227,7 +239,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     return key;
   }
 
-  private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {
+  private async prepareRelay(preparedHostKey?: string, enableStartup = false): Promise<PreparedRelay> {
     const hostKey = preparedHostKey ?? (await this.encryptedSync?.getRealtimeRelayKey());
     if (!hostKey) {
       throw new Error("Configure the shared dashboard password and enable WS Cross System before starting the relay.");
@@ -265,7 +277,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       }
     }
     const settings = getCodexManagerConfiguration();
-    const mode: "relay" | "node" = settings.get<boolean>("alwaysActive", false) || settings.get<boolean>("alwaysActiveStartWithSystem", false) ? "node" : "relay";
+    const mode: "relay" | "node" = enableStartup || settings.get<boolean>("alwaysActive", false) || settings.get<boolean>("alwaysActiveStartWithSystem", false) ? "node" : "relay";
     const { configPath, scriptTarget, launchArgs } = await this.prepareRelayFiles(mode, storage);
     const executable = await resolveNodeExecutable();
     const prepared: PreparedRelay = {
@@ -300,14 +312,25 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     // prepared host first so a slow or unavailable scheduler cannot prevent
     // the normal VS Code shutdown handoff.
     this.preparedRelay = prepared;
-    const startWithSystem = getCodexManagerConfiguration().get<boolean>("alwaysActiveStartWithSystem", false);
+    let startWithSystem = enableStartup;
     try {
-      await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
+      await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+        const config = getCodexManagerConfiguration();
+        startWithSystem = enableStartup || config.get<boolean>('alwaysActiveStartWithSystem', false);
+        await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
+        if (enableStartup) await config.update('alwaysActiveStartWithSystem', true, vscode.ConfigurationTarget.Global);
+      }, { background: !enableStartup });
       this.startupWarning = undefined;
       recordPersistentEvent("info", "node-host", startWithSystem ? "Windows boot startup task registered" : "Windows boot startup task removed", {
         configPath, scriptTarget, executable, startWithSystem
       });
     } catch (error) {
+      if (enableStartup) throw error;
+      if (error instanceof CrossWindowOperationBusyError) return prepared;
+      if (startWithSystem) {
+        try { await getCodexManagerConfiguration().update('alwaysActiveStartWithSystem', false, vscode.ConfigurationTarget.Global); }
+        catch (updateError) { recordPersistentEvent('error', 'node-host', 'Failed to reset unverified Windows startup setting', undefined, updateError); }
+      }
       recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
         configPath, scriptTarget, executable, startWithSystem
       }, error);
@@ -333,6 +356,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       }
     });
     recordPersistentEvent("info", "node-host", "Background host handoff requested", { mode: prepared.mode, pid: this.child.pid, executable: node });
+    void recordHostLifecycle(this.context, 'handoff-requested').catch(error => console.warn('[codexManager] handoff close marker could not be saved', error));
     this.child.on("error", (error) => {
       this.childLaunchError = error;
       console.warn("[codexManager] detached relay could not launch", error);
@@ -474,7 +498,9 @@ function requestShutdown(port: number, token: string): Promise<void> {
 }
 
 async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<void> {
-  await removeRelayStartup();
+  await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+    if (!getCodexManagerConfiguration().get<boolean>('alwaysActiveStartWithSystem', false)) await removeRelayStartup();
+  }, { background: true });
   void context;
 }
 

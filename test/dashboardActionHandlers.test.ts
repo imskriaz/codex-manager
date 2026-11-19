@@ -1,4 +1,5 @@
 import * as proxyMapping from "../src/services/aiProxyModelMapping";
+import { AlwaysOnlineServer } from '../src/services/alwaysOnlineServer';
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -96,6 +97,19 @@ beforeEach(() => {
 });
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it('reports startup verification success or the original error without waiting for account saves', async () => {
+  const ctx = createContext();
+  const flush = vi.fn(() => new Promise<void>(() => undefined));
+  ctx.repo = { flush } as never;
+  const enable = vi.spyOn(AlwaysOnlineServer.prototype, 'enableSystemStartup').mockResolvedValue(undefined);
+  const request = { type: 'dashboard:action', action: 'enableSystemStartup', requestId: 'verify-startup' } as const;
+  expect(await executeDashboardActionMessage(ctx, request)).toMatchObject({status:'completed',payload:{notice:{message:'Windows boot startup verified and enabled.'}}});
+  expect(ctx.schedulePublishState).toHaveBeenCalled();
+  enable.mockRejectedValueOnce(new Error('Access is denied'));
+  expect(await executeDashboardActionMessage(ctx, {...request,requestId:'verify-denied'})).toMatchObject({status:'failed',errorMessage:expect.stringContaining('Access is denied')});
+  expect(flush).not.toHaveBeenCalled();
+});
 
 afterAll(async () => {
   await removeTestDirectory(operationDirectory);

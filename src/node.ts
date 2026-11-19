@@ -16,6 +16,7 @@ import { disposeSessionRecording } from "./services/sessionRecording";
 import { EncryptedSyncManager } from "./services/encryptedSync";
 import { getCodexManagerConfiguration } from "./infrastructure/config/extensionSettings";
 import { initializeCodexProxyEnvironment, disposeCodexProxyEnvironment } from "./infrastructure/config/proxyEnvironment";
+import { startHostLifecycle, recordHostLifecycle } from './services/hostLifecycle';
 
 function createMemento(): vscode.Memento {
   const values = new Map<string, unknown>();
@@ -53,6 +54,7 @@ export async function startNodeHost(): Promise<void> {
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => closing ??= (async () => {
     recordPersistentEvent("info", "node-host", "Standalone shutdown started", { pid: process.pid });
+    void recordHostLifecycle(context, 'closing').catch(error => console.warn('[codexManager] standalone shutdown start could not be recorded', error));
     dashboard.prepareForShutdown();
     cancelCodexSessionAutoResume("Standalone is shutting down.");
     if (ownsDashboard) {
@@ -76,15 +78,23 @@ export async function startNodeHost(): Promise<void> {
       try { if (readSqliteStateFile(pidFile) === String(process.pid)) deleteSqliteStateFile(pidFile); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
+    await waitWithin(recordHostLifecycle(context, 'closed'), 500, 'Standalone shutdown completion log was not confirmed.')
+      .catch(error => console.warn('[codexManager] standalone shutdown completion could not be recorded', error));
     await disposePersistentLogging(true);
     getSqliteStateStore()?.close();
-  })();
+  })().catch(async error => {
+    await waitWithin(recordHostLifecycle(context, 'failed', error), 500, 'Standalone shutdown failure log was not confirmed.')
+      .catch(logError => console.warn('[codexManager] standalone shutdown failure could not be recorded', logError));
+    await waitWithin(disposePersistentLogging(true), 500, 'Standalone failure logs did not finish saving.').catch(() => undefined);
+    throw error;
+  });
   const exit = (): void => { void shutdown().then(() => process.exit(0), error => { console.error("[codexManager] Node shutdown failed", error); process.exit(1); }); };
   process.once("SIGINT", exit);
   process.once("SIGTERM", exit);
   try {
     await waitWithin(registerPersistentLogging(context), 2_000, "Standalone diagnostics initialization timed out.").catch(error => console.warn("[codexManager] standalone diagnostics unavailable", error));
     recordPersistentEvent("info", "node-host", "Standalone startup started", { pid: process.pid });
+    void startHostLifecycle(context, 'node').catch(error => console.warn('[codexManager] standalone close tracking could not initialize', error));
     await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
     await initializeCodexProxyEnvironment().catch(error => console.warn("[codexManager] standalone provider connection settings failed:", error));
     await repo.init();

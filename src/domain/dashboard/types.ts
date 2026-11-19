@@ -533,6 +533,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "enableSystemStartup"
   | "workspaceBrowser"
   | "browseWorkspaceFolders"
   | "createWorkspaceProject"

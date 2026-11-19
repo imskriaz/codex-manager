@@ -22,6 +22,7 @@ import { clampWebviewZoom } from "./webviewZoom";
 
 import { BrowserNotifications } from "./browserNotifications";
 import { MaintenanceTools } from "./maintenanceTools";
+import { SystemStartupSetting } from './systemStartupSetup';
 import type { SendAction } from "./hookTypes";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
@@ -337,11 +338,12 @@ export function SettingsOverlay(props: {
                           : "Enable Web Dashboard for this host to stay active."}
                       </div>
                     </SettingsToggleBlock>
-                    <SettingsToggleBlock
-                      title="Start with system"
-                      sub="Start the local host when Windows boots, before sign-in. Requires administrator permission to register."
+                    <SystemStartupSetting
                       enabled={props.settings.alwaysActiveStartWithSystem === true}
-                      onToggle={(enabled) => patchAndSend("alwaysActiveStartWithSystem", enabled)}
+                      connected={props.connected !== false && props.targetConnected !== false} parentOpen={props.open}
+                      targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
+                      onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
+                      onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
                     />
                     <SettingsToggleBlock
                       title="Dashboard API"

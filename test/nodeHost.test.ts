@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { removeTestDirectory } from './testFilesystem';
 
 const host = vi.hoisted(() => ({
   start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
@@ -21,19 +25,23 @@ vi.mock("../src/services/sessionRecording", () => ({ disposeSessionRecording: ho
 import { startNodeHost } from "../src/node";
 
 let signals: Set<(...args: any[]) => void>;
-beforeEach(() => {
+let storageRoot: string;
+beforeEach(async () => {
   vi.resetAllMocks();
+  storageRoot = await mkdtemp(join(tmpdir(), 'manager-node-host-'));
+  vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT', storageRoot);
   signals = new Set([...process.listeners("SIGINT"), ...process.listeners("SIGTERM")]);
   vi.stubEnv("CODEX_MANAGER_PID_FILE", "always-online-relay.pid");
   host.readPid.mockReturnValue(String(process.pid));
   vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
-afterEach(() => {
+afterEach(async () => {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     for (const listener of process.listeners(signal)) if (!signals.has(listener)) process.removeListener(signal, listener);
   }
   vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks();
+  await removeTestDirectory(storageRoot);
 });
 
 it("waits for VS Code's port release, writes the SQLite PID only after bind, and shuts down once", async () => {
@@ -108,4 +116,17 @@ it.each(['failed', 'timeout'] as const)('retains earlier recovery and completes 
   expect(host.log).toHaveBeenCalledWith('warning', 'node-host', expect.stringContaining('previous snapshot retained'), undefined, expect.any(Error));
   expect(host.captureRecovery).toHaveBeenCalledOnce();
   expect(host.close).toHaveBeenCalledOnce();
+});
+
+it('records a shutdown failure with the original error and exits unsuccessfully', async () => {
+  vi.useFakeTimers();
+  const error = new Error('Dashboard close failed');
+  host.stop.mockRejectedValueOnce(error);
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  await startNodeHost();
+  process.listeners('SIGTERM').find(listener => !signals.has(listener))!();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(host.log).toHaveBeenCalledWith('error', 'host-lifecycle', 'Standalone shutdown failed', expect.objectContaining({phase:'failed'}), error);
+  expect(host.log).not.toHaveBeenCalledWith('info', 'host-lifecycle', 'Standalone shutdown completed', expect.anything(), undefined);
+  expect(process.exit).toHaveBeenCalledWith(1);
 });

@@ -23,6 +23,8 @@ import {
 import { isDashboardLanguageOption } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
 import { setPersistentLogLevel, setPersistentLoggingEnabled, setPersistentLogRetentionDays } from "../../utils/persistentLog";
+import { removeRelayStartup } from '../../utils/relayStartup';
+import { runCrossWindowExclusive } from '../../utils/crossWindowOperations';
 
 export type DashboardConfigurationKey = DashboardSettingKey | "codexAppPath" | "codexCliPath";
 
@@ -41,7 +43,11 @@ export async function handleDashboardSettingUpdate(
       return config.get<boolean>(key, !value) === value;
     case "alwaysActiveStartWithSystem":
       if (typeof value !== "boolean") return false;
-      await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
+      if (value) throw new Error('Open Start with system setup and choose Verify and enable before enabling Windows boot startup.');
+      await runCrossWindowExclusive('host:windows-startup', 'Windows boot startup setup', async () => {
+        await removeRelayStartup();
+        await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
+      });
       return config.get<boolean>(key, !value) === value;
     case "persistentLogLevel":
       if (typeof value === "string") { await setPersistentLogLevel(value); updated = true; }

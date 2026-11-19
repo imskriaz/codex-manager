@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
+import { removeRelayStartup } from '../src/utils/relayStartup';
+vi.mock('../src/utils/relayStartup', () => ({ removeRelayStartup: vi.fn(async () => undefined) }));
 
 describe("handleDashboardSettingUpdate", () => {
   it('persists System Info as a boolean setting and rejects invalid values', async () => {
@@ -131,7 +133,7 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("persists the system startup toggle globally", async () => {
+  it("requires verified setup before enabling and allows disabling system startup globally", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     const values = new Map<string, unknown>();
     values.set("alwaysActive", true);
@@ -140,8 +142,13 @@ describe("handleDashboardSettingUpdate", () => {
       inspect: vi.fn(() => ({ key: "codexManager.alwaysActiveStartWithSystem", defaultValue: false }))
     } as never);
     update.mockImplementation(async (key, value) => { values.set(key, value); });
-    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", true)).resolves.toBe(true);
-    expect(update).toHaveBeenCalledWith("alwaysActiveStartWithSystem", true, vscode.ConfigurationTarget.Global);
+    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", true)).rejects.toThrow('Verify and enable');
+    expect(update).not.toHaveBeenCalled();
+    vi.mocked(removeRelayStartup).mockRejectedValueOnce(new Error('Task removal denied'));
+    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", false)).rejects.toThrow('Task removal denied');
+    expect(update).not.toHaveBeenCalled();
+    await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", false)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("alwaysActiveStartWithSystem", false, vscode.ConfigurationTarget.Global);
     await expect(handleDashboardSettingUpdate("alwaysActiveStartWithSystem", "true")).resolves.toBe(false);
   });
 

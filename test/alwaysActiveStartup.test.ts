@@ -15,12 +15,15 @@ vi.mock('../src/utils/relayStartup', () => ({
 vi.mock('../src/utils/persistentLog', () => ({ recordPersistentEvent: vi.fn() }));
 
 let root: string;
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 beforeEach(async () => {
   vi.clearAllMocks();
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
   root = await mkdtemp(join(tmpdir(), 'manager-startup-'));
   vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT', root);
 });
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', platform);
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await removeTestDirectory(root);
@@ -28,7 +31,10 @@ afterEach(async () => {
 
 function server(alwaysActive: boolean, startWithSystem: boolean) {
   const settings = { alwaysActive, alwaysActiveStartWithSystem: startWithSystem, webDashboardEnabled: true, webSocketServerEnabled: false };
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => settings[key as keyof typeof settings] ?? fallback } as never);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: (key: string, fallback: unknown) => settings[key as keyof typeof settings] ?? fallback,
+    update: vi.fn(async (key: string, value: boolean) => { settings[key as keyof typeof settings] = value; })
+  } as never);
   const secrets = new Map<string, string>();
   const host = new AlwaysOnlineServer({
     extensionUri: { fsPath: root },
@@ -91,4 +97,45 @@ it('applies the latest boot toggle without disarming an existing Always Active h
   expect(stop).not.toHaveBeenCalled();
   host.dispose();
   expect(spawn).toHaveBeenCalledOnce();
+});
+
+it('enables boot startup only after registration and verification finish', async () => {
+  let finish!: () => void;
+  vi.mocked(installRelayStartup).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  const { host, spawn, settings } = server(false, false);
+  const enabling = host.enableSystemStartup();
+  await vi.waitFor(() => expect(installRelayStartup).toHaveBeenCalledOnce());
+  expect(settings.alwaysActiveStartWithSystem).toBe(false);
+  finish();
+  await enabling;
+  expect(settings.alwaysActiveStartWithSystem).toBe(true);
+  expect(settings.alwaysActive).toBe(false);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it('preserves the scheduler error and leaves boot disabled after failed verification', async () => {
+  const error = new Error('Access is denied');
+  vi.mocked(installRelayStartup).mockRejectedValueOnce(error);
+  const { host, settings } = server(true, false);
+  await expect(host.enableSystemStartup()).rejects.toBe(error);
+  expect(settings.alwaysActiveStartWithSystem).toBe(false);
+  expect(settings.alwaysActive).toBe(true);
+});
+
+it('resets an old enabled flag when boot registration fails, preserving Always Active', async () => {
+  vi.mocked(installRelayStartup).mockRejectedValueOnce(new Error('Access is denied'));
+  const { host, settings, spawn } = server(true, true);
+  await host.applyConfiguration();
+  expect(settings.alwaysActiveStartWithSystem).toBe(false);
+  host.dispose();
+  expect(spawn).toHaveBeenCalledOnce();
+});
+
+it('rejects unsupported systems and a disabled dashboard before registration', async () => {
+  const { host, settings } = server(false, false);
+  settings.webDashboardEnabled = false;
+  await expect(host.enableSystemStartup()).rejects.toThrow('Enable Web Dashboard');
+  Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+  await expect(host.enableSystemStartup()).rejects.toThrow('requires Windows');
+  expect(installRelayStartup).not.toHaveBeenCalled();
 });
