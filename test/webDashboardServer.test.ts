@@ -50,6 +50,7 @@ it('permits only same-origin dashboard frames and retains authentication and pri
       expect(headers.get('x-frame-options')).toBe(dashboard ? 'SAMEORIGIN' : 'DENY');
       expect(headers.get('content-security-policy')).toContain(`frame-ancestors '${dashboard ? 'self' : 'none'}'`);
       expect(headers.get('content-security-policy')).toContain("form-action 'self'");
+      expect(headers.get('content-security-policy')).toContain("manifest-src 'self'");
       expect(headers.get('cache-control')).toBe('no-store');
       if (!authenticated && dashboard) { expect(body).toContain('password'); expect(body).not.toContain('id="app"'); }
       if (path === '/api/state') expect(response.statusCode).toBe(401);

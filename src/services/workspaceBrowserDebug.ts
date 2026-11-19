@@ -2,6 +2,7 @@ import type { CDPSession, Page } from 'playwright-core';
 import type { BrowserDebugEvent, WorkspaceBrowserRequest } from '../domain/workspaceBrowser';
 import { browserUrl } from '../domain/workspaceBrowser';
 import { waitWithin } from '../utils/concurrency';
+import { redactBrowserCredentials } from './browserCredentials';
 
 const domains = new Set(['Accessibility', 'Animation', 'Audits', 'CSS', 'CacheStorage', 'DOM', 'DOMDebugger', 'DOMSnapshot', 'DOMStorage', 'Debugger', 'Emulation', 'Fetch', 'IndexedDB', 'Input', 'Inspector', 'LayerTree', 'Log', 'Media', 'Network', 'Overlay', 'Page', 'Performance', 'PerformanceTimeline', 'Profiler', 'Runtime', 'Security', 'WebAudio', 'WebAuthn']);
 const blocked = new Set(['Page.setDownloadBehavior', 'DOM.setFileInputFiles', 'Network.clearBrowserCache', 'Network.clearBrowserCookies', 'Network.getAllCookies']);
@@ -32,8 +33,8 @@ function subscribe(debug: BrowserDebugger, names: string[]): void {
     if (debug.subscribed.has(name)) continue;
     debug.subscribed.add(name);
     debug.client.on(name as Parameters<CDPSession['on']>[0], (params: unknown) => {
-      const encoded = JSON.stringify(params) ?? 'null';
-      debug.events.push({ sequence: ++debug.sequence, timestamp: Date.now(), method: name, params: encoded.length > 8000 ? { preview: encoded.slice(0, 8000) } : params, ...(encoded.length > 8000 ? { truncated: true } : {}) });
+      const safe = redactBrowserCredentials(params), encoded = JSON.stringify(safe) ?? 'null';
+      debug.events.push({ sequence: ++debug.sequence, timestamp: Date.now(), method: name, params: encoded.length > 8000 ? { preview: encoded.slice(0, 8000) } : safe, ...(encoded.length > 8000 ? { truncated: true } : {}) });
       if (debug.events.length > 100) debug.events.shift();
       // Abandoned interception/breakpoints must not leave the shared page frozen.
       if (name === 'Debugger.paused') { const timer = setTimeout(() => { void debug.client.send('Debugger.resume').catch(() => undefined); }, 15_000); timer.unref(); }
@@ -52,6 +53,11 @@ function subscribe(debug: BrowserDebugger, names: string[]): void {
 }
 
 export async function browserDebugCommand(page: Page, debug: BrowserDebugger, r: WorkspaceBrowserRequest): Promise<unknown> {
+  if (r.operation === 'cursor') return page.evaluate(({ x, y }) => {
+    const element = document.elementFromPoint(x, y);
+    const cursor = element ? getComputedStyle(element).cursor : 'default';
+    return { cursor: cursor === 'auto' ? element?.matches('input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]),textarea,[contenteditable=true]') ? 'text' : 'default' : cursor };
+  }, { x: r.x ?? 0, y: r.y ?? 0 });
   if (r.operation === 'html') {
     if (r.params?.['action'] === 'metrics') { await debug.client.send('Performance.enable'); return debug.client.send('Performance.getMetrics'); }
     if (r.params?.['action'] === 'heap') return debug.client.send('Runtime.getHeapUsage');

@@ -62,6 +62,12 @@ export async function checkWorkspaceSurfaceUi(page, { origin, width, output }) {
     await command({ operation: 'select', tab: first });
     result = await command({ operation: 'read' });
     assert.match(result.content.text, /First fixture page/);
+    await page.evaluate(() => { window.__fixtureBrowserPages[0].title = 'Search verification page '.repeat(30); });
+    result = await command({ operation: 'select', tab: first });
+    assert.equal(result.surfaces[0].tabs.find(tab => tab.id === first).title.length, 512, 'Long browser titles stay within the surface message limit');
+    assert.equal(result.surfaces[0].browserPages[0].title.length, 512);
+    await page.evaluate(() => { window.__fixtureBrowserPages[0].title = 'First fixture page'; });
+    await command({ operation: 'select', tab: first });
     await command({ operation: 'open', tab: 'terminal' });
     await page.getByRole('button', { name: 'New terminal', exact: true }).click();
     await page.getByRole('combobox', { name: 'Select terminal', exact: true }).locator('option').filter({ hasText: 'Project terminal' }).waitFor({ state: 'attached' });

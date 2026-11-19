@@ -994,7 +994,7 @@ export class WebDashboardServer implements vscode.Disposable {
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader(
       "Content-Security-Policy",
-      `default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${getWebDashboardConnectSources(request, configuredCloudflaredOrigin)}; form-action 'self'; frame-ancestors ${frameAncestors}; base-uri 'none'`
+      `default-src 'none'; manifest-src 'self'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${getWebDashboardConnectSources(request, configuredCloudflaredOrigin)}; form-action 'self'; frame-ancestors ${frameAncestors}; base-uri 'none'`
     );
     const method = request.method ?? "GET";
     if (path.startsWith('/projects/share/') || path.startsWith('/api/projects/share/')) {

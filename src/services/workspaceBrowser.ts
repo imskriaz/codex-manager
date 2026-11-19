@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
@@ -13,8 +13,9 @@ import { projectTaskKey } from "./projectTasks";
 import { waitWithin } from "../utils/concurrency";
 import { browserDebugCommand, createBrowserDebugger, type BrowserDebugger } from './workspaceBrowserDebug';
 import { publishDashboardRealtime } from './dashboardRealtime';
+import { browserCredentials, fillBrowserCredential, redactBrowserCredentials } from './browserCredentials';
 
-type ManagedPage = { page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; agentPointer?: WorkspaceBrowserState['agentPointer']; agentActivity?: WorkspaceBrowserState['agentActivity']; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
+type ManagedPage = { mobile?: boolean; desktopUserAgent?: string; page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; agentPointer?: WorkspaceBrowserState['agentPointer']; agentActivity?: WorkspaceBrowserState['agentActivity']; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
 type Session = { context: BrowserContext; pages: Map<string, ManagedPage>; projectPath: string; sessionId?: string; scope: string };
 const sessions = new Map<string, Session>();
 const busy = new Set<string>();
@@ -33,6 +34,7 @@ async function engine(): Promise<Browser> {
       const instance = await chromium.launch({
         ...(channel === "chromium" ? {} : { channel }),
         headless: true,
+        ignoreDefaultArgs: ['--hide-scrollbars'],
         timeout: 15_000
       });
       if (started !== generation) {
@@ -116,14 +118,14 @@ async function actionState(project: string, pageId: string): Promise<WorkspaceBr
 export function workspaceBrowser(projectPath: string, raw: unknown): Promise<WorkspaceBrowserState> {
   const request = validateBrowserRequest(raw),
     project = request.sessionId ? JSON.stringify([projectTaskKey(projectPath), request.sessionId]) : projectTaskKey(projectPath);
-  const read = ["list", "snapshot", "screenshot", "readFeedback", "html", "styles", "events"].includes(request.operation) || (request.operation === 'storage' && (!request.params?.['action'] || request.params['action'] === 'read'));
+  const read = ["list", "snapshot", "screenshot", "readFeedback", "html", "styles", "events", "cursor"].includes(request.operation) || request.operation === 'credentials' && (!request.params?.['action'] || request.params['action'] === 'list') || (request.operation === 'storage' && (!request.params?.['action'] || request.params['action'] === 'read'));
   if (!read && !request.operationId) return Promise.reject(new Error("A unique browser operationId is required."));
   const key = `${project}:${request.operationId ?? ""}`;
-  const fingerprint = JSON.stringify(request);
+  const fingerprint = createHash('sha256').update(JSON.stringify(request)).digest('hex');
   const existing = !read ? attempts.get(key) : undefined;
   if (existing)
     return existing.fingerprint === fingerprint
-      ? existing.promise.then((pageId) => state(project, pageId))
+      ? existing.promise.then((pageId) => state(project, pageId)).then(redactBrowserCredentials)
       : Promise.reject(new Error("This browser operationId was already used for a different operation."));
   if (busy.has(project) && request.operation !== 'list')
     return Promise.reject(
@@ -137,10 +139,10 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
   const activity: WorkspaceBrowserState['agentActivity'] = request.operation !== 'list' && request.openedBy === 'ai' ? { operation: request.operation, status: 'running', updatedAt: Date.now() } : undefined;
   const promise = run(project, request, projectPath, activity, read).then(value => {
     if (activity) { activity.status = 'completed'; activity.updatedAt = Date.now(); }
-    return value;
+    return redactBrowserCredentials(value);
   }, error => {
     if (activity) { activity.status = 'failed'; activity.updatedAt = Date.now(); }
-    throw error;
+    throw new Error(redactBrowserCredentials(error instanceof Error ? error.message : String(error)));
   }).finally(() => {
     if (!read) busy.delete(project);
     if (!read || activity) publishDashboardRealtime({ type: 'dashboard:browser-changed', projectPath, sessionId: request.sessionId });
@@ -157,6 +159,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   // Verify durable storage before launching or modifying a page.
   feedbackFor(project);
   let session = sessions.get(project);
+  if (r.operation === 'credentials' && r.params?.['action'] !== 'fill') return { ...(await state(project)), value: await browserCredentials(projectTaskKey(projectPath), r) };
   if (r.operation === "list") return state(project, r.pageId);
   const startActivity = (item: ManagedPage) => {
     item.agentActivity = activity;
@@ -228,7 +231,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     return { ...(await state(project, r.pageId)), events: debug.events.filter(event => event.sequence > (r.after ?? 0)), eventSequence: debug.sequence,
       ...((r.after ?? 0) < (debug.events[0]?.sequence ?? 1) - 1 ? { warning: 'Older browser events were evicted from the 100-event buffer. Capture events more frequently.' } : {}) };
   }
-  if (['html', 'styles'].includes(r.operation) || (r.operation === 'storage' && (!r.params?.['action'] || r.params['action'] === 'read'))) {
+  if (['html', 'styles', 'cursor'].includes(r.operation) || (r.operation === 'storage' && (!r.params?.['action'] || r.params['action'] === 'read'))) {
     const inspectionRevision = item.revision;
     const value = await boundedDebug(page, await debuggerFor(item), r);
     const inspected = await state(project, r.pageId);
@@ -244,6 +247,11 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   if (r.revision !== item.revision)
     throw new Error("This page changed. Refresh the preview before interacting; no action was started.");
   startActivity(item);
+  if (r.operation === 'credentials') {
+    const value = await fillBrowserCredential(projectTaskKey(projectPath), page, r);
+    item.revision = randomUUID();
+    return { ...(await actionState(project, r.pageId!)), value };
+  }
   if (['cdp', 'storage'].includes(r.operation)) {
     item.revision = randomUUID();
     const value = await boundedDebug(page, await debuggerFor(item), r);
@@ -280,10 +288,18 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
       }
     };
   }
-  if (r.operation === "feedback") {
+  if (r.operation === "feedback" || r.operation === 'updateFeedback') {
     const rows = feedbackFor(project),
       f = r.feedback!;
     const previous = rows.find((row) => row.id === f.id);
+    if (r.operation === 'updateFeedback') {
+      if (!previous || previous.pageId !== r.pageId || previous.revision !== r.revision) throw new Error('This mark is no longer available on this page revision. Refresh before editing.');
+      if (r.params?.['expected'] !== JSON.stringify([previous.id, previous.createdAt, previous.text, previous.points, previous.referenceUrl ?? ''])) throw new Error('This mark was edited elsewhere. Cancel your edit and review the current mark.');
+      const image = await page.screenshot({ type: 'jpeg', quality: 45, timeout: 5000 });
+      if (image.length > 512 * 1024 || r.revision !== item.revision) throw new Error('The edited mark could not be captured. Your saved mark was preserved.');
+      saveFeedback(project, rows.map(row => row.id === f.id ? { ...row, kind: f.kind, text: f.text, points: f.points, referenceUrl: f.referenceUrl, image: `data:image/jpeg;base64,${image.toString('base64')}` } : row));
+      return state(project, r.pageId);
+    }
     if (
       previous &&
       (previous.text !== f.text ||
@@ -360,6 +376,20 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     )
       throw new Error("Use a viewport of 320–3840 × 240–2160 pixels.");
     await page.setViewportSize({ width: r.width!, height: r.height! });
+    const debug = await debuggerFor(item);
+    const mobile = r.width! < 768;
+    item.desktopUserAgent ??= await page.evaluate(() => navigator.userAgent);
+    const chromeVersion = item.desktopUserAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? '130.0.0.0';
+    await debug.client.send('Emulation.setUserAgentOverride', {
+      userAgent: mobile ? `Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Mobile Safari/537.36` : item.desktopUserAgent,
+      platform: mobile ? 'Linux armv8l' : process.platform === 'win32' ? 'Win32' : process.platform
+    });
+    await debug.client.send('Emulation.setDeviceMetricsOverride', { width: r.width!, height: r.height!, deviceScaleFactor: 1, mobile: r.width! < 768 });
+    await debug.client.send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 1 });
+    if (mobile !== (item.mobile ?? false)) {
+      item.mobile = mobile;
+      await page.reload({ waitUntil: 'domcontentloaded' });
+    }
   } else if (r.operation === "evaluate") {
     if (r.confirmed !== true || !r.text)
       throw new Error(
@@ -377,6 +407,14 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   } else if (r.operation === "scroll") await page.mouse.wheel(r.x ?? 0, r.y ?? 500);
   else if (r.operation === "type") await page.keyboard.insertText(r.text ?? "");
   else if (r.operation === "press" && !r.selector) await page.keyboard.press(r.key ?? "Enter");
+  else if (r.operation === 'drag') {
+    const toX = r.params?.['toX'], toY = r.params?.['toY'];
+    if (r.x === undefined || r.y === undefined || typeof toX !== 'number' || typeof toY !== 'number' || !Number.isFinite(toX) || !Number.isFinite(toY) || toX < 0 || toY < 0 || toX > 3840 || toY > 2160) throw new Error('Choose drag start coordinates and params.toX/toY in viewport pixels.');
+    await page.mouse.move(r.x, r.y);
+    await page.mouse.down();
+    try { await page.mouse.move(toX, toY, { steps: 8 }); }
+    finally { await page.mouse.up(); }
+  }
   else if ((r.operation === "click" || r.operation === 'hover') && !r.selector) {
     if (r.x === undefined || r.y === undefined) throw new Error("Choose a selector or click coordinates.");
     if (r.operation === 'hover') await page.mouse.move(r.x, r.y);
@@ -428,7 +466,7 @@ function register(session: Session, page: Page): string {
   });
   changed();
   const log = (message: string): void => {
-    item.logs.push(message.slice(0, 2000));
+    item.logs.push(redactBrowserCredentials(message).slice(0, 2000));
     if (item.logs.length > 100) item.logs.shift();
   };
   page.on("console", (message) => log(`${message.type()}: ${message.text()}`));

@@ -25,6 +25,7 @@ export const BROWSER_OPERATIONS = [
   "snapshot",
   "screenshot",
   "click",
+  "drag",
   "download",
   "fill",
   "type",
@@ -39,8 +40,11 @@ export const BROWSER_OPERATIONS = [
   "styles",
   "events",
   "storage",
+  "credentials",
+  "cursor",
   "cdp",
   "feedback",
+  "updateFeedback",
   "deleteFeedback",
   "readFeedback"
 ] as const;
@@ -118,7 +122,7 @@ export function validateBrowserRequest(value: unknown): WorkspaceBrowserRequest 
   if (row['params'] !== undefined && (!row['params'] || typeof row['params'] !== 'object' || Array.isArray(row['params']))) throw new Error('DevTools params must be an object.');
   if (row['eventNames'] !== undefined && (!Array.isArray(row['eventNames']) || row['eventNames'].length > 32 || row['eventNames'].some(name => typeof name !== 'string' || !/^[A-Za-z]+\.[A-Za-z]+$/.test(name)))) throw new Error('Choose at most 32 DevTools events.');
   if (row['after'] !== undefined && (!Number.isSafeInteger(row['after']) || Number(row['after']) < 0)) throw new Error('Invalid browser event cursor.');
-  if (row["operation"] === "feedback") {
+  if (row["operation"] === "feedback" || row["operation"] === "updateFeedback") {
     const f = row["feedback"] as BrowserFeedback | undefined;
     if (
       !f ||

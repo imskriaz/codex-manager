@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { expect, it } from "vitest";
+import { BROWSER_OPERATIONS } from '../src/domain/workspaceBrowser';
 
 async function withClient(
   run: (send: (method: string, params?: unknown) => Promise<any>) => Promise<void>,
@@ -48,6 +49,7 @@ it("requires initialization, negotiates a supported version, and discovers share
     expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_workspace");
     const browser = list.result.tools.find((tool: any) => tool.name === "manager_browser");
     expect(browser.inputSchema.properties.request.properties.operation.enum).toContain("feedback");
+    expect([...browser.inputSchema.properties.request.properties.operation.enum].sort()).toEqual([...BROWSER_OPERATIONS].sort());
     expect((await send("unknown/method")).error.code).toBe(-32601);
     expect((await send("tools/call", { name: "unknown", arguments: {} })).result.isError).toBe(true);
   });

@@ -276,3 +276,16 @@ it('shows AI inspection activity without clearing it during a human preview read
   const mirrored = await workspaceBrowser(project, { operation: 'screenshot', pageId: first.pageId });
   expect(mirrored.agentActivity).toEqual(result.agentActivity);
 });
+
+it('moves and resizes saved marks with revision and concurrent-edit protection', async () => {
+  const first = await open();
+  const feedback = { id: 'editable-mark', pageId: first.pageId!, revision: first.revision!, kind: 'area' as const, points: [{ x: 10, y: 10 }, { x: 50, y: 50 }], text: 'Original' };
+  const saved = await workspaceBrowser(project, { operation: 'feedback', operationId: 'save-editable', pageId: first.pageId, revision: first.revision, feedback });
+  const mark = saved.feedback[0]!;
+  const expected = JSON.stringify([mark.id, mark.createdAt, mark.text, mark.points, mark.referenceUrl ?? '']);
+  const changed = { ...feedback, points: [{ x: 20, y: 30 }, { x: 120, y: 130 }] };
+  const updated = await workspaceBrowser(project, { operation: 'updateFeedback', operationId: 'move-editable', pageId: first.pageId, revision: first.revision, feedback: changed, params: { expected } });
+  expect(updated.feedback[0]?.points).toEqual(changed.points);
+  await expect(workspaceBrowser(project, { operation: 'updateFeedback', operationId: 'stale-edit', pageId: first.pageId, revision: first.revision, feedback, params: { expected } })).rejects.toThrow('edited elsewhere');
+  expect((await workspaceBrowser(project, { operation: 'list' })).feedback[0]?.points).toEqual(changed.points);
+});

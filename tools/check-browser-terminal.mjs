@@ -27,7 +27,7 @@ const server = createServer((_request, response) => {
   if (_request.url.startsWith('/name?')) { typedName = new URL(_request.url, 'http://fixture.test').searchParams.get('value'); response.statusCode = 204; response.end(); return; }
   if (_request.url === '/api/data') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ ok: true })); return; }
   response.setHeader('Content-Type', 'text/html');
-  response.end('<!doctype html><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name" oninput="fetch(\'/name?value=\'+encodeURIComponent(this.value))">');
+  response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Browser fixture</title><button onclick="this.textContent=\'Saved\'">Save</button><input aria-label="Name" autocomplete="username" oninput="fetch(\'/name?value=\'+encodeURIComponent(this.value))"><input type="password" aria-label="Password" oninput="console.log(this.value)">');
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
@@ -46,11 +46,16 @@ try {
   console.log('Real browser navigation, snapshot, stale revision, and feedback storage passed.');
   let debugPage = (await workspaceBrowser(root, { operation: 'screenshot', pageId: opened.pageId }));
   const debugCommand = async request => {
-    const result = await workspaceBrowser(root, { operationId: randomUUID(), pageId: opened.pageId, revision: debugPage.revision, ...request });
-    debugPage = result; return result;
+    let result;
+    try { result = await workspaceBrowser(root, { operationId: randomUUID(), pageId: opened.pageId, revision: debugPage.revision, ...request }); }
+    catch (error) { console.error('Failed browser fixture operation:', request.operation, request.params?.action ?? request.method ?? ''); throw error; }
+    if (result.pageId === opened.pageId) debugPage = result;
+    return result;
   };
   assert.match((await debugCommand({ operation: 'html' })).value, /<button/);
   assert.ok((await debugCommand({ operation: 'styles', selector: 'button' })).value.styles.display);
+  assert.ok((await debugCommand({ operation:'html',params:{action:'metrics'} })).value.metrics.length > 0);
+  assert.ok((await debugCommand({ operation:'html',params:{action:'heap'} })).value.usedSize > 0);
   await debugCommand({ operation: 'evaluate', confirmed: true, text: `(async()=>{localStorage.setItem('theme','dark');sessionStorage.setItem('draft','kept');document.querySelector('button').style.color='rgb(255, 0, 0)';console.log('BROWSER_DEBUG_OK');return await (await fetch('/api/data')).json();})()` });
   assert.equal((await debugCommand({ operation: 'storage' })).value.localStorage.theme, 'dark');
   assert.equal((await debugCommand({ operation: 'styles', selector: 'button' })).value.styles.color, 'rgb(255, 0, 0)');
@@ -67,6 +72,7 @@ try {
   assert.ok(apiRequest);
   assert.match((await debugCommand({ operation: 'cdp', confirmed: true, method: 'Network.getResponseBody', params: { requestId: apiRequest.params.requestId } })).value.body, /"ok":true/);
   await debugCommand({ operation: 'storage', confirmed: true, params: { action: 'setCookies', cookies: [{ name: 'fixture', value: 'cookie-ok', url }] } });
+  await debugCommand({ operation: 'storage', confirmed: true, params: { action: 'setCookies', cookies: [{ name: 'long-value-fixture', value: 'x'.repeat(700), url }] } });
   assert.equal((await debugCommand({ operation: 'storage' })).value.cookies.find(cookie=>cookie.name==='fixture').value, 'cookie-ok');
   await debugCommand({ operation: 'cdp', confirmed: true, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: "window.injectedByManager = true" } });
   await debugCommand({ operation: 'reload' });
@@ -79,6 +85,26 @@ try {
   await debugCommand({ operation: 'cdp', confirmed: true, method: 'Fetch.fulfillRequest', params: { requestId: paused.params.requestId, responseCode: 200, body: Buffer.from('MOCKED_BY_MANAGER').toString('base64') } });
   await debugCommand({ operation: 'cdp', confirmed: true, method: 'Fetch.disable' });
   assert.equal((await debugCommand({ operation: 'evaluate', confirmed: true, text: 'window.intercepted' })).value, 'MOCKED_BY_MANAGER');
+  const desktopInput = (await debugCommand({ operation:'evaluate',confirmed:true,text:'navigator.maxTouchPoints' })).value;
+  await debugCommand({ operation:'resize',width:390,height:844 });
+  assert.equal((await debugCommand({ operation:'evaluate',confirmed:true,text:'innerWidth' })).value,390,'Phone emulation changes the real layout viewport');
+  assert.match((await debugCommand({ operation:'evaluate',confirmed:true,text:'navigator.userAgent' })).value,/Mobile/);
+  assert.equal((await debugCommand({ operation:'evaluate',confirmed:true,text:'navigator.maxTouchPoints' })).value,1,'Phone viewport enables touch without creating another browser session');
+  await debugCommand({ operation:'resize',width:1280,height:800 });
+  assert.equal((await debugCommand({ operation:'evaluate',confirmed:true,text:'navigator.maxTouchPoints' })).value,desktopInput,'Desktop viewport restores the original input capability');
+  const vault = params => debugCommand({ operation: 'credentials', confirmed: true, params });
+  await vault({ action: 'unlock', masterPassword: 'fixture-master-password' });
+  const login = (await vault({ action: 'save', name: 'Fixture login', origin: url, username: 'fixture-user', password: 'Fixture-secret-password!', usernameSelector: 'input[aria-label="Name"]', passwordSelector: 'input[type="password"]' })).value.entries[0];
+  assert.ok(!JSON.stringify(login).includes('Fixture-secret-password!'));
+  await vault({ action: 'fill', id: login.id });
+  assert.equal((await debugCommand({ operation:'evaluate',confirmed:true,text:'document.querySelector("input[type=password]").value === "Fixture-secret-password!"' })).value,true);
+  const safeLogs = await debugCommand({ operation:'events' });
+  assert.ok(!JSON.stringify(safeLogs).includes('Fixture-secret-password!'), 'Password logged by the fixture is redacted');
+  assert.ok(JSON.stringify(safeLogs).includes('[redacted]'));
+  await vault({ action: 'lock' });
+  await assert.rejects(vault({ action: 'fill', id: login.id }), /Unlock/);
+  await debugCommand({ operation:'reload' });
+  console.log('Encrypted credential persistence, real field fill, locking and diagnostic redaction passed.');
   console.log('Real HTML/CSS, JS modification/injection, console/events, network response body/interception, storage/cookies passed.');
   const frontend = await build({ stdin: { contents: `
     import { render } from 'preact';
@@ -112,14 +138,29 @@ try {
   assert.equal(await ui.getByRole('button', { name: 'Browser actions', exact: true }).count(), 0, 'The removed action menu is not rendered.');
   assert.equal(await ui.locator('.workspace-browser-page-tabs').count(), 0, 'Browser pages use the parent workspace tab track.');
   await ui.locator('.workspace-browser-preview img').waitFor();
-  await ui.getByRole('button', { name: 'Open browser inspector', exact: true }).click();
+  await ui.getByRole('button', { name: 'Browser menu', exact: true }).click();
+  await ui.getByRole('menuitemcheckbox', { name: 'Browser inspector', exact: true }).click();
   const inspector = ui.getByRole('complementary', { name: 'Browser inspector', exact: true });
   await inspector.waitFor();
   assert.equal(await inspector.evaluate(element => getComputedStyle(element).position), 'static', 'Browser Inspector stays in the workspace layout');
   const previewBounds = await ui.locator('.workspace-browser-preview').boundingBox();
   const inspectorBounds = await inspector.boundingBox();
   assert.ok(inspectorBounds.x >= previewBounds.x + previewBounds.width - 2, 'Browser Inspector docks beside the preview');
-  const toolStrip = inspector.locator('.workspace-browser-inspector-tools');
+  for (const position of ['left', 'bottom', 'right']) {
+    await inspector.getByRole('button', { name: 'Inspector position', exact: true }).click();
+    await ui.getByRole('menuitemradio', { name: `Dock ${position}`, exact: true }).click();
+    assert.ok(await ui.locator(`.workspace-browser-content.dock-${position}`).count(), `Inspector docks ${position}`);
+    const handle = await ui.getByRole('separator', { name:'Resize browser inspector',exact:true }).boundingBox();
+    const before = await inspector.boundingBox();
+    await ui.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await ui.mouse.down();
+    await ui.mouse.move(handle.x + handle.width / 2 + (position === 'left' ? 40 : position === 'right' ? -40 : 0), handle.y + handle.height / 2 + (position === 'bottom' ? -40 : 0), { steps:5 }); await ui.mouse.up();
+    const after = await inspector.boundingBox();
+    assert.ok((position === 'bottom' ? after.height - before.height : after.width - before.width) > 20, `Inspector resize handle works when docked ${position}`);
+  }
+  await inspector.getByRole('button', { name: 'Inspector position', exact: true }).click();
+  await ui.getByRole('menuitem', { name: 'Reset position', exact: true }).click();
+  assert.ok(await ui.locator('.workspace-browser-content.dock-right').count());
+  const toolStrip = ui.locator('.workspace-browser-address .workspace-browser-inspector-tools');
   await toolStrip.waitFor();
   assert.equal(await toolStrip.getByRole('button').count(), 4, 'Only control/selector, pointer, rectangle and freehand remain');
   assert.ok(await toolStrip.getByRole('button', { name: 'Control page / select element', exact: true }).count());
@@ -135,24 +176,59 @@ try {
   await ui.evaluate(projectPath => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:browser-changed', projectPath } })), root);
   await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor();
   await ui.locator('.workspace-browser-agent-activity').waitFor();
+  const animation = await ui.locator('.workspace-browser-agent-ripple').evaluate(element => getComputedStyle(element).animationName);
+  assert.equal(animation, 'workspace-agent-ripple', 'AI operations display an animated pointer');
+  await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-agent-pointer.png') });
   await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor({ state: 'hidden' });
-  const field = (await workspaceBrowser(root, { operation: 'styles', pageId: opened.pageId, selector: 'input' })).value.rect;
+  const field = (await workspaceBrowser(root, { operation: 'styles', pageId: opened.pageId, selector: 'input[aria-label="Name"]' })).value.rect;
   const inputPreview = ui.locator('.workspace-browser-preview > svg');
   const inputBounds = await inputPreview.boundingBox();
+  await inputPreview.hover({ position: { x: (field.x + field.width / 2) / 1280 * inputBounds.width, y: (field.y + field.height / 2) / 800 * inputBounds.height } });
+  await ui.waitForFunction(() => getComputedStyle(document.querySelector('.workspace-browser-preview > svg')).cursor === 'text');
   await inputPreview.click({ position: { x: (field.x + field.width / 2) / 1280 * inputBounds.width, y: (field.y + field.height / 2) / 800 * inputBounds.height } });
   await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
   await ui.keyboard.type('Ada Lovelace');
   for (let attempt = 0; attempt < 100 && typedName !== 'Ada Lovelace'; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(typedName, 'Ada Lovelace', 'Rapid direct keyboard input is preserved while screenshots complete');
+  await ui.getByRole('button', { name:'Browser menu',exact:true }).click(); await ui.getByRole('menuitem', { name:'Zoom in +',exact:true }).click();
+  assert.equal(await ui.locator('.workspace-browser-stage').getAttribute('data-zoomed'),'true');
+  const zoomedStage = await ui.locator('.workspace-browser-stage').evaluate(element => ({width:element.clientWidth,scroll:element.scrollWidth}));
+  assert.ok(zoomedStage.scroll > zoomedStage.width, 'Zoomed previews expose a horizontal scrollbar');
+  await ui.getByRole('button', { name:'Browser menu',exact:true }).click(); await ui.getByRole('menuitem', { name:/Reset zoom/ }).click();
+  assert.equal(await ui.locator('.workspace-browser-stage').getAttribute('data-zoomed'),'false');
+  await ui.getByRole('button', { name:'Browser menu',exact:true }).click(); await ui.getByRole('menuitem', { name:'Credentials',exact:true }).click();
+  const credentials = ui.getByRole('region', { name:'Credential manager',exact:true });
+  await credentials.getByLabel('Vault master password', { exact:true }).fill('fixture-master-password');
+  await credentials.getByRole('button', { name:'Unlock vault',exact:true }).click();
+  await credentials.getByRole('button', { name:'Fill Fixture login',exact:true }).waitFor();
+  await credentials.getByRole('button', { name:'Fill Fixture login',exact:true }).click();
+  await credentials.getByRole('status').filter({hasText:'Login filled'}).waitFor();
+  await credentials.getByRole('button', { name:'Lock vault',exact:true }).click();
+  await credentials.getByRole('button', { name:'Unlock vault',exact:true }).waitFor();
+  await credentials.getByRole('button', { name:'Close credential manager',exact:true }).click();
+  assert.equal(await ui.locator('body > [role="alert"]').count(),0,'Browser actions use inline feedback instead of global toasts');
   for (const name of ['Elements', 'Console', 'Sources', 'Network', 'Application', 'Performance', 'Memory', 'Comments']) {
     const tab = inspector.getByRole('tab', { name, exact: true });
     await tab.click();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
     if (name === 'Network') {
+      const heights = await inspector.locator('table tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
+      assert.ok(heights.every(height => height <= 22), 'Network rows remain a single compact line even when cells contain buttons');
       const topStyle = await tab.evaluate(element => ({ radius: getComputedStyle(element).borderRadius, height: element.getBoundingClientRect().height }));
       const filterStyle = await inspector.getByRole('button', { name: 'Fetch/XHR', exact: true }).evaluate(element => ({ radius: getComputedStyle(element).borderRadius, height: element.getBoundingClientRect().height }));
       assert.equal(filterStyle.radius, topStyle.radius, 'Network filters match flat top tabs');
       assert.ok(Math.abs(filterStyle.height - topStyle.height) < 0.5, 'Network filters match compact top tab height');
+    }
+    if (name === 'Application') {
+      await inspector.locator('.workspace-browser-storage-data table tbody tr').first().waitFor();
+      const rows = await inspector.locator('.workspace-browser-storage-data table tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
+      assert.ok(rows.every(height => height <= 23), 'Long cookie values never create wrapped rows');
+      await ui.locator('.workspace-browser').screenshot({ path:path.resolve('output/browser-storage-compact.png') });
+      for (const section of ['IndexedDB', 'Cache storage', 'Service workers']) {
+        await inspector.getByRole('button', { name: section, exact: true }).click();
+        assert.equal(await inspector.locator('.workspace-browser-storage-data table').count(), 1, `${section} uses a table`);
+        assert.equal(await inspector.locator('.workspace-browser-storage-data > pre').count(), 0);
+      }
     }
   }
   await inspector.getByRole('tab', { name: 'Console', exact: true }).click();
@@ -173,10 +249,17 @@ try {
   rejectEvaluate = false;
   await ui.getByRole('button', { name: 'Reload page', exact: true }).click();
   await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
-  await ui.getByRole('button', { name: 'Toggle responsive viewport', exact: true }).click();
+  await ui.getByRole('button', { name: 'Browser menu', exact: true }).click();
+  await ui.getByRole('menuitemcheckbox', { name: 'Responsive viewport', exact: true }).click();
+  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
   for (const preset of ['phone', 'tablet', 'desktop']) {
     await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).selectOption(preset);
+    await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
     assert.equal(await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).inputValue(), preset);
+    if (preset === 'phone') {
+      await ui.waitForFunction(() => document.querySelector('.workspace-browser-preview img').naturalWidth === 390);
+      assert.ok((await ui.locator('.workspace-browser-preview').boundingBox()).width <= 391, 'Phone preview never stretches above its emulated width');
+    }
   }
   await ui.getByRole('spinbutton', { name: 'Viewport width', exact: true }).fill('400');
   await ui.getByRole('spinbutton', { name: 'Viewport height', exact: true }).fill('832');
@@ -197,12 +280,31 @@ try {
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-desktop.png') });
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-inspector-menu.png') });
   await ui.getByRole('button', { name: 'area', exact: true }).click();
-  const preview = ui.locator('.workspace-browser-preview svg');
+  const preview = ui.locator('.workspace-browser-preview > svg');
   await preview.focus();
   assert.equal(await preview.evaluate(element => document.activeElement === element), true, 'Browser preview must support keyboard focus.');
   await ui.keyboard.press('Enter'); await ui.keyboard.press('Shift+ArrowRight'); await ui.keyboard.press('Shift+ArrowDown');
   await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).fill('Improve this layout');
-  assert.equal(await preview.locator('rect').count(), 1, 'Keyboard selection must create the current area mark.');
+  assert.equal(await preview.locator('.workspace-browser-draft-mark rect').count(), 1, 'Keyboard selection must create the current area mark.');
+  const comment = ui.getByRole('dialog', { name: 'Comment on mark', exact: true });
+  const commentBefore = await comment.boundingBox(), commentHeader = await comment.locator('header strong').boundingBox();
+  await ui.mouse.move(commentHeader.x + 10, commentHeader.y + 8); await ui.mouse.down(); await ui.mouse.move(commentHeader.x + 10, commentHeader.y + 150, { steps: 5 }); await ui.mouse.up();
+  assert.ok((await comment.boundingBox()).y > commentBefore.y + 80, 'Comment box can be repositioned by dragging its header');
+  const oldRect = await preview.locator('.workspace-browser-draft-mark rect').boundingBox();
+  const corner = await preview.getByRole('button', { name: 'Resize rectangle corner 4', exact: true }).boundingBox();
+  await ui.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2); await ui.mouse.down(); await ui.mouse.move(corner.x + 60, corner.y + 50, { steps: 5 }); await ui.mouse.up();
+  assert.ok((await preview.locator('.workspace-browser-draft-mark rect').boundingBox()).width > oldRect.width + 30, 'Rectangle corners resize the actual mark');
+  const rectBeforeMove = await preview.locator('.workspace-browser-draft-mark rect').boundingBox();
+  await ui.mouse.move(rectBeforeMove.x + rectBeforeMove.width / 2, rectBeforeMove.y + rectBeforeMove.height / 2); await ui.mouse.down(); await ui.mouse.move(rectBeforeMove.x + rectBeforeMove.width / 2 + 40, rectBeforeMove.y + rectBeforeMove.height / 2 + 25, { steps: 5 }); await ui.mouse.up();
+  assert.ok((await preview.locator('.workspace-browser-draft-mark rect').boundingBox()).x > rectBeforeMove.x + 25, 'A rectangle can be dragged to a new position');
+  await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).focus(); await ui.keyboard.press('Escape');
+  await comment.waitFor({ state:'hidden' });
+  assert.equal(await ui.getByRole('button', { name:'area',exact:true }).getAttribute('aria-pressed'),'false','Escape cancels the selected tool and current mark');
+  await ui.getByRole('button', { name:'area',exact:true }).click(); await ui.getByRole('button', { name:'area',exact:true }).click();
+  assert.equal(await ui.getByRole('button', { name:'area',exact:true }).getAttribute('aria-pressed'),'false','Clicking an active tool returns to page control');
+  await ui.getByRole('button', { name:'area',exact:true }).click(); await preview.focus();
+  await ui.keyboard.press('Enter'); await ui.keyboard.press('Shift+ArrowRight'); await ui.keyboard.press('Shift+ArrowDown');
+  await ui.getByRole('textbox', { name: 'Area instruction or design feedback' }).fill('Improve this layout');
   console.log('Browser preview keyboard focus and area marking passed.');
   rejectSave = true;
   await ui.getByRole('button', { name: 'Save feedback' }).click();
@@ -214,7 +316,7 @@ try {
   catch (error) { console.log('Feedback recovery notices:', await ui.getByRole('alert').allTextContents()); throw error; }
   console.log('Storage failure preserves the draft; saving after recovery passed.');
   await inspector.getByRole('tab', { name: 'Comments', exact: true }).click();
-  const note = ui.locator('.workspace-browser article').filter({ hasText: 'Improve this layout' });
+  const note = ui.getByRole('table', { name:'Comments',exact:true }).locator('tbody tr').filter({ hasText: 'Improve this layout' });
   await note.getByRole('button', { name: 'Add to instruction' }).click();
   await ui.waitForFunction(() => document.querySelector('#instruction').value.includes('Improve this layout') && document.querySelector('#instruction-image').src.startsWith('data:image/jpeg'));
   console.log('Marked feedback screenshot added to the instruction composer.');
@@ -235,7 +337,7 @@ try {
   const address = await ui.locator('.workspace-browser-address').boundingBox();
   const actions = await ui.locator('.workspace-browser-actions').boundingBox();
   assert.ok(address.x + address.width - actions.x - actions.width < 10, 'Browser actions reach the right edge');
-  assert.ok((await ui.getByRole('textbox', { name: 'Browser URL', exact: true }).boundingBox()).width > 100, 'Address field uses remaining width');
+  assert.ok((await ui.getByRole('textbox', { name: 'Browser URL', exact: true }).boundingBox()).width > 100, 'Address field uses remaining width: ' + JSON.stringify(await ui.locator('.workspace-browser-address').evaluate(element => [...element.children].map(child => ({ class: child.className, width: child.getBoundingClientRect().width, children: [...child.children].map(item => ({class:item.className,width:item.getBoundingClientRect().width})) })))));
   await ui.locator('.workspace-browser').screenshot({ path: path.join(artifacts, 'feedback-mobile.png') });
   const mobileTools = await toolStrip.getByRole('button').evaluateAll(buttons => buttons.map(button => { const rect = button.getBoundingClientRect(); return { width: rect.width, height: rect.height }; }));
   assert.equal(mobileTools.length, 4);

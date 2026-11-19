@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.6-pre.117
+
+- Use natural page cursors, editable draggable/resizable marks, Escape cancellation, and compact comment tables with icon actions.
+- Move zoom, responsive emulation, inspector visibility and encrypted project credentials into the browser menu; show page and preview scrollbars.
+- Fix inspector docking/resizing, compact storage and network tables, inline diagnostics without toast popups, long tab titles and dashboard manifest loading.
+- Expose browser operations consistently through MCP, including credential filling without returning passwords.
+
 ## 2.0.6-pre.116
 
 - Remove the proxy route panel, expand request logs to full width, and place connection settings after All logs.

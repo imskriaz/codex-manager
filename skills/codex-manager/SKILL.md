@@ -31,6 +31,14 @@ Configure Codex or Claude to launch `codex-manager-mcp` over stdio, or run
 
 ## Browser and feedback rules
 
+For saved logins, have the user create or unlock the project vault through the
+Browser menu's credential manager. Never ask for a master password or login
+password in chat or pass either through MCP. Use `credentials` with
+`params.action: "list"` to read metadata, then `params.action: "fill"`, the saved
+`id`, `confirmed: true`, and the current page revision. The host checks the exact
+origin and keeps secrets out of returned diagnostics. Filling does not submit.
+Unlocks expire after 15 minutes; report a locked vault and let the user unlock it.
+
 When the user asks to operate their right panel, start with `manager_workspace`
 and `{"projectPath":"/path/to/project","request":{"operation":"list"}}`.
 Discovery includes connected dashboard hosts. Choose the exact `surfaceId` and

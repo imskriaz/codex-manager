@@ -14,6 +14,18 @@ Use `manager_browser` with the project path and a request. Start with `list` or
 | `storage` | current revision, `confirmed:true`, `params:{action:"setCookies",cookies:[...]}` or `{action:"clearCookies"}` | Change isolated context cookies |
 | `evaluate` | current revision, `confirmed:true`, `text` | Execute page JavaScript, including DOM/CSS changes, fetch, storage APIs and event dispatch |
 | `cdp` | current revision, `confirmed:true`, `method`, optional `params` and `eventNames` | Raw page DevTools result in `value` |
+| `cursor` | `pageId`, viewport `x`, `y` | Website cursor at the pointer position |
+| `drag` | current revision, `x`, `y`, `params:{toX,toY}` | Drag page controls, text selections, or native scrollbar thumbs |
+| `credentials` | `params:{action:"list"}` | Unlocked project vault metadata, never passwords |
+| `credentials` | current revision, `confirmed:true`, `params:{action:"fill",id:"saved-login-id"}` | Fill exact-origin login fields without submitting |
+| `updateFeedback` | current page/revision, `feedback` with the saved ID, `params.expected` | Move/resize/edit a mark with concurrent-edit protection |
+
+For `updateFeedback`, `params.expected` is
+`JSON.stringify([mark.id, mark.createdAt, mark.text, mark.points, mark.referenceUrl ?? ""])`
+from the previously read mark. A conflicting edit fails without overwriting it.
+Users create, save, delete, unlock, and lock credentials in the dashboard
+Browser menu. Automation can list, fill, or lock the vault; do not send passwords
+through MCP. A locked vault must be unlocked by the user and expires after 15 minutes.
 
 Examples of DevTools methods:
 

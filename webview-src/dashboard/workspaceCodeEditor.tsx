@@ -17,10 +17,11 @@ import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 
-export default function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; onChange: (value: string) => void; onSave: () => void }) {
+export default function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; wrap?: boolean; onChange: (value: string) => void; onSave: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
   const editable = useRef(new Compartment());
+  const wrapping = useRef(new Compartment());
   const onChangeRef = useRef(props.onChange);
   const onSaveRef = useRef(props.onSave);
   onChangeRef.current = props.onChange;
@@ -33,7 +34,7 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
         doc: props.value,
         extensions: [
           basicSetup,
-          EditorView.lineWrapping,
+          wrapping.current.of(props.wrap === false ? [] : EditorView.lineWrapping),
           indentUnit.of("  "),
           editorLanguage(props.language),
           editable.current.of(EditorView.editable.of(!props.disabled)),
@@ -58,6 +59,9 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
   useEffect(() => {
     viewRef.current?.dispatch({ effects: editable.current.reconfigure(EditorView.editable.of(!props.disabled)) });
   }, [props.disabled]);
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: wrapping.current.reconfigure(props.wrap === false ? [] : EditorView.lineWrapping) });
+  }, [props.wrap]);
   useEffect(() => {
     const view = viewRef.current;
     if (!view || view.state.doc.toString() === props.value) return;

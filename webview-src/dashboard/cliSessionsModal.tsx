@@ -1123,7 +1123,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     projectPath: toolProjectPath, sessionId: props.selectedSession.id,
     targetDeviceId: workspacePeer?.local === false ? workspacePeer.id : props.selectedSession.remote ? props.selectedSession.deviceId : undefined,
     panelOpen: !toolsCollapsed, activeTab: activeContextTab,
-    tabs: contextTabs.map(id => ({ id, kind: workspaceTabKind(id), title: (id.startsWith('browser:') ? browserPages.find(page => page.id === workspaceTabPath(id))?.title : undefined) || id.slice(0, 512) })),
+    tabs: contextTabs.map(id => ({ id, kind: workspaceTabKind(id), title: ((id.startsWith('browser:') ? browserPages.find(page => page.id === workspaceTabPath(id))?.title : undefined) || id).slice(0, 512) })),
     browserPages: browserPages.map(page => ({ ...page, title: page.title.slice(0, 512) })),
     terminals: props.workspaceTerminals.map(terminal => ({ id: terminal.id, name: terminal.name }))
   } : undefined, props.connected !== false, async (request, assertCurrent) => {

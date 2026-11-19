@@ -24,6 +24,8 @@ const operations = [
   "snapshot",
   "screenshot",
   "click",
+  "drag",
+  "download",
   "fill",
   "type",
   "press",
@@ -37,8 +39,11 @@ const operations = [
   "styles",
   "events",
   "storage",
+  "credentials",
+  "cursor",
   "cdp",
   "feedback",
+  "updateFeedback",
   "deleteFeedback",
   "readFeedback"
 ];
@@ -227,7 +232,7 @@ const tools = [
   {
     name: "manager_browser",
     description:
-      "Control shared Manager browser tabs, including user-opened pages. For the user's visible right panel, FIRST call manager_workspace list and supply its surfaceId, sessionId and dashboard host targetDeviceId here; never assume the local host is the user's displayed view. Execute direct open/close/navigate requests before audit or optional inspection. Reuse a verified surface while its session is current. Open presents the tab before navigation; a preview warning does not mean the action failed. Start with list for page IDs and revisions; snapshot/screenshot only when needed. AI-opened tabs and the agent pointer are visible. Mutations need the current page revision; preserve operationId for the same attempt. On failure inspect current state, never replay blindly. Read HTML, styles (params.action rules/listeners), sources (html params.action resources/resource), events and storage; modify JavaScript/CSS/DOM with evaluate or page-scoped cdp. evaluate/cdp/storage changes require confirmed=true.",
+      "Control shared Manager browser tabs, including user-opened pages. For the user's visible right panel, FIRST call manager_workspace list and supply its surfaceId, sessionId and dashboard host targetDeviceId here; never assume the local host is the user's displayed view. Execute direct open/close/navigate requests before audit or optional inspection. Reuse a verified surface while its session is current. Open presents the tab before navigation; a preview warning does not mean the action failed. Start with list for page IDs and revisions; snapshot/screenshot only when needed. AI-opened tabs and the agent pointer are visible. Mutations need the current page revision; preserve operationId for the same attempt. On failure inspect current state, never replay blindly. Read HTML, styles (params.action rules/listeners), sources (html params.action resources/resource), events and storage; modify JavaScript/CSS/DOM with evaluate or page-scoped cdp. evaluate/cdp/storage changes require confirmed=true. For saved logins use credentials params.action=list, then fill with id, confirmed=true and the current page revision. The user unlocks the encrypted project vault in the dashboard; never request or supply passwords through MCP. Login fill checks the exact origin and does not submit. Credentials: the user creates/unlocks a project vault in the dashboard; never ask for or pass master passwords in tool calls. Use credentials params.action=list for safe metadata and params.action=fill,id with confirmed=true and the current page revision to fill a saved login on its exact origin. It does not submit.",
     inputSchema: browserSchema
   }
 ];
