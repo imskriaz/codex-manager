@@ -2,8 +2,13 @@ import { assertFlyoutNear } from './check-lists-api-ui.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+const setConnection = (page, connected) => page.evaluate(connected => {
+  for (const data of [{ type: 'dashboard:connection', connected }, { type: 'dashboard:host-status', stage: connected ? 'live' : 'offline' }])
+    window.dispatchEvent(new MessageEvent('message', { data }));
+}, connected);
+
 // Runs inside the responsive harness: every write is intercepted by its in-memory host.
-export async function checkTaskUi(page, { origin, width, height, output }) {
+export async function checkTaskUi(page, { origin, width, height, output, sessionOnly = false }) {
   await page.goto(`${origin}/`);
   await page.locator('#dashboard-main').waitFor();
   if (width <= 760) await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
@@ -153,6 +158,27 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.waitForFunction(() => !document.querySelector('.task-session-conversation .cli-approval-control input')?.checked);
   await page.keyboard.press('Escape');
   const taskContext = task.locator('.cli-turn-context');
+  const taskSessionState = await page.evaluate(() => {
+    const session = window.__uiSessions.find(item => item.title === 'Evaluate stack beyond expectations' && !item.parentSessionId);
+    const saved = structuredClone(session);
+    Object.assign(session, { status: 'unknown', steerTurnId: undefined });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'task-unknown-send', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+    window.__holdNextSend = true; window.__heldSendResult = undefined;
+    return saved;
+  });
+  await task.getByRole('textbox', { name: 'Message Codex', exact: true }).fill('Task follow-up despite stale status');
+  await task.locator('.cli-send-button').click();
+  await page.waitForFunction(() => !!window.__heldSendResult);
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, payload: undefined, status: 'failed', error: 'Task owner could not be verified. Your message was kept.' } })));
+  await task.locator('.cli-local-queue-summary').getByRole('alert').waitFor({ state: 'visible' });
+  await task.locator('.cli-local-queue-summary').click();
+  await page.getByRole('dialog', { name: '1 queued message', exact: true }).getByRole('button', { name: 'Delete queued message', exact: true }).click();
+  await task.locator('.cli-local-queue').waitFor({ state: 'hidden' });
+  await page.evaluate(saved => {
+    Object.assign(window.__uiSessions.find(item => item.id === saved.id), saved);
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'task-restored-status', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  }, taskSessionState);
+  if (sessionOnly) return;
   assert.ok((await taskContext.innerText()).trim(), 'Task conversation footer shows session context');
   assert.equal(await task.locator('.cli-turn-quota').count(), 0, 'Task context has no empty account quota');
   const strip = task.locator('.cli-turn-usage-strip');
@@ -178,9 +204,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.evaluate(()=>{window.__failAgentRead=false;});
   await reopenReviewer();
   await task.getByRole('alert').filter({hasText:'Agent transcript unavailable'}).waitFor({state:'hidden'});
-  await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+  await setConnection(page, false);
   assert.equal(await task.getByText('Agent reviewer message',{exact:true}).count(),1,'Offline agent keeps its transcript');
-  await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+  await setConnection(page, true);
   await task.getByRole('tab',{name:'Reviewer',exact:true}).waitFor();
   await page.evaluate(()=>{window.__holdNextAgentRead=true;window.__heldAgentResult=undefined;});
   await reopenReviewer();
@@ -373,7 +399,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await create.getByLabel('Prompt / idea', { exact: true }).fill('Keep this work through reconnect.');
   await create.locator('input[type=file]').setInputFiles({name:'task-brief.txt',mimeType:'text/plain',buffer:Buffer.from('Task attachment survives offline save')});
   await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).waitFor();
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
+  await setConnection(page, false);
   await page.locator('.dashboard-connection-banner').waitFor();
   assert.equal(await page.locator('.dashboard-offline-overlay').count(), 0, 'Task boards use only the bottom connection banner');
   assert.equal(await page.getByRole('button',{name:'Board actions',exact:true}).isDisabled(),false,'Local board actions remain available offline');
@@ -398,18 +424,17 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   } else {
     await create.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
-    assert.equal(await page.locator('.dashboard-notice').filter({hasText:'Saved offline.'}).count(),0,'The visible offline card confirms saving without an information toast');
+    await page.locator('.dashboard-notice').filter({hasText:'Saved offline.'}).waitFor({ state: 'visible' });
   }
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Saving offline sends no server action');
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+  await setConnection(page, true);
   await page.locator('.dashboard-connection-banner').waitFor({state:'hidden'});
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
   assert.equal(await page.locator('.task-board-status').count(),0,'Action feedback never inserts a board row');
-  assert.equal(await page.locator('.dashboard-notice.is-info').count(),0,'Routine task outcomes stay quiet');
   while (await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).count()) await page.getByRole('button',{name:'Dismiss notification',exact:true}).filter({visible:true}).first().click();
   await page.locator('.dashboard-notice-stack').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore + (width === 320 ? 0 : 1), 'The saved offline task syncs once after reconnect');
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+  await setConnection(page, true);
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
   if (width === 390) {
     assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='saveProjectTask'&&item.payload.task.title==='Offline task draft').at(-1).payload.task.uploads[0].data),'Task attachment survives offline save');

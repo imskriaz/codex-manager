@@ -325,6 +325,32 @@ it("force refreshes a leased native status", async () => {
   const refresh = readNativeCodexSessionRunning(home, id, undefined, true); await vi.advanceTimersByTimeAsync(0); message(snapshot("idle", 2));
   expect(await refresh).toBe(false);
 });
+it.each(['active', 'idle', 'missing'])('waits for turn proof after a runtime patch during refresh (%s)', async state => {
+  const initial = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot('active', 1)); await initial;
+  const refresh = readNativeCodexSessionRunning(home, id, undefined, true);
+  let settled = false; void refresh.then(() => { settled = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  message({ type: 'broadcast', version: 13, sourceClientId: 'owner', method: 'thread-stream-state-changed', params: {
+    hostId: 'local', conversationId: id, change: { type: 'patches', baseRevision: 1, revision: 2,
+      patches: [{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active' } }] }
+  } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(false);
+  const concurrent = readNativeCodexSessionRunning(home, id);
+  if (state === 'missing') {
+    await vi.advanceTimersByTimeAsync(3001);
+    expect(await refresh).toBeUndefined();
+    expect(await concurrent).toBeUndefined();
+    expect(getNativeCodexSessionTurnId(home, id)).toBeUndefined();
+    return;
+  }
+  await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(false);
+  message(snapshot(state, 2));
+  expect(await refresh).toBe(state === 'active');
+  expect(await concurrent).toBe(state === 'active');
+  expect(getNativeCodexSessionTurnId(home, id)).toBe(state === 'active' ? 'native-turn' : undefined);
+});
 it("decodes split headers and UTF-8 frames, and coalesces reads", async () => {
   const first = readNativeCodexSessionRunning(home, id), second = readNativeCodexSessionRunning(home, id); await initialize();
   const data = frame(snapshot("idle")); for (let offset = 0; offset < data.length; offset += 3) socket.emit("data", data.subarray(offset, offset + 3));

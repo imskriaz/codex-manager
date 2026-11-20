@@ -103,6 +103,7 @@ export function TaskBoard(props: {
   const ownerDeviceId = props.targetDeviceId ?? props.selectedSystem;
   const scope = boardScope(ownerDeviceId, project), active = useRef(scope); active.current = scope;
   const deviceRef = useRef(props.targetDeviceId); deviceRef.current = props.targetDeviceId;
+  const connectedRef = useRef(props.connected); connectedRef.current = props.connected;
   const selection = useRef(selected?.id); selection.current = selected?.id;
   const detailView = useRef({ tab: readTab, cursor }); detailView.current = { tab: readTab, cursor };
   const detailGeneration = useRef(0), receivedBoard = useRef(false), syncing = useRef(false);
@@ -126,7 +127,7 @@ export function TaskBoard(props: {
   const visibleRef = useRef(props.active !== false); visibleRef.current = props.active !== false;
   const requests = useRef(new Map<string, { resolve: (result: DashboardActionResultPayload) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>());
   const call = (action: DashboardActionName, payload: DashboardActionPayload = {}) => new Promise<DashboardActionResultPayload>((resolve, reject) => {
-    if (!props.connected) { reject(new Error('Reconnect to use this operation. It was not sent or queued.')); return; }
+    if (!connectedRef.current) { reject(new Error('Reconnect to use this operation. It was not sent or queued.')); return; }
     if (props.shared) { void props.shared.request(action, payload).then(resolve, reject); return; }
     const id = props.sendAction(action, undefined, { projectPath: project, targetDeviceId: props.targetDeviceId, automatic: true, ...payload });
     if (!id) { reject(new Error('The request could not be sent.')); return; }
@@ -212,12 +213,13 @@ export function TaskBoard(props: {
   useEffect(() => { if (props.shared) { apply(props.shared.board); void detailRefreshRef.current(); } }, [props.shared?.board]);
   refreshRef.current = () => refresh(true);
   const sync = async (retry = false) => {
-    if (props.shared || !props.connected || syncing.current) return;
+    if (props.shared || !connectedRef.current || syncing.current) return;
     syncing.current = true;
     const failures: Record<string, string> = {}, blocked = new Set<string>();
     try {
       const pending = (await listBrowserOutbox<Outbox>()).sort((a,b) => (a.value?.savedAt ?? 0) - (b.value?.savedAt ?? 0) || Number(!!b.value?.task) - Number(!!a.value?.task));
       for (const row of pending) {
+        if (!connectedRef.current) break;
         const value = row.value;
         if (!value || typeof value.project !== 'string' || (!value.task && !value.comment) || (value.task && value.comment)) { failures[row.key] = 'Unreadable local change. Copy its contents before removing it.'; continue; }
         if (!value.device || value.device === 'local') { failures[row.key] = 'This saved change has no verified system. Assign its owner before syncing.'; continue; }

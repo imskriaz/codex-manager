@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.16
+
+- Keep the message queue in one compact row with a short failure status; preserve full errors in its tooltip and dialog without a duplicate warning line.
+
 ## 3.0.0-pre.14
 
 - Always show the master username in password settings and the Change password dialog for signed-in master administrators, including remote browsers; retain local-only rotation and deny Team users, API tokens, and peer requests.
@@ -7,6 +11,12 @@
 ## 3.0.0-pre.10
 
 - Use a top section picker on mobile for General settings and Team management, while keeping searchable left navigation on desktop.
+
+## 3.0.0-pre.9
+
+- Wait for native turn identity during status refresh and allow a message to start when the previous turn finishes during send verification.
+- Keep full send failures visible above the composer and inside the queue dialog; let task conversations recheck stale status through the host like workspace chats.
+- Recheck the current connection before syncing saved task drafts so an earlier online sync cannot send after disconnecting.
 
 ## 3.0.0-pre.6
 

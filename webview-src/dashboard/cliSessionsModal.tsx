@@ -3550,11 +3550,13 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
   const items = queue.items;
   const [open, setOpen] = useState(false);
   if (!items.length) return null;
-  const reason = queue.notice ?? queue.reason;
+  const failed = items.find(item => item.state === 'failed' || item.state === 'uncertain');
+  const reason = failed ? failed.error ?? 'The send outcome needs confirmation. Check the session before retrying.' : queue.notice ?? queue.reason;
+  const status = failed ? failed.state === 'failed' ? 'Send failed' : 'Check send' : reason;
   const summary = items.length + ' queued message' + (items.length === 1 ? '' : 's');
   return <div class="cli-local-queue" aria-label="Local message queue">
-    <button type="button" class="cli-local-queue-summary" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} title={reason ?? summary}>
-      <QueueIcon /><span class="cli-local-queue-summary-copy">{summary}</span>{reason ? <small role="status" class="cli-local-queue-status">{reason}</small> : null}<ChevronIcon />
+    <button type="button" class={`cli-local-queue-summary ${failed ? 'has-error' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} title={reason ?? summary}>
+      <QueueIcon /><span class="cli-local-queue-summary-copy">{summary}</span>{status ? <small role={failed ? 'alert' : 'status'} class="cli-local-queue-status">{status}</small> : null}<ChevronIcon />
     </button>
     {items.map(item => <details key={item.id} class={`cli-goal-strip cli-queued-message is-${item.state}`} open={Boolean(item.error)}>
       <summary title={item.draft.text || 'Attachment'}>

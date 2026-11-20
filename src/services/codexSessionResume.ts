@@ -1277,7 +1277,9 @@ async function sendAppServerSessionMessage(options: {
       options.onStarted?.();
       return 'steered' as const;
     }
-    throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+    if (nativeRunning !== false) throw new Error(nativeRunning === true
+      ? "Codex is running, but its active turn could not be verified. Your message was kept; refresh the session and retry or queue it until the turn finishes."
+      : "The session has a live writer, but its Codex owner could not be reached. Your message was kept; open the original Codex window and retry.");
   }
   if (wasRunning === true) publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Stale session state was cleared. Sending your message.' });
   const savedAccess = standalone ? readSavedCodexSessionAccess(resolveCodexHome(), options.sessionId)?.access : undefined;

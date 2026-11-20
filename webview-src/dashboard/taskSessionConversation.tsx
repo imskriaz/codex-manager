@@ -76,13 +76,14 @@ export function TaskSessionConversation(props: {
     });
   }, [draft, ready, scope]);
   const queue = useCliMessageQueue({ scope, messages, results, connected: props.connected,
-    canDispatch: props.connected && !access.pending && !resume.pending && !props.session.archived && props.session.status !== 'unknown' && !stopping && (!running || followUpMode === 'steer' && !!steerTurnId),
-    canSteer: props.connected && !access.pending && !resume.pending && !props.session.archived && props.session.status !== 'unknown' && !stopping && (!running || !!steerTurnId),
+    canDispatch: props.connected && !access.pending && !resume.pending && !props.session.archived && !stopping && (!running || followUpMode === 'steer'),
+    canSteer: props.connected && !access.pending && !resume.pending && !props.session.archived && !stopping,
+    dispatchReason: !props.connected ? 'Reconnecting… your message is saved and will continue automatically.' : followUpMode === 'queue' && running ? 'Waiting for the current turn to finish. Use Steer to send this message now.' : undefined,
     turnId: running ? steerTurnId : undefined,
     send: value => props.sendAction(followUpMode === 'steer' && running && steerTurnId ? 'steerCodexCliSessionTurn' : 'sendCodexCliSessionMessage', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId, ...(followUpMode === 'steer' && running && steerTurnId ? { expectedTurnId: steerTurnId } : {}) }),
     steer: value => steerTurnId && running
       ? props.sendAction('steerCodexCliSessionTurn', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId, expectedTurnId: steerTurnId })
-      : !running ? props.sendAction('sendCodexCliSessionMessage', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId }) : undefined,
+      : props.sendAction('sendCodexCliSessionMessage', undefined, { ...value, sandboxMode: undefined, sessionId: props.session.id, projectPath: props.session.projectPath, targetDeviceId: props.session.deviceId }),
     restore: value => { if (!canRestoreCliComposerDraft(current.current, value)) { report({ level: 'warning', message: 'Your newer draft was kept. Clear or send it before moving the failed message from the queue.' }); return false; } current.current = restoreFailedCliComposerDraft(current.current, value); setDraft(current.current); return true; },
     feedback: (message, cancel) => report({ level: 'warning', message, cancel })
   });

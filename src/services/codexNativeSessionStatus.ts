@@ -49,6 +49,8 @@ function settle(entry: Observation, running: boolean | undefined): void {
   if (running === undefined) entry.threadSettings = undefined;
   for (const changed of entry.accessWaiters ?? []) changed();
   recordNativeSessionStatus(entry.home,entry.id,running);
+  // Runtime patches can arrive before the requested snapshot supplies the turn ID.
+  if (running === true && entry.needsTurnSnapshot) return;
   for (const resolve of entry.waiters) resolve(running);
   entry.waiters.clear();
 }
@@ -505,8 +507,8 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
     if (!entry.waiters.size && entry.running === undefined) { follow(entry, false); observations.delete(key); }
     return undefined;
   }
-  if (!forceRefresh && entry.running !== undefined && entry.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS) return entry.running;
-  if (entry.running !== undefined) {
+  if (!forceRefresh && !entry.needsTurnSnapshot && entry.running !== undefined && entry.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS) return entry.running;
+  if (entry.running !== undefined && !entry.needsTurnSnapshot) {
     // Refresh missed completion events without trusting a retained writer handle.
     entry.needsTurnSnapshot = true; settle(entry, undefined); follow(entry, true);
   }

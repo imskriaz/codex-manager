@@ -1293,8 +1293,8 @@ try {
       results.push({width,height,checks:'Usage log interval/toggle, quota retention, confirmed clear, cancellation and storage failure feedback'});
       await context.close();continue;
     }
-    if (process.argv.includes('--tasks')) {
-      await checkTaskUi(page,{origin,width,height,output});
+    if (process.argv.includes('--tasks') || process.argv.includes('--task-send')) {
+      await checkTaskUi(page,{origin,width,height,output,sessionOnly:process.argv.includes('--task-send')});
       assert.deepEqual(errors,[],'Task UI runtime errors');
       results.push({width,height,checks:'Compact context header, four views, Agents, Overview, details and sharing'});
       await context.close(); continue;

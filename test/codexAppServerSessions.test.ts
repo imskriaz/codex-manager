@@ -838,7 +838,7 @@ describe("native App Server new sessions", () => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
-    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('already working');
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('active turn could not be verified');
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
     expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
@@ -850,6 +850,18 @@ describe("native App Server new sessions", () => {
     await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('Writer inspection failed');
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
+  it('sends once when the native turn finishes during the final ownership check', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValueOnce(true).mockResolvedValue(false);
+    const rpc = { request: vi.fn(async () => ({ thread: { id } })), close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined, startAndWaitForTurn: vi.fn(async (_id, _params, _timeout, started) => started('new-turn')) };
+    mocks.open.mockResolvedValue(rpc);
+    const accepted = vi.fn();
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'Follow up', onStarted: accepted });
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
   });
   it('preserves a failed native ownership recheck instead of replacing it with a busy error', async () => {
     await mkdir(path.join(root, 'sessions'));
