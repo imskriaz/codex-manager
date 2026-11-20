@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.20
+
+- Remove the dark background from installed app and notification icons, preserving transparency around and inside the Codex logo. Declare the transparent app icons for ordinary use instead of maskable display.
+
 ## 3.0.0-pre.19
 
 - Prefill the donation amount with USD 10.11 in the Donate dialog and onboarding.
