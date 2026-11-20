@@ -43,7 +43,7 @@ const WARNING_VALUES = Array.from({ length: 91 }, (_, index) => index);
 const WARNING_SCALE_VALUES = [0, 20, 40, 60, 80, 90];
 const WEEKLY_WARNING_VALUES = WARNING_VALUES;
 const WEEKLY_WARNING_SCALE_VALUES = WARNING_SCALE_VALUES;
-type SettingsTabId = "general" | "automation" | "data" | "tools" | "office";
+type SettingsTabId = "general" | "automation" | "data" | "tools";
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
@@ -107,7 +107,7 @@ export function SettingsOverlay(props: {
   const transferCopy = resolveTransferCopy(props.lang);
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
-  const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }, ...(props.office && props.office.role !== "user" ? [{ id: "office" as const, label: "Office", heading: "Office management", description: "Users, features, MCP access, and storage." }] : [])];
+  const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
   const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
   useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
@@ -265,6 +265,12 @@ export function SettingsOverlay(props: {
                         : "Browser access and connections."}
                   </div>
                 </div>
+                <SettingsToggleBlock
+                  title="Enable Team workspace"
+                  sub="Allow team users to sign in and show the separate Team admin panel in the browser."
+                  enabled={props.settings.teamWorkspaceEnabled === true}
+                  onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)}
+                />
                 <SettingsToggleBlock
                   title={
                     props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
@@ -835,10 +841,6 @@ export function SettingsOverlay(props: {
             <SettingsPanelIntro tab={tabs[3]!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
-          {props.office ? <div class="settings-tab-panel" id="settings-panel-office" role="tabpanel" aria-labelledby="settings-tab-office" hidden={activeTab !== "office"}>
-            <SettingsPanelIntro tab={tabs[tabs.length - 1]!} />
-            <OfficeAdminSettings />
-          </div> : null}
         </div>
       </div>
     </div>
@@ -890,18 +892,6 @@ function SettingsTabIcon(props: { tab: SettingsTabId }) {
       <circle cx="8.5" cy="14.5" r="1.5" />
     </svg>
   );
-}
-
-type OfficeAdminUser = { id: string; username: string; displayName: string; role: string; enabled: boolean; features: string[]; defaultPrompt: string; workspacePath: string; mcpServers: string[] };
-
-function OfficeAdminSettings() {
-  const [users, setUsers] = useState<OfficeAdminUser[]>([]);
-  const [error, setError] = useState("");
-  const [draft, setDraft] = useState({ username: "", password: "", displayName: "", defaultPrompt: "", features: "generalChat,tasks,files,browser", mcpServers: "" });
-  const load = () => void fetch("/api/office/users", { cache: "no-store" }).then(async response => { const body = await response.json() as { users?: OfficeAdminUser[]; error?: string }; if (!response.ok) throw new Error(body.error ?? "Office users could not be loaded."); setUsers(body.users ?? []); }).catch(value => setError(value instanceof Error ? value.message : "Office users could not be loaded."));
-  useEffect(load, []);
-  const create = async (event: Event) => { event.preventDefault(); setError(""); try { const response = await fetch("/api/office/users", { method: "POST", headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify({ ...draft, features: draft.features.split(",").map(item => item.trim()).filter(Boolean), mcpServers: draft.mcpServers.split(",").map(item => item.trim()).filter(Boolean) }) }); const body = await response.json() as { error?: string }; if (!response.ok) throw new Error(body.error ?? "Office user could not be created."); setDraft({ username: "", password: "", displayName: "", defaultPrompt: "", features: "generalChat,tasks,files,browser", mcpServers: "" }); load(); } catch (value) { setError(value instanceof Error ? value.message : "Office user could not be created."); } };
-  return <div class="office-admin-settings"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Users & roles</div><div class="settings-block-sub">Create isolated users and choose their workspace features.</div></div>{error ? <div class="settings-note settings-notice-warning" role="alert">{error}</div> : null}<div class="office-user-list">{users.map(user => <div class="office-user-row" key={user.id}><strong>{user.displayName}</strong><span>{user.username} · {user.role} · {user.enabled ? "Enabled" : "Disabled"}</span><small>{user.workspacePath}</small><small>Features: {user.features.join(", ") || "none"}</small></div>)}</div><form class="office-user-create" onSubmit={event => { void create(event); }}><input required placeholder="Username" value={draft.username} onInput={event => setDraft(current => ({ ...current, username: (event.currentTarget as HTMLInputElement).value }))} /><input required type="password" minLength={8} placeholder="Temporary password" value={draft.password} onInput={event => setDraft(current => ({ ...current, password: (event.currentTarget as HTMLInputElement).value }))} /><input placeholder="Display name" value={draft.displayName} onInput={event => setDraft(current => ({ ...current, displayName: (event.currentTarget as HTMLInputElement).value }))} /><input placeholder="Features: generalChat,tasks,files,browser" value={draft.features} onInput={event => setDraft(current => ({ ...current, features: (event.currentTarget as HTMLInputElement).value }))} /><input placeholder="MCP ids (comma separated)" value={draft.mcpServers} onInput={event => setDraft(current => ({ ...current, mcpServers: (event.currentTarget as HTMLInputElement).value }))} /><textarea placeholder="Default prompt for this user" value={draft.defaultPrompt} onInput={event => setDraft(current => ({ ...current, defaultPrompt: (event.currentTarget as HTMLTextAreaElement).value }))} /><button class="settings-action-btn" type="submit">Add user</button></form></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Storage & MCP</div><div class="settings-block-sub">Configure the office root, PostgreSQL fallback, and MCP allow-list from VS Code settings.</div></div><div class="settings-note">Users never receive account credentials or host diagnostics. MCP entries are limited to the ids assigned above.</div></div></div>;
 }
 
 function resolveSettingsNavigationCopy(lang: DashboardState["lang"]): {

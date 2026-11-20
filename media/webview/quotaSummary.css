@@ -14988,7 +14988,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .overview-metrics, .overview-actions { padding: 6px; }
   .accounts-grid { gap: 6px; }
   .accounts-section-header { margin-bottom: 4px; }
-  .dashboard-account-toolbar { display: flex; flex-wrap: nowrap; gap: 4px; padding-block: 3px; margin-bottom: 6px; overflow: visible; }
+  .dashboard-account-toolbar { display: flex; flex-wrap: nowrap; gap: 4px; padding-block: 1px; margin-bottom: 4px; overflow: visible; }
   .dashboard-account-toolbar .account-search-control { flex: 1 1 0; width: auto; min-width: 0; height: 40px; min-height: 40px; grid-column: auto; padding-inline: 6px; gap: 3px; }
   .dashboard-account-toolbar .account-search-control input { flex: 1 1 0; min-width: 0; width: 0; font-size: calc(16px * var(--dashboard-text-scale, 1)); }
   .dashboard-account-toolbar .account-search-control button { flex: 0 0 28px; width: 28px; height: 36px; }
@@ -18084,7 +18084,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 }
 .dashboard-content .dashboard-account-toolbar .account-search-control > button { height: calc(var(--account-control-size) - 2px); min-height: 0; }
 @media (pointer: coarse) {
-  .dashboard-content .dashboard-account-toolbar { --account-control-size: 40px; }
+  .dashboard-content .dashboard-account-toolbar { --account-control-size: 34px; }
 }
 @container dashboard-surface (max-width: 760px) {
   .dashboard-content .hero { flex-wrap: nowrap; gap: 5px; }

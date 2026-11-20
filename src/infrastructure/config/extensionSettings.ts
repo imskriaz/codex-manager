@@ -90,6 +90,7 @@ export class ExtensionSettingsStore {
       alwaysActiveStartWithSystem: config.get<boolean>("alwaysActiveStartWithSystem", false),
       cloudflaredDomain: config.get<string>("cloudflaredDomain", "").trim(),
       officeWorkspaceRoot: config.get<string>("officeWorkspaceRoot", "").trim(),
+      teamWorkspaceEnabled: config.get<boolean>("teamWorkspaceEnabled", false),
       officeDatabaseProvider: config.get<"sqlite" | "postgres">("officeDatabaseProvider", "sqlite") === "postgres" && Boolean(config.get<string>("officePostgresUrl", "").trim()) ? "postgres" : "sqlite",
       officePostgresUrl: config.get<string>("officePostgresUrl", "").trim(),
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")

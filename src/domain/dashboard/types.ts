@@ -54,6 +54,7 @@ export type DashboardSettingKey =
   | "alwaysActiveStartWithSystem"
   | "cloudflaredDomain"
   | "officeWorkspaceRoot"
+  | "teamWorkspaceEnabled"
   | "officeDatabaseProvider"
   | "officePostgresUrl"
   | "displayLanguage";
@@ -126,6 +127,7 @@ export interface DashboardSettings {
   cloudflaredDomain?: string;
   /** Root folder for per-user office workspaces. SQLite remains the fallback store. */
   officeWorkspaceRoot?: string;
+  teamWorkspaceEnabled?: boolean;
   officeDatabaseProvider?: "sqlite" | "postgres";
   officePostgresUrl?: string;
   displayLanguage: DashboardLanguageOption;

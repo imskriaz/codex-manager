@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.1",
+  "version": "3.0.0-pre.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -351,9 +351,18 @@
           "default": "",
           "markdownDescription": "Root folder for isolated office user workspaces. Users receive a folder below this path."
         },
+        "codexManager.teamWorkspaceEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Enable Team workspace sign-in and role-gated Team routes."
+        },
         "codexManager.officeDatabaseProvider": {
           "type": "string",
-          "enum": ["sqlite", "postgres"],
+          "enum": [
+            "sqlite",
+            "postgres"
+          ],
           "default": "sqlite",
           "markdownDescription": "Office data store. SQLite is the default; PostgreSQL is used only when a valid connection is configured."
         },
@@ -477,6 +486,7 @@
     "@xterm/headless": "6.0.0",
     "mammoth": "^1.12.2",
     "node-pty": "1.1.0",
+    "pg": "8.23.1",
     "playwright-core": "1.63.0",
     "undici": "6.29.1",
     "web-push": "^3.6.7",
@@ -506,6 +516,7 @@
     "@codemirror/lang-yaml": "^6.1.3",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.16.11",
+    "@types/pg": "8.11.10",
     "@types/vscode": "^1.96.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",

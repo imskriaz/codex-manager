@@ -202,6 +202,8 @@ const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 type ComposerDraft = CliComposerDraft;
 
 export type CliSessionsPageProps = {
+  /** User workspace feature allow-list; omitted for the full admin dashboard. */
+  officeFeatures?: string[];
   browser?: boolean;
   standalone?: boolean;
   dashboardMode?: boolean;
@@ -950,7 +952,22 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return () => { clearTimeout(timer); window.removeEventListener('pagehide', save); save(); };
   }, [contextProjectKey, contextProjectState.fileDrafts, restoredFileDraftKeys, props.browser]);
 
-  const activeContextTab = contextProjectState.active;
+  const officeFeatures = props.officeFeatures ? new Set(props.officeFeatures) : undefined;
+  const contextTabAllowed = (tab: WorkspaceTab): boolean => {
+    if (!officeFeatures) return true;
+    const kind = workspaceTabKind(tab);
+    if (kind === "env") return officeFeatures.has("env");
+    if (kind === "terminal") return officeFeatures.has("terminal");
+    if (kind === "git" || kind === "reviews") return officeFeatures.has("git");
+    if (kind === "browser") return officeFeatures.has("browser");
+    if (kind === "files") return officeFeatures.has("files");
+    if (kind === "accounts") return false;
+    return officeFeatures.has("tasks");
+  };
+  const contextTabs = contextProjectState.tabs.filter(contextTabAllowed);
+  const activeContextTab = contextTabAllowed(contextProjectState.active)
+    ? contextProjectState.active
+    : contextTabs[0] ?? (officeFeatures?.has("files") ? "files" : officeFeatures?.has("browser") ? "browser" : "accounts");
   const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
@@ -961,7 +978,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     else if (toolProjectPath && (kind === 'env' || kind === 'git')) props.onRefreshEnvironment(toolProjectPath);
   }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed, props.connected, props.standalone]);
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
-  const contextTabs = contextProjectState.tabs;
   const browserPages = contextProjectState.browserPages ?? [];
   const terminalDraft = contextProjectState.draft ?? '';
   const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), draft } }));
@@ -1075,6 +1091,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   };
   const openContextTab = (tab: WorkspaceToolTab, filePath?: string, browserUrl?: string, browserDownloadUrl?: string): void => {
+    if (officeFeatures && !contextTabAllowed(tab)) {
+      props.onActionFeedback({ level: 'warning', message: 'This workspace tool is not enabled for your account.' });
+      return;
+    }
     if (tab === 'accounts' && mobileLayout) setRailCollapsed(true);
     if (tab === "reviews") setBranchReview(false);
     if (tab === "browser" && !filePath && !browserUrl && !browserDownloadUrl) {
@@ -1492,13 +1512,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       <div class={`cli-workspace-grid ${props.selectedSession ? "has-context" : ""}`}>
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label="Codex sessions">
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
-            <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>
+            {props.officeFeatures ? <div class="cli-rail-brand" aria-label="Office workspace" title="Office workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Office</strong></div> : <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>}
             {props.browser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
             <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton>
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
-                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive && !props.apiActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
+                {!props.officeFeatures ? <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive && !props.apiActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button> : null}
                 <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => { selectNewRequest(); props.onTasks?.(); }} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button>{props.apiEnabled ? <button type="button" class="cli-icon-button cli-api-shortcut" aria-current={props.apiActive ? "page" : undefined} aria-label="API access" title="API access" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onApi?.(); }}><ApiIcon /></button> : null}
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
@@ -1723,6 +1743,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
         <WorkspaceContextPanel
+          officeFeatures={props.officeFeatures}
           liveState={props.liveState}
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
 
@@ -2730,6 +2751,7 @@ export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]
 }
 
 function WorkspaceContextPanel(props: {
+  officeFeatures?: string[];
   onDashboardTarget?: (target: HTMLElement | null) => void;
   renderAccounts?: () => preact.ComponentChildren;
   onBrowserInstruction: (text: string, image?: string, images?: string[]) => void;
@@ -2849,8 +2871,20 @@ function WorkspaceContextPanel(props: {
     const activeTab = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     activeTab?.closest("span")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [props.activeTab, props.tabs.length]);
-  const visibleTabs = props.hideTerminal ? props.tabs.filter(tab => tab !== 'terminal') : props.tabs;
-  const workspaceAddTabs = (['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && (tab === 'browser' || !visibleTabs.includes(tab)));
+  const officeFeatures = props.officeFeatures ? new Set(props.officeFeatures) : undefined;
+  const featureAllows = (tab: WorkspaceTab): boolean => {
+    if (!officeFeatures) return true;
+    const kind = workspaceTabKind(tab);
+    if (kind === 'browser') return officeFeatures.has('browser');
+    if (kind === 'files') return officeFeatures.has('files');
+    if (kind === 'env') return officeFeatures.has('env');
+    if (kind === 'terminal') return officeFeatures.has('terminal');
+    if (kind === 'git' || kind === 'reviews') return officeFeatures.has('git');
+    if (kind === 'accounts') return false;
+    return officeFeatures.has('tasks');
+  };
+  const visibleTabs = (props.hideTerminal ? props.tabs.filter(tab => tab !== 'terminal') : props.tabs).filter(featureAllows);
+  const workspaceAddTabs = (['browser', 'git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !(props.hideTerminal && tab === 'terminal') && featureAllows(tab) && (tab === 'browser' || !visibleTabs.includes(tab)));
   const addTabs = [...workspaceAddTabs, ...(visibleTabs.includes('accounts') ? [] : ['accounts' as const])];
   const activeKind = workspaceTabKind(props.activeTab);
   const activePath = workspaceTabPath(props.activeTab);

@@ -638,6 +638,9 @@ function App() {
     document.documentElement.classList.toggle("office-user-theme", snapshot?.office?.role === "user");
     return () => document.documentElement.classList.remove("office-user-theme");
   }, [snapshot?.office?.role]);
+  useEffect(() => {
+    if (snapshot?.office?.role === "user" && isBrowserDashboard && browserPath === "/tasks") navigateDashboardPath("/workspace", setBrowserPath);
+  }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
   const localCacheSystemId = snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
   useEffect(() => {
@@ -2883,7 +2886,6 @@ function App() {
                 </span>
                 {snapshot.encryptedSyncNeedsConfiguration ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
               </button>
-              {snapshot.office && snapshot.office.role !== "user" ? <button id="officeAdminButton" class="settings-btn action-btn icon-only" type="button" title="Office administration" aria-label="Office administration" onClick={() => dispatch({ type: "open-settings" })}><span class="button-face"><span class="button-icon">▦</span></span></button> : null}
               <button
                 id="aboutOpenButton"
                 class="settings-btn action-btn about-btn"
@@ -3067,7 +3069,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/tasks', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/workspace', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
         </fieldset>
       </main>
 
@@ -3221,6 +3223,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && (snapshot.office?.role !== "user" || browserPath === "/tasks")
         ? createPortal(
             <CliSessionsPage
+              officeFeatures={snapshot.office?.role === "user" ? snapshot.office.features : undefined}
               hostConnected={!connectionUnavailable && !reloadInProgress}
               systemInfoEnabled={snapshot?.settings.systemInfoEnabled !== false}
               quotaWarningSettings={snapshot?.settings}

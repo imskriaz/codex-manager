@@ -71,6 +71,7 @@ export async function handleDashboardSettingUpdate(
       }
       break;
     case "systemInfoEnabled":
+    case "teamWorkspaceEnabled":
     case "privacyMode":
     case "codexAppRestartEnabled":
     case "modelCapacityAutoSwitchEnabled":

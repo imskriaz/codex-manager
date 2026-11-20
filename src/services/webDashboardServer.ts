@@ -1196,18 +1196,27 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     const officeUser = apiAuthorized ? undefined : await this.officeUserForRequest(request);
+    if (officeUser?.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
+      response.statusCode = 403;
+      if (path.startsWith("/api/")) this.sendJson(response, { error: "Team workspace is currently unavailable." });
+      else response.end("Team workspace is currently unavailable.");
+      return;
+    }
+    if (path.startsWith("/api/office/") && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
+      response.statusCode = 404; response.end("Not found"); return;
+    }
     if (method === "GET" && path === "/api/office/users") {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
-      this.sendJson(response, { users: listOfficeUsers() });
+      this.sendJson(response, { users: await listOfficeUsers() });
       return;
     }
     if (method === "GET" && path === "/api/office/mcp") {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
-      this.sendJson(response, { servers: listOfficeMcpServers() }); return;
+      this.sendJson(response, { servers: await listOfficeMcpServers() }); return;
     }
     if (method === "PUT" && path === "/api/office/mcp") {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
-      try { const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as { servers?: unknown }; if (!Array.isArray(body.servers)) throw new Error("Choose a valid MCP list."); saveOfficeMcpServers(body.servers as never[]); this.sendJson(response, { servers: listOfficeMcpServers() }); }
+      try { const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as { servers?: unknown }; if (!Array.isArray(body.servers)) throw new Error("Choose a valid MCP list."); await saveOfficeMcpServers(body.servers as never[]); this.sendJson(response, { servers: await listOfficeMcpServers() }); }
       catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "MCP settings could not be saved." }); }
       return;
     }
@@ -1420,7 +1429,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const credential = await this.auth.getDashboardPassphraseFingerprint();
       const configured = Boolean(await this.auth.hasDashboardPassphrase());
       const officeUser = await authenticateOfficeUser(username, password, () => this.auth.verifyDashboardPassphrase(password));
-      if (!configured || !officeUser) {
+      if (!configured || !officeUser || officeUser.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
         this.loginAttempts.set(ip, {
           count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1,
           resetAt: attempt && attempt.resetAt > now ? attempt.resetAt : now + LOGIN_WINDOW_MS
@@ -1463,11 +1472,11 @@ export class WebDashboardServer implements vscode.Disposable {
     const token = readDashboardSessionToken(request);
     if (!token || !(await this.isAuthorizedSessionToken(token))) return undefined;
     const cached = this.officeSessions?.get(token);
-    if (cached) return cached.userId === "master" ? this.officeUserForRequest({ headers: { host: "localhost" } } as http.IncomingMessage) : getOfficeUser(cached.userId);
+    if (cached) return cached.userId === "master" ? this.officeUserForRequest({ headers: { host: "localhost" } } as http.IncomingMessage) : await getOfficeUser(cached.userId);
     const persisted = normalizePersistedWebDashboardSessions(await this.auth.readSessions(), Date.now()).find(item => item.fingerprint === fingerprintWebDashboardSession(token));
     const userId = persisted?.officeUserId;
     if (!userId) return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
-    const user = getOfficeUser(userId);
+    const user = await getOfficeUser(userId);
     if (user) (this.officeSessions ??= new Map()).set(token, { userId, role: user.role });
     return user;
   }
@@ -3833,7 +3842,7 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
 
 function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-username">Office username (optional for the master account)</label><input id="dashboard-username" name="username" type="text" autocomplete="username" autofocus><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Team users sign in with their username and password.</p><form method="post" action="${action}"><label for="dashboard-username">Username (required for Team users)</label><input id="dashboard-username" name="username" type="text" autocomplete="username" autofocus><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
 }
 
 function versionPublicAssets(html: string, version: string): string {

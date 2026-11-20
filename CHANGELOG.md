@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.2
+
+- Add a Team workspace enable toggle under Settings → General → Dashboard; Team routes remain role-gated and separate from regular user settings.
+- Hide Dashboard, environment, terminal, Git, and GitHub workspace tools from users unless their assigned features allow them.
+
 ## 3.0.0-pre.1
 
 - Add office users, role-aware workspaces, per-user folders, admin feature/MCP controls, General proxy chat, and reduced Task work for users.
