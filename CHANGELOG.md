@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.6
+
+- Add a role-gated Team settings page at `/manage`, with user editing, permissions, workspace defaults, MCP access, and SQLite/PostgreSQL configuration; redirect `/admin` to `/manage`.
+- Match the searchable settings sidebar across Team and main Settings, compact the editor tabs, and align Dashboard controls in columns.
+
 ## 3.0.0-pre.5
 
 - Improve compact tab spacing by context: tighter workspace and Inspector tools, roomier task/API navigation, clearer counts, and clean task selection underlines.

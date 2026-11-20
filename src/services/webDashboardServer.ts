@@ -74,6 +74,7 @@ import {
 } from "./dashboardUsageHistory";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { readTeamSettings, saveTeamSettings } from "./teamSettings";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, listCodexSessionLiveStates } from "./codexSessionLive";
 import { recordSessionLive } from "./sessionRecording";
@@ -1179,7 +1180,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const apiAuthorized = !!apiToken;
     if (bearer && !apiAuthorized) { response.statusCode = 401; this.sendJson(response, { error: 'API access is disabled or the token is invalid.' }); return; }
     if (apiToken && !['/api/state', '/api/schema', '/api/message'].includes(path)) { response.statusCode = 403; this.sendJson(response, { error: 'Use the permitted dashboard API endpoints.' }); return; }
-    if (method === "POST" && !(apiAuthorized && !request.headers.origin) && !isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined)) {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && !(apiAuthorized && !request.headers.origin) && !isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined)) {
       response.statusCode = 403;
       if (path.startsWith("/api/")) this.sendJson(response, { error: "Cross-origin dashboard request rejected" });
       else response.end("Forbidden");
@@ -1196,6 +1197,18 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     const officeUser = apiAuthorized ? undefined : await this.officeUserForRequest(request);
+    if (!apiAuthorized && (!officeUser || !officeUser.enabled)) {
+      response.statusCode = 401; this.sendJson(response, { error: "Your session expired. Sign in again." }); return;
+    }
+    if (method === "GET" && (path === "/manage" || path === "/admin")) {
+      if (!officeUser || !officeUser.enabled || officeUser.role === "user") {
+        response.statusCode = 403; response.end("Team management is restricted to administrators."); return;
+      }
+      if (path === "/admin") {
+        response.statusCode = 303; response.setHeader("Location", "/manage"); response.end(); return;
+      }
+      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request), this.assetVersion)); return;
+    }
     if (officeUser?.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
       response.statusCode = 403;
       if (path.startsWith("/api/")) this.sendJson(response, { error: "Team workspace is currently unavailable." });
@@ -1203,7 +1216,17 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (path.startsWith("/api/office/") && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
-      response.statusCode = 404; response.end("Not found"); return;
+      response.statusCode = 403; this.sendJson(response, { error: "Enable Team workspace in Settings → General → Dashboard first." }); return;
+    }
+    if (path === "/api/office/settings" && (method === "GET" || method === "PUT")) {
+      if (!officeUser || !officeUser.enabled || officeUser.role === "user") { response.statusCode = 403; this.sendJson(response, { error: "Team settings are restricted to administrators." }); return; }
+      if (method === "GET") { this.sendJson(response, readTeamSettings()); return; }
+      try {
+        const body: unknown = JSON.parse(await readDashboardRequestBody(request, 16 * 1024));
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Send a valid Team settings form.");
+        this.sendJson(response, await saveTeamSettings(body as Record<string, unknown>));
+      } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Team settings could not be saved." }); }
+      return;
     }
     if (method === "GET" && path === "/api/office/users") {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
@@ -1227,20 +1250,20 @@ export class WebDashboardServer implements vscode.Disposable {
         const workspaceRoot = this.settingsStore.getDashboardSettings().officeWorkspaceRoot?.trim() || pathLib.join(getCodexManagerStorageRoot(), "office-workspaces");
         const username = typeof body["username"] === "string" ? body["username"] : "";
         const workspacePath = typeof body["workspacePath"] === "string" && body["workspacePath"].trim() ? body["workspacePath"].trim() : pathLib.join(workspaceRoot, username.toLowerCase().replace(/[^a-z0-9._-]/g, "-"));
-        const user = await createOfficeUser({ username, password: typeof body["password"] === "string" ? body["password"] : "", displayName: typeof body["displayName"] === "string" ? body["displayName"] : undefined, role: body["role"] === "admin" || body["role"] === "unrestricted-admin" ? body["role"] : "user", features: Array.isArray(body["features"]) ? body["features"] as never[] : undefined, defaultPrompt: typeof body["defaultPrompt"] === "string" ? body["defaultPrompt"] : undefined, workspacePath, mcpServers: Array.isArray(body["mcpServers"]) ? body["mcpServers"].filter((item): item is string => typeof item === "string") : undefined });
+        const user = await createOfficeUser({ username, password: typeof body["password"] === "string" ? body["password"] : "", displayName: typeof body["displayName"] === "string" ? body["displayName"] : undefined, role: body["role"] === "admin" || body["role"] === "unrestricted-admin" ? body["role"] : "user", enabled: body["enabled"] !== false, features: Array.isArray(body["features"]) ? body["features"] as never[] : undefined, defaultPrompt: typeof body["defaultPrompt"] === "string" ? body["defaultPrompt"] : undefined, workspacePath, mcpServers: Array.isArray(body["mcpServers"]) ? body["mcpServers"].filter((item): item is string => typeof item === "string") : undefined });
         this.sendJson(response, { user });
       } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be created." }); }
       return;
     }
     if (method === "PATCH" && path.startsWith("/api/office/users/")) {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
-      try { const id = decodeURIComponent(path.slice("/api/office/users/".length)); const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as Record<string, unknown>; const user = await updateOfficeUser(id, { ...body, password: typeof body["password"] === "string" && body["password"] ? body["password"] : undefined } as never); this.sendJson(response, { user }); }
+      try { const id = decodeURIComponent(path.slice("/api/office/users/".length)); const body = JSON.parse(await readDashboardRequestBody(request, 64 * 1024)) as Record<string, unknown>; const user = await updateOfficeUser(id, { ...body, password: typeof body["password"] === "string" && body["password"] ? body["password"] : undefined } as never); this.closeOfficeUserSockets(id); this.sendJson(response, { user }); }
       catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be updated." }); }
       return;
     }
     if (method === "DELETE" && path.startsWith("/api/office/users/")) {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
-      try { await deleteOfficeUser(decodeURIComponent(path.slice("/api/office/users/".length))); this.sendJson(response, { ok: true }); }
+      try { const id = decodeURIComponent(path.slice("/api/office/users/".length)); await deleteOfficeUser(id); this.closeOfficeUserSockets(id); this.sendJson(response, { ok: true }); }
       catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be deleted." }); }
       return;
     }
@@ -2062,6 +2085,9 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     const browserOfficeUser = !isPeer ? await this.officeUserForRequest(request) : undefined;
+    if (!isPeer && (!browserOfficeUser || !browserOfficeUser.enabled || browserOfficeUser.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true)) {
+      socket.destroy(); return;
+    }
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
       if (browserOfficeUser) (this.browserSocketOfficeUser ??= new WeakMap()).set(client, browserOfficeUser);
       if (!isPeer && !localBrowser) {
@@ -2536,6 +2562,12 @@ export class WebDashboardServer implements vscode.Disposable {
       if (client.readyState === WebSocket.OPEN) {
         client.close(4001, "Dashboard session expired");
       }
+    }
+  }
+
+  private closeOfficeUserSockets(id: string): void {
+    for (const client of this.webSocketClients) {
+      if (this.browserSocketOfficeUser?.get(client)?.id === id && client.readyState === WebSocket.OPEN) client.close(4001, "Workspace permissions changed. Sign in again.");
     }
   }
 
@@ -3797,14 +3829,14 @@ export function normalizePersistedWebDashboardSessions(
 }
 
 export function isWebDashboardPagePath(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || apiViewFromPath(pathname) !== undefined || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
+  return pathname === "/" || pathname === "/tasks" || pathname === "/manage" || pathname === "/admin" || apiViewFromPath(pathname) !== undefined || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {
   try {
     const url = new URL(pathname, "http://localhost");
     if (!pathname.startsWith("/") || url.origin !== "http://localhost" || !isWebDashboardPagePath(url.pathname)) return "/";
-    const target = url.pathname === "/dash" ? "/" : url.pathname === '/' || apiViewFromPath(url.pathname) !== undefined || url.pathname.toLowerCase().startsWith("/workspace") ? url.pathname : `/workspace${url.pathname}`;
+    const target = url.pathname === "/dash" ? "/" : url.pathname === "/admin" ? "/manage" : url.pathname === '/' || apiViewFromPath(url.pathname) !== undefined || url.pathname.toLowerCase().startsWith("/workspace") || url.pathname === "/manage" ? url.pathname : `/workspace${url.pathname}`;
     return `${target}${url.search}`;
   } catch { return "/"; }
 }

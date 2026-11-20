@@ -131,6 +131,7 @@ import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 import { ConnectionRecovery, receiveReload, reconcileReloads, reloadStage, type Reloads, type ConnectionStage } from './connectionRecovery';
 import { OfficeUserWorkspace } from './officeUserWorkspace';
+import { TeamManagementPage } from './teamManagementPage';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 type AccountSort =
@@ -156,7 +157,11 @@ function isCliSessionsPath(pathname: string): boolean {
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || apiViewFromPath(pathname) !== undefined || isCliSessionsPath(pathname);
+  return pathname === "/" || pathname === "/tasks" || pathname === "/manage" || pathname === "/admin" || apiViewFromPath(pathname) !== undefined || isCliSessionsPath(pathname);
+}
+
+function isTeamManagementPath(pathname: string): boolean {
+  return pathname === "/manage" || pathname === "/admin";
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -640,6 +645,11 @@ function App() {
   }, [snapshot?.office?.role]);
   useEffect(() => {
     if (snapshot?.office?.role === "user" && isBrowserDashboard && browserPath === "/tasks") navigateDashboardPath("/workspace", setBrowserPath);
+  }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
+  useEffect(() => {
+    if (!isBrowserDashboard || !isTeamManagementPath(browserPath)) return;
+    if (browserPath === "/admin") replaceDashboardPath("/manage", setBrowserPath);
+    else if (snapshot?.office?.role === "user") replaceDashboardPath("/workspace", setBrowserPath);
   }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
   const localCacheSystemId = snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
@@ -3069,7 +3079,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/workspace', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (isTeamManagementPath(browserPath) ? (snapshot.office && snapshot.office.role !== "user" ? <TeamManagementPage /> : null) : snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/workspace', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
         </fieldset>
       </main>
 
@@ -3128,7 +3138,7 @@ function App() {
         </div>
       </ModalShell>
 
-      {isBrowserDashboard && !isCliSessionsPath(browserPath) && !state.settingsOpen && <BrowserNotifications offerOnLoad />}
+      {isBrowserDashboard && !isCliSessionsPath(browserPath) && !isTeamManagementPath(browserPath) && !state.settingsOpen && <BrowserNotifications offerOnLoad />}
       <OnboardingModal
         open={onboardingOpen}
         step={onboardingStep}
@@ -3220,7 +3230,7 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && (snapshot.office?.role !== "user" || browserPath === "/tasks")
+      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && !isTeamManagementPath(browserPath) && (snapshot.office?.role !== "user" || browserPath === "/tasks")
         ? createPortal(
             <CliSessionsPage
               officeFeatures={snapshot.office?.role === "user" ? snapshot.office.features : undefined}

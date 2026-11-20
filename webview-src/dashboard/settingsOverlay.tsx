@@ -97,6 +97,7 @@ export function SettingsOverlay(props: {
     props.settings.autoRefreshMinutes > 0 ? Math.max(5, props.settings.autoRefreshMinutes) : 0;
   const accessibility = useModalAccessibility(props.open, props.onClose);
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
+  const [sectionSearch, setSectionSearch] = useState("");
   const patchAndSend = (key: DashboardSettingKey, value: string | number | boolean) => {
     if (shouldPatchDashboardSettingOptimistically(key)) {
       props.onPatchSettings({ [key]: value });
@@ -108,6 +109,7 @@ export function SettingsOverlay(props: {
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
   const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
+  const visibleTabs = tabs.filter(tab => tab.label.toLowerCase().includes(sectionSearch.toLowerCase()));
   const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
   useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
@@ -126,7 +128,7 @@ export function SettingsOverlay(props: {
     <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div
         ref={accessibility.modalRef}
-        class="settings-modal"
+        class="settings-modal settings-master-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
@@ -145,8 +147,11 @@ export function SettingsOverlay(props: {
             ×
           </button>
         </div>
-        <div class="settings-tab-list" role="tablist" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
-          {tabs.map((tab, index) => (
+        <aside class="settings-sidebar">
+        <input type="search" aria-label="Find a settings section" placeholder="Find a section…" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />
+        <div class="settings-sidebar-label">{navigationCopy.tabListLabel}</div>
+        <div class="settings-tab-list" role="tablist" aria-orientation="vertical" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
+          {visibleTabs.map((tab, index) => (
             <button
               key={tab.id}
               id={`settings-tab-${tab.id}`}
@@ -160,21 +165,21 @@ export function SettingsOverlay(props: {
               tabIndex={activeTab === tab.id ? 0 : -1}
               onClick={() => setActiveTab(tab.id)}
               onKeyDown={(event) => {
-                const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
                 const nextIndex =
                   event.key === "Home"
                     ? 0
                     : event.key === "End"
-                      ? tabs.length - 1
+                      ? visibleTabs.length - 1
                       : direction
-                        ? (index + direction + tabs.length) % tabs.length
+                        ? (index + direction + visibleTabs.length) % visibleTabs.length
                         : index;
                 if (nextIndex === index && event.key !== "Home" && event.key !== "End") {
                   return;
                 }
                 event.preventDefault();
                 event.stopPropagation();
-                const nextTab = tabs[nextIndex]!;
+                const nextTab = visibleTabs[nextIndex]!;
                 setActiveTab(nextTab.id);
                 event.currentTarget.parentElement
                   ?.querySelector<HTMLButtonElement>(`#settings-tab-${nextTab.id}`)
@@ -188,6 +193,7 @@ export function SettingsOverlay(props: {
             </button>
           ))}
         </div>
+        </aside>
         <div class="settings-modal-body">
           {activeTab === "general" ? <div class="settings-local-preferences settings-layout">
             {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
@@ -266,12 +272,6 @@ export function SettingsOverlay(props: {
                   </div>
                 </div>
                 <SettingsToggleBlock
-                  title="Enable Team workspace"
-                  sub="Allow team users to sign in and show the separate Team admin panel in the browser."
-                  enabled={props.settings.teamWorkspaceEnabled === true}
-                  onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)}
-                />
-                <SettingsToggleBlock
                   title={
                     props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
                   }
@@ -298,7 +298,14 @@ export function SettingsOverlay(props: {
                           ? "已停用。"
                           : "Disabled."}
                   </div>
-                  <div class="settings-integration-grid">
+                  <div class="settings-integration-grid settings-dashboard-grid">
+                    <div class="settings-dashboard-column">
+                    <SettingsToggleBlock
+                      title="Enable Team workspace"
+                      sub="Allow team users to sign in with their email and password."
+                      enabled={props.settings.teamWorkspaceEnabled === true}
+                      onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)}
+                    />
                     <SettingsToggleBlock
                       title={
                         props.lang === "zh"
@@ -338,12 +345,15 @@ export function SettingsOverlay(props: {
                         value={props.settings.workspaceTextFileLimitMb ?? 10}
                         values={Array.from({ length: 16 }, (_, index) => index + 1)}
                         accent="sky"
+                        scaleValues={[1, 5, 10, 16]}
                         valueLabel={value => `${value} MB`}
                         description={value => `Open and save text files up to ${value} MB.`}
                         onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
                         onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
                       />
                     </SettingsToggleBlock>
+                    </div>
+                    <div class="settings-dashboard-column">
                     <SettingsToggleBlock
                       title="Always Active"
                       sub="Keep the local dashboard and system services running after VS Code closes."
@@ -403,6 +413,7 @@ export function SettingsOverlay(props: {
                     </div>
                   </div>
                   </SettingsToggleBlock>
+                  </div>
                 </div>
                 </SettingsToggleBlock>
               </div>

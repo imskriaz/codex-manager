@@ -45,10 +45,17 @@ function readUsers(): StoredOfficeUser[] {
 
 type OfficePostgresPool = { query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ record?: unknown }> }>; end?: () => Promise<void> };
 let postgresPoolPromise: Promise<OfficePostgresPool | undefined> | undefined;
+let postgresPoolUrl = "";
 async function postgresPool(): Promise<OfficePostgresPool | undefined> {
   const config = getCodexManagerConfiguration();
   const url = config.get<string>("officePostgresUrl", "").trim();
   if (config.get<string>("officeDatabaseProvider", "sqlite") !== "postgres" || !url) return undefined;
+  if (postgresPoolUrl !== url) {
+    const previous = postgresPoolPromise;
+    postgresPoolPromise = undefined;
+    postgresPoolUrl = url;
+    void previous?.then(pool => pool?.end?.()).catch(() => undefined);
+  }
   if (postgresPoolPromise) return postgresPoolPromise;
   postgresPoolPromise = (async () => {
     try {
@@ -194,6 +201,12 @@ export async function createOfficeUser(input: {
 }
 
 export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUser, "id" | "username" | "createdAt">> & { password?: string }): Promise<OfficeUser> {
+  if (patch.role !== undefined && !["user", "admin", "unrestricted-admin"].includes(patch.role)) throw new Error("Choose a valid Team role.");
+  if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") throw new Error("Choose a valid sign-in status.");
+  for (const key of ["displayName", "defaultPrompt", "workspacePath", "password"] as const) {
+    if (patch[key] !== undefined && typeof patch[key] !== "string") throw new Error("Send valid user settings.");
+  }
+  if (patch.mcpServers !== undefined && (!Array.isArray(patch.mcpServers) || patch.mcpServers.some(value => typeof value !== "string"))) throw new Error("Choose valid data connections.");
   return runCrossWindowExclusive("state:office-users", "Office user update", async () => {
     const backend = await readUsersBackend(), users = backend.users;
     const index = users.findIndex(item => item.id === id);

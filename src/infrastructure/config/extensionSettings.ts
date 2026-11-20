@@ -92,7 +92,7 @@ export class ExtensionSettingsStore {
       officeWorkspaceRoot: config.get<string>("officeWorkspaceRoot", "").trim(),
       teamWorkspaceEnabled: config.get<boolean>("teamWorkspaceEnabled", false),
       officeDatabaseProvider: config.get<"sqlite" | "postgres">("officeDatabaseProvider", "sqlite") === "postgres" && Boolean(config.get<string>("officePostgresUrl", "").trim()) ? "postgres" : "sqlite",
-      officePostgresUrl: config.get<string>("officePostgresUrl", "").trim(),
+      officePostgresUrl: "", // Database credentials are only read by the Team storage service.
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")
     };
   }
