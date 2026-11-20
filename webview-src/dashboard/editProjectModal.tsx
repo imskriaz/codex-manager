@@ -12,6 +12,7 @@ function TrashIcon() {
 }
 
 export function EditProjectModal(props: {
+  simple?: boolean;
   project: DashboardCliProject;
   deviceId?: string;
   disabled?: boolean;
@@ -82,7 +83,7 @@ export function EditProjectModal(props: {
       <p class="workspace-dialog-description">Update the project label or remove this saved project from the list. The folder and conversations stay on the system.</p>
       {notice ? <p role="alert" class="edit-project-notice">{notice.message}</p> : null}
       <label>Project name<input autoFocus value={name} maxLength={120} disabled={pending || props.disabled} onInput={event => setName(event.currentTarget.value)} /></label>
-      <div class="create-project-destination"><small>PROJECT FOLDER</small><code title={props.project.path}>{props.project.path}</code></div>
+      {!props.simple ? <div class="create-project-destination"><small>PROJECT FOLDER</small><code title={props.project.path}>{props.project.path}</code></div> : null}
       {confirmDelete ? <div class="edit-project-confirm" role="alert"><strong>Remove this project?</strong><span>Only the saved project entry is removed. Files and conversations are kept.</span><div class="dialog-actions"><button type="button" disabled={pending} onClick={() => setConfirmDelete(false)}>Cancel</button><button type="button" class="is-danger" disabled={pending || props.disabled} onClick={() => submit("removeWorkspaceProject", { confirmed: true })}>Remove project</button></div></div> : null}
       <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => setConfirmDelete(true)}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></footer>
     </div>

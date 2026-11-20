@@ -3,8 +3,8 @@ import { normalizeCliComposerDraft, type CliComposerDraft } from './cliSessionCo
 export type SavedCliSessionStart = { requestId: string; key: string; draft: CliComposerDraft; projectPath?: string };
 const STORAGE_KEY = 'codexManager.sessionStarts.v1';
 
-export function readCliSessionStarts(storage: Pick<Storage, 'getItem'>): SavedCliSessionStart[] {
-  const saved: unknown = JSON.parse(storage.getItem(STORAGE_KEY) ?? '[]');
+export function readCliSessionStarts(storage: Pick<Storage, 'getItem'>, owner?: string): SavedCliSessionStart[] {
+  const saved: unknown = JSON.parse(storage.getItem(owner ? `${STORAGE_KEY}:${owner}` : STORAGE_KEY) ?? '[]');
   if (!Array.isArray(saved) || saved.length > 20) throw new Error('Saved session starts could not be read. Copy your prompts before closing this tab.');
   const ids = new Set<string>();
   return (saved as unknown[]).map(raw => {
@@ -19,6 +19,6 @@ export function readCliSessionStarts(storage: Pick<Storage, 'getItem'>): SavedCl
   });
 }
 
-export function writeCliSessionStarts(storage: Pick<Storage, 'setItem'>, starts: SavedCliSessionStart[]): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(starts.map(item => ({ ...item, draft: normalizeCliComposerDraft(item.draft) }))));
+export function writeCliSessionStarts(storage: Pick<Storage, 'setItem'>, starts: SavedCliSessionStart[], owner?: string): void {
+  storage.setItem(owner ? `${STORAGE_KEY}:${owner}` : STORAGE_KEY, JSON.stringify(starts.map(item => ({ ...item, draft: normalizeCliComposerDraft(item.draft) }))));
 }

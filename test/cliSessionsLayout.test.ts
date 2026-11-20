@@ -166,7 +166,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Running state will be checked when sending");
-    expect(source).toContain('placeholder="Message Codex…"');
+    expect(source).toContain('placeholder={props.simple ? "Message…" : "Message Codex…"}');
     expect(source).toContain('onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain('accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}');

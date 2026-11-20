@@ -67,11 +67,11 @@ export async function browseWorkspaceFolders(folder?: unknown) {
   })(), 5000, 'Folder browsing timed out. Check the drive or reconnect before retrying.');
 }
 
-export function readWorkspaceProjects(): DashboardCliProject[] {
+export function readWorkspaceProjects(namespace = NAMESPACE): DashboardCliProject[] {
   const store = getSqliteStateStore();
   return store
-    ? store.keys(NAMESPACE).flatMap((key) => {
-        const project = store.get<DashboardCliProject>(NAMESPACE, key);
+    ? store.keys(namespace).flatMap((key) => {
+        const project = store.get<DashboardCliProject>(namespace, key);
         return project &&
           typeof project.path === "string" &&
           path.isAbsolute(project.path) &&
@@ -82,30 +82,30 @@ export function readWorkspaceProjects(): DashboardCliProject[] {
     : [];
 }
 
-export function renameWorkspaceProject(projectPath: unknown, name: unknown): DashboardCliProject {
+export function renameWorkspaceProject(projectPath: unknown, name: unknown, namespace = NAMESPACE): DashboardCliProject {
   const key = projectStorageKey(projectPath);
   const label = validateProjectName(name);
   const store = getSqliteStateStore();
   if (!store) throw new Error("Project storage is unavailable. The project was not renamed.");
-  const project = store.get<DashboardCliProject>(NAMESPACE, key);
+  const project = store.get<DashboardCliProject>(namespace, key);
   if (!project) throw new Error("This project is not saved on the selected system. Refresh the project list and try again.");
   const updated = { ...project, label };
-  store.set(NAMESPACE, key, updated);
+  store.set(namespace, key, updated);
   return updated;
 }
 
-export function removeWorkspaceProject(projectPath: unknown): void {
+export function removeWorkspaceProject(projectPath: unknown, namespace = NAMESPACE): void {
   const key = projectStorageKey(projectPath);
   const store = getSqliteStateStore();
   if (!store) throw new Error("Project storage is unavailable. The project was not removed.");
   store.transaction(() => {
-    store.set(NAMESPACE, key, undefined);
-    store.set(HIDDEN_NAMESPACE, key, true);
+    store.set(namespace, key, undefined);
+    if(namespace === NAMESPACE)store.set(HIDDEN_NAMESPACE, key, true);
   });
 }
 
 /** Register the selected folder, creating a named child only when needed. */
-export async function createWorkspaceProject(name: unknown, folder: unknown): Promise<DashboardCliProject> {
+export async function createWorkspaceProject(name: unknown, folder: unknown, namespace = NAMESPACE): Promise<DashboardCliProject> {
   const label = name === undefined || name === "" ? "" : validateProjectName(name);
   if (
     typeof folder !== "string" ||
@@ -130,8 +130,8 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
     const store = getSqliteStateStore();
     if (!store) throw new Error("Project storage is unavailable. No folder was created.");
     const key = process.platform === "win32" ? target.toLowerCase() : target;
-    const saved = store.get<DashboardCliProject>(NAMESPACE, key);
-    if (!saved && store.keys(NAMESPACE).length >= 200)
+    const saved = store.get<DashboardCliProject>(namespace, key);
+    if (!saved && store.keys(namespace).length >= 200)
       throw new Error("The saved project list is full (200 projects). No folder was created.");
     let created = false;
     try {
@@ -144,11 +144,11 @@ export async function createWorkspaceProject(name: unknown, folder: unknown): Pr
     }
     if (!(await waitWithin(fs.stat(target), 5_000, "The project folder did not respond.")).isDirectory())
       throw new Error("A file already exists at the project path. Choose a folder or another name.");
-    if (saved) { store.set(HIDDEN_NAMESPACE, key, undefined); return saved; }
+    if (saved) { if(namespace === NAMESPACE)store.set(HIDDEN_NAMESPACE, key, undefined); return saved; }
     const project: DashboardCliProject = { id: target, label: label || path.basename(target) || target, path: target };
     try {
-      store.set(NAMESPACE, key, project);
-      store.set(HIDDEN_NAMESPACE, key, undefined);
+      store.set(namespace, key, project);
+      if(namespace === NAMESPACE)store.set(HIDDEN_NAMESPACE, key, undefined);
     } catch (error) {
       throw new Error(
         `The ${created ? 'folder was created at' : 'existing folder is unchanged at'} ${target}, but the project list could not be saved. Add this existing folder after storage recovers. ${error instanceof Error ? error.message : String(error)}`

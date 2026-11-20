@@ -9,7 +9,8 @@ import type {
 import { sameCliSessionTarget } from "./cliSessionRoute";
 import { normalizeCliComposerDraft, type CliComposerDraft } from "./cliSessionComposerState";
 
-const DB_NAME = "codex-manager-cache";
+const workspaceUser = typeof document !== "undefined" ? document.documentElement.dataset["dashboardUser"] : undefined;
+const DB_NAME = workspaceUser && /^[a-zA-Z0-9-]{1,80}$/.test(workspaceUser) ? `codex-manager-cache-user-${workspaceUser}` : "codex-manager-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "cli-sessions";
 const MAX_CACHE_AGE_MS = 30 * 24 * 60 * 60_000;

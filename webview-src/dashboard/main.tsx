@@ -1,3 +1,4 @@
+import { userWorkspaceNotice } from './userWorkspacePresentation';
 import { retainOfflineAccounts } from './offlinePolicy';
 import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
@@ -130,7 +131,7 @@ import { scheduleDashboardReopen } from "./reopenView";
 import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 import { ConnectionRecovery, receiveReload, reconcileReloads, reloadStage, type Reloads, type ConnectionStage } from './connectionRecovery';
-import { OfficeUserWorkspace } from './officeUserWorkspace';
+
 import { TeamManagementPage } from './teamManagementPage';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
@@ -491,6 +492,7 @@ function App() {
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardLocalNotice) => {
+      if(document.documentElement.dataset["dashboardUser"])next={...next,message:userWorkspaceNotice(next.message)};
       if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info") return;
       noticeControllerRef.current?.show(next);
@@ -639,19 +641,26 @@ function App() {
   }, [isBrowserDashboard, sendAction, showNotice]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
+  useEffect(()=>{
+    if(snapshot?.office?.role!=="user")return;
+    const receive=(event:MessageEvent<DashboardHostMessage>)=>{
+      if(event.data?.type==="dashboard:notice"&&event.data.message==="Your response is ready."&&document.visibilityState==="hidden"&&"Notification" in window&&Notification.permission==="granted")new Notification("Workspace",{body:"Your response is ready."});
+    };
+    window.addEventListener("message",receive);return()=>window.removeEventListener("message",receive);
+  },[snapshot?.office?.id]);
   useEffect(() => {
     document.documentElement.classList.toggle("office-user-theme", snapshot?.office?.role === "user");
     return () => document.documentElement.classList.remove("office-user-theme");
   }, [snapshot?.office?.role]);
   useEffect(() => {
-    if (snapshot?.office?.role === "user" && isBrowserDashboard && browserPath === "/tasks") navigateDashboardPath("/workspace", setBrowserPath);
+    if (snapshot?.office?.role === "user" && isBrowserDashboard && ["/", "/tasks"].includes(browserPath)) navigateDashboardPath("/workspace", setBrowserPath);
   }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
   useEffect(() => {
     if (!isBrowserDashboard || !isTeamManagementPath(browserPath)) return;
     if (browserPath === "/admin") replaceDashboardPath("/manage", setBrowserPath);
     else if (snapshot?.office?.role === "user") replaceDashboardPath("/workspace", setBrowserPath);
   }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
-  const localCacheSystemId = snapshot?.connectedPeers?.find(peer => peer.local)?.id;
+  const localCacheSystemId = snapshot?.office?.role === "user" ? `user:${snapshot.office.id}` : snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
   useEffect(() => {
     if (isBrowserDashboard || !snapshot || onboardingVisibilityResolvedRef.current) {
@@ -708,7 +717,7 @@ function App() {
   const cliSessionsRef = useRef(cliSessions);
   cliSessionsRef.current = cliSessions;
   const connectedPeers = mergeDashboardPeers(snapshot?.connectedPeers ?? [], cliSessions);
-  const pcOptions = connectedPeers.some(peer => peer.local) ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: false, local: true }, ...connectedPeers];
+  const pcOptions = snapshot?.office?.role === "user" ? [{id:"local",name:"My workspace",sessionCount:cliSessions.length,connected:!connectionUnavailable,local:true}] : connectedPeers.some(peer => peer.local) ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: false, local: true }, ...connectedPeers];
   if (selectedPeerId !== "local" && !pcOptions.some(peer => peer.id === selectedPeerId))
     pcOptions.push({ id: selectedPeerId, name: "Remote PC", sessionCount: 0, connected: false, local: false });
   const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
@@ -823,8 +832,9 @@ function App() {
     [sendWorkspaceAction, workspaceTargetDeviceId, selectedCliSession?.id, selectedCliSession?.projectPath]
   );
   const requestWorkspaceTerminals = useCallback((): void => {
+    if (snapshot?.office?.role === "user" && !snapshot.office.features.includes("terminal")) return;
     sendWorkspaceAction("listWorkspaceTerminals", undefined, { targetDeviceId: workspaceTargetDeviceId });
-  }, [sendWorkspaceAction, workspaceTargetDeviceId]);
+  }, [sendWorkspaceAction, workspaceTargetDeviceId, snapshot?.office]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
@@ -837,7 +847,7 @@ function App() {
     handleHostMessage: (message) => {
       if (message.type === "dashboard:snapshot") {
         dashboardCacheHydratedRef.current = true;
-        bindBrowserCacheSystem(message.state.connectedPeers?.find(peer => peer.local)?.id);
+        bindBrowserCacheSystem(message.state.office?.role === "user" ? `user:${message.state.office.id}` : message.state.connectedPeers?.find(peer => peer.local)?.id);
         if (isBrowserDashboard) {
           setBrowserLastSyncAt(Date.now());
           for (const id of Object.keys(message.state.peerAccounts ?? {}))
@@ -3079,7 +3089,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (isTeamManagementPath(browserPath) ? (snapshot.office && snapshot.office.role !== "user" ? <TeamManagementPage /> : null) : snapshot.office?.role === "user" ? <OfficeUserWorkspace office={snapshot.office} taskActive={false} onTask={() => navigateDashboardPath('/workspace', setBrowserPath)} onSettings={() => dispatch({ type: "open-settings" })} /> : dashboardContent) : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (isTeamManagementPath(browserPath) ? (snapshot.office && snapshot.office.role !== "user" ? <TeamManagementPage /> : null) : snapshot.office?.role === "user" ? null : dashboardContent) : null}
         </fieldset>
       </main>
 
@@ -3232,9 +3242,11 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && !isTeamManagementPath(browserPath) && (snapshot.office?.role !== "user" || browserPath === "/tasks")
+      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && !isTeamManagementPath(browserPath)
         ? createPortal(
             <CliSessionsPage
+              officeUser={snapshot.office?.role === "user" ? snapshot.office : undefined}
+
               officeFeatures={snapshot.office?.role === "user" ? snapshot.office.features : undefined}
               hostConnected={!connectionUnavailable && !reloadInProgress}
               systemInfoEnabled={snapshot?.settings.systemInfoEnabled !== false}

@@ -181,7 +181,8 @@ export class AiProxy {
     private readonly repo: AccountsRepository,
     private readonly enabled: () => boolean,
     private readonly canUseAccount: (id: string) => boolean = () => true,
-    private readonly refresh: () => void = () => undefined
+    private readonly refresh: () => void = () => undefined,
+    private readonly internalTokenAllowed: (id: string) => boolean = () => false
   ) {}
   stop(): void {
     this.stopped = true;
@@ -216,7 +217,6 @@ export class AiProxy {
     response.once("close", disconnect);
     try {
       if (this.stopped) throw new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "api_error");
-      if (!this.enabled()) throw new AiProxyError(401, "Dashboard API access is disabled.", "authentication_error");
       const auth = request.headers.authorization;
       const bearer = auth?.match(/^Bearer (cm_[a-f0-9]{64})$/i)?.[1];
       const apiKey = typeof request.headers["x-api-key"] === "string" ? request.headers["x-api-key"] : undefined;
@@ -231,6 +231,7 @@ export class AiProxy {
       );
       signal.throwIfAborted();
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
+      if (!this.enabled() && !this.internalTokenAllowed(token.id)) throw new AiProxyError(401, "Dashboard API access is disabled.", "authentication_error");
       log.apiKeyId = token.id;
       log.apiKeyName = token.name;
       if (apiTokenProjects(token).length || !hasApiPermission(token, "aiProxy"))

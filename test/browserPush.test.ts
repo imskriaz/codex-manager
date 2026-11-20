@@ -155,6 +155,19 @@ describe("persistent browser push", () => {
     expect(payload.title).toBe(`${hostname()} · Fix SMS end to end`);
     expect(payload.body).toContain("Session failed");
   });
+  it("does not send administrator notifications to a restricted workspace owner", async () => {
+    const privateService = new BrowserPushService({get:async(key:string)=>stored.get(key),store:async(key:string,value:string)=>{stored.set(key,value);}} as never, async () => password, async owner => owner === "master");
+    await privateService.subscribe(subscription("master"), "master", "https://dashboard.example", password);
+    await privateService.subscribe(subscription("team"), "team", "https://dashboard.example", password);
+    privateService.notify({level:"error",message:"Private account quota warning"});
+    await privateService.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    send.mockClear();
+    const testDelivery=await privateService.sendTest();
+    expect(testDelivery.subscriptions).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0].endpoint).toContain("master");
+  });
   it("pushes Codex approval and question requests with review actions", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never,

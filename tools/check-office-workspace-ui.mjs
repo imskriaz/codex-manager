@@ -1,0 +1,102 @@
+import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {chromium} from 'playwright';
+import {useWorkspaceDashboardAssets} from './workspace-dashboard-assets.mjs';
+const origin='http://127.0.0.1:39875';
+const raw=await(await fetch(origin+'/api/state')).json();
+const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
+const state={lang:raw.lang,copy:raw.copy,logoUri:raw.logoUri,panelTitle:'Workspace',brandSub:'',onboardingCompleted:true,office,accounts:[],connectedPeers:[],peerAccounts:{},indexHealth:{status:'healthy',availableBackups:0},tokenAutomation:{enabled:false},settings:{...Object.fromEntries(Object.entries(raw.settings).map(([key,value])=>[key,typeof value==='boolean'?false:typeof value==='number'?0:typeof value==='string'?'':[]])),dashboardTheme:'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,workspaceTextFileLimitMb:10}};
+const mockHost=`(()=>{
+document.documentElement.dataset.dashboardUser='fixture-alex';
+const state=${JSON.stringify(state)},key='private-workspace-fixture';
+const saved=JSON.parse(localStorage.getItem(key)||'null');let session=saved?.session,messages=saved?.messages||[];
+const config={models:[],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
+const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
+const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
+window.__privateActions=[];
+window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined,updatedAt:new Date().toISOString()};messages.push({id:'read-file',kind:'tool-call',title:'Read file',text:'Read the document',result:'Complete document contents.',status:'completed'},{id:'run-checks',kind:'command',text:'Checking changes',command:'cd "C:/team/alex" && npm test',cwd:'C:/team/alex',output:'All 83 checks passed.',status:'completed'},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
+window.acquireVsCodeApi=()=>({postMessage(message){window.__privateActions.push(message);setTimeout(()=>{
+if(message.type==='dashboard:ready'||message.type==='dashboard:workspace-presence'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}
+if(message.type==='dashboard:setting'){state.settings[message.key]=message.value;dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:notice',level:'info',message:'Setting saved.'});return;}
+if(message.type!=='dashboard:action')return;
+let payload={};
+if(message.action==='listCodexCliSessions')payload={cliSessions:session?[session]:[],cliComposerConfig:config};
+else if(message.action==='getCodexCliSessionMessages')payload={cliSession:session,cliSessionMessages:messages};
+else if(['startCodexCliSession','sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(message.action)){
+session={id:session?.id||'12345678-1234-1234-1234-123456789abc',title:session?.title||message.payload.text,status:'running',queueEnabled:true,queueError:'Your request is queued. Please wait; we will continue as soon as capacity is available.',projectPath:'C:/team/alex',canStop:true,updatedAt:new Date().toISOString()};
+messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});persist();payload={cliSession:session,cliSessions:[session],cliSessionMessages:messages,notice:{level:'info',message:'Message accepted and queued.'}};
+}else if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:'C:/team/alex',projectName:'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
+else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:[]};
+else if(message.action==='workspaceBrowser')payload={workspaceBrowser:{projectPath:'C:/team/alex',pages:[],feedback:[]}};
+else if(message.action==='getCodexSkills')payload={cliSkills:[]};
+else if(!['refreshView','openExternalUrl'].includes(message.action))throw new Error('Unexpected private-workspace action: '+message.action);
+dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload});
+},10);},getState(){return{};},setState(){}});
+})();`;
+const output=path.join(os.tmpdir(),'codex-manager-private-workspace-ui');await mkdir(output,{recursive:true});
+async function assertPlainUserInterface(page){
+ const presentation=await page.evaluate(()=>[document.body.innerText,...[...document.querySelectorAll('[title],[aria-label]')].filter(node=>node.getClientRects().length).flatMap(node=>[node.getAttribute('title')||'',node.getAttribute('aria-label')||''])].join('\n'));
+ assert.doesNotMatch(presentation,/C:[\\/]team[\\/]alex|Codex|quota|sandbox|API|model provider|native thread/i);
+}
+const browser=await chromium.launch({channel:'msedge',headless:true});
+try{for(const width of [1440,390]){
+ const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ page.on('console',message=>{if(message.type()==='error')console.log('Browser console: '+message.text());});
+ await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
+ const start=Date.now();await page.goto(origin+'/workspace');
+ await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
+ await page.locator('.cli-composer textarea').waitFor();
+ await assertPlainUserInterface(page);
+ await page.locator('.cli-composer textarea').fill('/model');
+ assert.equal(await page.getByRole('listbox',{name:'Commands and skills'}).count(),0);
+ await page.locator('.cli-composer textarea').fill('');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('__create_workspace_project__');
+ await page.getByRole('textbox',{name:'Project name',exact:true}).waitFor();
+ assert.equal(await page.getByRole('textbox',{name:'Project folder',exact:true}).count(),0);
+ await assertPlainUserInterface(page);
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();
+ if(width===390)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+ await page.locator('.team-user-footer').getByText('Alex Morgan',{exact:true}).first().waitFor();
+ assert.equal(await page.getByRole('button',{name:'Dashboard',exact:true}).count(),0);
+ assert.equal(await page.getByRole('tab',{name:'General',exact:true}).count(),0);
+ assert.equal(await page.getByRole('tab',{name:'Task',exact:true}).count(),0);
+ assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),0);
+ if(width===390)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
+ await page.locator('.cli-composer textarea').fill('Plan my private workspace');
+ assert.equal(await page.locator('.cli-workspace').count(),1);
+ await page.getByRole('button',{name:'Send message',exact:true}).click();
+ await page.locator('.team-request-state').filter({hasText:'Please wait'}).waitFor();
+ await assertPlainUserInterface(page);
+ await page.screenshot({path:path.join(output,`queued-${width}.png`),fullPage:true});
+ const first=await page.evaluate(()=>JSON.parse(localStorage.getItem('private-workspace-fixture')).session.id);
+ await page.evaluate(()=>window.__completeOffice());
+ await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
+ assert.equal(await page.locator('.cli-conversation-project').innerText(),'My workspace');
+ const transcript=await page.locator('.cli-session-messages').textContent();
+ assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/Read the document/);
+ assert.doesNotMatch(transcript,/C:[\\/]team[\\/]alex/);
+ await assertPlainUserInterface(page);
+ await page.reload();
+ await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
+ await assertPlainUserInterface(page);
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('private-workspace-fixture')).session.id),first);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+ assert.equal(await page.locator('.cli-account-footer').count(),0);
+ assert.equal(await page.locator('.cli-conversation-header').innerText().then(text=>/Started by|Running by/.test(text)),false);
+ assert.deepEqual(errors,[]);await page.screenshot({path:path.join(output,`complete-${width}.png`),fullPage:true});
+ console.log(JSON.stringify({width,elapsedMs:Date.now()-start,privateProfile:true,queue:true,reloadPreserved:true,technicalDetailsHidden:true,errors:0}));await context.close();
+}
+ const context=await browser.newContext({viewport:{width:1440,height:960},serviceWorkers:'block'}),page=await context.newPage();
+ const master={...state,office:{...office,id:'master',role:'unrestricted-admin'},connectedPeers:[{id:'local',name:'This PC',connected:true,local:true}],settings:{...raw.settings,cliIntegrationEnabled:true,systemInfoEnabled:false}};
+ const masterHost=mockHost.replace("document.documentElement.dataset.dashboardUser='fixture-alex';",'delete document.documentElement.dataset.dashboardUser;').replace(JSON.stringify(state),JSON.stringify(master)).replace("else if(message.action==='getCodexSkills')", "else if(message.action==='listWorkspaceTerminals')payload={workspaceTerminals:[]};else if(message.action==='getCodexSkills')");
+ await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:masterHost}));
+ await page.goto(origin+'/workspace');await page.getByRole('button',{name:'Dashboard',exact:true}).waitFor();
+ assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),1);assert.equal(await page.locator('.team-user-footer').count(),0);
+ assert.equal(await page.locator('.cli-task-nav').count(),1);
+ assert.equal(await page.locator('.cli-task-nav').textContent(),'Kanban');
+ console.log(JSON.stringify({masterDashboardControlsPreserved:true}));await context.close();
+}finally{await browser.close();}
+console.log('Screenshots: '+output);

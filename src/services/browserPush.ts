@@ -68,7 +68,8 @@ export class BrowserPushService {
 
   constructor(
     private readonly secrets: vscode.SecretStorage,
-    private readonly password: () => Promise<string | undefined>
+    private readonly password: () => Promise<string | undefined>,
+    private readonly ownerAllowed: (owner: string) => Promise<boolean> = () => Promise.resolve(true)
   ) {}
 
   private async read(): Promise<PushState> {
@@ -192,6 +193,7 @@ export class BrowserPushService {
           createdAt: now
         });
         await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => {
+          if (!(await this.ownerAllowed(subscription.owner))) return;
           const deliveryId = createHash("sha256").update(`${key}:${subscription.endpoint}`).digest("hex");
           if (delivered.has(deliveryId)) return;
           if (Date.now() - now > (notice.actions?.length ? 120_000 : 300_000)) return;
@@ -248,7 +250,8 @@ export class BrowserPushService {
       const state = await this.read();
       const password = await this.password();
       const webPush = await loadWebPush();
-      const subscriptions = state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).filter(subscription =>
+      const eligible = await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => (await this.ownerAllowed(subscription.owner)) ? subscription : undefined));
+      const subscriptions = eligible.filter((subscription): subscription is Subscription => !!subscription).filter(subscription =>
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };
       const expired = new Set<string>();

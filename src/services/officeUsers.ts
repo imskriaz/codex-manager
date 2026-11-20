@@ -224,6 +224,25 @@ export async function getOfficeUser(id: string | undefined): Promise<OfficeUser 
   return user ? publicUser(user) : undefined;
 }
 
+async function canonicalOfficeWorkspace(folder:string):Promise<string>{
+  try{return await fs.realpath(folder);}catch(error){
+    if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;
+    const parent=path.dirname(path.resolve(folder));
+    if(parent===path.resolve(folder))throw error;
+    return path.join(await canonicalOfficeWorkspace(parent),path.basename(folder));
+  }
+}
+async function validateSeparateOfficeWorkspace(users:StoredOfficeUser[],candidate:OfficeUser):Promise<void>{
+  if(candidate.role!=="user")return;
+  const folder=await canonicalOfficeWorkspace(candidate.workspacePath);
+  const inside=(parent:string,child:string)=>{const relative=path.relative(parent,child);return relative===""||!relative.startsWith("..")&&!path.isAbsolute(relative);};
+  for(const other of users){
+    if(other.id===candidate.id||other.role!=="user")continue;
+    const existing=await canonicalOfficeWorkspace(other.workspacePath);
+    if(inside(folder,existing)||inside(existing,folder))throw new Error("Choose a separate workspace folder. User workspaces cannot share or contain another user's folder.");
+  }
+}
+
 export async function createOfficeUser(input: {
   username: string;
   password: string;
@@ -249,8 +268,9 @@ export async function createOfficeUser(input: {
       mcpServers: [...new Set((input.mcpServers ?? []).filter(item => typeof item === "string" && item.length <= 160))].slice(0, 64),
       createdAt: Date.now(), salt, passwordHash: await derive(input.password, salt)
     };
-    await saveUsersBackend([...users, row], backend.pool);
+    await validateSeparateOfficeWorkspace(users,row);
     await fs.mkdir(row.workspacePath, { recursive: true });
+    await saveUsersBackend([...users, row], backend.pool);
     return publicUser(row);
   }, { waitMs: 2_000 });
 }
@@ -283,8 +303,9 @@ export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUse
       next.salt = crypto.randomBytes(24).toString("hex");
       next.passwordHash = await derive(patch.password, next.salt);
     }
-    const updated = [...users]; updated[index] = next; await saveUsersBackend(updated, backend.pool);
+    await validateSeparateOfficeWorkspace(users,next);
     await fs.mkdir(next.workspacePath, { recursive: true });
+    const updated = [...users]; updated[index] = next; await saveUsersBackend(updated, backend.pool);
     return publicUser(next);
   }, { waitMs: 2_000 });
 }

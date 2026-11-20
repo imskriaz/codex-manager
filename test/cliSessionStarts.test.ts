@@ -21,3 +21,10 @@ it('surfaces unavailable and full storage to the initiating UI', () => {
   expect(() => writeCliSessionStarts({ setItem() { throw new Error('Storage full'); } }, [start('one')])).toThrow('Storage full');
   expect(readCliSessionStarts({ getItem: () => null })).toEqual([]);
 });
+it('keeps recovered prompts separate for master and each Team login',()=>{
+ const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
+ writeCliSessionStarts(storage,[start('master')]);writeCliSessionStarts(storage,[start('alex')],'alex');writeCliSessionStarts(storage,[start('sam')],'sam');
+ expect(readCliSessionStarts(storage).map(value=>value.requestId)).toEqual(['master']);
+ expect(readCliSessionStarts(storage,'alex').map(value=>value.requestId)).toEqual(['alex']);
+ expect(readCliSessionStarts(storage,'sam').map(value=>value.requestId)).toEqual(['sam']);
+});

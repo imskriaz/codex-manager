@@ -11,14 +11,14 @@ export function commandChoices(draft: string, skills: ComposerSkill[]) {
   return [...(query === 'skills' ? [] : commands.filter(command => command.name.startsWith(query))), ...skills.filter(skill => query === 'skills' || skill.name.toLowerCase().includes(query)).map(skill => ({ ...skill, skill: true }))].slice(0, 80);
 }
 
-export function useComposerCommands(props: { draft: string; projectPath?: string; deviceId?: string; onDraft: (value: string) => void; onSettings: () => void; onFocus: () => void }) {
+export function useComposerCommands(props: { disabled?: boolean; draft: string; projectPath?: string; deviceId?: string; onDraft: (value: string) => void; onSettings: () => void; onFocus: () => void }) {
   const [skills, setSkills] = useState<ComposerSkill[]>([]), [status, setStatus] = useState(''), [retry, setRetry] = useState(0), [selection, setSelection] = useState({ scope: '', index: 0 }), [dismissed, setDismissed] = useState<number>();
   const request = useRef<string>();
   const scope = JSON.stringify([props.deviceId, props.projectPath, props.draft]);
   const revision = useRef({ scope, value: 0 });
   if (revision.current.scope !== scope) revision.current = { scope, value: revision.current.value + 1 };
   const selected = selection.scope === scope ? selection.index : 0;
-  const active = /^\/[\w:.-]+$/.test(props.draft) && dismissed !== revision.current.value;
+  const active = !props.disabled && /^\/[\w:.-]+$/.test(props.draft) && dismissed !== revision.current.value;
   const choices = commandChoices(props.draft, skills), id = useId();
   const visible = active && (choices.length > 0 || props.draft.toLowerCase() === '/skills');
   useEffect(() => {

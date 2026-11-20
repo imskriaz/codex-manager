@@ -35,9 +35,9 @@ export function acknowledgeWorkspaceSurface(owner: object, requestId: string, st
   item.resolve({ surfaces: [state], ...(content === undefined ? {} : { content }) });
 }
 
-export async function workspaceSurface(projectPath: string | undefined, request: unknown, localOnly = false): Promise<WorkspaceSurfaceResult> {
+export async function workspaceSurface(projectPath: string | undefined, request: unknown, localOnly = false, ownerAllowed: (owner: object) => boolean = () => true): Promise<WorkspaceSurfaceResult> {
   if (!projectPath?.trim() || !isWorkspaceSurfaceRequest(request)) throw new Error('Provide a projectPath and a valid workspace surface request.');
-  const matches = [...connections.entries()].filter(([, value]) => (!localOnly || !value.state.targetDeviceId) && Date.now() - value.seenAt < 45000 && projectTaskKey(value.state.projectPath) === projectTaskKey(projectPath) &&
+  const matches = [...connections.entries()].filter(([owner, value]) => ownerAllowed(owner) && (!localOnly || !value.state.targetDeviceId) && Date.now() - value.seenAt < 45000 && projectTaskKey(value.state.projectPath) === projectTaskKey(projectPath) &&
     (!request.surfaceId || value.state.surfaceId === request.surfaceId) &&
     (request.operation === 'list' && !request.sessionId || value.state.sessionId === request.sessionId));
   if (request.operation === 'list') return { surfaces: matches.map(([, value]) => value.state) };

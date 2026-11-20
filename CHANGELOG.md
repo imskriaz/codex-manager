@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-pre.22
+
+- Keep the master session renderer and tool grouping for Team members, including every recorded call, command and output. Mask the execution folder while preserving conversation content and retaining activity after reload.
+
+## 3.0.0-pre.21
+
+- Give Team members the shared session interface with private workspaces, conversations and message history, generic waiting states, persistent capacity queues and completion feedback. Model calls use the shared proxy without creating native Codex threads.
+- Restrict account, quota, provider and administrative data to administrators; reject overlapping user folders and workspace escapes, and filter private live updates and notifications by user. Remove session ownership labels from the UI.
+
 ## 3.0.0-pre.20
 
 - Remove the dark background from installed app and notification icons, preserving transparency around and inside the Codex logo. Declare the transparent app icons for ordinary use instead of maskable display.
