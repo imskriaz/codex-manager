@@ -12,7 +12,7 @@ import { checkUploadsUi } from './check-uploads-ui.mjs';
 import { checkWideContentUi } from './check-wide-content-ui.mjs';
 import { checkSessionRequestsUi } from "./check-session-requests-ui.mjs";
 import { checkSessionQuestionUi } from './check-session-question-ui.mjs';
-import { checkSteerUi } from './check-steer-ui.mjs';
+import { checkInlineQueueUi, checkSteerUi } from './check-steer-ui.mjs';
 import { checkSendRecoveryUi } from './check-send-recovery-ui.mjs';
 import { checkMobilePolishUi } from './check-mobile-polish-ui.mjs';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
@@ -898,6 +898,12 @@ try {
       await checkSendRecoveryUi(page, { origin, parentId, width, output });
       assert.deepEqual(errors, [], 'Send recovery has no browser runtime errors');
       results.push({ width, height, checks: 'Unknown status dispatches immediately, visible failure, explicit retry, newer draft preservation' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--inline-queue')) {
+      await checkInlineQueueUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, [], 'Inline queue has no browser runtime errors');
+      results.push({ width, height, checks: 'Every queued message visible, inline expansion, Edit, Delete, Steer once, full failure and newer draft preservation' });
       await context.close(); continue;
     }
     if (process.argv.includes('--steer')) {

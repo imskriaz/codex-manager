@@ -3593,16 +3593,10 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
   // Sending items are rendered in the transcript optimistically; keep only waiting/recovery rows here.
   queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending') };
   const items = queue.items;
-  const [open, setOpen] = useState(false);
   if (!items.length) return null;
-  const failed = items.find(item => item.state === 'failed' || item.state === 'uncertain');
-  const reason = failed ? failed.error ?? 'The send outcome needs confirmation. Check the session before retrying.' : queue.notice ?? queue.reason;
-  const status = failed ? failed.state === 'failed' ? 'Send failed' : 'Check send' : reason;
-  const summary = items.length + ' queued message' + (items.length === 1 ? '' : 's');
+  const reason = queue.notice ?? queue.reason;
   return <div class="cli-local-queue" aria-label="Local message queue">
-    <button type="button" class={`cli-local-queue-summary ${failed ? 'has-error' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} title={reason ?? summary}>
-      <QueueIcon /><span class="cli-local-queue-summary-copy">{summary}</span>{status ? <small role={failed ? 'alert' : 'status'} class="cli-local-queue-status">{status}</small> : null}<ChevronIcon />
-    </button>
+    {reason ? <small role="status" class="cli-local-queue-status">{reason}</small> : null}
     {items.map(item => <details key={item.id} class={`cli-goal-strip cli-queued-message is-${item.state}`} open={Boolean(item.error)}>
       <summary title={item.draft.text || 'Attachment'}>
         <span class="cli-goal-mark" aria-hidden="true">{item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : <QueueIcon />}</span>
@@ -3618,17 +3612,5 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
       </summary>
       <div class="cli-queued-message-expanded">{item.draft.text ? <p>{item.draft.text}</p> : null}{item.draft.attachments.length ? <div class="cli-queued-attachments">{item.draft.attachments.map(attachment => attachment.kind === 'image' ? <img key={attachment.id} src={attachment.data} alt={attachment.name} /> : <span key={attachment.id}>{attachment.name}</span>)}</div> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
     </details>)}
-    <ModalShell open={open} title={summary} closeLabel="Close queued messages" className="dashboard-modal-compact cli-queue-modal" onClose={() => setOpen(false)}>
-      <div class="cli-queue-modal-list">{items.map(item => <article key={item.id} class={`cli-queue-modal-item is-${item.state}`}>
-        <div class="cli-queue-modal-copy"><strong>{item.state === 'failed' ? 'Send failed' : item.state === 'uncertain' ? 'Needs confirmation' : 'Waiting to send'}</strong><span title={item.draft.text || 'Attachment'}>{item.draft.text || item.draft.attachments[0]?.name || 'Attachment'}</span>{item.error ? <small role="alert">{item.error}</small> : null}</div>
-        <span class="cli-queued-message-actions" onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
-          {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => queue.steerNow(item.id)}>Steer <span>now</span></button> : null}
-          {item.state === 'uncertain' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
-          {queue.connected && (item.state === 'failed' || item.state === 'uncertain') ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Resend queued message" title="Resend" onClick={() => queue.resend(item.id)}><SendIcon /></button> : null}
-          <button type="button" class="cli-icon-button cli-goal-control is-danger" aria-label="Delete queued message" title="Delete" onClick={() => { void queue.remove(item.id); }}><TrashIcon /></button>
-          <button type="button" class="cli-icon-button cli-goal-control" aria-label="Edit queued message" title="Edit queued message" onClick={() => { void queue.remove(item.id, true); }}><PencilIcon /></button>
-        </span>
-      </article>)}</div>
-    </ModalShell>
   </div>;
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.25
+
+- Restore individual queued message rows above the composer with inline Steer, Edit, Delete and recovery controls. Remove the queue dialog and keep full send errors visible beside the affected message.
+
 ## 3.0.0-pre.24
 
 - Consolidate session quota, retry, capacity, and failure notices into one line with optional diagnostics. Remove duplicate quota recovery status, move task conversation access into a header icon, and use the workspace title for the compact dashboard/settings/sign-out menu without an account avatar.

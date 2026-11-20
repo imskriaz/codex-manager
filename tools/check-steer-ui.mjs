@@ -1,6 +1,55 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+export async function checkInlineQueueUi(page, { origin, parentId, output, width }) {
+  const started = performance.now();
+  await page.goto(`${origin}/workspace/${parentId}`);
+  const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });
+  await input.waitFor();
+  await page.evaluate(sessionId => {
+    Object.assign(window.__uiSessions.find(item => item.id === sessionId), { status: 'running', steerTurnId: 'inline-queue-turn' });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-inline-queue', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
+  }, parentId);
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Follow-up mode', exact: true }).selectOption('queue');
+  await page.keyboard.press('Escape');
+  for (const text of ['First queued message', 'Second queued message']) {
+    await input.fill(text);
+    await page.locator('.cli-send-button').click();
+  }
+  const rows = page.locator('.cli-local-queue > .cli-queued-message');
+  const first = rows.filter({ hasText: 'First queued message' }), second = rows.filter({ hasText: 'Second queued message' });
+  await second.getByRole('button', { name: /Steer$/ }).waitFor();
+  assert.equal(await rows.count(), 2, 'Every waiting message has an inline row');
+  assert.equal(await first.isVisible(), true);
+  assert.equal(await page.locator('.cli-local-queue-summary, .cli-queue-modal').count(), 0, 'No summary or modal hides queued messages');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').length), 0, 'Queue mode waits for explicit steering');
+  assert.ok(await first.evaluate(row => row.getBoundingClientRect().bottom <= document.querySelector('.cli-composer').getBoundingClientRect().top), 'Queue rows sit above the composer');
+  await first.locator(':scope > summary').click();
+  assert.equal(await first.evaluate(row => row.open), true, 'Full text expands inline');
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Queue rows fit the viewport');
+  await page.screenshot({ path: path.join(output, `queue-inline-${width}.png`), animations: 'disabled' });
+  await second.getByRole('button', { name: 'Edit queued message', exact: true }).click();
+  await second.waitFor({ state: 'hidden' });
+  assert.equal(await input.inputValue(), 'Second queued message', 'Edit restores the draft');
+  await page.locator('.cli-send-button').click();
+  await second.getByRole('button', { name: 'Delete queued message', exact: true }).click();
+  await second.waitFor({ state: 'hidden' });
+  await input.fill('Keep my newer draft');
+  await page.evaluate(() => { window.__holdNextSteer = true; window.__heldSteerResult = undefined; });
+  await first.getByRole('button', { name: /Steer$/ }).click();
+  await page.waitForFunction(() => window.__heldSteerResult);
+  await page.locator('.cli-session-message.is-user').filter({ hasText: 'First queued message' }).waitFor();
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Steering could not be confirmed. Check before retrying.' } })));
+  await first.getByRole('alert').waitFor();
+  assert.equal(await first.evaluate(row => row.open), true, 'Failed steering expands the full error automatically');
+  await first.getByRole('button', { name: 'Resend queued message', exact: true }).waitFor();
+  assert.equal(await input.inputValue(), 'Keep my newer draft', 'Steering and failure preserve newer input');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').length), 1, 'Explicit steering dispatches once');
+  await page.screenshot({ path: path.join(output, `queue-inline-failure-${width}.png`), animations: 'disabled' });
+  console.log(`${width}px inline queue controls verified in ${Math.round(performance.now() - started)}ms`);
+}
+
 export async function checkSteerUi(page, { origin, parentId, output, width }) {
   await page.goto(`${origin}/workspace/${parentId}`);
   const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });

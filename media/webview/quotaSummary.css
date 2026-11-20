@@ -16986,22 +16986,7 @@ html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.155; }
 .cli-workspace .cli-local-queue { width: auto; max-width: none; margin: 2px 16px 0; }
 .cli-workspace .cli-local-queue .cli-goal-strip { margin: 0; }
 .cli-local-queue { gap: 4px; margin-bottom: 4px; }
-.cli-local-queue-summary { display:flex; align-items:center; gap:6px; width:100%; min-width:0; min-height:26px; height:26px; box-sizing:border-box; padding:2px 7px; border:1px solid var(--border-default); border-radius:4px; background:transparent; color:var(--text-secondary); font:inherit; font-size:calc(11px * var(--dashboard-text-scale, 1)); line-height:18px; text-align:left; cursor:pointer; }
-.cli-local-queue-summary:hover { background:var(--bg-hover); color:var(--text-primary); }
-.cli-local-queue-summary.has-error .cli-local-queue-status { color: var(--warning); }
-.cli-local-queue-summary > svg { flex:none; width:14px; height:14px; color:var(--text-muted); }
-.cli-local-queue-summary-copy { flex:none; white-space:nowrap; }
-.cli-local-queue-status { min-width:0; overflow:hidden; color:var(--text-muted); text-overflow:ellipsis; white-space:nowrap; }
-.cli-local-queue-summary > svg:last-child { margin-left:auto; }
-.cli-local-queue > details { display:none; }
-.cli-queue-modal.settings-modal { width:min(560px,calc(100vw - 24px)); max-height:min(520px,calc(100dvh - 24px)); min-height:0; }
-.cli-queue-modal-list { display:grid; gap:5px; max-height:390px; overflow:auto; }
-.cli-queue-modal-item { display:flex; align-items:center; gap:8px; min-width:0; padding:6px 7px; border:1px solid var(--border-default); border-radius:6px; background:var(--bg-surface); }
-.cli-queue-modal-copy { display:grid; gap:2px; min-width:0; flex:1; }
-.cli-queue-modal-copy strong { color:var(--text-secondary); font-size:calc(10px * var(--dashboard-text-scale, 1)); }
-.cli-queue-modal-copy > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cli-queue-modal-copy small { color:var(--warning); overflow-wrap:anywhere; white-space:normal; }
-.cli-queue-modal-item .cli-queued-message-actions { flex:none; }
+.cli-local-queue-status { color: var(--text-muted); overflow-wrap: anywhere; }
 .cli-queued-message { display: block; padding: 0; box-shadow: none; }
 .cli-queued-message-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cli-queued-message-thumb { flex: none; width: 14px; height: 14px; object-fit: cover; border-radius: 3px; }

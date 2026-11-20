@@ -108,8 +108,30 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).not.toContain('Turn off queueing');
   expect(css).toContain('.cli-queued-message-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis;');
   expect(css).toContain('.cli-queued-message-thumb { flex: none; width: 14px; height: 14px;');
+  expect(css).not.toContain('.cli-local-queue > details { display:none; }');
+  expect(source).not.toContain('className="dashboard-modal-compact cli-queue-modal"');
+  expect(source).not.toContain('class="cli-local-queue-summary"');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
   expect(QueuedMessages({queue:{...queue,items:[{...item,state:'sending'}],ready:true,connected:true},onRefresh:()=>{}})).toBeNull();
+});
+
+it('renders every waiting message and its controls without opening a dialog', () => {
+  const steerNow = vi.fn(), remove = vi.fn(), resend = vi.fn(), onRefresh = vi.fn();
+  const queue = { items: ['queued', 'failed', 'uncertain'].map((state, index) => ({ id: state, state, draft: { text: `Message ${index}`, attachments: [] }, createdAt: index, seenIds: [], ...(state !== 'queued' ? { error: `${state} error` } : {}) })), ready: true, connected: true, steerNow, remove, resend } as unknown as Parameters<typeof QueuedMessages>[0]['queue'];
+  const node = QueuedMessages({ queue, onRefresh }) as VNode<any>;
+  const rows = node.props.children.flat(Infinity).filter((child: VNode<any>) => child?.type === 'details');
+  expect(rows).toHaveLength(3);
+  for (const [index, row] of rows.entries()) {
+    const summary = row.props.children[0];
+    expect(summary.props.children[1].props.children).toBe(`Message ${index}`);
+    const actions = summary.props.children[2].props.children.filter(Boolean);
+    for (const action of actions) action.props.onClick();
+    expect(row.props.open).toBe(index > 0);
+  }
+  expect(steerNow).toHaveBeenCalledExactlyOnceWith('queued');
+  expect(resend.mock.calls).toEqual([['failed'], ['uncertain']]);
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(remove.mock.calls).toEqual(['queued', 'failed', 'uncertain'].flatMap(id => [[id], [id, true]]));
 });
 
 it('lets the resized Account Center use columns without reserving a blank footer strip', () => {
