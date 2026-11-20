@@ -17539,7 +17539,27 @@ html[data-dashboard-host="browser"] { --dashboard-text-scale: 1.155; }
 .cli-account-center .accounts-section-header .account-center-actions { margin-left: auto; }
 .cli-account-center .account-center-actions .workspace-tool-menu { display: flex; }
 .cli-account-center .account-center-actions .workspace-tool-menu > button { display: grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
-.cli-error-notice { padding: 8px 10px; }
+.cli-capacity-notice, .cli-error-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; margin: 4px 0; padding: 0; border: 0; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.5; }
+.cli-capacity-notice > span, .cli-error-notice > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-error-notice > .is-error { color: var(--danger); }
+.cli-capacity-notice > .cli-debug-details, .cli-error-notice > .cli-debug-details { flex: none; margin: 0; padding: 0; border: 0; }
+.cli-capacity-notice > .cli-debug-details[open], .cli-error-notice > .cli-debug-details[open] { flex-basis: 100%; min-width: 0; }
+.cli-capacity-notice > .cli-debug-details > summary, .cli-error-notice > .cli-debug-details > summary { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; list-style: none; cursor: pointer; }
+.cli-capacity-notice > .cli-debug-details > summary::before, .cli-error-notice > .cli-debug-details > summary::before { display: none; }
+.cli-capacity-notice > .cli-debug-details > summary svg, .cli-error-notice > .cli-debug-details > summary svg { width: 16px; height: 16px; }
+.cli-rail-brand-menu { display: flex; flex: 1; min-width: 0; }
+.cli-rail-brand-menu .workspace-tool-menu { min-width: 0; }
+.cli-rail-brand-menu .workspace-tool-menu > button { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px; border: 0; background: transparent; color: var(--text-primary); cursor: pointer; }
+.cli-rail-brand-menu img, .cli-rail-brand-menu svg { width: 18px; height: 18px; }
+.cli-rail-brand-menu button > svg:last-child { width: 12px; height: 12px; }
+.cli-workspace .cli-account-footer > button { grid-template-columns: minmax(0, 1fr) auto; }
+.task-detail-panel > .settings-modal-head { grid-template-columns: minmax(0, 1fr) auto auto; }
+.task-detail-panel > .settings-modal-head .settings-close { height: 28px; min-height: 28px; padding: 0; }
+.task-detail-context-actions { flex: none; }
+.task-detail-context-actions .task-open-conversation { display: grid; place-items: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 4px; background: transparent; color: var(--accent-blue); cursor: pointer; }
+.task-detail-context-actions .task-open-conversation:hover { background: var(--bg-elevated); }
+.task-open-conversation svg { width: 16px; height: 16px; }
+.task-attention { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cli-error-message { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 

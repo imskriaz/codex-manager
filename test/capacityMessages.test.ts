@@ -129,12 +129,14 @@ it('keeps warning and error toasts visible on mobile while info stays silent', (
   expect(css).toContain('.dashboard-notice-stack { display: grid; top:');
 });
 
-it.each(["You have hit your usage limit. Retry tomorrow.", "Authentication failed", "Unexpected provider error"])('shows the full error without expanding: %s', text => {
+it.each(["You have hit your usage limit. Retry tomorrow.", "Authentication failed", "Unexpected provider error"])('shows one error summary with full text available: %s', text => {
   const node = activity({ id: 'failed', kind: 'error', text, status: 'failed' });
   expect(node.type).toBe('div'); expect(node.props.role).toBe('alert');
-  const detail = node.props.children[0];
-  const rendered = detail.type(detail.props);
-  expect(rendered.props.children[1].props.children).toContain(text);
+  const summary = node.props.children[0];
+  expect(summary.type).toBe('span');
+  expect(summary.props.children).toContain(text);
+  expect(summary.props.title).toBe(text);
+  expect(node.props.children[1].props.children[1].props.text).toBe(text);
 });
 
 it('keeps errors outside collapsed completed turns even after the session recovers', () => {

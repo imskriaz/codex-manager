@@ -31,6 +31,7 @@ const WorkspaceBrowser = deferredPanel(() => import('./workspaceBrowser'), 'brow
 const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'terminal');
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
 import { WorkspaceGit } from './workspaceGit';
+import { WorkspaceMenu } from './workspaceMenu';
 import { ToolIcon as WorkspaceToolIcon } from './icons';
 import { readChatAttachmentFiles } from './attachmentUploads';
 import { createPortal } from "preact/compat";
@@ -214,7 +215,7 @@ export type CliSessionsPageProps = {
   onApi?: () => void;
   apiEnabled?: boolean;
   apiActive?: boolean;
-  /** Show the remote dashboard sign-out action in the avatar menu. */
+  /** Show the remote dashboard sign-out action in the workspace menu. */
   showLogout?: boolean;
   systemInfoEnabled?: boolean;
   hostConnected?: boolean;
@@ -928,6 +929,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const showWorking = transcriptRunning && !hasInProgressActivity;
   const quotaWaiting = sessionQuotaWaitingMessage(props.selectedSession, props.messages, props.liveState, props.selectedSession?.remote ? props.peerAccounts?.[props.selectedSession.deviceId ?? ''] ?? [] : props.localAccounts ?? [], props.standalone === true && props.autoResumeEnabled, props.connected !== false, currentTurnRunning);
+  const quotaError = quotaWaiting ? [...props.messages].reverse().find(message => message.kind === 'error' && isCodexQuotaInterruption(message.text)) : undefined;
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
@@ -1520,9 +1522,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       <div class={`cli-workspace-grid ${props.selectedSession ? "has-context" : ""}`}>
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label={props.officeUser ? "Your conversations" : "Codex sessions"}>
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
-            {props.officeFeatures ? <div class="cli-rail-brand" aria-label="Team workspace" title="Team workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Team</strong></div> : <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>}
+            {props.officeFeatures ? <div class="cli-rail-brand" aria-label="Team workspace" title="Team workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Team</strong></div> : <span class="cli-rail-brand-menu"><WorkspaceMenu label="Workspace menu" icon={<>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<strong>Codex</strong><ChevronIcon /></>}>
+              <button type="button" role="menuitem" aria-label="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon />Dashboard</button>
+              <button type="button" role="menuitem" onClick={() => openContextTab("accounts")}><DashboardIcon />Account center</button>
+              <button type="button" role="menuitem" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}>Settings</button>
+              {props.showLogout ? <form method="post" action="/logout"><button type="submit" role="menuitem"><SignOutIcon />Sign out</button></form> : null}
+            </WorkspaceMenu></span>}
             {props.browser && !props.officeUser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
-            <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton>
+            {props.officeFeatures ? <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton> : null}
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
@@ -1652,7 +1659,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!pendingNewChat && !props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript automaticRecovery={props.standalone && props.autoResumeEnabled && props.selectedSession?.autoResumeEnabled !== false} agentSessions={relatedAgents} onOpenAgent={id => {
+                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript quotaRecoveryMessageId={quotaError?.id} agentSessions={relatedAgents} onOpenAgent={id => {
                     if (!id) { openContextTab('agents'); return; }
                     if (id === props.selectedSession?.id) { setContextCollapsed(true); return; }
                     const agent = relatedAgents.find(session => session.id === id);
@@ -1662,7 +1669,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                    {renderPendingMessages()}
                   {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
                   {showWorking ? <WorkingMessage /> : null}
-                  {quotaWaiting ? <div class="cli-live-activity" role="status" aria-live="polite">{quotaWaiting}</div> : null}
+                  {quotaWaiting ? sessionNotice(quotaWaiting, quotaError ? sessionErrorDiagnostics(quotaError) : undefined) : null}
                   <div />
                 </div>
               </section>
@@ -2109,7 +2116,7 @@ export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedbac
 type SessionImage = { src: string; alt?: string };
 const SessionPageContext = createContext('Workspace');
 const PrivateWorkspaceContext = createContext<string[]|undefined>(undefined);
-const SessionAutomaticRecoveryContext = createContext(false);
+const SessionQuotaRecoveryContext = createContext<string | undefined>(undefined);
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
@@ -2405,13 +2412,22 @@ function ActivityCode({ text, label, copyLabel }: { text: string; label: string;
   return <div class="cli-code-surface"><div class="cli-code-surface-head"><strong>{label}</strong><CopySnippet text={text} label={copyLabel} /></div><pre tabIndex={0} aria-label={label}><code>{formatted || 'No output.'}</code></pre></div>;
 }
 
+function sessionErrorDiagnostics(message: DashboardCliSessionMessage): string {
+  return [...new Set([message.text, message.result, message.debug].filter(Boolean))].join('\n\n');
+}
+
+function sessionNotice(label: JSX.Element | string, diagnostics?: string, className = 'cli-capacity-notice') {
+  return <div class={className} role={className.includes('is-error') ? 'alert' : undefined}>{typeof label === 'string' ? <span role="status" title={label}>{label}</span> : label}{diagnostics ? <details class="cli-debug-details"><summary aria-label="Show diagnostics" title="Show diagnostics"><MoreIcon /></summary><ActivityCode text={diagnostics} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+}
+
 function isCapacityMessage(message: DashboardCliSessionMessage): boolean {
   return message.kind !== 'command' && (message.kind === 'error' || message.status === 'failed' || message.status === 'interrupted') && isCodexCapacityInterruption([message.text, message.result, message.kind === 'error' ? message.debug : undefined].filter(Boolean).join(' '));
 }
 
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const privateWorkspace = useContext(PrivateWorkspaceContext);
-  const automaticRecovery = useContext(SessionAutomaticRecoveryContext);
+  const quotaRecoveryMessageId = useContext(SessionQuotaRecoveryContext);
+  const page = useContext(SessionPageContext);
   const openAgent = useContext(SessionAgentContext);
   const agentIds = useMemo(() => messageAgentIds(message), [message]);
   const images = uniqueMessageImages(message);
@@ -2430,10 +2446,10 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
     else if (retrying && seconds && seconds > 0 && seconds <= 86400) retryLabel = `Retrying · ${seconds}s delay`;
     const diagnostics = capacity ? [...new Set([message.text, message.result, message.debug].filter(Boolean))].join('\n\n') : message.debug;
     const label = <span class={capacity ? 'is-error' : undefined} role="status" title={message.text || (capacity ? "Selected model is at capacity. Please try a different model." : undefined)}>{capacity ? `Model at capacity${retrying ? ` · ${retryLabel}` : ''}` : retryLabel}</span>;
-    return <div class="cli-capacity-notice">{label}{diagnostics ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={diagnostics} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+    return sessionNotice(label, diagnostics);
   }
-  if (automaticRecovery && message.kind === 'error' && isCodexQuotaInterruption(message.text)) return <details class="cli-activity cli-quota-recovery-detail"><summary>Account usage limit · saved for recovery</summary><ActivityDetail message={message} /></details>;
-  if (message.kind === 'error') return <div class="cli-activity is-error is-failed cli-error-notice" role="alert"><ActivityDetail message={message} />{message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><ActivityCode text={message.debug} label="Debug details" copyLabel="Copy debug details" /></details> : null}</div>;
+  if (message.id === quotaRecoveryMessageId) return null;
+  if (message.kind === 'error') return sessionNotice(<span class="is-error" title={message.text}>{sessionFailureMessage(message.text, page) || 'The activity could not be completed.'}</span>, sessionErrorDiagnostics(message), 'cli-error-notice is-error');
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
@@ -2670,7 +2686,7 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
 }
 
 /** One transcript renderer; public views omit callbacks for private operations. */
-export function SessionTranscript({ automaticRecovery = false, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { automaticRecovery?: boolean; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+export function SessionTranscript({ quotaRecoveryMessageId, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { quotaRecoveryMessageId?: string; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const inheritedAgents = useContext(SessionAgentContext);
   const privateFolders=useContext(PrivateWorkspaceContext);
   const images = useMemo(() => collectSessionImages(messages), [messages]);
@@ -2682,7 +2698,7 @@ export function SessionTranscript({ automaticRecovery = false, page = 'Workspace
   const active = candidate && !queuedAnswers.some(message => Date.parse(message.timestamp ?? '') >= Date.parse(candidate.timestamp!)) ? candidate : undefined;
   const pending = answeredSessionQuestionIds(queuedAnswers);
   const browser = document.documentElement.dataset['dashboardHost'] === 'browser';
-  return <SessionFeedbackContext.Provider value={onActionFeedback}><SessionAutomaticRecoveryContext.Provider value={automaticRecovery}><SessionPageContext.Provider value={page}><SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider></SessionPageContext.Provider></SessionAutomaticRecoveryContext.Provider></SessionFeedbackContext.Provider>;
+  return <SessionFeedbackContext.Provider value={onActionFeedback}><SessionQuotaRecoveryContext.Provider value={quotaRecoveryMessageId}><SessionPageContext.Provider value={page}><SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider></SessionPageContext.Provider></SessionQuotaRecoveryContext.Provider></SessionFeedbackContext.Provider>;
 }
 
 function CompletedTurnChanges({ messages, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenReviews: (path?: string) => void }) {
@@ -3310,7 +3326,6 @@ function SessionAccountFooter(props: {
   }, [open]);
   return <footer class={`cli-account-footer ${props.standalone ? 'is-standalone' : ''}`} ref={rootRef}>
     {props.standalone ? null : <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => props.onOpenPanel ? props.onOpenPanel() : open ? closeMenu() : openMenu(event.detail === 0)}>
-      <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </button>}
