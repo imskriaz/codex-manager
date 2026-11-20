@@ -9,8 +9,13 @@ const origin = 'http://127.0.0.1:39875';
 const output = path.join(tmpdir(), 'codex-manager-workspace-tabs-ui');
 await mkdir(output, { recursive: true });
 const css = await readFile('media/webview/quotaSummary.css', 'utf8');
-const marker = '/* Reuse the compact Git tab strip throughout workspaces;';
-const baseline = css.slice(0, css.indexOf(marker));
+const marker = '/* Compact workspace tabs; dashboard settings retain their own layout. */';
+assert.ok(css.includes(marker), 'Locate shared horizontal tab styles');
+const endMarker = '/* End compact workspace tabs. */';
+assert.ok(css.includes(endMarker), 'Locate the end of compact tab styles');
+const treatmentEnd = css.indexOf(endMarker, css.indexOf(marker)) + endMarker.length;
+const baseline = css.slice(0, css.indexOf(marker)) + css.slice(treatmentEnd);
+const treatment = css.slice(css.indexOf(marker), treatmentEnd);
 assert.ok(baseline.length > 0, 'Locate the tab treatment separately from dashboard styles');
 const families = [
   ['Session tools', 'cli-workspace', 'cli-context-tab-scroll', 'wrapped'],
@@ -27,14 +32,14 @@ const families = [
   ['Inspector sources', 'workspace-browser-inspector', 'workspace-browser-source-tabs', 'source'],
   ['Inspector network types', 'workspace-browser-inspector', 'workspace-browser-network-types', 'pressed']
 ];
-const dashboard = '<div class="settings-tab-list"><button class="settings-tab active" role="tab" aria-selected="true">General</button></div><div class="modal-tabs"><button class="modal-tab active">Account</button></div><div class="maintenance-tabs"><button aria-selected="true">Snapshots</button></div>';
+const dashboard = '<div class="settings-tab-list" role="tablist" aria-orientation="vertical"><button class="settings-tab active" role="tab" aria-selected="true">General</button></div><div class="modal-tabs"><button class="modal-tab active">Account</button></div><div class="maintenance-tabs" role="tablist"><button aria-selected="true">Snapshots</button></div><div class="office-user-tabs"><button class="active">General</button></div>';
 const button = (label, active, mode) => `<button type="button" ${mode === 'pressed' ? `aria-pressed="${active}"` : `role="tab" aria-selected="${active}"`} class="${active ? 'is-active' : ''}">${label}</button>`;
 const fixture = families.map(([name, parent, tabs, mode], index) => {
   const tab = (label, active, i) => {
     const wrapped = mode === 'wrapped' || mode === 'source' || mode === 'mixed' && i > 0;
-    return wrapped ? `<span class="${active && mode !== 'source' ? 'is-active' : ''}">${button(label, active, mode)}<button type="button" aria-label="Close ${label}">&#215;</button></span>` : button(label, active, mode);
+    return wrapped ? `<span class="${active && mode !== 'source' ? 'is-active' : ''}">${button(label, active, mode)}<button type="button" aria-label="Close ${label.replace(/<[^>]*>/g, '')}">&#215;</button></span>` : button(label, active, mode);
   };
-  return `<section><h2>${name}</h2><div class="${parent}" style="display:block;position:static;width:100%;height:auto;min-height:0;padding:0"><nav data-family="${index}" class="${tabs}" style="position:relative;top:auto;flex:none;width:100%;max-width:100%;margin:0">${tab('Git', true, 0)}${tab('History', false, 1)}${tab('A very long workspace tab title that must remain scrollable', false, 2)}${tab('Disabled', false, 3).replaceAll('type="button"', 'type="button" disabled')}</nav></div></section>`;
+  return `<section><h2>${name}</h2><div class="${parent}" style="display:block;position:static;width:100%;height:auto;min-height:0;padding:0"><nav data-family="${index}" role="tablist" class="${tabs}" style="position:relative;top:auto;flex:none;width:100%;max-width:100%;margin:0">${tab('Overview', true, 0)}${tab('Agents <small>1</small>', false, 1)}${tab('Activities', false, 2)}${tab('A very long workspace tab title that must remain scrollable', false, 3)}${tab('Disabled', false, 4).replaceAll('type="button"', 'type="button" disabled')}</nav></div></section>`;
 }).join('');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
@@ -54,8 +59,9 @@ try {
       return [style.borderRadius, style.backgroundColor, style.color, style.fontSize, style.padding, style.minHeight, style.boxShadow];
     }));
     const dashboardBefore = await unchanged();
-    await page.addStyleTag({ content: css.slice(css.indexOf(marker)) });
-    assert.deepEqual(await unchanged(), dashboardBefore, 'Dashboard and its settings/account/maintenance tabs retain their appearance');
+    await page.addStyleTag({ content: treatment });
+    await page.screenshot({ path: path.join(output, `tabs-${theme}-${width}.png`), fullPage: true });
+    assert.deepEqual(await unchanged(), dashboardBefore, 'Unrelated controls retain their appearance');
     const styles = await page.locator('[data-family]').evaluateAll(elements => elements.map(element => {
       const button = element.querySelector('button');
       const cell = button.parentElement === element ? button : button.parentElement;
@@ -63,11 +69,23 @@ try {
       return { font: style.font, padding: style.padding, align: style.alignItems, minHeight: style.minHeight, height: button.getBoundingClientRect().height, radius: style.borderRadius, background: item.backgroundColor, shadow: item.boxShadow, underline: [after.height, after.backgroundColor, after.left, after.right], color: style.color, overflow: getComputedStyle(element).overflowX };
     }));
     for (let index = 0; index < styles.length; index++) {
-      assert.deepEqual(styles[index], styles[0], `${families[index][0]} matches the reference Git tab (${width}px, ${theme})`);
+      const roomy = [2, 3, 7, 8].includes(index);
       assert.equal(styles[index].radius, '0px');
       assert.equal(styles[index].align, 'center', 'Tab labels remain vertically centered');
-      assert.equal(styles[index].minHeight, '28px');
+      assert.equal(styles[index].minHeight, roomy || width <= 760 ? '32px' : '28px');
+      assert.equal(styles[index].padding, roomy ? '5px 10px' : '4px 8px');
+      assert.equal(styles[index].shadow, 'none', 'Active tabs avoid a heavy boxed border');
+      if ([2, 3].includes(index)) assert.equal(styles[index].background, 'rgba(0, 0, 0, 0)', 'Task selection uses a clean underline');
       assert.equal(styles[index].overflow, 'auto');
+    }
+    const spacing = await page.locator('[data-family]').evaluateAll(elements => elements.map(element => {
+      const style = getComputedStyle(element);
+      return { gap: style.columnGap, padding: style.padding, width: element.clientWidth, scroll: element.scrollWidth };
+    }));
+    for (const [index, strip] of spacing.entries()) {
+      assert.equal(strip.gap, [2, 3, 7, 8].includes(index) ? '4px' : '2px', 'Spacing suits the tab context');
+      assert.equal(strip.padding, index === 3 ? '0px 14px' : '0px 2px', 'Tab strips retain an outer inset');
+      if (width <= 390) assert.ok(strip.scroll > strip.width, `${families[index][0]}: long tab rows remain horizontally scrollable`);
     }
     const centers = await page.locator('[data-family]').evaluateAll(elements => elements.map(element => {
       const button = element.querySelector('button'), range = document.createRange();
@@ -82,9 +100,12 @@ try {
       const style = getComputedStyle(button), item = getComputedStyle(cell);
       return [style.font, style.color, style.padding, style.minHeight, style.borderRadius, item.backgroundColor, item.boxShadow];
     }));
-    for (let index = 0; index < inactive.length; index++) assert.deepEqual(inactive[index], inactive[0], `${families[index][0]} inactive tabs match the reference`);
+    for (let index = 0; index < inactive.length; index++) {
+      const reference = [2, 3, 7, 8].includes(index) ? 2 : 0;
+      assert.deepEqual(inactive[index], inactive[reference], `${families[index][0]} inactive tabs match their density group`);
+    }
     const reference = page.locator('[data-family="0"]');
-    const inactiveClose = reference.getByRole('button', { name: 'Close History', exact: true });
+    const inactiveClose = reference.getByRole('button', { name: 'Close Agents 1', exact: true });
     await inactiveClose.focus();
     assert.equal(await inactiveClose.evaluate(element => getComputedStyle(element).opacity), width <= 760 ? '1' : '0.8', 'Keyboard focus exposes tab close controls');
     assert.equal(await inactiveClose.evaluate(element => getComputedStyle(element).outlineStyle), 'solid');
@@ -101,13 +122,28 @@ try {
   await useWorkspaceDashboardAssets(page, origin);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  for (const route of ['/tasks', '/api/keys', '/api/explorer', '/api/proxy']) {
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  for (const width of [1440, 390, 320]) for (const route of ['/tasks', '/api/keys', '/api/explorer', '/api/proxy']) {
+    await page.setViewportSize({ width, height: 1000 });
     const started = performance.now();
     await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
     await page.getByRole('tablist', { name: route === '/tasks' ? 'Task views' : 'API views', exact: true }).waitFor();
-    await page.screenshot({ path: path.join(output, `live-${route.slice(1).replaceAll('/', '-')}.png`) });
+    await page.screenshot({ path: path.join(output, `live-${route.slice(1).replaceAll('/', '-')}-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-    results.push({ route, readyMs: Math.round(performance.now() - started) });
+    results.push({ route, width, readyMs: Math.round(performance.now() - started) });
+    if (route === '/tasks' && await page.locator('.task-board-card').count()) {
+      await page.locator('.task-board-card').first().click();
+      const tabs = page.getByRole('tablist', { name: 'Task details', exact: true });
+      await tabs.waitFor();
+      for (const name of ['Overview', 'Agents', 'Activities', 'Files', 'Changes']) {
+        const tab = tabs.getByRole('tab', { name: new RegExp(`^${name}(?:\\s|$)`) });
+        if (!await tab.count()) continue;
+        await tab.click();
+        assert.equal(await tab.getAttribute('aria-selected'), 'true');
+      }
+      await page.screenshot({ path: path.join(output, `live-task-details-${width}.png`) });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    }
   }
   assert.deepEqual(errors, [], 'Live read-only navigation has no runtime errors');
   console.log(JSON.stringify({ results, screenshots: output }, null, 2));

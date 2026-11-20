@@ -545,7 +545,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-review-detail");
     expect(source).toContain('props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"');
     expect(source).toContain("const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));");
-    expect(source).toContain(".filter(tab => !(props.hideTerminal && tab === 'terminal') && (tab === 'browser' || !visibleTabs.includes(tab)))");
+    expect(source).toContain(".filter(tab => !(props.hideTerminal && tab === 'terminal') && featureAllows(tab) && (tab === 'browser' || !visibleTabs.includes(tab)))");
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
     expect(css).toContain('width: min(var(--cli-terminal-width), 92vw)');

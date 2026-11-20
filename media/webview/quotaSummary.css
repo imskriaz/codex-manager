@@ -18501,7 +18501,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .workspace-browser-inspector .workspace-browser-comment-actions button { flex:0 0 21px; width:21px; background:transparent; border:0; }
 @container (max-width:650px) { .workspace-browser-content > .workspace-browser-resizer.is-responsive { height:5px; width:100%; cursor:row-resize; } }
 
-/* Reuse the compact Git tab strip throughout workspaces; dashboard navigation keeps its own styles. */
+/* Compact workspace tabs; dashboard settings retain their own layout. */
 :is(
   .cli-workspace .cli-context-tab-scroll,
   .cli-workspace .cli-agent-tabs,
@@ -18516,8 +18516,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   .workspace-browser-inspector nav.workspace-browser-source-tabs,
   .workspace-browser-inspector nav.workspace-browser-network-types
 ) {
-  display:flex; align-items:stretch; flex-wrap:nowrap; gap:1px!important; min-width:0;
-  min-height:28px!important; height:auto!important; padding:0!important; border-radius:0;
+  display:flex; align-items:stretch; justify-content:flex-start!important; flex-wrap:nowrap; gap:2px!important; min-width:0;
+  min-height:28px!important; height:auto!important; padding:0 2px!important; border-radius:0;
+  box-sizing:border-box;
   background:transparent; box-shadow:none; overflow-x:auto; overflow-y:hidden;
   scrollbar-width:thin; overscroll-behavior-x:contain;
 
@@ -18527,9 +18528,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
     background:transparent!important; color:var(--text-muted); box-shadow:none; transform:none;
   }
   & > button, & > span > button {
-    display:inline-flex; align-items:center; justify-content:flex-start; flex:0 0 auto; gap:5px;
+    display:inline-flex; align-items:center; justify-content:flex-start; flex:0 0 auto; gap:6px;
     box-sizing:border-box; min-width:0; min-height:28px!important; height:auto!important;
-    padding:2px 5px!important; border:0!important; border-radius:0!important;
+    padding:4px 8px!important; border:0!important; border-radius:0!important;
     background:transparent!important; color:inherit; box-shadow:none; transform:none;
     font:400 calc(11px * var(--dashboard-text-scale, 1))/normal var(--font-family,Arial,sans-serif);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer;
@@ -18537,24 +18538,37 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   & > span > button:first-child { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
   & > button { color:var(--text-muted); }
   & > :is(button,span:has(> button)):hover { background:var(--bg-hover)!important; color:var(--text-primary); }
-  & > :is(button,span):is([aria-selected="true"],[aria-pressed="true"],.is-active,:has(> button.is-active)) {
-    background:color-mix(in srgb,var(--accent) 14%,var(--bg-selected))!important;
-    color:var(--text-primary); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 38%,var(--border-default));
+  & > :is(button,span):is([aria-selected="true"],[aria-pressed="true"],.is-active,.active,:has(> button.is-active)) {
+    background:color-mix(in srgb,var(--accent) 7%,var(--bg-selected))!important;
+    color:var(--text-primary); box-shadow:none;
     &::after { position:absolute; right:0; bottom:0; left:0; height:2px; border-radius:0; background:var(--accent); content:""; pointer-events:none; }
   }
   & button:is([aria-selected="true"],[aria-pressed="true"],.is-active) { color:var(--text-primary)!important; font-weight:700; }
   & > span[data-ai-browser-tab] { border-top:2px solid #a78bfa!important; background:color-mix(in srgb,#a78bfa 14%,var(--bg-base))!important; }
   & > span[data-ai-browser-tab].is-active { background:color-mix(in srgb,#a78bfa 23%,var(--bg-base))!important; }
   & > button svg, & > span > button svg { width:14px; height:14px; flex:0 0 14px; }
-  & > span > button + button { flex:0 0 22px; width:22px; min-width:22px; padding:0!important; justify-content:center; opacity:0; }
+  & > span > button + button { flex:0 0 26px; width:26px; min-width:26px; padding:0!important; justify-content:center; opacity:0; }
   & > span:is(:hover,:focus-within,.is-active,:has(> button.is-active)) > button + button { opacity:.8; }
   & > span > button + button svg { width:12px; height:12px; flex-basis:12px; }
   & button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   & button:disabled { opacity:.45; cursor:default; }
   @media (max-width:760px), (pointer:coarse) {
+    & > button, & > span > button { min-height:32px!important; }
     & > span > button + button { flex-basis:26px; width:26px; min-width:26px; opacity:1!important; }
   }
 }
-.task-detail-panel .task-detail-tabs { padding-inline:14px!important; }
+.task-detail-panel .task-detail-tabs[role="tablist"] { padding-inline:14px!important; }
+.task-detail-panel .task-detail-tabs[role="tablist"],
+.task-board-header .task-view-tabs[role="tablist"],
+.api-workspace-screen .api-token-tabs[role="tablist"],
+.api-proxy-connection .api-token-tabs[role="tablist"] { gap:4px!important; }
+.task-detail-panel .task-detail-tabs[role="tablist"] > button,
+.task-board-header .task-view-tabs[role="tablist"] > button,
+.api-workspace-screen .api-token-tabs[role="tablist"] > span > button:first-child,
+.api-proxy-connection .api-token-tabs[role="tablist"] > span > button:first-child { min-height:32px!important; padding:5px 10px!important; }
+.task-detail-panel .task-detail-tabs[role="tablist"] > button[aria-selected="true"],
+.task-board-header .task-view-tabs[role="tablist"] > button[aria-selected="true"] { background:transparent!important; }
+/* End compact workspace tabs. */
+
 
 .office-user-shell{display:flex;flex-direction:column;min-height:calc(100vh - 24px);background:var(--bg-surface);color:var(--text);border:1px solid var(--border-default);border-radius:8px;overflow:hidden}.office-user-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border-default);background:var(--bg-elevated)}.office-user-header strong,.office-user-header small{display:block}.office-user-header small{color:var(--muted);margin-top:3px}.office-user-actions button,.office-general-chat form button{border:1px solid var(--border-default);border-radius:6px;padding:8px 14px;background:var(--accent);color:var(--button-primary-foreground);font:inherit;cursor:pointer}.office-user-tabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border-default);background:var(--bg-base)}.office-user-tabs button{border:1px solid transparent;border-radius:5px;padding:8px 18px;background:transparent;color:var(--muted);font:inherit;cursor:pointer}.office-user-tabs button.active{background:var(--bg-selected);border-color:var(--border-accent);color:var(--text)}.office-general-chat{display:flex;flex:1;flex-direction:column;gap:12px;padding:20px;max-width:960px;width:100%;box-sizing:border-box;margin:0 auto}.office-chat-messages{display:flex;flex:1;flex-direction:column;gap:10px;min-height:220px;overflow:auto}.office-chat-message{padding:10px 14px;border:1px solid var(--border-default);border-radius:8px;background:var(--bg-base)}.office-chat-message.user{align-self:flex-end;background:var(--bg-selected)}.office-chat-message span{font-size:calc(11px * var(--dashboard-text-scale, 1));color:var(--muted);text-transform:uppercase}.office-chat-message p{margin:5px 0 0;white-space:pre-wrap}.office-chat-empty,.office-chat-notice{color:var(--muted)}.office-chat-notice{padding:8px;border:1px solid var(--border-accent);background:var(--bg-selected)}.office-general-chat form{display:flex;gap:8px;align-items:flex-end}.office-general-chat textarea{flex:1;resize:vertical;min-height:60px;padding:10px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text);font:inherit}.office-admin-settings{display:grid;gap:12px}.office-user-list{display:grid;gap:8px;margin:10px 0}.office-user-row{display:grid;gap:2px;padding:10px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base)}.office-user-row span,.office-user-row small{color:var(--muted)}.office-user-create{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.office-user-create input,.office-user-create textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-base);color:var(--text);font:inherit}.office-user-create textarea{grid-column:1/-1;min-height:70px}.office-user-create button{justify-self:start}

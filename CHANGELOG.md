@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.5
+
+- Improve compact tab spacing by context: tighter workspace and Inspector tools, roomier task/API navigation, clearer counts, and clean task selection underlines.
+- Preserve separate settings and maintenance layouts, horizontal scrolling, keyboard focus, and visible close controls on touch screens.
+
 ## 3.0.0-pre.2
 
 - Add a Team workspace enable toggle under Settings → General → Dashboard; Team routes remain role-gated and separate from regular user settings.
