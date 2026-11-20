@@ -62,7 +62,13 @@ try {
     console.log(`${width}px: successful save requested`);
     await editor.waitFor({ state: 'hidden' });
     await page.getByRole('status').filter({ hasText: 'User settings saved.' }).waitFor();
-    await page.getByRole('navigation', { name: 'Team settings sections' }).getByRole('button', { name: 'Database', exact: true }).click();
+    if (width <= 700) {
+      await page.getByRole('combobox', { name: 'Team settings section', exact: true }).selectOption('database');
+      assert.equal(await page.locator('.team-settings-sidebar').isVisible(), false);
+    } else {
+      assert.equal(await page.getByRole('combobox', { name: 'Team settings section', exact: true }).isVisible(), false);
+      await page.getByRole('navigation', { name: 'Team settings sections' }).getByRole('button', { name: 'Database', exact: true }).click();
+    }
     await page.getByLabel(/^Database provider/).selectOption('postgres');
     await page.getByLabel(/^PostgreSQL connection URL/).waitFor();
     await fits();
@@ -72,6 +78,14 @@ try {
     await page.locator('.cli-settings-shortcut').click();
     const settings = page.getByRole('dialog', { name: /settings/i }).first();
     const sidebar = settings.locator('.settings-sidebar');
+    if (width <= 700) {
+      const picker = settings.getByRole('combobox', { name: 'Settings section', exact: true });
+      await picker.waitFor();
+      assert.equal(await sidebar.isVisible(), false);
+      await picker.selectOption('automation');
+      assert.equal(await picker.inputValue(), 'automation');
+      await picker.selectOption('general');
+    } else {
     await sidebar.waitFor();
     assert.equal(await sidebar.getByRole('tablist').getAttribute('aria-orientation'), 'vertical');
     const general = sidebar.getByRole('tab', { name: 'General', exact: true });
@@ -79,6 +93,7 @@ try {
     await page.keyboard.press('ArrowDown');
     assert.equal(await sidebar.getByRole('tab', { name: 'Automation', exact: true }).getAttribute('aria-selected'), 'true');
     await general.click();
+    }
     const teamToggle = settings.locator('.settings-dashboard-column .settings-block').filter({ has: page.locator('.settings-block-title', { hasText: 'Enable Team workspace' }) });
     await teamToggle.waitFor();
     await fits();

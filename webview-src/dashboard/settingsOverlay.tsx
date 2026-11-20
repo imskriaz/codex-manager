@@ -147,6 +147,12 @@ export function SettingsOverlay(props: {
             ×
           </button>
         </div>
+        <label class="settings-mobile-picker">
+          <span>{navigationCopy.tabListLabel}</span>
+          <select aria-label="Settings section" value={activeTab} onChange={event => setActiveTab(event.currentTarget.value as SettingsTabId)}>
+            {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+          </select>
+        </label>
         <aside class="settings-sidebar">
         <input type="search" aria-label="Find a settings section" placeholder="Find a section…" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />
         <div class="settings-sidebar-label">{navigationCopy.tabListLabel}</div>

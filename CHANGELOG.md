@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.10
+
+- Use a top section picker on mobile for General settings and Team management, while keeping searchable left navigation on desktop.
+
 ## 3.0.0-pre.6
 
 - Add a role-gated Team settings page at `/manage`, with user editing, permissions, workspace defaults, MCP access, and SQLite/PostgreSQL configuration; redirect `/admin` to `/manage`.

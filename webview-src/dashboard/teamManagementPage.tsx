@@ -220,6 +220,16 @@ export function TeamManagementPage() {
         </a>
       </header>
       <div class="team-settings-layout">
+        <label class="settings-mobile-picker">
+          <span>Team settings</span>
+          <select aria-label="Team settings section" value={section} onChange={event => {
+            setSection(event.currentTarget.value as typeof section);
+            setError("");
+            setNotice("");
+          }}>
+            {SECTIONS.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+          </select>
+        </label>
         <aside class="team-settings-sidebar">
           <input
             type="search"
