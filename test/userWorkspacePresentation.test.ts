@@ -1,5 +1,6 @@
 import { expect,it } from 'vitest';
-import { userProjectLabel,userWorkspaceNotice,userSessionActivity } from '../webview-src/dashboard/userWorkspacePresentation';
+import { userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary } from '../webview-src/dashboard/userWorkspacePresentation';
+import { userWorkspacePathText } from '../src/domain/teamWorkspacePresentation';
 
 it('uses project labels without displaying physical workspace folders',()=>{
  const projects=[{id:'personal',path:'C:/team/alex',label:'My workspace'},{id:'planning',path:'C:/team/alex/plan',label:'Planning'}];
@@ -16,7 +17,49 @@ it('preserves useful plain-language outcomes',()=>{
 it('preserves command text, full output and activity identity while masking only the host path and private diagnostics',()=>{
  const message={id:'command-1',kind:'command' as const,text:'Run checks',command:'cd "C:/team/alex" && npm test',cwd:'C:/team/alex',output:'Checked C:/team/alex/index.ts\nAll 83 tests passed.',status:'completed' as const,debug:'Provider account credentials'};
  const safe=userSessionActivity(message,['C:/team/alex']);
- expect(safe.id).toBe(message.id);expect(safe.kind).toBe('command');expect(safe.command).toBe('cd "[workspace]" && npm test');
- expect(safe.output).toBe('Checked [workspace]/index.ts\nAll 83 tests passed.');expect(safe.cwd).toBeUndefined();expect(safe.debug).toBeUndefined();
+ expect(safe.id).toBe(message.id);expect(safe.kind).toBe('command');expect(safe.command).toBe('cd "alex" && npm test');
+ expect(safe.output).toBe('Checked alex/index.ts\nAll 83 tests passed.');expect(safe.cwd).toBeUndefined();expect(safe.debug).toBeUndefined();
  expect(message.cwd).toBe('C:/team/alex');
+});
+it.each([
+ ['D:\\projects\\codex-manager\\output\\commit.cjs','codex-manager\\output\\commit.cjs'],
+ ['d:\\PROJECTS\\CODEX-MANAGER\\output\\commit.cjs','codex-manager\\output\\commit.cjs'],
+ ['D:/projects/codex-manager/output/commit.cjs','codex-manager/output/commit.cjs'],
+ ['"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command \'$r=1\'','"PowerShell" -NoProfile -Command \'$r=1\''],
+ ['"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command npm test','"PowerShell" -Command npm test'],
+ ['C:\\Windows\\System32\\cmd.exe /c npm test','cmd.exe /c npm test'],
+ ['C:\\ /tmp','[folder] [folder]'],
+ ['"C:\\Program Files\\Tools\\check.exe" --output report.txt','"check.exe" --output report.txt'],
+ [JSON.stringify({command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command \'$r=1\''}),JSON.stringify({command:'"PowerShell" -NoProfile -Command \'$r=1\''})],
+ ['/usr/bin/pwsh -NoProfile -Command npm test','PowerShell -NoProfile -Command npm test'],
+ ['\'/usr/bin/node output/check.js\'','\'node output/check.js\''],
+ ['/home/service/private/log.txt /etc /tmp','log.txt [folder] [folder]'],
+ ['\\\\server\\private\\report.txt','report.txt'],
+ ['https://example.test/a/b codex-manager/output/file.txt npm test','https://example.test/a/b codex-manager/output/file.txt npm test'],
+ ['D:\\projects\\codex-manager-other\\file.txt','file.txt'],
+ [JSON.stringify({path:'D:\\projects\\codex-manager\\output\\file.txt'}),JSON.stringify({path:'codex-manager\\output\\file.txt'})],
+])('shortens host and system paths without changing commands: %s',(input,expected)=>{
+ const safe=userWorkspacePathText(input,['D:\\projects\\codex-manager']);
+ expect(safe).toBe(expected);expect(userWorkspacePathText(safe,['D:\\projects\\codex-manager'])).toBe(safe);
+});
+it('masks paths in every activity surface without dropping details or changing the source',()=>{
+ const path='D:\\projects\\codex-manager\\output\\commit.cjs';
+ const message={id:'file',kind:'file-change' as const,text:path,title:path,subtitle:path,arguments:JSON.stringify({path}),result:path,output:path,changes:[{path,kind:'update',diff:'+ '+path}]};
+ const safe=userSessionActivity(message,['D:\\projects\\codex-manager']);
+ for(const value of [safe.text,safe.title,safe.subtitle,safe.arguments,safe.result,safe.output,safe.changes?.[0]?.path,safe.changes?.[0]?.diff])expect(value).not.toMatch(/[a-z]:[\\/]/i);
+ expect(safe.changes?.[0]?.path).toBe('codex-manager\\output\\commit.cjs');expect(message.text).toBe(path);
+});
+it.each([
+ ['"PowerShell" -NoProfile -Command \'$r=1; npm test\'','PowerShell: $r=1; npm test'],
+ ['PowerShell -NoLogo -NonInteractive -c npm test','PowerShell: npm test'],
+ ['npm test\nnpm run build','npm test'],
+ ['PowerShell -File check.ps1','PowerShell -File check.ps1'],
+])('uses readable command summaries while preserving the executed script: %s',(command,summary)=>{
+ expect(userCommandSummary(command)).toBe(summary);
+});
+it('labels file reads with the project-relative file while retaining all recorded information',()=>{
+ const safe=userSessionActivity({id:'read',kind:'tool-call',title:'Read file',text:'Read the whole file',arguments:JSON.stringify({path:'D:\\projects\\codex-manager\\notes.txt'}),result:'All contents'},['D:\\projects\\codex-manager']);
+ expect(safe.title).toBe('Read File · codex-manager\\notes.txt');expect(safe.text).toBe('Read the whole file');expect(safe.result).toBe('All contents');
+ const legacy=userSessionActivity({id:'read',kind:'tool-call',title:'Read /srv/projects/codex-manager/notes.txt',text:'Read'},['/srv/projects/codex-manager']);
+ expect(legacy.title).toBe('Read File · codex-manager/notes.txt');
 });

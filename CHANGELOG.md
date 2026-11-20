@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.23
+
+- Shorten Team activity paths to the project folder and relative file location, hide system directory prefixes, and use readable PowerShell command summaries. Preserve commands, output, grouping, and expansion; label file changes Added or Edited. Administrator activity remains unchanged.
+
 ## 3.0.0-pre.22
 
 - Keep the master session renderer and tool grouping for Team members, including every recorded call, command and output. Mask the execution folder while preserving conversation content and retaining activity after reload.

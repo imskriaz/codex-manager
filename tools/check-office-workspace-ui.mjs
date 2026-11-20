@@ -8,6 +8,11 @@ const origin='http://127.0.0.1:39875';
 const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
 const state={lang:raw.lang,copy:raw.copy,logoUri:raw.logoUri,panelTitle:'Workspace',brandSub:'',onboardingCompleted:true,office,accounts:[],connectedPeers:[],peerAccounts:{},indexHealth:{status:'healthy',availableBackups:0},tokenAutomation:{enabled:false},settings:{...Object.fromEntries(Object.entries(raw.settings).map(([key,value])=>[key,typeof value==='boolean'?false:typeof value==='number'?0:typeof value==='string'?'':[]])),dashboardTheme:'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,workspaceTextFileLimitMb:10}};
+const activities=[
+ {id:'read-file',kind:'tool-call',title:'Read file',text:'Read the document',arguments:JSON.stringify({path:'C:/team/alex/notes.txt'}),result:'Complete document contents.',status:'completed'},
+ {id:'run-checks',kind:'command',text:'Checking changes',command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command \'$r=1; npm test\'',cwd:'C:/team/alex',output:'All 83 checks passed.\nC:\\Windows\\Temp\\checks.log',status:'completed'},
+ {id:'files',kind:'file-change',text:'Updated your files',status:'completed',changes:[{path:'C:/team/alex/output/new.cjs',kind:'add',diff:'+ New file'},{path:'C:/team/alex/output/commit.cjs',kind:'update',diff:'- Before\n+ After'}]},
+];
 const mockHost=`(()=>{
 document.documentElement.dataset.dashboardUser='fixture-alex';
 const state=${JSON.stringify(state)},key='private-workspace-fixture';
@@ -16,7 +21,7 @@ const config={models:[],projects:[{id:'personal',path:'C:/team/alex',label:'My w
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
 const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
 window.__privateActions=[];
-window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined,updatedAt:new Date().toISOString()};messages.push({id:'read-file',kind:'tool-call',title:'Read file',text:'Read the document',result:'Complete document contents.',status:'completed'},{id:'run-checks',kind:'command',text:'Checking changes',command:'cd "C:/team/alex" && npm test',cwd:'C:/team/alex',output:'All 83 checks passed.',status:'completed'},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
+window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined,updatedAt:new Date().toISOString()};messages.push(...${JSON.stringify(activities)},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
 window.acquireVsCodeApi=()=>({postMessage(message){window.__privateActions.push(message);setTimeout(()=>{
 if(message.type==='dashboard:ready'||message.type==='dashboard:workspace-presence'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}
 if(message.type==='dashboard:setting'){state.settings[message.key]=message.value;dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:notice',level:'info',message:'Setting saved.'});return;}
@@ -38,13 +43,13 @@ dispatch({type:'dashboard:action-result',requestId:message.requestId,action:mess
 const output=path.join(os.tmpdir(),'codex-manager-private-workspace-ui');await mkdir(output,{recursive:true});
 async function assertPlainUserInterface(page){
  const presentation=await page.evaluate(()=>[document.body.innerText,...[...document.querySelectorAll('[title],[aria-label]')].filter(node=>node.getClientRects().length).flatMap(node=>[node.getAttribute('title')||'',node.getAttribute('aria-label')||''])].join('\n'));
- assert.doesNotMatch(presentation,/C:[\\/]team[\\/]alex|Codex|quota|sandbox|API|model provider|native thread/i);
+ assert.doesNotMatch(presentation,/C:[\\/]|Windows[\\/](?:System32|Temp)|Codex|quota|sandbox|API|model provider|native thread/i);
 }
 const browser=await chromium.launch({channel:'msedge',headless:true});
 try{for(const width of [1440,390]){
  const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
- page.on('console',message=>{if(message.type()==='error')console.log('Browser console: '+message.text());});
+ page.on('console',message=>{if(message.type()==='error')errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
@@ -77,7 +82,16 @@ try{for(const width of [1440,390]){
  assert.equal(await page.locator('.cli-conversation-project').innerText(),'My workspace');
  const transcript=await page.locator('.cli-session-messages').textContent();
  assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/Read the document/);
- assert.doesNotMatch(transcript,/C:[\\/]team[\\/]alex/);
+ assert.match(transcript,/Ran PowerShell: \$r=1; npm test/);assert.match(transcript,/\"PowerShell\" -NoProfile -Command/);
+ assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Added/);assert.match(transcript,/Edited/);
+ assert.match(transcript,/Read File · alex\/notes.txt/);
+ assert.doesNotMatch(transcript,/C:[\\/]|Windows[\\/](?:System32|Temp)/);
+ await page.locator('.cli-completed-work > summary').click();
+ await page.locator('.cli-activity-group-details > summary').click();
+ await page.locator('.cli-activity.is-command > summary').click();
+ await page.getByLabel('Command output',{exact:true}).waitFor({state:'visible'});
+ await assertPlainUserInterface(page);
+ await page.screenshot({path:path.join(output,`activity-${width}.png`),fullPage:true});
  await assertPlainUserInterface(page);
  await page.reload();
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
@@ -97,6 +111,10 @@ try{for(const width of [1440,390]){
  assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),1);assert.equal(await page.locator('.team-user-footer').count(),0);
  assert.equal(await page.locator('.cli-task-nav').count(),1);
  assert.equal(await page.locator('.cli-task-nav').textContent(),'Kanban');
+ await page.evaluate(activities=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id:'12345678-1234-1234-1234-123456789abc',title:'Master session',status:'idle',projectPath:'C:/team/alex'},messages:[{id:'user',role:'user',text:'Check files'},...activities,{id:'answer',role:'assistant',text:'Master response ready.'}]})),activities);
+ await page.reload();await page.getByRole('button',{name:/^Master session/}).click();await page.getByText('Master response ready.',{exact:true}).waitFor();
+ const masterTranscript=await page.locator('.cli-session-messages').textContent();
+ assert.match(masterTranscript,/C:\\Windows\\System32\\WindowsPowerShell/);assert.match(masterTranscript,/C:\/team\/alex\/output\/commit.cjs/);assert.match(masterTranscript,/Update/);
  console.log(JSON.stringify({masterDashboardControlsPreserved:true}));await context.close();
 }finally{await browser.close();}
 console.log('Screenshots: '+output);

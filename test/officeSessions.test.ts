@@ -75,7 +75,7 @@ it("retains every activity and command output in order across reload, with host 
  const {service,changed}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  service.stop();const next=setup().service;const read=await next.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});
  expect(read.cliSessionMessages?.map(message=>message.id)).toEqual([expect.any(String),'read','command',expect.any(String)]);
- expect(read.cliSessionMessages?.[1]?.result).toBe('All document text remains here.');expect(read.cliSessionMessages?.[2]?.command).toBe('cd "[workspace]" && npm test');expect(read.cliSessionMessages?.[2]?.output).toBe('83 checks passed.');
+ expect(read.cliSessionMessages?.[1]?.result).toBe('All document text remains here.');expect(read.cliSessionMessages?.[2]?.command).toBe('cd "alex" && npm test');expect(read.cliSessionMessages?.[2]?.output).toBe('83 checks passed.');
  const sequences=changed.mock.calls.flatMap(call=>call[1]).filter(message=>message.type==='dashboard:codex-session-live').map(message=>(message as any).state.sequence);
  expect(new Set(sequences).size).toBe(sequences.length);
 });

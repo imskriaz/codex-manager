@@ -1,5 +1,5 @@
 import { SystemPicker, SystemStatusRows } from './systemPicker';
-import { userProjectLabel, userWorkspaceNotice, userSessionActivity } from './userWorkspacePresentation';
+import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary } from './userWorkspacePresentation';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { useWorkspaceSurface } from './workspaceSurface';
@@ -2410,6 +2410,7 @@ function isCapacityMessage(message: DashboardCliSessionMessage): boolean {
 }
 
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
+  const privateWorkspace = useContext(PrivateWorkspaceContext);
   const automaticRecovery = useContext(SessionAutomaticRecoveryContext);
   const openAgent = useContext(SessionAgentContext);
   const agentIds = useMemo(() => messageAgentIds(message), [message]);
@@ -2436,7 +2437,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
-      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
+      <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(privateWorkspace && message.kind === 'command' ? {...message, command:userCommandSummary(message.command ?? message.text)} : message)}</strong><small>{activityMeta(message)}</small></span>
       <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : capacity ? "Capacity" : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
       {agentLink ? <button type="button" class="cli-agent-detail-toggle" aria-label={`${message.title || 'Agent activity'} details`} title="Expand activity details" onClick={event => { event.preventDefault(); event.stopPropagation(); const details = event.currentTarget.closest('details'); if (details) details.open = !details.open; }}><ChevronIcon /></button> : <ChevronIcon />}
     </summary>
@@ -2481,9 +2482,10 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
 }
 
 function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: NonNullable<DashboardCliSessionMessage["changes"]>; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
+  const privateWorkspace = useContext(PrivateWorkspaceContext);
   if (changes.length === 0) return <div class="cli-activity-copy">File changes are being prepared…</div>;
   return <div class="cli-file-change-list">{changes.map((change) => <details key={`${change.path}-${change.kind}`}>
-    <summary><span><FileIcon /><strong>{change.path}</strong></span><button type="button" disabled={!onOpenFile} onClick={(event) => { event.preventDefault(); onOpenFile?.(change.path); }}>Open</button><button type="button" disabled={!onOpenReviews} onClick={(event) => { event.preventDefault(); onOpenReviews?.(change.path); }}>Review</button><small>{capitalize(change.kind)}</small><ChevronIcon /></summary>
+    <summary><span><FileIcon /><strong>{change.path}</strong></span><button type="button" disabled={!onOpenFile} onClick={(event) => { event.preventDefault(); onOpenFile?.(change.path); }}>Open</button><button type="button" disabled={!onOpenReviews} onClick={(event) => { event.preventDefault(); onOpenReviews?.(change.path); }}>Review</button><small>{privateWorkspace ? /^(?:add|added|create|created)$/i.test(change.kind) ? 'Added' : /^(?:update|updated|edit|edited|modify|modified)$/i.test(change.kind) ? 'Edited' : capitalize(change.kind) : capitalize(change.kind)}</small><ChevronIcon /></summary>
     {change.diff ? <DiffPreview diff={change.diff} /> : <div class="cli-activity-copy">No diff details were recorded.</div>}
   </details>)}</div>;
 }
