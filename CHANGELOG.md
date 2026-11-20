@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.19
+
+- Prefill the donation amount with USD 10.11 in the Donate dialog and onboarding.
+
 ## 3.0.0-pre.16
 
 - Keep the message queue in one compact row with a short failure status; preserve full errors in its tooltip and dialog without a duplicate warning line.
