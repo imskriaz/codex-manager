@@ -17,6 +17,7 @@ const source = { hasDashboardPassphrase: vi.fn(), verifyDashboardPassphrase: vi.
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "manager-dashboard-auth-"));
   vi.stubEnv("CODEX_MANAGER_STORAGE_ROOT", root);
+  vi.stubEnv("CODEX_MANAGER_ADMIN_USERNAME", "manager-test");
   store = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
   configureSqliteStateStore(store);
   secrets = new Map([[DASHBOARD_PASSPHRASE_KEY, "same protected password"]]);
@@ -61,7 +62,7 @@ it("allows fresh remote login in standalone and persists logout for the next VS 
   const request = Object.assign(new EventEmitter(), { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-proto": "https" }, setEncoding: vi.fn() });
   try {
     const pending = (server as any).handleLogin(request, response, "/workspace");
-    request.emit("data", "password=same+protected+password"); request.emit("end");
+    request.emit("data", "username=manager-test&password=same+protected+password"); request.emit("end");
     await pending;
     expect(response.statusCode).toBe(303);
     const cookie = headers.get("Set-Cookie")!;
@@ -69,6 +70,11 @@ it("allows fresh remote login in standalone and persists logout for the next VS 
     expect(cookie).toContain("Secure");
     const token = cookie.split(";")[0]!.split("=")[1]!;
     await expect((server as any).isAuthorizedSessionToken(token)).resolves.toBe(true);
+    const nextHost = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
+    try {
+      const remote = { headers: { host: "dashboard.example", "cf-ray": "tunnel", cookie: `codex_dashboard_session=${token}` }, socket: { remoteAddress: "127.0.0.1" } };
+      await expect((nextHost as any).officeUserForRequest(remote)).resolves.toMatchObject({ id: "master", role: "unrestricted-admin" });
+    } finally { nextHost.dispose(); }
     await (server as any).forgetSession(token);
     await new DashboardAuth(storage, source).refresh();
     await expect((server as any).isAuthorizedSessionToken(token)).resolves.toBe(false);
@@ -157,7 +163,7 @@ it("bounds simultaneous password checks and releases capacity after failed sign-
     const response = { statusCode: 200, setHeader: vi.fn(), end: vi.fn() };
     const request = Object.assign(new EventEmitter(), { socket: { remoteAddress: ip }, headers: {}, setEncoding: vi.fn() });
     const done = internal.handleLogin(request, response, "/");
-    request.emit("data", "password=wrong"); request.emit("end");
+    request.emit("data", "username=manager-test&password=wrong"); request.emit("end");
     return { done, response };
   };
   try {

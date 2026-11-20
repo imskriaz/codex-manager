@@ -1,3 +1,4 @@
+import { MasterUsernameField } from "./masterUsernameField";
 import type {
   DashboardCopy,
   DashboardOfficeView,
@@ -263,6 +264,7 @@ export function SettingsOverlay(props: {
                     {passwordCopy.configure}
                   </button>
                 </div>
+                <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.office?.id === "master"} />
               </div>
               <div class="settings-block settings-block-wide settings-integration-group">
                 <div class="settings-block-head settings-integration-head">

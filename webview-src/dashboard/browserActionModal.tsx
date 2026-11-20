@@ -6,6 +6,8 @@ import type { CodexResetCreditsSnapshot } from "../../src/core/types";
 import { ModalShell } from "./components";
 import { getSensitiveDisplayValue } from "./helpers";
 import { useModalAccessibility } from "./primitives";
+import { MasterUsernameField } from "./masterUsernameField";
+import type { SendAction } from "./hookTypes";
 
 export type BrowserActionRequest =
   | {
@@ -79,6 +81,8 @@ export function BrowserActionModal(props: {
   onConfirm: (request: BrowserActionRequest, submittedValues?: string[]) => void;
   onRetry?: (request: BrowserActionRequest) => void;
   presentation?: "modal" | "popover";
+  sendAction?: SendAction;
+  authenticatedMaster?: boolean;
 }) {
   const request = props.request;
   const [password, setPassword] = useState("");
@@ -225,6 +229,7 @@ export function BrowserActionModal(props: {
             />
           ) : null}
           {mismatch && passwordConfirmation ? <div class="modal-error">The passwords do not match.</div> : null}
+          {request.action === "configureEncryptedSync" && props.sendAction ? <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.authenticatedMaster} /> : null}
           <div class="modal-actions">
             <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
               {cancelLabel}

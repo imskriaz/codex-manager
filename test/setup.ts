@@ -1,4 +1,5 @@
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
+beforeEach(() => vi.stubEnv("CODEX_MANAGER_ADMIN_USERNAME", "manager-test"));
 
 vi.mock('../src/services/autoResumeKeepAwake', () => ({
   createAutoResumeKeepAwake: vi.fn(() => ({ setActive: vi.fn(), dispose: vi.fn() }))

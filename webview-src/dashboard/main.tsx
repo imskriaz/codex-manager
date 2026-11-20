@@ -3213,6 +3213,8 @@ function App() {
 
       {
         <BrowserActionModal
+          sendAction={sendAction}
+          authenticatedMaster={snapshot.office?.id === "master"}
           request={browserActionRequest}
           anchor={switchPopoverAnchor.current}
           accounts={

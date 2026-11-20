@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.14
+
+- Always show the master username in password settings and the Change password dialog for signed-in master administrators, including remote browsers; retain local-only rotation and deny Team users, API tokens, and peer requests.
+
 ## 3.0.0-pre.10
 
 - Use a top section picker on mobile for General settings and Team management, while keeping searchable left navigation on desktop.

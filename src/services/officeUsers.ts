@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { promisify } from "node:util";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
@@ -25,8 +26,62 @@ type StoredOfficeUser = OfficeUser & { salt: string; passwordHash: string };
 const NAMESPACE = "office-users";
 const KEY = "users";
 const MCP_KEY = "mcp-servers";
+export const MASTER_USERNAME_ENV = "CODEX_MANAGER_ADMIN_USERNAME";
 const scrypt = promisify(crypto.scrypt);
 const DEFAULT_FEATURES: OfficeFeature[] = ["generalChat", "tasks", "files", "browser"];
+
+function validMasterUsername(value: string | undefined): string | undefined {
+  const username = value?.trim().toLowerCase();
+  return username && /^[a-z0-9][a-z0-9._-]{1,63}$/.test(username) ? username : undefined;
+}
+
+export async function resolveMasterOfficeUsername(expectedUsername?: string): Promise<string> {
+  const environment = process.env[MASTER_USERNAME_ENV];
+  const configured = validMasterUsername(environment);
+  if (environment !== undefined) {
+    if (!configured) throw new Error(`${MASTER_USERNAME_ENV} must contain a username with 2-64 letters, numbers, dots, dashes, or underscores.`);
+    if (expectedUsername !== undefined) throw new Error("The master username is controlled by an environment override. Remove that override and restart the host to rotate it here.");
+    return configured;
+  }
+  const file = path.join(getCodexManagerStorageRoot(), "codex-manager.env");
+  const username = await runCrossWindowExclusive(`state:master-username:${file}`, "Dashboard username setup", async () => {
+    let text: string;
+    try { text = await fs.readFile(file, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const generated = `manager-${crypto.randomBytes(16).toString("hex")}`;
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      text = `${MASTER_USERNAME_ENV}=${generated}\n`;
+      try { await fs.writeFile(file, text, { encoding: "utf8", mode: 0o600, flag: "wx" }); }
+      catch (writeError) {
+        if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
+        text = await fs.readFile(file, "utf8");
+      }
+    }
+    const stored = validMasterUsername(text.match(/^CODEX_MANAGER_ADMIN_USERNAME=([^\r\n]*)$/m)?.[1]);
+    if (!stored) throw new Error(`The dashboard username in ${file} is invalid. Set ${MASTER_USERNAME_ENV} to a valid username and restart the host.`);
+    if (expectedUsername !== undefined) {
+      if (expectedUsername !== stored) throw new Error("The master username changed in another window. Reload the username before rotating again.");
+      const replacement = `manager-${crypto.randomBytes(16).toString("hex")}`;
+      const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+      try {
+        await fs.writeFile(temporary, text.replace(/^CODEX_MANAGER_ADMIN_USERNAME=[^\r\n]*$/m, `${MASTER_USERNAME_ENV}=${replacement}`), { encoding: "utf8", mode: 0o600, flag: "wx" });
+        await fs.rename(temporary, file);
+      } finally {
+        await fs.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[codexManager] username rotation temporary file cleanup failed", error); });
+      }
+      return replacement;
+    }
+    return stored;
+  }, { waitMs: 2_000 });
+  return username;
+}
+
+export function masterOfficeUser(username: string): OfficeUser {
+  return { id: "master", username, displayName: "Administrator", role: "unrestricted-admin", enabled: true,
+    features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "",
+    workspacePath: "", mcpServers: [], createdAt: 0 };
+}
 
 function store(): ReturnType<typeof getSqliteStateStore> {
   return getSqliteStateStore();
@@ -243,18 +298,15 @@ export async function deleteOfficeUser(id: string): Promise<void> {
   }, { waitMs: 2_000 });
 }
 
-export async function authenticateOfficeUser(username: string, password: string, verifyMaster: () => Promise<boolean>): Promise<OfficeUser | undefined> {
+export async function authenticateOfficeUser(username: string, password: string, verifyMaster: () => Promise<boolean>, masterUsername: string): Promise<OfficeUser | undefined> {
   const normalized = username.trim().toLowerCase();
   const user = (await readUsersBackend()).users.find(item => item.username === normalized);
   if (user) {
     if (!user.enabled || !crypto.timingSafeEqual(Buffer.from(user.passwordHash, "hex"), Buffer.from(await derive(password, user.salt), "hex"))) return undefined;
     return publicUser(user);
   }
-  // Preserve the existing master passphrase as an implicit unrestricted admin until
-  // the first explicit office account is created.
-  if ((normalized === "admin" || normalized === "" ) && await verifyMaster()) {
-    return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
-  }
+  // The master identity keeps the shared passphrase and requires its generated username.
+  if (normalized === masterUsername && await verifyMaster()) return masterOfficeUser(masterUsername);
   return undefined;
 }
 

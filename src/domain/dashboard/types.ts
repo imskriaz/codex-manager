@@ -591,6 +591,8 @@ export type DashboardActionName =
   | "restoreFromBackup"
   | "restoreFromAuthJson"
   | "copyText"
+  | "getMasterUsername"
+  | "rotateMasterUsername"
   | "openDashboard"
   | "openWebDashboard"
   | "openExternalUrl"
@@ -693,6 +695,7 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  masterUsername?: string;
   tags?: string[];
   expectedTags?: string[];
   tagName?: string;
@@ -1175,6 +1178,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  masterUsername?: string;
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
   workspacePanel?: import('../workspaceSurface').WorkspaceSurfaceResult;
   workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };

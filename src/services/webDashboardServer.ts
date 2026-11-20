@@ -101,6 +101,8 @@ import {
   getOfficeUser,
   listOfficeUsers,
   listOfficeMcpServers,
+  masterOfficeUser,
+  resolveMasterOfficeUsername,
   updateOfficeUser,
   saveOfficeMcpServers,
   type OfficeRole,
@@ -531,6 +533,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly browserSocketSessionFingerprint = new WeakMap<WebSocket, string>();
   private readonly browserSocketPassphraseFingerprint = new WeakMap<WebSocket, string>();
   private browserSocketOfficeUser = new WeakMap<WebSocket, OfficeUser>();
+  private readonly localMasterSockets = new WeakSet<WebSocket>();
   private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly publicProjectRequests = new Map<string, { until: number; reads: number; writes: number }>();
   private publicProjectInflight = 0;
@@ -1451,7 +1454,7 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       const credential = await this.auth.getDashboardPassphraseFingerprint();
       const configured = Boolean(await this.auth.hasDashboardPassphrase());
-      const officeUser = await authenticateOfficeUser(username, password, () => this.auth.verifyDashboardPassphrase(password));
+      const officeUser = await authenticateOfficeUser(username, password, () => this.auth.verifyDashboardPassphrase(password), await this.getMasterOfficeUsername());
       if (!configured || !officeUser || officeUser.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
         this.loginAttempts.set(ip, {
           count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1,
@@ -1488,17 +1491,21 @@ export class WebDashboardServer implements vscode.Disposable {
     return this.isAuthorizedSessionToken(token);
   }
 
+  private getMasterOfficeUsername(): Promise<string> {
+    return resolveMasterOfficeUsername();
+  }
+
   private async officeUserForRequest(request: http.IncomingMessage): Promise<OfficeUser | undefined> {
     if (isLocalWebDashboardRequest(request) && !readDashboardSessionToken(request)) {
-      return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
+      return masterOfficeUser(await this.getMasterOfficeUsername());
     }
     const token = readDashboardSessionToken(request);
     if (!token || !(await this.isAuthorizedSessionToken(token))) return undefined;
     const cached = this.officeSessions?.get(token);
-    if (cached) return cached.userId === "master" ? this.officeUserForRequest({ headers: { host: "localhost" } } as http.IncomingMessage) : await getOfficeUser(cached.userId);
+    if (cached) return cached.userId === "master" ? masterOfficeUser(await this.getMasterOfficeUsername()) : await getOfficeUser(cached.userId);
     const persisted = normalizePersistedWebDashboardSessions(await this.auth.readSessions(), Date.now()).find(item => item.fingerprint === fingerprintWebDashboardSession(token));
     const userId = persisted?.officeUserId;
-    if (!userId) return { id: "master", username: "admin", displayName: "Administrator", role: "unrestricted-admin", enabled: true, features: ["generalChat", "tasks", "files", "browser", "env", "terminal", "git", "github"], defaultPrompt: "", workspacePath: "", mcpServers: [], createdAt: 0 };
+    if (!userId || userId === "master") return masterOfficeUser(await this.getMasterOfficeUsername());
     const user = await getOfficeUser(userId);
     if (user) (this.officeSessions ??= new Map()).set(token, { userId, role: user.role });
     return user;
@@ -1576,7 +1583,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private officeView(user: OfficeUser): import("../domain/dashboard/types").DashboardOfficeView {
-    return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, features: user.features, defaultPrompt: user.defaultPrompt, workspacePath: user.role === "user" ? "" : user.workspacePath, mcpServers: user.role === "user" ? [] : user.mcpServers };
+    return { id: user.id, username: user.id === "master" ? "" : user.username, displayName: user.displayName, role: user.role, features: user.features, defaultPrompt: user.defaultPrompt, workspacePath: user.role === "user" ? "" : user.workspacePath, mcpServers: user.role === "user" ? [] : user.mcpServers };
   }
 
   private async handleClientMessage(request: http.IncomingMessage, response: http.ServerResponse, apiToken?: DashboardApiToken): Promise<void> {
@@ -1623,7 +1630,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if (!scoped) { response.statusCode = 403; this.sendJson(response, { error: "This workspace path is outside your assigned office folder." }); return; }
       message = scoped;
     }
-    const processed = await this.processClientMessage(message);
+    const processed = await this.processClientMessage(message, !apiToken && isLocalWebDashboardRequest(request) && officeUser?.id === "master", !apiToken && officeUser?.id === "master" && officeUser.enabled);
     const messages = officeUser?.role === "user" ? this.sanitizeOfficeMessages(processed.messages) : processed.messages;
     const reloadAfterResponse = processed.reloadAfterResponse;
     this.sendJson(response, { messages: apiToken ? scopeApiResults(apiToken, messages) : messages });
@@ -1765,7 +1772,9 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async processClientMessage(
-    message: DashboardClientMessage
+    message: DashboardClientMessage,
+    localMasterAccess = false,
+    authenticatedMasterAccess = false
   ): Promise<{ messages: DashboardHostMessage[]; reloadAfterResponse: boolean }> {
     const messages: DashboardHostMessage[] = [];
     let reloadAfterResponse = false;
@@ -1805,6 +1814,8 @@ export class WebDashboardServer implements vscode.Disposable {
             publishState: () => Promise.resolve(),
             oauth: this.oauth,
             hostKind: "browser",
+            localMasterAccess,
+            authenticatedMasterAccess,
             configureEncryptedSync: this.encryptedSync
               ? (passphrase, confirmation, currentPassphrase) =>
                   this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
@@ -2089,6 +2100,7 @@ export class WebDashboardServer implements vscode.Disposable {
       socket.destroy(); return;
     }
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      if (localBrowser && browserOfficeUser?.id === "master") this.localMasterSockets.add(client);
       if (browserOfficeUser) (this.browserSocketOfficeUser ??= new WeakMap()).set(client, browserOfficeUser);
       if (!isPeer && !localBrowser) {
         const token = readDashboardSessionToken(request);
@@ -2502,7 +2514,7 @@ export class WebDashboardServer implements vscode.Disposable {
         if (!scoped) { sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:notice", level: "warning", message: "This workspace path is outside your assigned office folder." } satisfies DashboardHostMessage)); return; }
         message = scoped;
       }
-      const result = await this.processClientMessage(message);
+      const result = await this.processClientMessage(message, this.localMasterSockets?.has(socket) === true, officeUser?.id === "master" && officeUser.enabled);
       for (const hostMessage of result.messages) {
         if (hostMessage.type === 'dashboard:snapshot') this.sendClientSnapshot(socket, hostMessage.state);
         else sendDashboardSocketMessage(socket, JSON.stringify(officeUser?.role === "user" ? this.sanitizeOfficeMessages([hostMessage])[0] : hostMessage));

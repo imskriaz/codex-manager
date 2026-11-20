@@ -1,3 +1,4 @@
+import { resolveMasterOfficeUsername } from "../../services/officeUsers";
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
@@ -134,6 +135,8 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "completeOnboarding",
   "refreshAll",
   "configureEncryptedSync",
+  "getMasterUsername",
+  "rotateMasterUsername",
   "syncNow",
   "setEncryptedSyncRegistryOverride",
   "openDashboard",
@@ -227,6 +230,8 @@ export type DashboardActionContext = {
   oauth: DashboardOAuthCoordinator;
   /** Browser actions must never open VS Code-owned prompts or confirmations. */
   hostKind?: "webview" | "browser";
+  localMasterAccess?: boolean;
+  authenticatedMasterAccess?: boolean;
   configureEncryptedSync?: (passphrase: string, confirmation: string, currentPassphrase?: string) => Promise<boolean>;
   syncEncryptedAccounts?: () => Promise<boolean>;
   setEncryptedSyncRegistryOverride?: (enabled: boolean, passphrase?: string) => Promise<boolean>;
@@ -417,6 +422,15 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case "getMasterUsername":
+    case "rotateMasterUsername": {
+      if (ctx.hostKind === "browser" && ctx.localMasterAccess !== true && (action !== "getMasterUsername" || ctx.authenticatedMasterAccess !== true)) throw new Error("The master username is available only in VS Code, the local dashboard, or an authenticated master session (read only).");
+      if (payload?.targetDeviceId && payload.targetDeviceId !== "local") throw new Error("Manage the master username on this system locally.");
+      if (action === "rotateMasterUsername" && (!payload?.confirmed || !payload.masterUsername)) throw new Error("Confirm rotation of the current master username first.");
+      const masterUsername = await resolveMasterOfficeUsername(action === "rotateMasterUsername" ? payload?.masterUsername : undefined);
+      return { masterUsername, ...(action === "rotateMasterUsername" ? { notice: { level: "info" as const, message: "Master username rotated. Use the new username for your next sign-in." } } : {}) };
+    }
+
     case 'workspacePanel':
       return { workspacePanel: await workspaceSurface(payload?.projectPath, payload?.panelRequest, payload?.panelLocalOnly) };
     case 'enableSystemStartup':
