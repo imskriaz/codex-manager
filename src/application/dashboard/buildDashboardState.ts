@@ -402,7 +402,7 @@ export function buildMetrics(
       label: copy.hourlyLabel,
       period: "hourly",
       percentage: quota?.hourlyPercentage,
-      resetAt: quota?.hourlyResetTime,
+      resetAt: quota?.weeklyWindowPresent && quota.weeklyPercentage === 0 ? quota.weeklyResetTime : quota?.hourlyResetTime,
       requestsLeft: quota?.hourlyRequestsLeft,
       requestsLimit: quota?.hourlyRequestsLimit,
       visible: quota ? Boolean(quota.hourlyWindowPresent) : true

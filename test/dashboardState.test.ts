@@ -290,6 +290,36 @@ describe("formatPlanType", () => {
 });
 
 describe("buildMetrics", () => {
+  it.each([
+    { weeklyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyResetTime: 200, expected: 200 },
+    { weeklyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 43200, weeklyResetTime: 200, expected: 200 },
+    { weeklyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyResetTime: undefined, expected: undefined },
+    { weeklyPercentage: 1, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyResetTime: 200, expected: 100 },
+    { weeklyPercentage: 0, weeklyWindowPresent: false, weeklyWindowMinutes: 10080, weeklyResetTime: 200, expected: 100 }
+  ])("uses the main quota reset for 5h only when that window is exhausted: %j", ({ expected, ...longWindow }) => {
+    const account = {
+      id: "plus-account",
+      email: "plus@example.com",
+      isActive: true,
+      planType: "plus",
+      createdAt: 1,
+      updatedAt: 1,
+      quotaSummary: {
+        hourlyPercentage: 0,
+        hourlyWindowPresent: true,
+        hourlyWindowMinutes: 300,
+        hourlyResetTime: 100,
+        ...longWindow
+      }
+    };
+
+    const metrics = buildMetrics(account, getDashboardCopy("en"), "en");
+
+    expect(metrics.find(metric => metric.key === "hourly")?.resetAt).toBe(expected);
+    expect(metrics.find(metric => metric.key === "weekly")?.resetAt).toBe(longWindow.weeklyResetTime);
+    expect(account.quotaSummary.hourlyResetTime).toBe(100);
+  });
+
   it("labels a Free 30-day quota as monthly", () => {
     const metrics = buildMetrics(
       {

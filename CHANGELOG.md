@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.50
+
+- Show the weekly or monthly reset date and countdown in the 5-hour dashboard metric when the main quota is exhausted.
+
 ## 3.0.0-pre.49
 
 - Match the account menu to the account card width and join their borders and background as one expanded container, including narrow screens.
