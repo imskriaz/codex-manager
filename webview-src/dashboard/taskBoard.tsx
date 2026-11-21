@@ -1,7 +1,8 @@
+import { ProjectPicker } from './projectPicker';
 import { useTaskViewPosition } from './taskViewPosition';
 import { isWorkspaceTerminalKeyboardEvent } from './keyboardScope';
 import { showsCodexSessionAutoResume } from '../../src/domain/codexSessionState';
-import { CreateProjectModal, CREATE_PROJECT_OPTION } from './createProjectModal';
+import { CreateProjectModal } from './createProjectModal';
 import { codexModelLabel } from "./helpers";
 import { useAnchoredPopover } from './anchoredPopover';
 import { ScrollMore } from './scrollMore';
@@ -519,7 +520,7 @@ export function TaskBoard(props: {
   return <section class={`task-board-section ${selected?.id ? 'has-detail-panel' : ''}`} aria-labelledby="task-board-title">
     <div class="task-board-surface">
     <header class="task-board-header"><h2 id="task-board-title" class="sr-only">Task workspace</h2>{!props.shared ? <div class="task-board-heading"><span id="task-sidebar-toggle-slot" class="content-sidebar-slot" /><div class="task-context-tabs" aria-label="Workspace context">
-      <label class="task-context-select task-project-select"><span class="task-context-icon"><FolderIcon /></span><span><strong>{project ? basename(project) : 'Choose project'}</strong></span><span class="task-context-chevron"><ChevronDownIcon /></span><select aria-label="Task project" title={`${project || 'Choose project'} · ${cards.length} tasks · ${cards.filter(task => task.session?.status === 'running').length} running`} value={project} disabled={busy || !!props.shared} onChange={event => { const value = event.currentTarget.value; if (value === CREATE_PROJECT_OPTION) { event.currentTarget.value = project; setCreateProject(true); } else setProject(value); }}><option value="">Choose a project</option>{projects.map(value => <option key={value} value={value}>{props.shared ? props.systemName : basename(value)}</option>)}<option value={CREATE_PROJECT_OPTION}>＋ Add Project…</option></select></label>
+      <div class="task-context-select task-project-select"><span class="task-context-icon"><FolderIcon /></span><ProjectPicker label="Task project" value={project} projects={projects.map(path => ({ path, label: props.shared ? props.systemName ?? basename(path) : basename(path) }))} scope={props.targetDeviceId} title={`${project || 'Choose project'} · ${cards.length} tasks · ${cards.filter(task => task.session?.status === 'running').length} running`} disabled={busy || !!props.shared} onChange={setProject} onAdd={() => setCreateProject(true)} /></div>
     </div></div> : null}<div class="task-view-tabs" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Task views">{(['board','list','gantt','calendar'] as const).map(value => <button key={value} type="button" role="tab" aria-label={value === 'gantt' ? 'Gantt' : label(value)} aria-selected={view === value} title={label(value)} onClick={() => {
       setView(value); if (!saveTaskBoardView(value)) setStatus('Display choice is kept in this tab only. Browser storage is unavailable.');
     }}><ViewIcon view={value} /><span>{value === 'gantt' ? 'Gantt' : label(value)}</span></button>)}</div><div class="task-board-toolbar">
@@ -770,8 +771,6 @@ export function TaskAlternateView(props: { view: 'list' | 'gantt' | 'calendar'; 
 }
 
 function FolderIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 6h7l2 3h9v11H3z"/></svg>; }
-
-function ChevronDownIcon() { return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>; }
 
 function TaskRecordedChanges({ messages, onFeedback }: { messages: ProjectTaskDetails['messages']; onFeedback: (notice: DashboardNotice) => void }) {
   const files = new Map<string, ProjectTaskDetails['messages']>();

@@ -1,3 +1,4 @@
+import { ProjectPicker } from './projectPicker';
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardCliProject } from "../../src/domain/dashboard/types";
 import type { DashboardApiToken } from "../../src/domain/dashboard/apiActions";
@@ -881,21 +882,7 @@ export function ApiWorkspace(props: {
                     onChange={setOperation}
                   />
                   {checked?.projects.length ? (
-                    <label>
-                      Host project
-                      <select
-                        aria-label="Host project"
-                        value={testProject}
-                        disabled={testing}
-                        onChange={(event) => setTestProject(event.currentTarget.value)}
-                      >
-                        {checked.projects.map((path) => (
-                          <option key={path} value={path}>
-                            {path}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <div>Host project<ProjectPicker label="Host project" value={testProject} projects={checked.projects.map(path => ({ path, label: path }))} scope={`api:${baseUrl}`} allowEmpty={false} disabled={testing} onChange={setTestProject} /></div>
                   ) : null}
                 </>
               ) : null}

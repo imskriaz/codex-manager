@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-pre.45
+
+- Use compact searchable project pickers across the composer, task board, session move dialog, and API host controls. Keep only the cross removal icon and confirm removal from recents using the session-deletion dialog style.
+- Preserve project folders, sessions, and selection, share recent preferences per system, and keep removed entries searchable.
+
+## 3.0.0-pre.44
+
+- Verify Windows byte-range writer locks and their Codex process identity. Restoring an old conversation no longer marks its interrupted turn as running; preserve recovery, ownership checks, and long active turns.
+
 ## 3.0.0-pre.43
 
 - Use compact single-row Settings tables with detail dialogs for users, connections, activity, proxy requests, and system logs. Open new data connections in a separate form dialog.

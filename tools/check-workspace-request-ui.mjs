@@ -29,7 +29,7 @@ try {
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     const picker = page.getByRole('combobox', { name: 'Project', exact: true });
     await picker.waitFor();
-    await picker.selectOption('__create_workspace_project__');
+    await picker.click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
     const modal = page.getByRole('dialog', { name: 'Add Project', exact: true });
     await modal.waitFor();
     assert.equal(await modal.getByRole('textbox').count(), 1, 'Only the project folder field is shown');
@@ -81,7 +81,7 @@ try {
     await page.getByRole('button', { name: 'Project task board', exact: true }).click();
     const hideSidebar = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
     if (width < 760 && await hideSidebar.isVisible()) await hideSidebar.click();
-    await page.getByRole('combobox', { name: 'Task project', exact: true }).selectOption('__create_workspace_project__');
+    await page.getByRole('combobox', { name: 'Task project', exact: true }).click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
     await modal.waitFor();
     await page.screenshot({ path: path.join(output, `task-create-project-${width}.png`) });
     await modal.getByRole('button', { name: 'Cancel', exact: true }).click();

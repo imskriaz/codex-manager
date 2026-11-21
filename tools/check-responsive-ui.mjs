@@ -643,7 +643,7 @@ async function checkClosedProject(page, width, errors) {
     if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.getByRole("button", { name: "Message settings", exact: true }).click();
-    assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).inputValue(), "D:/closed-worktree", "New chat retains the closed session project");
+    assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).getAttribute("data-value"), "D:/closed-worktree", "New chat retains the closed session project");
     await page.keyboard.press("Escape");
     assert.deepEqual(errors, [], "Closed-project browser runtime errors");
 }
@@ -1216,7 +1216,7 @@ try {
       const showRail = async () => { const show = page.getByRole('button',{name:'Show sessions sidebar',exact:true}); if (await show.isVisible()) await show.click(); };
       await showRail(); await page.getByRole('button',{name:'New chat',exact:true}).click();
       const project = page.getByRole('combobox',{name:'Project',exact:true});
-      await project.selectOption('D:/empty-project-with-a-long-name'); await project.selectOption('D:/demo');
+      await project.click(); await page.locator('.project-picker-popover').getByRole('option').filter({hasText:'empty-project-with-a-long-name'}).click(); await project.click(); await page.locator('.project-picker-popover').getByRole('option').filter({hasText:'demo'}).click();
       await page.getByRole('button',{name:'Message settings',exact:true}).click();
       await page.getByRole('combobox',{name:'Reasoning',exact:true}).selectOption('high');
       await page.getByRole('combobox',{name:'Access mode',exact:true}).selectOption('read-only');
@@ -1627,7 +1627,7 @@ try {
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
       await page.getByRole('button',{name:'New chat',exact:true}).click();
       const projectPicker=page.getByRole('combobox',{name:'Project',exact:true});
-      assert.equal(await projectPicker.locator('option[value="E:/remote-project"]').count(),0,'Delayed remote catalogs do not change local new-chat projects');
+      await projectPicker.click(); assert.equal(await page.locator('[role=option][data-value="E:/remote-project"]').count(),0,'Delayed remote catalogs do not change local new-chat projects'); await page.keyboard.press('Escape');
       await rail();await picker.selectOption('fixture-system');
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).click();
       await page.locator('.cli-session-row-select').filter({hasText:'Remote system session'}).click();
@@ -2494,10 +2494,10 @@ try {
     await composer.fill("");
     await page.waitForFunction(height => Math.abs(document.querySelector(".cli-composer").getBoundingClientRect().height - height) <= 2, emptyComposerHeight);
     const projectSelect = page.getByRole("combobox", { name: "Project", exact: true });
-    assert.equal(await projectSelect.locator("option").count(), 3, "New chat includes projects with no listed sessions and project creation");
-    await projectSelect.selectOption("D:/empty-project-with-a-long-name");
-    assert.equal(await projectSelect.inputValue(), "D:/empty-project-with-a-long-name", "Project can be changed");
-    await projectSelect.selectOption("D:/demo");
+    await projectSelect.click(); assert.equal(await page.locator(".project-picker-popover").getByRole("option").count(), 3, "New chat includes projects with no listed sessions and no folder"); await page.keyboard.press("Escape");
+    await projectSelect.click(); await page.locator(".project-picker-popover").getByRole("option").filter({ hasText: "empty-project-with-a-long-name" }).click();
+    assert.equal(await projectSelect.getAttribute("data-value"), "D:/empty-project-with-a-long-name", "Project can be changed");
+    await projectSelect.click(); await page.locator(".project-picker-popover").getByRole("option").filter({ hasText: "demo" }).click();
     await page.getByRole("button", { name: "Message settings", exact: true }).click();
     const optionsBounds = await page.locator(".cli-composer-options").boundingBox();
     assert.ok(optionsBounds && optionsBounds.x >= 0 && optionsBounds.y >= 0 && optionsBounds.x + optionsBounds.width <= width && optionsBounds.y + optionsBounds.height <= height, "Message settings fit the viewport");

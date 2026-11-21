@@ -1162,6 +1162,6 @@ it('retains empty active projects and keeps creation in the existing project pic
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
   expect(source).toContain("sessions.length > 0 || (pc.local && section === 'active')");
   expect(source).not.toContain('class="cli-create-project"');
-  expect(source).toContain('<option value={CREATE_PROJECT_OPTION}>');
+  expect(source).toContain('onAdd={() => setCreateProject(true)}');
   expect(source).not.toContain('New chat in ${project.label}');
 });

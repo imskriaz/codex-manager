@@ -58,7 +58,7 @@ try{for(const width of [1440,390]){
  await page.locator('.cli-composer textarea').fill('/model');
  assert.equal(await page.getByRole('listbox',{name:'Commands and skills'}).count(),0);
  await page.locator('.cli-composer textarea').fill('');
- await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('__create_workspace_project__');
+ await page.getByRole('combobox',{name:'Project',exact:true}).click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
  await page.getByRole('textbox',{name:'Project name',exact:true}).waitFor();
  assert.equal(await page.getByRole('textbox',{name:'Project folder',exact:true}).count(),0);
  await assertPlainUserInterface(page);
