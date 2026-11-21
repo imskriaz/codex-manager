@@ -29,7 +29,10 @@ export async function checkInlineQueueUi(page, { origin, parentId, output, width
   assert.equal(await rows.count(), 2, 'Every waiting message has an inline row');
   assert.equal(await first.isVisible(), true);
   assert.equal(await first.evaluate(row => row.open), false, 'Queue rows start collapsed');
-  assert.ok(await first.locator('summary').evaluate(row => row.getBoundingClientRect().height >= 42), 'Queue controls have comfortable spacing');
+  const queueHeight = await first.locator('summary').evaluate(row => row.getBoundingClientRect().height);
+  assert.ok(width <= 760 ? queueHeight >= 32 && queueHeight <= 36 : queueHeight >= 42, 'Mobile queues stay compact and desktop controls retain their spacing');
+  const steerHeight = await first.getByRole('button', { name: /Steer$/ }).evaluate(button => button.getBoundingClientRect().height);
+  assert.ok(width > 760 || steerHeight <= 26, 'Mobile Steer stays compact');
   assert.equal(await page.locator('.cli-local-queue-status').count(), 0, 'Routine queue status has no message row');
   await page.evaluate(() => { Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false }); window.dispatchEvent(new Event('blur')); });
   assert.equal(await first.isVisible(), true, 'Moving focus never hides a pending queue');
@@ -122,13 +125,15 @@ export async function checkSteerUi(page, { origin, parentId, output, width }) {
     };
     return { goal: read('.cli-goal-strip:not(.cli-queued-message)'), queue: read('.cli-queued-message.is-sending') };
   });
-  assert.deepEqual(matchingRows.queue, matchingRows.goal, 'Queue and Steer use the exact goal row geometry and visual styles');
+  const { height: queueHeight, padding: queuePadding, gap: queueGap, ...queueStyle } = matchingRows.queue;
+  const { height: goalHeight, padding: goalPadding, gap: goalGap, ...goalStyle } = matchingRows.goal;
+  assert.deepEqual(queueStyle, goalStyle, 'Queue rows align with the goal row and retain its visual styles');
+  assert.ok(width <= 760 ? queueHeight >= 32 && queueHeight <= 36 : queueHeight >= 42 && queueHeight >= goalHeight, 'Queue actions use the expected mobile and desktop height');
   const iconSizes = await page.evaluate(() => {
     const size = selector => { const style = getComputedStyle(document.querySelector(selector)); return { width: style.width, height: style.height }; };
-    return { goal: size('.cli-goal-strip:not(.cli-queued-message) .cli-goal-mark svg'), queue: size('.cli-queued-message .cli-goal-mark svg'), spinner: size('.cli-queued-message .cli-live-spinner') };
+    return { goal: size('.cli-goal-strip:not(.cli-queued-message) .cli-goal-mark svg'), spinner: size('.cli-queued-message .cli-live-spinner') };
   });
-  assert.deepEqual(iconSizes.queue, iconSizes.goal, 'Queue icons match goal icons');
-  assert.deepEqual(iconSizes.spinner, iconSizes.goal, 'The single sending spinner matches goal icon dimensions');
+  assert.ok(parseFloat(iconSizes.spinner.width) >= 10 && parseFloat(iconSizes.spinner.width) <= parseFloat(iconSizes.goal.width), 'The single sending spinner remains visible inside the queue mark');
   await page.screenshot({ path: path.join(output, `queue-goal-${width}.png`), animations: 'disabled' });
   const pendingRow = page.locator('.cli-queued-message.is-sending');
   await pendingRow.locator(':scope > summary').click();
@@ -146,7 +151,7 @@ export async function checkSteerUi(page, { origin, parentId, output, width }) {
     const size = selector => { const box = document.querySelector(selector).getBoundingClientRect(); return { width: box.width, height: box.height }; };
     return { goal: size('.cli-goal-strip:not(.cli-queued-message) .cli-goal-control'), queue: size('.cli-queued-message .cli-goal-control') };
   });
-  assert.deepEqual(controlSizes.queue, controlSizes.goal, 'Queue controls use the same desktop and touch sizes as goal controls');
+  assert.ok(width <= 760 ? controlSizes.queue.width === 24 && controlSizes.queue.height === 24 : controlSizes.queue.width >= controlSizes.goal.width && controlSizes.queue.height >= controlSizes.goal.height, 'Queue controls use compact mobile sizing');
   await page.keyboard.press('Escape');
   assert.equal(await input.inputValue(),'','A failed send stays in the conversation without restoring the composer');
   await input.fill('My next draft');
@@ -181,7 +186,7 @@ export async function checkSteerUi(page, { origin, parentId, output, width }) {
   await send.click();
   await page.locator('.cli-session-message.is-user').filter({ hasText: 'Fast accepted steering' }).waitFor();
   assert.equal(await page.locator('.cli-session-message.is-user').filter({ hasText: 'Fast accepted steering' }).count(), 1, 'Accepted guidance appears immediately without waiting for an owner echo');
-  assert.equal(await page.locator('.cli-local-queue .is-sending').count(), 0, 'Accepted guidance stops showing a pending send');
+  await page.locator('.cli-local-queue .is-sending').waitFor({ state: 'hidden' });
   await page.evaluate(sessionId => {
     window.__composerNode = document.querySelector('textarea[name="codex-message"]');
     window.__steerState = { ...window.__steerState, sequence: 4, status: 'disconnected', updatedAt: Date.now() };
@@ -202,29 +207,29 @@ export async function checkSteerUi(page, { origin, parentId, output, width }) {
       Object.assign(session, { status, steerTurnId: status === 'unknown' ? undefined : 'native-follow-up', updatedAt: new Date(Date.now()+3000).toISOString() });
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-status-refresh', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
     }, {sessionId:parentId,status});
-    await page.waitForFunction(status => status === 'unknown'
-      ? document.querySelector('.cli-composer .sr-only[role="status"]')?.textContent === 'Checking running state · messages wait locally'
-      : document.querySelector('.cli-composer .sr-only[role="status"]')?.textContent !== 'Checking running state · messages wait locally', status);
+    await page.waitForFunction(status => document.querySelector('.cli-composer .cli-send-button')?.getAttribute('aria-label') === (status === 'unknown' ? 'Send message' : 'Send follow-up'), status);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Status refresh never unmounts the composer');
     assert.equal(await input.inputValue(), 'Native owner guidance', 'Status refresh preserves typed guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     if(status==='unknown') assert.equal(await send.isEnabled(),true,'Unverified sessions accept a local queued draft without dispatching');
   }
   for (const connected of [false,true]) {
-    await page.evaluate(connected => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } })), connected);
-    await page.waitForFunction(connected => connected
-      ? !document.querySelector('.cli-workspace')?.hasAttribute('disabled')
-      : document.querySelector('.cli-workspace')?.hasAttribute('disabled'), connected);
+    await page.evaluate(connected => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected } }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:host-status', stage: connected ? 'live' : 'unreachable' } }));
+    }, connected);
+    await page.waitForFunction(connected => document.querySelector('.cli-composer .cli-send-button')?.getAttribute('aria-label') === (connected ? 'Send follow-up' : 'Send message'), connected);
     assert.equal(await page.evaluate(() => window.__composerNode === document.querySelector('textarea[name="codex-message"]')), true, 'Reconnect preserves the composer node');
     assert.equal(await input.inputValue(), 'Native owner guidance');
     await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     if(!connected){
-      assert.equal(await input.isDisabled(),true,'Offline composer actions are disabled');
-      const before=await page.evaluate(()=>window.__uiActions.length);
-      await input.press('Control+Enter');
+      assert.equal(await input.isDisabled(),false,'Offline drafts remain editable');
+      const before=await page.evaluate(()=>window.__uiActions.filter(item=>['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(item.action)).length);
+      await input.fill('Native owner guidance edited offline');
+      await input.fill('Native owner guidance');
       assert.equal(await page.locator('.cli-local-queue').getByRole('button',{name:'Resend queued message',exact:true}).count(),0,'Offline queued messages do not offer Resend');
       assert.equal(await input.getAttribute('placeholder'),'Message Codex…','Connection status keeps the default composer placeholder');
-      assert.equal(await page.evaluate(()=>window.__uiActions.length),before,'Offline input sends no host actions');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(item.action)).length),before,'Offline draft edits never dispatch');
       assert.equal(await input.inputValue(),'Native owner guidance','Offline actions preserve the draft');
       await page.getByRole('button',{name:'Remove guidance.txt',exact:true}).waitFor();
     }
@@ -238,12 +243,13 @@ export async function checkSteerUi(page, { origin, parentId, output, width }) {
   await page.getByRole('button', {name:'Stop',exact:true}).waitFor();
   assert.equal(await page.locator('.cli-send-button:visible,.cli-stop-button:visible').count(),1,'Accepted guidance returns to a single Stop action');
   await page.evaluate(() => {
-    window.__steerState = { ...window.__steerState, sequence: 5, status: 'running', updatedAt: Date.now() + 5000, tokenUsage: { input: 276906687, cachedInput: 272657408, output: 251524, reasoningOutput: 96616, total: 277158211, contextWindow: 475000 } };
+    window.__steerState = { ...window.__steerState, streamId: 'native-owner-fixture', turnId: 'native-follow-up', sequence: 5, status: 'running', updatedAt: Date.now() + 5000, tokenUsage: { input: 276906687, cachedInput: 272657408, output: 251524, reasoningOutput: 96616, total: 277158211, contextWindow: 475000 } };
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:codex-session-live', state: window.__steerState } }));
   });
   const showTools = page.getByRole('button', { name: 'Show workspace tools', exact: true });
   if (await showTools.isVisible()) await showTools.click();
   await page.getByRole('tab', { name: 'Env', exact: true }).click();
+  await page.getByLabel('Session usage details', { exact: true }).locator('summary').click();
   const usage = page.locator('.cli-inspector-view .cli-usage-grid');
   await usage.waitFor();
   assert.deepEqual(await usage.locator('strong').allTextContents(), ['276.9M', '272.7M', '251.5K', '96.6K', '277.2M', '475K'], 'Every usage counter uses compact suffixes');

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.41
+
+- Compact mobile queue rows to 32px, with smaller text, spacing and 24px Steer and recovery controls. Preserve inline expansion, background visibility and delivery safeguards.
+- Update steering UI checks for live history snapshots, HTTP fallback, editable offline drafts and compact controls.
+
+
 ## 3.0.0-pre.39
 
 - Size connection warnings to their contents on desktop and mobile.
