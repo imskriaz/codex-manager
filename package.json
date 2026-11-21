@@ -387,14 +387,6 @@
           "scope": "machine",
           "ignoreSync": true,
           "markdownDescription": "Choose the minimum interval between VS Code Settings Sync saves."
-        },
-        "codexManager.officeMaxActiveRequests": {
-          "type": "number",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 20,
-          "scope": "machine",
-          "markdownDescription": "Maximum simultaneous user workspace assistant requests. Additional requests stay queued."
         }
       }
     },
