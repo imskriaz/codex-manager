@@ -3321,7 +3321,7 @@ function SessionAccountFooter(props: {
     };
   }, [open]);
   return <footer class={`cli-account-footer ${props.standalone ? 'is-standalone' : ''}`} ref={rootRef}>
-    {props.standalone ? null : <WorkspaceMenu label="Account menu" icon={<>
+    {props.standalone ? null : <WorkspaceMenu attached label="Account menu" icon={<>
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
     </>}>

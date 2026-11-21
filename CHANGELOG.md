@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.49
+
+- Match the account menu to the account card width and join their borders and background as one expanded container, including narrow screens.
+- Rename the automatic theme option to Match System.
+
 ## 3.0.0-pre.47
 
 - Suppress duplicate browser pushes while a dashboard, workspace, or VS Code window is being viewed. Recheck queued delivery, expire disconnected viewers, and preserve in-app notices and explicit notification tests.

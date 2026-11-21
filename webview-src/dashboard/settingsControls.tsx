@@ -65,7 +65,7 @@ export function SettingsThemeBlock(props: {
         sub: "Choose the dashboard appearance.",
         dark: "Dark",
         light: "Light",
-        auto: "Follow VS Code"
+        auto: "Match System"
       };
   const options: Array<{ value: DashboardSettings["dashboardTheme"]; label: string }> = [
     { value: "dark", label: copy.dark },

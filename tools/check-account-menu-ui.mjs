@@ -67,6 +67,18 @@ try {
     assert.equal(await logout.getAttribute('method'), 'post');
     assert.equal(await logout.getAttribute('action'), '/logout');
     const bounds = await menu.boundingBox();
+    const card = await trigger.boundingBox();
+    assert.ok(Math.abs(bounds.width - card.width) <= 1, 'Expanded menu matches the card width');
+    assert.ok(Math.abs(bounds.x - card.x) <= 1, `Expanded menu aligns with the card: ${JSON.stringify({ bounds, card })}`);
+    assert.ok(Math.abs(bounds.y + bounds.height - card.y) <= 1, 'Expanded menu joins the top of the card');
+    await trigger.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+    const surfaces = await menu.evaluate(element => {
+      const card = element.previousElementSibling, menuStyle = getComputedStyle(element), cardStyle = getComputedStyle(card);
+      return { menuBackground: menuStyle.backgroundColor, cardBackground: cardStyle.backgroundColor, menuCorner: menuStyle.borderBottomLeftRadius, cardCorner: cardStyle.borderTopLeftRadius };
+    });
+    assert.equal(surfaces.menuBackground, surfaces.cardBackground, 'Menu and card share one surface');
+    assert.equal(surfaces.menuCorner, '0px');
+    assert.equal(surfaces.cardCorner, '0px');
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y >= 0 && bounds.y + bounds.height <= 901, JSON.stringify(bounds));
     assert.ok(bounds.height < 48 * await menu.getByRole('menuitem').count() + 20, 'Menu stays compact');
     await menu.getByRole('menuitem', { name: 'Dashboard', exact: true }).focus();
@@ -75,7 +87,9 @@ try {
     await page.keyboard.press('Home');
     await page.keyboard.press('ArrowDown');
     assert.equal(await menu.getByRole('menuitem', { name: 'Open account center', exact: true }).evaluate(element => document.activeElement === element), true);
-    await page.screenshot({ path: path.join(output, `menu-${width}.png`) });
+    await page.screenshot({ path: path.join(output, `menu-${width}.png`), animations: 'disabled' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.screenshot({ path: path.join(output, `menu-dark-${width}.png`), animations: 'disabled' });
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'hidden' });
     assert.equal(await trigger.evaluate(element => document.activeElement === element), true);
@@ -83,6 +97,21 @@ try {
     await menu.waitFor();
     await page.mouse.click(width - 4, 4);
     await menu.waitFor({ state: 'hidden' });
+    if (process.argv.includes('--menu-only')) {
+      if (width === 1440) {
+        await trigger.click();
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+        const settings = page.locator('.overlay.open .settings-modal');
+        await settings.getByRole('button', { name: 'Match System', exact: true }).waitFor();
+        assert.equal(await settings.getByRole('button', { name: 'Follow VS Code', exact: true }).count(), 0);
+        await page.screenshot({ path: path.join(output, 'settings-theme.png'), animations: 'disabled' });
+      }
+      assert.deepEqual(writes, [], 'Smoke check sends no writes');
+      assert.deepEqual(errors, [], 'No browser errors');
+      results.push({ width, loadMs, menuMs, bounds, consoleErrors: errors.length });
+      await context.close();
+      continue;
+    }
     if (await showSidebar.isVisible()) await showSidebar.click();
     await trigger.click();
     await menu.getByRole('menuitem', { name: 'Open account center', exact: true }).click();

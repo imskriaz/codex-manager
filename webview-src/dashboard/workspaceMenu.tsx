@@ -2,12 +2,12 @@ import { useAnchoredPopover } from './anchoredPopover';
 import type { ComponentChildren } from "preact";
 import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 
-export function WorkspaceMenu(props: { label: string; icon: ComponentChildren; children: ComponentChildren }) {
+export function WorkspaceMenu(props: { label: string; icon: ComponentChildren; children: ComponentChildren; attached?: boolean }) {
   const anchor = useRef<HTMLButtonElement>(null),
     panel = useRef<HTMLDivElement>(null);
   const id = useId(),
     [open, setOpen] = useState(false);
-  useAnchoredPopover(open, anchor, panel);
+  useAnchoredPopover(open, anchor, panel, 'end', props.attached);
   useLayoutEffect(() => {
     if (!open || !panel.current) {
       return;

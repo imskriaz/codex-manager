@@ -1,6 +1,11 @@
 import { expect, it } from 'vitest';
 import { anchoredPopoverPosition } from '../webview-src/dashboard/anchoredPopover';
 const viewport = { left: 0, top: 0, width: 800, height: 600 };
+it('joins an attached menu to either edge of its trigger without a gap', () => {
+  expect(anchoredPopoverPosition({ top: 540, bottom: 590, left: 20, right: 300 }, { width: 280, height: 200 }, viewport, 'end', true)).toEqual({ left: 20, top: 340, opensAbove: true });
+  expect(anchoredPopoverPosition({ top: 20, bottom: 70, left: 20, right: 300 }, { width: 280, height: 200 }, viewport, 'end', true)).toEqual({ left: 20, top: 70, opensAbove: false });
+  expect(anchoredPopoverPosition({ top: 540, bottom: 590, left: 2, right: 282 }, { width: 280, height: 200 }, viewport, 'end', true)).toEqual({ left: 2, top: 340, opensAbove: true });
+});
 it('opens beside the clicked control and flips above without overlapping it', () => {
   expect(anchoredPopoverPosition({ top: 540, bottom: 560, left: 770, right: 790 }, { width: 264, height: 140 }, viewport)).toEqual({ left: 526, top: 394, opensAbove: true });
   expect(anchoredPopoverPosition({ top: 20, bottom: 40, left: 0, right: 20 }, { width: 264, height: 140 }, viewport)).toEqual({ left: 8, top: 46, opensAbove: false });

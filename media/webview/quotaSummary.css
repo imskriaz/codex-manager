@@ -13508,6 +13508,14 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace .cli-account-footer-quota { pointer-events: none; }
 .cli-account-footer > .workspace-tool-menu > button > svg { transform: rotate(180deg); transition: transform 140ms ease; }
 .cli-account-footer > .workspace-tool-menu > button[aria-expanded="true"] > svg { transform: none; }
+.cli-account-footer > .workspace-tool-menu > .workspace-menu-popover {
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, var(--border-default));
+  border-radius: 10px; background: var(--bg-elevated);
+}
+.cli-account-footer > .workspace-tool-menu > .workspace-menu-popover[data-placement="above"] { border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.cli-account-footer > .workspace-tool-menu:has(> .workspace-menu-popover[data-placement="above"]:popover-open) > button { border-top-left-radius: 0; border-top-right-radius: 0; }
+.cli-account-footer > .workspace-tool-menu > .workspace-menu-popover[data-placement="below"] { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.cli-account-footer > .workspace-tool-menu:has(> .workspace-menu-popover[data-placement="below"]:popover-open) > button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .cli-account-quota-track { display: block; height: 3px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--border-default) 65%, transparent); }
 .cli-account-quota-track i { display: block; height: 100%; border-radius: inherit; background: var(--success); }
 .cli-account-quota-track[data-level="low"] i { background: var(--warning, #d29922); }
