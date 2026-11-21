@@ -867,6 +867,7 @@ export interface DashboardCliSessionSummary {
   /** Queue order; equal priorities may recover together. */
   queuePriority?: number;
   queueError?: string;
+  queueRetryAt?: number;
 }
 
 export interface DashboardCliSessionMessage {

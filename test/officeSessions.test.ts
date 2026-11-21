@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as teamSettings from "../src/services/teamSettings";
+import { saveOfficeInstructions } from "../src/services/officePreferences";
 import { OfficeCapacityError, OfficeSessionService } from "../src/services/officeSessions";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import type { OfficeUser } from "../src/services/officeUsers";
@@ -11,7 +13,7 @@ let root:string,storage:SqliteStateStore;
 const services:OfficeSessionService[]=[];
 const user:OfficeUser={id:"alex",username:"alex",displayName:"Alex",role:"user",enabled:true,features:["generalChat","files"],workspacePath:"C:/team/alex",mcpServers:[],defaultPrompt:"Help with office work.",createdAt:0};
 beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);});
-afterEach(async()=>{services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
+afterEach(async()=>{vi.restoreAllMocks();services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
 function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
 }
@@ -38,7 +40,7 @@ it("deduplicates accepted requests and rejects a changed replay",async()=>{
 it("retains a capacity rejection in the queue and resumes the original message when capacity returns",async()=>{
  const generate=vi.fn<() => Promise<string>>().mockRejectedValueOnce(new OfficeCapacityError()).mockResolvedValue("Ready");
  const {service,changed}=setup(generate);const first=await service.handle(user,start());
- await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueError).toContain("Please wait"));
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueError).toContain("All assistants are busy"));
  const namespace=`office-sessions:${user.id}`,session=storage.get<any>(namespace,first.cliSession!.id)!;
  session.turns[0].retryAt=0;storage.set(namespace,session.id,session);await service.pump();
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));expect(generate).toHaveBeenCalledTimes(2);
@@ -78,4 +80,47 @@ it("retains every activity and command output in order across reload, with host 
  expect(read.cliSessionMessages?.[1]?.result).toBe('All document text remains here.');expect(read.cliSessionMessages?.[2]?.command).toBe('cd "alex" && npm test');expect(read.cliSessionMessages?.[2]?.output).toBe('83 checks passed.');
  const sequences=changed.mock.calls.flatMap(call=>call[1]).filter(message=>message.type==='dashboard:codex-session-live').map(message=>(message as any).state.sequence);
  expect(new Set(sequences).size).toBe(sequences.length);
+});
+it("shares the active request limit across service instances and releases queued work after completion",async()=>{
+ vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),maxActiveRequests:1});
+ let finish!:(value:string)=>void;
+ const firstGenerate=vi.fn<() => Promise<string>>().mockImplementationOnce(()=>new Promise<string>(resolve=>{finish=resolve;})).mockResolvedValue("Hello");
+ const first=setup(firstGenerate).service,second=setup().service;
+ await first.handle(user,start("first"));
+ await vi.waitFor(()=>expect(firstGenerate).toHaveBeenCalledTimes(1));
+ const waitingUser={...user,id:"waiting"};
+ const queued=await second.handle(waitingUser,start("second"));
+ expect(second.list(waitingUser.id)[0]?.queueError).toContain("All assistants are busy");
+ expect(second.list(waitingUser.id)[0]?.queueRetryAt).toBeGreaterThan(Date.now());
+ expect((second as any).running.size).toBe(0);
+ finish("Done");await vi.waitFor(()=>expect((first as any).running.size).toBe(0));
+ second.pump();await vi.waitFor(()=>expect(second.list(waitingUser.id)[0]?.status).toBe("idle"));
+ expect((await second.handle(waitingUser,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:queued.cliSession!.id}})).cliSessionMessages?.at(-1)?.text).toBe("Hello");
+});
+it("applies personal instructions to the next message and honors a changed model in the same conversation",async()=>{
+ vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),globalPrompt:"Help every user clearly."});
+ saveOfficeInstructions(user.id,"Use short answers.","");
+ const {service,generate}=setup();const first=await service.handle(user,{...start(),payload:{text:"Hello",model:"fast"}});
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
+ expect(generate.mock.calls[0]?.[1]).toBe("fast");
+ expect(generate.mock.calls[0]?.[2].slice(0,3)).toEqual([{role:"system",content:"Help every user clearly."},{role:"system",content:user.defaultPrompt},{role:"system",content:"Use short answers."}]);
+ vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),globalPrompt:"Updated global guidance."});
+ await service.handle(user,{type:"dashboard:action",action:"sendCodexCliSessionMessage",requestId:"next-model",payload:{sessionId:first.cliSession!.id,text:"Continue",model:"strong"}});
+ await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
+ expect(generate.mock.calls[1]?.[1]).toBe("strong");
+ expect(generate.mock.calls[1]?.[2][0]).toEqual({role:"system",content:"Updated global guidance."});
+});
+it("offers available models and preserves chat when discovery fails",async()=>{
+ const models=vi.fn(async()=>[{id:"fast",label:"Fast",reasoningEfforts:[]}]);
+ const service=new OfficeSessionService({readUser:async()=>user,generate:async()=>"Hello",changed:()=>{},models});services.push(service);
+ expect((await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"models"})).cliComposerConfig?.models[0]?.id).toBe("fast");
+ models.mockRejectedValueOnce(new Error("provider-secret"));
+ const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"fallback"});
+ expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain("automatic selection");expect(JSON.stringify(result)).not.toContain("provider-secret");
+});
+it("charges accepted requests once and rejects requests beyond the daily allowance",async()=>{
+ const {service}=setup(),limited={...user,limits:{storageMb:0,dailyTokens:0,dailyRequests:1}};
+ const first=await service.handle(limited,start());
+ expect((await service.handle(limited,start())).cliSession?.id).toBe(first.cliSession?.id);
+ await expect(service.handle(limited,start("over-limit"))).rejects.toThrow("daily request allowance");
 });

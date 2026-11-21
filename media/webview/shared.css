@@ -63,12 +63,12 @@
   --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
-:root.office-user-theme {
-  --bg-base: #f3f6fb;
+:root.office-user-theme[data-theme="light"] {
+  --bg-base: #fafafa;
   --bg-surface: #ffffff;
-  --bg-elevated: #e9eef7;
-  --border-default: #c7d1e0;
-  --border-muted: #aebbd0;
+  --bg-elevated: #f5f5f5;
+  --border-default: #e2e2e2;
+  --border-muted: #c9c9c9;
   --text-primary: #172033;
   --text-secondary: #42506a;
   --text-muted: #64748b;

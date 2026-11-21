@@ -6,6 +6,8 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 export function readTeamSettings() {
   const config = getCodexManagerConfiguration();
   return {
+    maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
+    globalPrompt: config.get<string>("officeGlobalPrompt", ""),
     workspaceRoot:
       config.get<string>("officeWorkspaceRoot", "").trim() ||
       path.join(getCodexManagerStorageRoot(), "office-workspaces"),
@@ -16,7 +18,16 @@ export function readTeamSettings() {
 
 export async function saveTeamSettings(input: Record<string, unknown>): Promise<ReturnType<typeof readTeamSettings>> {
   const config = getCodexManagerConfiguration();
-  const updates: Array<[string, string]> = [];
+  const updates: Array<[string, string | number]> = [];
+  if (input["globalPrompt"] !== undefined) {
+    if (typeof input["globalPrompt"] !== "string" || input["globalPrompt"].length > 16_000) throw new Error("Use up to 16,000 characters for the global User Workspace prompt.");
+    updates.push(["officeGlobalPrompt", input["globalPrompt"]]);
+  }
+  if (input["maxActiveRequests"] !== undefined) {
+    const value = input["maxActiveRequests"];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 20) throw new Error("Choose between 1 and 20 active requests.");
+    updates.push(["officeMaxActiveRequests", value]);
+  }
   if (input["workspaceRoot"] !== undefined) {
     if (typeof input["workspaceRoot"] !== "string" || !path.isAbsolute(input["workspaceRoot"].trim()))
       throw new Error("Choose an absolute workspace folder path.");

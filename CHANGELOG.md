@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-pre.54
+
+- Block host shell, Git, GitHub, external URL launching, and host browser execution for User Workspace accounts until an isolated runtime is configured. Add adversarial access tests.
+- Add a master-controlled Global User Workspace Prompt applied to new messages in every user conversation.
+- Introduce User Workspace with compact navigation, a visible model picker, personal response instructions, and a simple environment view. Preserve the master workspace controls.
+- Create new files without approval prompts, keep revision checks for edits, and surface conflicts in the conversation.
+- Add a shared active-request slider and persistent queues with generic busy messages and local retry times.
+- Allocate per-user storage, daily tokens, and daily requests, with personal usage and reset times. Storage checks cover managed file saves; runtime isolation is required before enabling host execution.
+
 ## 3.0.0-pre.53
 
 - Remove manual refresh icons throughout the dashboard and workspace; retain automatic updates and error recovery actions.
@@ -41,7 +50,6 @@
 - Use compact single-row Settings tables with detail dialogs for users, connections, activity, proxy requests, and system logs. Open new data connections in a separate form dialog.
 - Keep one sidebar search, find collapsed options, focus required module switches, and preserve local zoom while a target is offline.
 - Show the master username before the password button and remove it from the password dialog. Correct activity-load errors and tab scroll position.
-
 
 ## 3.0.0-pre.42
 

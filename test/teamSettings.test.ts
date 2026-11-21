@@ -40,9 +40,27 @@ describe("Team storage settings", () => {
     expect(readTeamSettings().workspaceRoot).toBe("C:/existing");
     await saveTeamSettings({ workspaceRoot: "C:/new-users" });
     expect(readTeamSettings()).toEqual({
+      globalPrompt: "",
+      maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
       databaseProvider: "postgres",
       postgresConfigured: true
     });
   });
+});
+it("validates and saves the shared active request limit",async()=>{
+ await expect(saveTeamSettings({maxActiveRequests:0})).rejects.toThrow("1 and 20");
+ await expect(saveTeamSettings({maxActiveRequests:2.5})).rejects.toThrow("1 and 20");
+ expect(config.update).not.toHaveBeenCalled();
+ expect((await saveTeamSettings({maxActiveRequests:4})).maxActiveRequests).toBe(4);
+});
+it("saves and clears the global prompt without exposing database credentials or accepting invalid input",async()=>{
+ config.values.set("officePostgresUrl","postgresql://secret@host/db");
+ expect((await saveTeamSettings({globalPrompt:"Be useful to every user."})).globalPrompt).toBe("Be useful to every user.");
+ expect(JSON.stringify(readTeamSettings())).not.toContain("secret");
+ expect((await saveTeamSettings({globalPrompt:""})).globalPrompt).toBe("");
+ config.update.mockClear();
+ await expect(saveTeamSettings({workspaceRoot:"C:/team",globalPrompt:"x".repeat(16001)})).rejects.toThrow("16,000");
+ await expect(saveTeamSettings({globalPrompt:42})).rejects.toThrow("16,000");
+ expect(config.update).not.toHaveBeenCalled();
 });

@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.53",
+  "version": "3.0.0-pre.54",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -387,6 +387,21 @@
           "scope": "machine",
           "ignoreSync": true,
           "markdownDescription": "Choose the minimum interval between VS Code Settings Sync saves."
+        },
+        "codexManager.officeMaxActiveRequests": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 20,
+          "scope": "machine",
+          "markdownDescription": "Maximum simultaneous user workspace assistant requests. Additional requests stay queued."
+        },
+        "codexManager.officeGlobalPrompt": {
+          "type": "string",
+          "default": "",
+          "maxLength": 16000,
+          "scope": "machine",
+          "markdownDescription": "Global guidance applied to every User Workspace conversation. Does not affect master workspace sessions."
         }
       }
     },

@@ -1,17 +1,21 @@
+import { claimOfficeRequest, OfficeQuotaError } from "./officeQuota";
+import { officeCapacityMessage } from "../domain/officeCapacity";
+import { readTeamSettings } from "./teamSettings";
 import { createHash, randomUUID } from "node:crypto";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { prepareChatInput, validateChatAttachments } from "../domain/chatAttachments";
 import type { DashboardActionResultPayload, DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardHostMessage } from "../domain/dashboard/types";
 import type { OfficeUser } from "./officeUsers";
+import { readOfficeInstructions } from "./officePreferences";
 import { readWorkspaceProjects } from "./workspaceProjects";
 import * as path from "node:path";
 import { userSessionActivity } from '../domain/teamWorkspacePresentation';
 
-type Turn = { id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; retryAt?: number; lease?: string; leaseUntil?: number };
+type Turn = { id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
 type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; archived?: boolean; updatedAt: string; turns: Turn[] };
 type Action = Extract<import("../domain/dashboard/types").DashboardClientMessage, { type: "dashboard:action" }>;
 export class OfficeCapacityError extends Error {}
-const WAITING = "Your request is queued. Please wait; we'll continue as soon as capacity is available.";
+const WAITING = "Your message is queued. We will start as soon as an assistant is available.";
 const UNCERTAIN = "The response could not be confirmed. Your message is saved. Check the conversation before sending again.";
 const namespace = (owner: string) => `office-sessions:${owner}`;
 function store() { const value = getSqliteStateStore(); if (!value) throw new Error("Conversation storage is unavailable. Please try again shortly."); return value; }
@@ -20,10 +24,10 @@ function summary(session: Session): DashboardCliSessionSummary {
   const uncertain = session.turns.some(turn => turn.state === "uncertain");
   return { id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, updatedAt: session.updatedAt, archived: session.archived,
     status: pending ? "running" : "idle", canStop: !!pending, autoResumeEnabled: false,
-    queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueError: pending && pending.state !== "working" ? WAITING : uncertain ? UNCERTAIN : undefined };
+    queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : uncertain ? UNCERTAIN : undefined };
 }
 function messages(session: Session): DashboardCliSessionMessage[] {
-  return session.turns.flatMap(turn => [turn.user,...(turn.activities??[]), ...(turn.assistant ? [turn.assistant] : []), ...(turn.state === "uncertain" ? [{ id: `${turn.id}:unconfirmed`, kind: "error" as const, text: UNCERTAIN, timestamp: session.updatedAt }] : [])]);
+  return session.turns.flatMap(turn => [turn.user,...(turn.activities??[]), ...(turn.assistant ? [turn.assistant] : []), ...(turn.error ? [{id: `${turn.id}:error`, kind: "error" as const, text: turn.error, timestamp: session.updatedAt}] : []), ...(turn.state === "uncertain" ? [{ id: `${turn.id}:unconfirmed`, kind: "error" as const, text: UNCERTAIN, timestamp: session.updatedAt }] : [])]);
 }
 
 /** Team conversations use the model endpoint only; this module never opens a native Codex thread. */
@@ -33,6 +37,7 @@ export class OfficeSessionService {
   private stopped = false;
   private sequences=new Map<string,number>();
   constructor(private readonly options: {
+    models?: (user: OfficeUser) => Promise<import("../domain/dashboard/types").DashboardCliModelOption[]>;
     readUser: (id: string) => Promise<OfficeUser | undefined>;
     generate: (user: OfficeUser, model: string | undefined, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void) => Promise<string>;
     changed: (owner: string, messages: DashboardHostMessage[]) => void;
@@ -66,7 +71,10 @@ export class OfficeSessionService {
     if (p.targetDeviceId && p.targetDeviceId !== "local") throw new Error("Choose your own workspace.");
     if (action.action === "listCodexCliSessions") {
       const projects=readWorkspaceProjects(`office-projects:${user.id}`).filter(project=>{const relative=path.relative(user.workspacePath,project.path);return relative!==""&&!relative.startsWith("..")&&!path.isAbsolute(relative);});
-      return { cliSessions: this.list(user.id), cliComposerConfig: { models: [], projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:user.features.includes("terminal") } };
+      let models: import("../domain/dashboard/types").DashboardCliModelOption[] = [], modelDiscoveryWarning: string | undefined;
+      try { models = await this.options.models?.(user) ?? []; if (!models.length) modelDiscoveryWarning = "Models are temporarily unavailable. You can still send a message using automatic selection, or refresh to try again."; }
+      catch { modelDiscoveryWarning = "Models could not be loaded. You can still send a message using automatic selection, or refresh to try again."; }
+      return { cliSessions: this.list(user.id), cliComposerConfig: { models, modelDiscoveryWarning, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
     if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {
@@ -88,11 +96,14 @@ export class OfficeSessionService {
         session = action.action === "startCodexCliSession" ? { id: randomUUID(),owner: user.id,title: text.slice(0,80) || "New conversation",projectPath: p.projectPath || user.workspacePath,model: p.model,updatedAt: new Date().toISOString(),turns: [] } : this.read(user.id,p.sessionId!);
         if (session.archived) throw new Error("Restore this conversation before sending a message.");
         if (session.turns.length >= 200 || session.turns.filter(turn => ["queued","working","waiting"].includes(turn.state)).length >= 20) throw new Error("This conversation is full. Start a new chat or wait for queued messages to finish.");
+        claimOfficeRequest(user);
         const id = randomUUID();
-        session.turns.push({ id,requestId:action.requestId,fingerprint,state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
+        session.turns.push({ id,requestId:action.requestId,fingerprint,model:p.model ?? session.model ?? "",state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
+        if (p.model !== undefined) session.model = p.model || undefined;
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
       this.publish(session); this.start();
+      session = this.read(user.id, session.id);
       return { cliSession: summary(session), cliSessionMessages: messages(session), cliSessions: this.list(user.id), notice: { level:"info", message:"Message accepted and queued." } };
     }
     let session = this.read(user.id,p.sessionId!);
@@ -118,10 +129,11 @@ export class OfficeSessionService {
     return { cliSessions:this.list(user.id), ...(action.action === "deleteCodexCliSession" ? {} : {cliSession:summary(session),cliSessionMessages:messages(session)}), notice:{level:"info",message:action.action === "cancelCodexCliSessionTurn" || action.action === "setCodexSessionQueue" ? "Queued work stopped." : "Conversation updated."} };
   }
   pump(): void {
-    if (this.stopped || this.running.size >= 2) return;
+    if (this.stopped) return;
     try {
-      for (const owner of store().keys("office-session-owners")) {
-        if (this.running.size >= 2 || this.stopped) break;
+      const oldest = (owner: string) => Math.min(...store().keys(namespace(owner)).flatMap(id => this.read(owner, id).turns.filter(turn => turn.state === "queued" || turn.state === "waiting").map(turn => Date.parse(turn.user.timestamp ?? "") || 0)));
+      for (const owner of store().keys("office-session-owners").sort((a,b) => oldest(a) - oldest(b))) {
+        if (this.stopped) break;
         let claimed: {session:Session;turn:Turn} | undefined;
         store().transaction(() => {
           const sessions=store().keys(namespace(owner)).map(id=>this.read(owner,id));
@@ -130,11 +142,19 @@ export class OfficeSessionService {
             for (const turn of session.turns) if(turn.state==="working" && (turn.leaseUntil??0)<Date.now()){turn.state="uncertain";for(const activity of turn.activities??[])if(activity.status==="inProgress")activity.status="unknown";changed=true;}
             if(changed)this.save(session);
           }
-          if(sessions.some(session=>session.turns.some(turn=>turn.state==="working")))return;
+          const active = store().keys("office-session-owners").flatMap(id => store().keys(namespace(id)).map(key => this.read(id, key))).reduce((count, value) => count + value.turns.filter(turn => turn.state === "working" && (turn.leaseUntil ?? 0) > Date.now()).length, 0);
+          if (active >= readTeamSettings().maxActiveRequests || sessions.some(session=>session.turns.some(turn=>turn.state==="working"))) {
+            for (const session of sessions) {
+              let changed = false;
+              for (const turn of session.turns) if (turn.state === "queued" || turn.state === "waiting") { turn.retryAt = Math.max(turn.retryAt ?? 0, Date.now() + 2000); changed = true; }
+              if (changed) { this.save(session); this.publish(session); }
+            }
+            return;
+          }
           for(const session of sessions){
             if(session.archived || session.turns.some(turn=>turn.state==="uncertain"))continue;
             const turn=session.turns.find(turn=>turn.state==="queued" || turn.state==="waiting");
-            if(!turn || (turn.retryAt??0)>Date.now())continue;
+            if(!turn || turn.state === "waiting" && (turn.retryAt??0)>Date.now())continue;
             turn.state="working";turn.lease=randomUUID();turn.leaseUntil=Date.now()+120_000;this.save(session);claimed={session,turn};break;
           }
         });
@@ -147,6 +167,7 @@ export class OfficeSessionService {
     let content:string|undefined,failure:unknown;
     try{
       const user=await this.options.readUser(session.owner);
+      controller.signal.throwIfAborted();
       if(!user?.enabled || !user.features.some(value=>value==="generalChat"||value==="tasks"))throw new Error("Workspace access changed.");
       const history=session.turns.slice(0,session.turns.findIndex(value=>value.id===turn.id)+1).flatMap(value=>value.state==="cancelled"?[]:[{role:"user" as const,content:value.user.text},...(value.assistant?[{role:"assistant" as const,content:value.assistant.text}]:[])]);
       const report=(activity:DashboardCliSessionMessage)=>{
@@ -162,7 +183,9 @@ export class OfficeSessionService {
         if(updated)this.publish(updated);
       };
       this.publish(session);
-      content=await this.options.generate(user,session.model,[...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...history],controller.signal,session.projectPath,report);
+      const instructions = readOfficeInstructions(user.id);
+      const globalPrompt = readTeamSettings().globalPrompt;
+      content=await this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"system" as const,content:instructions}]:[]),...history],controller.signal,session.projectPath,report);
       if(!content?.trim())throw new Error("Empty response.");
     }catch(error){failure=error;}
     finally{clearTimeout(timeout);}
@@ -174,10 +197,11 @@ export class OfficeSessionService {
         completed=true;
         if(content){current.assistant={id:randomUUID(),role:"assistant",text:content,timestamp:new Date().toISOString()};current.state="done";}
         else if(failure instanceof OfficeCapacityError && !controller.signal.aborted){current.state="waiting";current.retryAt=Date.now()+5_000;}
+        else if (failure instanceof OfficeQuotaError) {current.state="done"; current.error=failure.message; for (const activity of current.activities ?? []) if (activity.status === "inProgress") activity.status = "unknown";}
         else {current.state="uncertain";for(const activity of current.activities??[])if(activity.status==="inProgress")activity.status="unknown";}
         this.save(updated);
       });
-      if(completed)this.publish(updated,content?"Your response is ready.":failure instanceof OfficeCapacityError?turn.retryAt?undefined:WAITING:UNCERTAIN);
+      if(completed)this.publish(updated,content?"Your response is ready.":failure instanceof OfficeQuotaError?failure.message:failure instanceof OfficeCapacityError?officeCapacityMessage(updated.turns.find(value=>value.id===turn.id)?.retryAt ?? Date.now()+5000):UNCERTAIN);
     }catch(error){console.warn("[codexManager] Team response could not be saved",error);}
     finally{this.running.delete(turn.id);if(!this.stopped)void this.pump();}
   }

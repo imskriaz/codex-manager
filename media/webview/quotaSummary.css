@@ -18784,6 +18784,19 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 
 /* Private workspace profile uses the session sidebar tokens. */
 .team-user-footer{display:flex;align-items:center;gap:10px;padding:14px 12px;border-top:1px solid var(--border-default);color:var(--text)}.team-user-avatar{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;border-radius:50%;background:var(--bg-selected);font-size: calc(12px * var(--dashboard-text-scale, 1));font-weight:600}.team-user-footer-copy{display:grid;gap:3px;min-width:0;flex:1}.team-user-footer-copy strong,.team-user-footer-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-user-footer-copy strong{font-size: calc(12px * var(--dashboard-text-scale, 1))}.team-user-footer-copy small,.team-composer-hint{font-size: calc(11px * var(--dashboard-text-scale, 1));color:var(--muted)}.team-user-footer-menu{position:relative}.team-user-footer-menu .cli-session-menu{bottom:100%;top:auto;right:0}.team-user-footer-menu form{margin:0}.team-user-footer-menu form button{width:100%}.team-request-state{padding:8px 16px;color:var(--muted);font-size: calc(12px * var(--dashboard-text-scale, 1));line-height:1.5}
+.office-user-theme .user-rail-actions { display:flex; align-items:center; gap:2px; margin-left:auto; }
+.office-user-theme .cli-rail-header .cli-icon-button, .office-user-theme .user-rail-actions > .workspace-tool-menu > button { display:grid; place-items:center; width:28px; min-width:28px; height:28px; padding:4px; border:0; border-radius:6px; background:transparent; color:var(--text); }
+.office-user-theme .cli-rail-header .cli-icon-button svg, .office-user-theme .user-rail-actions svg, .team-user-footer-menu > button svg { width:20px; height:20px; }
+.office-user-theme .user-rail-actions > button:hover, .office-user-theme .user-rail-actions > .workspace-tool-menu > button:hover { background:var(--bg-hover); }
+.office-user-theme .cli-rail-header .cli-settings-shortcut { margin-left:0; }
+.office-user-theme .user-model-picker select { max-width:190px; min-height:32px; padding:4px 6px; border:0; border-radius:6px; background:transparent; color:var(--text); font:inherit; font-size:calc(12px * var(--dashboard-text-scale, 1)); text-overflow:ellipsis; }
+.office-user-theme .user-model-warning { margin:4px 16px; color:var(--muted); font-size:calc(12px * var(--dashboard-text-scale, 1)); }
+.user-workspace-instructions textarea { box-sizing:border-box; width:100%; resize:vertical; min-height:110px; padding:10px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; }
+.user-workspace-instructions { display:grid; gap:10px; }
+.user-workspace-instructions button { justify-self:start; }
+.user-workspace-usage dl > div { display:flex; justify-content:space-between; gap:12px; padding:8px 0; }
+.user-workspace-usage dd { margin:0; }
+@media (max-width:760px) { .office-user-theme .user-model-picker select { max-width:145px; } }
 
 /* Unified settings: compact rows, one navigation, and tools in place. */
 .settings-modal.settings-master-modal { grid-template-rows: auto auto auto minmax(0, 1fr); }

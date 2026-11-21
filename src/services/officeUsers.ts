@@ -1,3 +1,4 @@
+import { validateOfficeLimits, type OfficeLimits } from "./officeQuota";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -16,6 +17,7 @@ export interface OfficeUser {
   role: OfficeRole;
   enabled: boolean;
   features: OfficeFeature[];
+  limits?: OfficeLimits;
   defaultPrompt: string;
   workspacePath: string;
   mcpServers: string[];
@@ -254,6 +256,7 @@ export async function createOfficeUser(input: {
   defaultPrompt?: string;
   workspacePath: string;
   mcpServers?: string[];
+  limits?: OfficeLimits;
 }): Promise<OfficeUser> {
   const username = normalizeUsername(input.username);
   if (input.password.length < 8 || input.password.length > 256) throw new Error("Use a password between 8 and 256 characters.");
@@ -267,6 +270,7 @@ export async function createOfficeUser(input: {
       role: input.role ?? "user", enabled: input.enabled !== false, features: normalizeFeatures(input.features),
       defaultPrompt: (input.defaultPrompt ?? "").trim().slice(0, 8_000), workspacePath: input.workspacePath,
       mcpServers: [...new Set((input.mcpServers ?? []).filter(item => typeof item === "string" && item.length <= 160))].slice(0, 64),
+      limits: input.limits === undefined ? undefined : validateOfficeLimits(input.limits),
       createdAt: Date.now(), salt, passwordHash: await derive(input.password, salt)
     };
     await validateSeparateOfficeWorkspace(users,row);
@@ -289,6 +293,7 @@ export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUse
     if (index < 0) throw new Error("Office user was not found.");
     const current = users[index]!;
     const next: StoredOfficeUser = { ...current };
+    if (patch.limits !== undefined) next.limits = validateOfficeLimits(patch.limits);
     if (patch.displayName !== undefined) next.displayName = patch.displayName.trim().slice(0, 120) || current.username;
     if (patch.role !== undefined) next.role = patch.role;
     if (patch.enabled !== undefined) next.enabled = patch.enabled;

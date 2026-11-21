@@ -1,3 +1,5 @@
+import type { OfficeLimits } from "../../src/services/officeQuota";
+const unlimitedOfficeLimits = {storageMb: 0, dailyTokens: 0, dailyRequests: 0};
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { OfficeUser, OfficeMcpServer, OfficeFeature, OfficeRole } from "../../src/services/officeUsers";
 import { TeamActivity } from "./teamActivity";
@@ -8,8 +10,9 @@ import { ModalShell } from "./primitives";
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
-type TeamSettings = { workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
+type TeamSettings = { globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
+  limits?: OfficeLimits;
   id?: string;
   username: string;
   displayName: string;
@@ -25,7 +28,7 @@ export const TEAM_SETTINGS_SECTIONS: { id: TeamSettingsSection; title: string; d
   { id: "logs", title: "Logs", description: "See who initiated each action and its outcome." },
   { id: "proxy", title: "Proxy", description: "Monitor requests, user identity, running status, and token use." },
   { id: "users", title: "Users", description: "Manage sign-in, workspace access, and permissions." },
-  { id: "workspace", title: "Workspace", description: "Choose where new Team user workspaces are created." },
+  { id: "workspace", title: "User Workspace", description: "Choose where new Team user workspaces are created." },
   { id: "mcp", title: "MCP data access", description: "Manage the data connections available to your Team." },
   { id: "database", title: "Database", description: "Configure storage for Team users and data connections." }
 ];
@@ -60,6 +63,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const [users, setUsers] = useState<OfficeUser[]>([]);
   const [servers, setServers] = useState<OfficeMcpServer[]>([]);
   const [settings, setSettings] = useState<TeamSettings>();
+  const [globalPrompt, setGlobalPrompt] = useState("");
+  const [maxActiveRequests, setMaxActiveRequests] = useState(2);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [databaseProvider, setDatabaseProvider] = useState<"sqlite" | "postgres">("sqlite");
   const [postgresUrl, setPostgresUrl] = useState("");
@@ -87,8 +92,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       ]);
       setUsers(userData.users);
       setServers(mcpData.servers);
-      setSettings(teamSettings);
-      setWorkspaceRoot(teamSettings.workspaceRoot);
+      setSettings(teamSettings); setGlobalPrompt(teamSettings.globalPrompt ?? "");
+      setWorkspaceRoot(teamSettings.workspaceRoot); setMaxActiveRequests(teamSettings.maxActiveRequests ?? 2);
       setDatabaseProvider(teamSettings.databaseProvider);
     } catch (value) {
       setError(value instanceof Error ? value.message : "Team settings could not be loaded.");
@@ -168,11 +173,11 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       if (adding) setMcpOpen(false);
     }, adding ? "Data connection added." : "Data connections saved.", adding ? "mcp" : false);
   };
-  const saveSettings = (fields: Record<string, string>): void => {
+  const saveSettings = (fields: Record<string, string | number>): void => {
     void mutate(async () => {
       const result = await request<TeamSettings>("/api/office/settings", "PUT", fields);
-      setSettings(result);
-      setWorkspaceRoot(result.workspaceRoot);
+      setSettings(result); setGlobalPrompt(result.globalPrompt ?? "");
+      setWorkspaceRoot(result.workspaceRoot); setMaxActiveRequests(result.maxActiveRequests ?? 2);
       setDatabaseProvider(result.databaseProvider);
       setPostgresUrl("");
     }, "Team settings saved.");
@@ -249,10 +254,18 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               class="team-settings-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                saveSettings({ workspaceRoot });
+                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt });
               }}
             >
               <label>
+                Global User Workspace Prompt
+                <textarea aria-label="Global User Workspace Prompt" rows={7} maxLength={16000} value={globalPrompt} disabled={pending} placeholder="Define your assistant’s purpose, tone, response style, and how it should help every user." onInput={event => setGlobalPrompt(event.currentTarget.value)} />
+                <small>Applies to every User Workspace from the next message, including existing conversations. Global guidance comes first, followed by per-user defaults and personal instructions. Workspace permissions remain enforced.</small>
+              </label><label>
+                Active requests: {maxActiveRequests}
+                <input type="range" aria-label="Maximum active workspace requests" min={1} max={20} step={1} value={maxActiveRequests} disabled={pending} onInput={event => setMaxActiveRequests(Number(event.currentTarget.value))} />
+                <small>Shared across user workspaces. Extra requests wait in the queue. Lowering the limit lets current work finish.</small>
+              </label><label>
                 Workspace root
                 <input
                   value={workspaceRoot}
@@ -457,7 +470,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     <small>Applied automatically to this user's conversations.</small>
                   </label>
                 </div>
-                <details class="team-editor-advanced"><summary>Permissions & data access</summary>
+                <fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
+                <details class="team-editor-advanced"><summary>Permissions & data access</summary><p class="settings-note">User Workspace has no host terminal, Git, or GitHub execution. Browser navigation and execution require an isolated runtime. These restrictions protect the host even when a feature was previously enabled.</p>
                 <div
                   id="team-editor-panel-permissions"
                   aria-label="Permissions"
@@ -483,6 +497,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                         <input
                           type="checkbox"
                           checked={draft.features.includes(feature.id)}
+                          disabled={draft.role === "user" && ["terminal","git","github"].includes(feature.id)}
                           onChange={(event) =>
                             setDraft({
                               ...draft,

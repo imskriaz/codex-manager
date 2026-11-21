@@ -37,6 +37,8 @@ export function userSessionActivity(message: DashboardCliSessionMessage, folders
 
 /** User-facing operational feedback must not reveal host or provider diagnostics. */
 export function userWorkspaceNotice(message: string): string {
+  if (/isolated runtime|host isolation/i.test(message)) return 'This action is not available right now. You can keep working with chat and files.';
+  if (message === "Your daily token allowance is unavailable or has been reached. Check Usage in settings for the reset time.") return message;
   if (/(?:[a-z]:[\\/]|\\\\[^\s]+\\|\/(?:home|users|tmp|var|mnt|opt|etc)\/|\b(?:codex|sqlite|postgres|websocket|api|oauth|token|provider|sandbox|stack|errno|ENOENT|EACCES|EPERM)\b|\bHTTP\s*\d{3}\b)/i.test(message))
     return 'This request could not be completed. Please try again. Your work is saved.';
   return message;
