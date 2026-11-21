@@ -83,3 +83,31 @@ Session messages use a device/session-scoped IndexedDB queue with one browser lo
 Session access is read from Codex turn context, native thread settings, and the Codex session database. Workspace access changes go through the verified owner or official app-server settings API; regular sends inherit the current Codex policy. Access changes apply to subsequent turns, and errors or unconfirmed responses remain visible without automatic replay.
 
 Confirmed per-session access is retained in the `session-access` namespace of Manager SQLite, keyed by Codex home and session ID. Recovery reuses the exact confirmed policy or named profile; native settings remain authoritative. A failed recovery write is reported after the Codex acknowledgement and does not replay the change.
+
+## Deletion, archive, and scheduled cleanup
+
+Both hosts schedule shared storage maintenance 30 seconds after startup and every 30 minutes while running. Passes do not overlap. Busy storage defers work; attachment cleanup checks cancellation between files, rotates through up to 128 known folders per pass, and has a 15-second budget. A failed phase does not prevent the other phases from running.
+
+| Area | Cleanup policy |
+| --- | --- |
+| Custom tasks and comments | Deleting a task removes its comments and attempts file cleanup immediately. Shared attachment content stays while any task or comment references it. Incomplete file cleanup returns a warning and retries on schedule. Replaced uploads and failed upload leftovers are swept under the same per-folder lease used by writers. |
+| Archived conversations and tasks | Keep history and attachment references for restoration. Archiving retires queued execution; it does not authorize attachment deletion. |
+| Deleted conversations | Remove cached turns/status/catalogue rows, derived tasks/comments, saved access, queue preferences, title bridges, explicit-goal-pause markers, recovery IDs, and attachment ownership after confirmed deletion. Deletion tombstones remain to reject late writes. Native transcript cleanup retries only when the conversation row is already absent; a rolled-back deletion is never replayed by a timer. Shell snapshots are removed only for confirmed deleted IDs. |
+| Session upload files | New uploads record their home/session owner before writing. Startup uploads transfer to the accepted conversation; abandoned staging ownership expires after one day. Unowned files are removed only after a complete bounded scan of native conversation and archive files proves no remaining fork references them. Unavailable or external history and scan limits retain files for a later pass. |
+| Attachment temporary files | Remove generated staging files older than one day and empty managed attachment folders. Preserve fresh temporary files, symlinks, unknown filenames, and legacy session upload folders whose ownership cannot be proven. |
+| Project links and title bridges | Expired project share records and title overrides older than their one-minute bridge window are swept. Permanent shares remain until revoked. |
+| Browser data | Read caches already expire after 30 days and are evicted within their byte/count budgets on writes. Composer drafts have separate age/count/byte bounds. Unsynced outboxes, message queues, and workspace drafts are protected from read-cache eviction; empty message queues are removed. |
+| Accounts, usage, and diagnostics | Account removal deletes its credentials and quota cache; labeled historical usage follows its configured retention. System Log follows its configured retention and existing byte/record caps. Migration backups and unverified recovery archives remain deliberate recovery data. |
+
+Cleanup never sweeps arbitrary project files, native database/WAL files, active work, or unclassified legacy data merely because it is old. These preservation cases can leave retained files on disk; failed or inconclusive background cleanup is logged and remains retryable.
+# Session coordination retention
+
+MCP peer activity and mailboxes live in the Manager database, scoped by Codex home
+and project. Activity expires after one day (and displays as unknown after five
+minutes). Unread messages expire after seven days; acknowledged messages expire
+after one day. Each inbox accepts at most 200 unread messages, and the database
+accepts at most 2,000 messages and 2,000 activity records. Text is capped at 4,000
+characters per message and 2,000 characters per activity note. Full mailboxes reject
+new sends rather than silently dropping existing messages. Scheduled maintenance
+and mailbox operations prune expired records. Confirmed session deletion removes
+its activity and messages in that Codex home; archiving preserves them until expiry.

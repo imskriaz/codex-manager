@@ -349,6 +349,11 @@ describe("Codex session integration", () => {
     await expect(readTrackedCliTurns(root)).resolves.toEqual([]);
   });
 
+  it.each(['accept', 'decline', 'cancel', null])('shows completed MCP requests and their outcomes (%s)', action => {
+    const items = parseCodexAppServerThreadItems({ thread: { turns: [{ id: 'turn', items: [{ id: 'request', type: 'mcpServerElicitation', completed: true, action, params: { serverName: 'codex-manager', message: 'Allow manager_schema?', challenge: 'private-proof' } }] }] } });
+    expect(items).toMatchObject([{ id: 'request', kind: 'tool-call', title: 'Completed request', text: 'Allow manager_schema?', result: action === 'accept' ? 'Accepted' : action === 'decline' ? 'Declined' : action === 'cancel' ? 'Cancelled' : 'Completed', status: 'completed' }]);
+    expect(JSON.stringify(items)).not.toContain('private-proof');
+  });
   it("maps rich app-server items into expandable dashboard activity", () => {
     const items = parseCodexAppServerThreadItems({
       thread: {

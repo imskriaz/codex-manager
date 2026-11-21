@@ -1,6 +1,8 @@
-import { resolveMasterOfficeUsername } from "../../services/officeUsers";
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
+import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
 import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
+import { resolveMasterOfficeUsername } from '../../services/officeUsers';
+import { localMasterActor, recordOfficeAudit, recordSessionInitiator, withOfficeActor, withSessionInitiator, type OfficeActor } from '../../services/officeAudit';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
 import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
@@ -106,6 +108,7 @@ import type { SwitchAccountCommandResult } from "../../application/accounts/comm
 import { AccountsRepository } from "../../storage";
 import { normalizeAccountTags } from '../../domain/accountTags';
 import { waitWithin } from "../../utils/concurrency";
+import { coordinateCodexSessions } from '../../services/sessionCoordination';
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { isAutoSwitchLocked, updateAutoSwitchLock } from "../workbench/autoSwitchState";
@@ -124,6 +127,7 @@ import { homedir } from "node:os";
 import { readApiProxyHistory, clearApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
+  "teamSettingsRequest",
   "enableSystemStartup",
   "addAccount",
   "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "clearApiProxyLogs", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
@@ -188,7 +192,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "unarchiveCodexCliSession",
   "deleteCodexCliSession",
   "getWorkspaceEnvironment",
-  "workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
+  "coordinateCodexSessions", "workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
   "listWorkspaceFiles",
   "readWorkspaceFile",
   "saveWorkspaceFile",
@@ -232,6 +236,7 @@ export type DashboardActionContext = {
   hostKind?: "webview" | "browser";
   localMasterAccess?: boolean;
   authenticatedMasterAccess?: boolean;
+  actor?: OfficeActor;
   configureEncryptedSync?: (passphrase: string, confirmation: string, currentPassphrase?: string) => Promise<boolean>;
   syncEncryptedAccounts?: () => Promise<boolean>;
   setEncryptedSyncRegistryOverride?: (enabled: boolean, passphrase?: string) => Promise<boolean>;
@@ -273,7 +278,21 @@ export function executeDashboardActionMessage(
   ctx: DashboardActionContext,
   message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
 ): ReturnType<typeof executeDashboardActionMessageInTransport> {
-  return withCodexAppServerTransport(ctx.hostKind === "browser" ? browserCodexAppServerTransport() : "stdio", () => executeDashboardActionMessageInTransport(ctx, message));
+  const actor = ctx.actor ?? (ctx.hostKind !== "browser" ? localMasterActor : { id: "host", name: "Host service" });
+  return withOfficeActor(actor, async () => {
+    const audit = message.payload?.automatic !== true && !message.requestId.startsWith("auto-") && !["getMasterUsername", "getDailyUsage", "getUsageGraph", "viewLogs", "listCodexCliSessions"].includes(message.action);
+    if (audit) recordOfficeAudit(message.action, "started", actor, message.payload?.sessionId);
+    const result = await withCodexAppServerTransport(ctx.hostKind === "browser" ? browserCodexAppServerTransport() : "stdio", () => executeDashboardActionMessageInTransport(ctx, message));
+    const sessionId = result.payload?.cliSession?.id ?? message.payload?.sessionId;
+    if (result.status === "completed" && sessionId && ["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn"].includes(message.action)) {
+      try { recordSessionInitiator(sessionId, actor); }
+      catch { result.payload = { ...result.payload, notice: { level: "warning", message: "The session action completed, but its user attribution could not be saved." } }; }
+    }
+    if (result.payload?.cliSession) result.payload.cliSession = withSessionInitiator(result.payload.cliSession);
+    if (result.payload?.cliSessions) result.payload.cliSessions = result.payload.cliSessions.map(withSessionInitiator);
+    if (audit && !recordOfficeAudit(message.action, result.status, actor, sessionId)) result.payload = { ...result.payload, notice: { level: "warning", message: "The action finished, but its audit record could not be saved." } };
+    return result;
+  });
 }
 
 async function executeDashboardActionMessageInTransport(
@@ -292,7 +311,7 @@ async function executeDashboardActionMessageInTransport(
   // Routine reads and the console itself must not generate audit traffic.
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
     "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
-    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser", "workspacePanel"
+    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser", "workspacePanel", "coordinateCodexSessions"
   ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
@@ -422,6 +441,11 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case "teamSettingsRequest": {
+      if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
+      if (getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Access settings first.");
+      return { teamSettingsResponse: await requestLocalTeamSettings(payload?.teamSettingsRequest) };
+    }
     case "getMasterUsername":
     case "rotateMasterUsername": {
       if (ctx.hostKind === "browser" && ctx.localMasterAccess !== true && (action !== "getMasterUsername" || ctx.authenticatedMasterAccess !== true)) throw new Error("The master username is available only in VS Code, the local dashboard, or an authenticated master session (read only).");
@@ -430,7 +454,13 @@ async function runDashboardAction(
       const masterUsername = await resolveMasterOfficeUsername(action === "rotateMasterUsername" ? payload?.masterUsername : undefined);
       return { masterUsername, ...(action === "rotateMasterUsername" ? { notice: { level: "info" as const, message: "Master username rotated. Use the new username for your next sign-in." } } : {}) };
     }
-
+    case 'coordinateCodexSessions': {
+      const result = await coordinateCodexSessions(payload?.projectPath, payload?.sessionId, payload?.coordinationRequest);
+      const operation = payload?.coordinationRequest?.operation;
+      return { sessionCoordination: result, notice: { level: result.warning ? 'warning' : 'info', message: result.warning ??
+        (operation === 'send' ? 'Coordination message queued. The recipient must read and acknowledge it through MCP.' :
+          operation === 'status' ? 'Session activity updated.' : operation === 'acknowledge' ? 'Coordination messages acknowledged.' : 'Coordination data loaded.') } };
+    }
     case 'workspacePanel':
       return { workspacePanel: await workspaceSurface(payload?.projectPath, payload?.panelRequest, payload?.panelLocalOnly) };
     case 'enableSystemStartup':
@@ -498,8 +528,8 @@ async function runDashboardAction(
     case 'deleteProjectTask': {
       const project = await resolveWorkspaceProjectPathAsync(payload?.projectPath);
       if (!payload?.taskId || !Number.isSafeInteger(payload.taskRevision)) throw new Error('Choose a task and refresh before deleting it.');
-      deleteProjectTask(project, payload.taskId, payload.taskRevision!);
-      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Task deleted.' } };
+      const warning = await deleteProjectTask(project, payload.taskId, payload.taskRevision!);
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: warning ? 'warning' : 'info', message: warning ?? 'Task deleted.' } };
     }
     case 'saveProjectTask': {
       if (!payload?.task) throw new Error('The task draft is missing.');
@@ -1100,7 +1130,7 @@ async function runDashboardAction(
     case "getCodexSubAgentMessages": {
       ensureCliIntegrationEnabled();
       if (!payload?.sessionId) throw new Error("Choose a sub-agent from the parent session first.");
-      const agent = await readCodexCliSessionSummary(payload.sessionId);
+      const agent = await readCodexCliSessionSummary(payload.sessionId, undefined, "display");
       if (!agent?.subAgent) throw new Error("This sub-agent was not found. Refresh the parent session and try again.");
       return { cliSubAgentSession: agent, cliSubAgentMessages: await readCodexCliSessionMessages(agent.id) };
     }

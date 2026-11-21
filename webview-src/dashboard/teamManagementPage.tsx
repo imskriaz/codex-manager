@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { OfficeUser, OfficeMcpServer, OfficeFeature, OfficeRole } from "../../src/services/officeUsers";
-import { handleTabKeyDown, ModalShell } from "./primitives";
+import { TeamActivity } from "./teamActivity";
+import type { DashboardOfficeView } from "../../src/domain/dashboard/types";
+import { request } from "./teamSettingsRequest";
+export { request } from "./teamSettingsRequest";
 
-type Section = "users" | "workspace" | "mcp" | "database";
-type EditorTab = "profile" | "permissions" | "data";
+export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
 type TeamSettings = { workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
   id?: string;
@@ -17,7 +19,9 @@ type UserDraft = {
   features: OfficeFeature[];
   mcpServers: string[];
 };
-const SECTIONS: { id: Section; title: string; description: string }[] = [
+export const TEAM_SETTINGS_SECTIONS: { id: TeamSettingsSection; title: string; description: string }[] = [
+  { id: "logs", title: "Logs", description: "See who initiated each action and its outcome." },
+  { id: "proxy", title: "Proxy", description: "Monitor requests, user identity, running status, and token use." },
   { id: "users", title: "Users", description: "Manage sign-in, workspace access, and permissions." },
   { id: "workspace", title: "Workspace", description: "Choose where new Team user workspaces are created." },
   { id: "mcp", title: "MCP data access", description: "Manage the data connections available to your Team." },
@@ -47,42 +51,9 @@ const newUser = (): UserDraft => ({
   mcpServers: []
 });
 
-export async function request<T>(url: string, method = "GET", body?: unknown): Promise<T> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, {
-      method,
-      cache: "no-store",
-      signal: controller.signal,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
-    const result = (await response.json().catch(() => ({}))) as T & { error?: string };
-    if (!response.ok)
-      throw new Error(
-        result.error ??
-          (response.status === 401
-            ? "Your session expired. Sign in again."
-            : "Team settings could not be loaded. Enable Team workspace in General settings and retry.")
-      );
-    return result;
-  } catch (error) {
-    if (controller.signal.aborted)
-      throw new Error(
-        method === "GET"
-          ? "Loading timed out. Retry when the host is available."
-          : "The result could not be confirmed. Refresh before retrying to avoid duplicate changes."
-      );
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
 
-export function TeamManagementPage() {
-  const [section, setSection] = useState<Section>("users");
-  const [sectionSearch, setSectionSearch] = useState("");
+export function TeamManagementPage(props: { office?: DashboardOfficeView; section: TeamSettingsSection }) {
+  const section = props.section;
   const [userSearch, setUserSearch] = useState("");
   const [users, setUsers] = useState<OfficeUser[]>([]);
   const [servers, setServers] = useState<OfficeMcpServer[]>([]);
@@ -96,7 +67,6 @@ export function TeamManagementPage() {
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
   const [draft, setDraft] = useState<UserDraft>();
-  const [editorTab, setEditorTab] = useState<EditorTab>("profile");
   const [editorError, setEditorError] = useState("");
   const [deleting, setDeleting] = useState<OfficeUser>();
   const [mcpDraft, setMcpDraft] = useState({ id: "", label: "", endpoint: "" });
@@ -148,7 +118,6 @@ export function TeamManagementPage() {
     setDraft(
       user ? { ...user, features: [...user.features], mcpServers: [...user.mcpServers], password: "" } : newUser()
     );
-    setEditorTab("profile");
     setEditorError("");
   };
   const closeEditor = (): void => {
@@ -161,13 +130,11 @@ export function TeamManagementPage() {
     if (!draft) return;
     if (!draft.id && (draft.username.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.username.trim()))) {
       setEditorError("Enter the user's email address. It is their sign-in username.");
-      setEditorTab("profile");
-      return;
+        return;
     }
     if ((!draft.id || draft.password) && (draft.password.length < 8 || draft.password.length > 256)) {
       setEditorError("Use a password between 8 and 256 characters.");
-      setEditorTab("profile");
-      return;
+        return;
     }
     void mutate(
       async () => {
@@ -202,61 +169,14 @@ export function TeamManagementPage() {
       setPostgresUrl("");
     }, "Team settings saved.");
   };
-  const currentSection = SECTIONS.find((item) => item.id === section)!;
+  const currentSection = TEAM_SETTINGS_SECTIONS.find((item) => item.id === section)!;
   const filteredUsers = users.filter((user) =>
     `${user.displayName} ${user.username}`.toLowerCase().includes(userSearch.toLowerCase())
   );
 
   return (
-    <div class="team-management-page">
-      <header class="team-management-head">
-        <div>
-          <span class="team-eyebrow">Administration</span>
-          <h1>Team settings</h1>
-          <p>People, workspace access, and shared services.</p>
-        </div>
-        <a class="team-button" href="/">
-          Back to dashboard
-        </a>
-      </header>
-      <div class="team-settings-layout">
-        <label class="settings-mobile-picker">
-          <span>Team settings</span>
-          <select aria-label="Team settings section" value={section} onChange={event => {
-            setSection(event.currentTarget.value as typeof section);
-            setError("");
-            setNotice("");
-          }}>
-            {SECTIONS.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-          </select>
-        </label>
-        <aside class="team-settings-sidebar">
-          <input
-            type="search"
-            aria-label="Find a section"
-            placeholder="Find a section…"
-            value={sectionSearch}
-            onInput={(event) => setSectionSearch(event.currentTarget.value)}
-          />
-          <span class="team-eyebrow">Team</span>
-          <nav aria-label="Team settings sections">
-            {SECTIONS.filter((item) => item.title.toLowerCase().includes(sectionSearch.toLowerCase())).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                aria-current={section === item.id ? "page" : undefined}
-                onClick={() => {
-                  setSection(item.id);
-                  setError("");
-                  setNotice("");
-                }}
-              >
-                {item.title}
-              </button>
-            ))}
-          </nav>
-        </aside>
-        <section class="team-settings-content" aria-label={currentSection.title}>
+    <div class="team-management-page team-settings-embedded">
+        <section class="team-settings-content" aria-label={currentSection.title} hidden={Boolean(draft && section === "users")}>
           <div class="team-section-head">
             <div>
               <h2>{currentSection.title}</h2>
@@ -286,7 +206,7 @@ export function TeamManagementPage() {
               </button>
             </div>
           ) : null}
-          {loading ? (
+          {section === "logs" || section === "proxy" ? <TeamActivity key={section} view={section} /> : loading ? (
             <p role="status" class="team-empty">
               Loading Team settings…
             </p>
@@ -350,7 +270,7 @@ export function TeamManagementPage() {
                     <strong>{users.length ? "No matching users" : "No Team users yet"}</strong>
                     <p>
                       {users.length
-                        ? "Try a different name or username."
+                        ? "Try a different name or email."
                         : "Add a user to give them a private workspace and sign-in."}
                     </p>
                   </div>
@@ -511,39 +431,10 @@ export function TeamManagementPage() {
             </>
           )}
         </section>
-      </div>
-      <ModalShell
-        open={Boolean(draft)}
-        title={draft?.id ? `Edit ${draft.username}` : "Add Team user"}
-        closeLabel="Close user editor"
-        className="team-edit-modal"
-        closeDisabled={pending}
-        onClose={closeEditor}
-      >
+      {draft && section === "users" ? <section class="team-inline-editor" aria-label={draft.id ? `Edit ${draft.username}` : "Add Team user"}>
+        <div class="team-section-head"><h2>{draft.id ? "Edit user" : "Add user"}</h2><button class="team-button" type="button" disabled={pending} onClick={closeEditor}>Back to users</button></div>
         {draft ? (
           <>
-            <div class="team-edit-tabs" role="tablist" aria-label="User settings" onKeyDown={handleTabKeyDown}>
-              {(
-                [
-                  ["profile", "Profile"],
-                  ["permissions", "Permissions"],
-                  ["data", "Data access"]
-                ] as const
-              ).map(([id, title]) => (
-                <button
-                  type="button"
-                  role="tab"
-                  id={`team-editor-tab-${id}`}
-                  aria-controls={`team-editor-panel-${id}`}
-                  aria-selected={editorTab === id}
-                  tabIndex={editorTab === id ? 0 : -1}
-                  onClick={() => setEditorTab(id)}
-                  key={id}
-                >
-                  {title}
-                </button>
-              ))}
-            </div>
             {editorError ? (
               <div class="team-notice is-error" role="alert">
                 {editorError}
@@ -558,9 +449,7 @@ export function TeamManagementPage() {
               <fieldset class="team-editor-fields" disabled={pending}>
                 <div
                   id="team-editor-panel-profile"
-                  role="tabpanel"
-                  aria-labelledby="team-editor-tab-profile"
-                  hidden={editorTab !== "profile"}
+                  aria-label="Profile"
                   class="team-settings-form"
                 >
                   <div class="team-field-grid">
@@ -623,11 +512,10 @@ export function TeamManagementPage() {
                     <small>Applied automatically to this user's conversations.</small>
                   </label>
                 </div>
+                <details class="team-editor-advanced"><summary>Permissions & data access</summary>
                 <div
                   id="team-editor-panel-permissions"
-                  role="tabpanel"
-                  aria-labelledby="team-editor-tab-permissions"
-                  hidden={editorTab !== "permissions"}
+                  aria-label="Permissions"
                   class="team-settings-form"
                 >
                   <label>
@@ -669,9 +557,7 @@ export function TeamManagementPage() {
                 </div>
                 <div
                   id="team-editor-panel-data"
-                  role="tabpanel"
-                  aria-labelledby="team-editor-tab-data"
-                  hidden={editorTab !== "data"}
+                  aria-label="Data access"
                   class="team-settings-form"
                 >
                   <p>Select which data connections this user can access.</p>
@@ -699,6 +585,7 @@ export function TeamManagementPage() {
                     <p class="team-empty">Add an MCP data connection before assigning user access.</p>
                   ) : null}
                 </div>
+                </details>
               </fieldset>
               <div class="team-form-footer">
                 <button type="button" class="team-button" disabled={pending} onClick={closeEditor}>
@@ -711,18 +598,9 @@ export function TeamManagementPage() {
             </form>
           </>
         ) : null}
-      </ModalShell>
-      <ModalShell
-        open={Boolean(deleting)}
-        title="Delete Team user?"
-        closeLabel="Cancel user deletion"
-        className="team-edit-modal"
-        closeDisabled={pending}
-        onClose={() => {
-          setDeleting(undefined);
-          setNotice("User deletion cancelled.");
-        }}
-      >
+      </section> : null}
+      {deleting && section === "users" ? <section class="settings-inline-confirm" aria-label="Delete Team user?">
+        <h3>Delete Team user?</h3>
         <p>
           Remove {deleting?.displayName} ({deleting?.username}) and their sign-in access? Their workspace files will be
           kept.
@@ -760,7 +638,7 @@ export function TeamManagementPage() {
             {pending ? "Deleting…" : "Delete user"}
           </button>
         </div>
-      </ModalShell>
+      </section> : null}
     </div>
   );
 }

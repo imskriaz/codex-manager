@@ -41,7 +41,7 @@ export function createAutoQueuePolicy(settings: AutoQueuePolicySettings = {}, no
     staleAfterMs: typeof configuredFreshness === "number" && Number.isFinite(configuredFreshness) && configuredFreshness > 0
       ? configuredFreshness : getAutoQueueQuotaFreshnessMs(interval),
     hourlyEnabled: true,
-    hourlyThreshold: normalizeAutoQueueThreshold(settings.autoSwitchHourlyThreshold, 5, 20),
+    hourlyThreshold: normalizeAutoQueueThreshold(settings.autoSwitchHourlyThreshold, 0, 20),
     weeklyThreshold: normalizeAutoQueueThreshold(settings.autoSwitchWeeklyThreshold, 0, 20),
     autoSwitchEnabled: settings.autoSwitchEnabled === true,
     autoResetEnabled: settings.autoSwitchEnabled === true && settings.autoResetEnabled === true,

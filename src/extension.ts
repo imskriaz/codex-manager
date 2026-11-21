@@ -1,7 +1,6 @@
 import { prepareQuotaSummaryPanelForExtensionHostRestart } from "./presentation/dashboard/panel";
 import { waitWithin } from "./utils/concurrency";
-import { maintainManagerDatabases } from "./storage/storageCleanup";
-import { getSqliteStateStore } from "./storage/sqliteState";
+import { registerStorageMaintenance } from './services/storageMaintenance';
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
 import { disposeNativeCodexSessionStatus } from "./services/codexNativeSessionStatus";
 import { onDidChangeConfiguration } from "./storage/configurationEvents";
@@ -12,7 +11,7 @@ import {
   getCodexProxyConfigurationError,
   initializeCodexProxyEnvironment
 } from "./infrastructure/config/proxyEnvironment";
-import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive, CrossWindowOperationBusyError } from "./utils/crossWindowOperations";
+import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
@@ -88,21 +87,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerSessionRecording(context);
   registerCodexSessionQueue(context);
   registerCompletedGoalCleanup(context);
-  if (getSqliteStateStore()) {
-  const cleanup = () => {
-    void runCrossWindowExclusive("background:storage-cleanup", "Storage cleanup", async () => {
-      const store = getSqliteStateStore();
-      if (store) await maintainManagerDatabases(store);
-    }, { background: true }).catch(error => {
-      if (!(error instanceof CrossWindowOperationBusyError)) console.warn("[codexManager] storage cleanup postponed",error);
-    });
-  };
-  const cleanupTimer = setTimeout(cleanup, 30_000);
-  const cleanupInterval = setInterval(cleanup, 30 * 60_000);
-  cleanupTimer.unref?.();
-  cleanupInterval.unref?.();
-  context.subscriptions.push({dispose:()=>{ clearTimeout(cleanupTimer); clearInterval(cleanupInterval); }});
-  }
+  registerStorageMaintenance(context);
   try {
     await initializeCodexProxyEnvironment();
   } catch (error) {

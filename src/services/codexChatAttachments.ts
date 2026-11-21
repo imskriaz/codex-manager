@@ -32,8 +32,8 @@ export function appServerChatInput(text: string, attachments?: ChatAttachment[])
   return [{ type: "text", text, text_elements: [] }, ...(attachments ?? []).filter((file) => file.kind === "image").map((file) => ({ type: "image", url: file.data }))];
 }
 
-export async function materializeChatAttachments(text: string, files: ChatAttachment[] | undefined, projectPath: string, signal?: AbortSignal): Promise<string> {
+export async function materializeChatAttachments(text: string, files: ChatAttachment[] | undefined, projectPath: string, signal?: AbortSignal, owner?: { home: string; sessionId: string; pending?: boolean }): Promise<string> {
   if (!files || !needsChatAttachmentFiles(files)) return text;
-  const stored = await saveCodexAttachmentFiles(projectPath, files.filter(file => file.kind !== 'image'), signal);
+  const stored = await saveCodexAttachmentFiles(projectPath, files.filter(file => file.kind !== 'image'), signal, owner);
   return text + '\n\n<attachment_paths>\nRead complete uploaded files from these paths:\n' + stored.map(file => `${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`).join('\n') + '\n</attachment_paths>';
 }

@@ -1,4 +1,3 @@
-import { MasterUsernameField } from "./masterUsernameField";
 import type {
   DashboardCopy,
   DashboardOfficeView,
@@ -6,6 +5,7 @@ import type {
   DashboardSettings,
   DashboardState
 } from "../../src/domain/dashboard/types";
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import {
@@ -18,7 +18,7 @@ import {
 } from "./components";
 import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
-import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
+import { handleTabKeyDown, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 import { clampWebviewZoom } from "./webviewZoom";
 
@@ -26,6 +26,8 @@ import { BrowserNotifications } from "./browserNotifications";
 import { MaintenanceTools } from "./maintenanceTools";
 import { SystemStartupSetting } from './systemStartupSetup';
 import type { SendAction } from "./hookTypes";
+import { TeamManagementPage, TEAM_SETTINGS_SECTIONS, type TeamSettingsSection } from "./teamManagementPage";
+import { isSettingsSectionEnabled, matchesSettingsSearch, SETTINGS_MODULE_KEYS } from "./settingsNavigation";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
@@ -35,6 +37,8 @@ const USAGE_HISTORY_RETENTION_VALUES = Array.from({length:90},(_,index)=>index+1
 const TOKEN_HISTORY_GAP_VALUES = Array.from({ length: 1440 }, (_, index) => index + 1);
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
+const CAPACITY_FAILURE_VALUES = Array.from({ length: 100 }, (_, index) => index + 1);
+const CAPACITY_RETRY_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
 const WEBVIEW_ZOOM_VALUES = Array.from({ length: 7 }, (_, index) => 80 + index * 10);
 // Warning thresholds are intentionally available at every percentage point.
 // The native range input already moves in single-point steps; keeping the
@@ -44,7 +48,28 @@ const WARNING_VALUES = Array.from({ length: 91 }, (_, index) => index);
 const WARNING_SCALE_VALUES = [0, 20, 40, 60, 80, 90];
 const WEEKLY_WARNING_VALUES = WARNING_VALUES;
 const WEEKLY_WARNING_SCALE_VALUES = WARNING_SCALE_VALUES;
-type SettingsTabId = "general" | "automation" | "data" | "tools";
+type SettingsTabId = "general" | "automation" | "data" | "modules" | "dashboard" | "sessions" | "connections" | "desktop" | "sync" | "usage" | "system-log" | "tools" | TeamSettingsSection;
+type SettingsSearchItem = { title: string; text: string; tab: SettingsTabId; element?: HTMLElement };
+const SEARCH_FALLBACK_OPTIONS: Array<[SettingsTabId, string, string]> = [
+  ["automation", "Consecutive failures", "model capacity switch errors"],
+  ["automation", "Capacity retry delay", "model capacity seconds"],
+  ["automation", "Auto resume sessions", "resume stopped chats"],
+  ["automation", "Wait for running sessions", "account switch delay"],
+  ["automation", "Reload VS Code", "account switch refresh"],
+  ["sync", "Reserve all accounts", "claim every account PC"],
+  ["sync", "Full account sync", "login credentials other PCs"],
+  ["sync", "Use reserved accounts", "recovery override password"],
+  ["users", "User email, password & permissions", "add edit delete users roles access"],
+  ["workspace", "Workspace root folder", "team files project storage"],
+  ["mcp", "MCP server access", "data permissions tools server"],
+  ["database", "Database provider", "sqlite postgres connection"],
+  ["logs", "Team activity log", "audit requests users"],
+  ["proxy", "API proxy requests", "tokens models request activity"]
+];
+
+export function canShowTeamSettings(settings: DashboardSettings, office?: DashboardOfficeView, browser = false, targetDeviceId?: string): boolean {
+  return settings.webDashboardEnabled && settings.teamWorkspaceEnabled === true && (!browser || Boolean(office && office.role !== "user")) && !targetDeviceId;
+}
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
@@ -53,6 +78,7 @@ export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingK
 
 export function SettingsOverlay(props: {
   open: boolean;
+  initialSection?: string;
   connected?: boolean;
   targetConnected?: boolean;
   copy: DashboardCopy;
@@ -76,6 +102,7 @@ export function SettingsOverlay(props: {
   onClearUsageHistory: () => void;
   onExportBackup: () => void;
   onShowLogs: () => void;
+  logConsole?: ComponentChildren;
   onImportBackup: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
@@ -99,6 +126,7 @@ export function SettingsOverlay(props: {
   const accessibility = useModalAccessibility(props.open, props.onClose);
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
   const [sectionSearch, setSectionSearch] = useState("");
+  const [teamSection, setTeamSection] = useState<TeamSettingsSection>();
   const patchAndSend = (key: DashboardSettingKey, value: string | number | boolean) => {
     if (shouldPatchDashboardSettingOptimistically(key)) {
       props.onPatchSettings({ [key]: value });
@@ -109,17 +137,70 @@ export function SettingsOverlay(props: {
   const transferCopy = resolveTransferCopy(props.lang);
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
-  const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
-  const visibleTabs = tabs.filter(tab => tab.label.toLowerCase().includes(sectionSearch.toLowerCase()));
+  const canManageTeam = canShowTeamSettings(props.settings, props.office, document.documentElement.dataset["dashboardHost"] === "browser", props.targetDeviceId);
+  const allTabs = [...navigationCopy.tabs,
+    { id: "modules" as const, label: "Modules", heading: "Modules", description: "Turn features on or off. Enabled modules appear in the sidebar." },
+    { id: "dashboard" as const, label: "Dashboard", heading: "Web Dashboard", description: "Browser hosting and startup." },
+    { id: "sessions" as const, label: "Sessions", heading: "Workspace & sessions", description: "Editor limits and accounts in VS Code windows." },
+    { id: "connections" as const, label: "Connections", heading: "Cross-system connections", description: "Shared server address for connected systems." },
+    { id: "sync" as const, label: "Sync & claim", heading: "Sync & claim", description: "Account reservations, sync behavior, and recovery." },
+    { id: "desktop" as const, label: "Desktop app", heading: "Desktop app", description: "Restart policy and application path." },
+    { id: "usage" as const, label: "Usage log", heading: "Usage log", description: "Automatic token usage recording." },
+    { id: "system-log" as const, label: "System log", heading: "System log", description: "Diagnostic detail, retention, and logs." },
+    { id: "tools" as const, label: "Tools", heading: "Tools", description: "Review data, clean up, and troubleshoot this system." },
+    ...TEAM_SETTINGS_SECTIONS.map(section => ({ id: section.id, label: section.title, heading: section.title, description: section.description }))];
+  const tabs = [allTabs[0]!, allTabs.find(tab => tab.id === "modules")!, ...allTabs.filter(tab => tab.id !== "general" && tab.id !== "modules")]
+    .filter(tab => isSettingsSectionEnabled(tab.id, props.settings, canManageTeam));
+  const searching = Boolean(sectionSearch.trim());
+  const [searchItems, setSearchItems] = useState<SettingsSearchItem[]>([]);
+  const searchResults = searchItems.filter(item => matchesSettingsSearch(item.text, sectionSearch));
+  const openSearchResult = (item: SettingsSearchItem) => {
+    const enabled = tabs.some(tab => tab.id === item.tab);
+    setSectionSearch("");
+    setActiveTab(enabled ? item.tab : "modules");
+    requestAnimationFrame(() => {
+      const moduleKey = SETTINGS_MODULE_KEYS[item.tab];
+      const target = enabled ? item.element : accessibility.modalRef.current?.querySelector<HTMLElement>('[data-setting="' + moduleKey + '"]');
+      if (target) {
+        target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: "center" });
+      }
+    });
+  };
+  useEffect(() => {
+    if (!props.open) return;
+    const items: SettingsSearchItem[] = [];
+    accessibility.modalRef.current?.querySelectorAll<HTMLElement>(".settings-tab-panel .settings-block-title, .settings-tab-panel .step-slider-copy, .settings-tab-panel input[aria-label], .settings-tab-panel select[aria-label], .settings-tab-panel .maintenance-tool-title").forEach(element => {
+      const tab = element.closest<HTMLElement>(".settings-tab-panel")?.id.replace("settings-panel-", "") as SettingsTabId;
+      const title = (element.getAttribute("aria-label") ?? element.textContent ?? "").trim();
+      if (!title || items.some(item => item.tab === tab && item.title === title)) return;
+      const description = element.parentElement?.querySelector(".settings-block-sub")?.textContent ?? "";
+      items.push({ title, tab, text: title + " " + description, element });
+    });
+    // Collapsed controls and unloaded Team forms remain discoverable.
+    for (const [tab, title, keywords] of SEARCH_FALLBACK_OPTIONS) {
+      if (!items.some(item => item.title === title && item.tab === tab)) items.push({ tab, title, text: title + " " + keywords });
+    }
+    setSearchItems(items);
+  }, [props.open, props.settings, props.lang, teamSection]);
+  useEffect(() => {
+    if (props.open && props.initialSection && tabs.some(tab => tab.id === props.initialSection)) setActiveTab(props.initialSection as SettingsTabId);
+  }, [props.open, props.initialSection, canManageTeam]);
+  useEffect(() => {
+    if (!tabs.some(tab => tab.id === activeTab)) setActiveTab("general");
+    if (canManageTeam && TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)) setTeamSection(activeTab as TeamSettingsSection);
+  }, [canManageTeam, activeTab, props.settings]);
   const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
   useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
   if (props.office?.role === "user") {
     return createPortal(<div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open}>
-      <div class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title">
+      <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="settings-modal-head"><div><div class="settings-modal-kicker">Workspace</div><div class="settings-modal-title" id="office-user-settings-title">User settings</div></div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
-        <div class="settings-modal-body"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace access</div><div class="settings-block-sub">Your administrator controls the tools available to you.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Your files and projects are private to your workspace." : "File access is disabled for this workspace."}</div></div></div>
+        <div class="settings-modal-body">
+          {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{tabs.some(tab => tab.id === item.tab) ? "Open ?" : "Enable module ?"}</span></button>)}</section> : null}<div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace access</div><div class="settings-block-sub">Your administrator controls the tools available to you.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Your files and projects are private to your workspace." : "File access is disabled for this workspace."}</div></div></div>
       </div>
     </div>, document.body);
   }
@@ -139,10 +220,10 @@ export function SettingsOverlay(props: {
       >
         <div class="settings-modal-head">
           <div class="settings-modal-heading">
-            <div class="settings-modal-kicker">{navigationCopy.kicker}</div>
             <div class="settings-modal-title" id="settings-modal-title">
               {props.copy.settingsTitle}
             </div>
+            <span class="settings-modal-system">{props.targetName}</span>
           </div>
           <button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>
             ×
@@ -150,15 +231,15 @@ export function SettingsOverlay(props: {
         </div>
         <label class="settings-mobile-picker">
           <span>{navigationCopy.tabListLabel}</span>
-          <select aria-label="Settings section" value={activeTab} onChange={event => setActiveTab(event.currentTarget.value as SettingsTabId)}>
+          <select aria-label="Settings section" value={activeTab} onChange={event => { setSectionSearch(""); setActiveTab(event.currentTarget.value as SettingsTabId); }}>
             {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
           </select>
         </label>
+        <div class="settings-search"><input type="search" aria-label="Search all settings" placeholder="Search all settings?" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />{searching ? <button type="button" aria-label="Clear settings search" onClick={() => setSectionSearch("")}>?</button> : null}</div>
         <aside class="settings-sidebar">
         <input type="search" aria-label="Find a settings section" placeholder="Find a section…" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />
-        <div class="settings-sidebar-label">{navigationCopy.tabListLabel}</div>
         <div class="settings-tab-list" role="tablist" aria-orientation="vertical" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
-          {visibleTabs.map((tab, index) => (
+          {tabs.map((tab, index) => (
             <button
               key={tab.id}
               id={`settings-tab-${tab.id}`}
@@ -170,23 +251,24 @@ export function SettingsOverlay(props: {
               aria-selected={activeTab === tab.id}
               aria-controls={`settings-panel-${tab.id}`}
               tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setSectionSearch(""); setActiveTab(tab.id); }}
               onKeyDown={(event) => {
                 const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
                 const nextIndex =
                   event.key === "Home"
                     ? 0
                     : event.key === "End"
-                      ? visibleTabs.length - 1
+                      ? tabs.length - 1
                       : direction
-                        ? (index + direction + visibleTabs.length) % visibleTabs.length
+                        ? (index + direction + tabs.length) % tabs.length
                         : index;
                 if (nextIndex === index && event.key !== "Home" && event.key !== "End") {
                   return;
                 }
                 event.preventDefault();
                 event.stopPropagation();
-                const nextTab = visibleTabs[nextIndex]!;
+                const nextTab = tabs[nextIndex]!;
+                setSectionSearch("");
                 setActiveTab(nextTab.id);
                 event.currentTarget.parentElement
                   ?.querySelector<HTMLButtonElement>(`#settings-tab-${nextTab.id}`)
@@ -200,9 +282,19 @@ export function SettingsOverlay(props: {
             </button>
           ))}
         </div>
+
         </aside>
         <div class="settings-modal-body">
-          {activeTab === "general" ? <div class="settings-local-preferences settings-layout">
+          <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
+          <div
+            class="settings-tab-panel"
+            id="settings-panel-general"
+            role="tabpanel"
+            aria-labelledby="settings-tab-general"
+            hidden={activeTab !== "general" || searching}
+          >
+          <SettingsPanelIntro tab={allTabs[0]!} />
+          <div class="settings-local-preferences settings-layout">
             {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
               <div class="settings-block settings-block-wide settings-zoom-block" data-setting="webview-zoom">
                 <div class="settings-block-head">
@@ -222,16 +314,7 @@ export function SettingsOverlay(props: {
                 />
                 <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
               </div>
-          </div> : null}
-          <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
-          <div
-            class="settings-tab-panel"
-            id="settings-panel-general"
-            role="tabpanel"
-            aria-labelledby="settings-tab-general"
-            hidden={activeTab !== "general"}
-          >
-            <SettingsPanelIntro tab={tabs[0]!} />
+          </div>
             <div class="settings-layout">
               <SettingsThemeBlock
                 lang={props.lang}
@@ -250,119 +333,17 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
-              <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
-                <div class="settings-block-head">
-                  <div class="settings-block-title">{passwordCopy.title}</div>
-                  <div class="settings-block-sub" title={passwordCopy.sub}>{passwordCopy.sub}</div>
-                </div>
-                {props.encryptedSyncNeedsConfiguration ? (
-                  <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
-                ) : null}
-                <div class="settings-note">{passwordCopy.note}</div>
-                <div class="settings-actions">
-                  <button class="settings-action-btn" type="button" onClick={props.onConfigureSync}>
-                    {passwordCopy.configure}
-                  </button>
-                </div>
-                <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.office?.id === "master"} />
-              </div>
-              <div class="settings-block settings-block-wide settings-integration-group">
-                <div class="settings-block-head settings-integration-head">
-                  <div class="settings-block-title">
-                    {props.lang === "zh" ? "面板" : props.lang === "zh-hant" ? "面板" : "Dashboard"}
-                  </div>
-                  <div class="settings-block-sub">
-                    {props.lang === "zh"
-                      ? "配置浏览器访问、在线主机和公共域名。"
-                      : props.lang === "zh-hant"
-                        ? "設定瀏覽器存取、線上主機與公開網域。"
-                        : "Browser access and connections."}
-                  </div>
-                </div>
-                <SettingsToggleBlock
-                  title={
-                    props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
-                  }
-                  sub={
-                      props.lang === "zh"
-                        ? "在 127.0.0.1:39875 启动浏览器面板。本机访问无需密码；远程登录使用加密同步密码短语。"
-                        : props.lang === "zh-hant"
-                          ? "在 127.0.0.1:39875 啟動瀏覽器面板。本機存取無需密碼；遠端登入使用加密同步密碼。"
-                          : "Open in a browser; remote access needs a password."
-                  }
-                  enabled={props.settings.webDashboardEnabled}
-                  onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)}
-                >
-                  <div class="settings-note">
-                    {props.settings.webDashboardEnabled
-                      ? props.lang === "zh"
-                        ? "已启用。点击顶部面板按钮可在浏览器中打开。"
-                        : props.lang === "zh-hant"
-                          ? "已啟用。點擊頂部面板按鈕可在瀏覽器中開啟。"
-                          : "Open it with the dashboard button above."
-                      : props.lang === "zh"
-                        ? "已停用。"
-                        : props.lang === "zh-hant"
-                          ? "已停用。"
-                          : "Disabled."}
-                  </div>
-                  <div class="settings-integration-grid settings-dashboard-grid">
-                    <div class="settings-dashboard-column">
-                    <SettingsToggleBlock
-                      title="Enable Team workspace"
-                      sub="Allow team users to sign in with their email and password."
-                      enabled={props.settings.teamWorkspaceEnabled === true}
-                      onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)}
-                    />
-                    <SettingsToggleBlock
-                      title={
-                        props.lang === "zh"
-                          ? "启用工作区"
-                          : props.lang === "zh-hant"
-                            ? "啟用工作區"
-                            : "Enable workspace"
-                      }
-                      sub={
-                        props.lang === "zh"
-                          ? "默认停用。启用后可在面板中打开工作区、会话和终端工具。"
-                          : props.lang === "zh-hant"
-                            ? "預設停用。啟用後可在面板中開啟工作區、工作階段與終端工具。"
-                            : "Add chats and terminals to this dashboard."
-                      }
-                      enabled={props.settings.cliIntegrationEnabled === true}
-                      onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)}
-                    >
-                      <div class="settings-note">
-                        {props.settings.cliIntegrationEnabled
-                          ? props.lang === "zh"
-                            ? "已启用。面板顶部会显示工作区入口。"
-                            : props.lang === "zh-hant"
-                              ? "已啟用。面板頂部會顯示工作區入口。"
-                              : "Workspace is available above."
-                          : props.lang === "zh"
-                            ? "已停用。工作区入口和会话读取均关闭。"
-                            : props.lang === "zh-hant"
-                              ? "已停用。工作區入口與工作階段讀取均關閉。"
-                              : "Workspace is off."}
-                      </div>
-                      <div class="settings-block-head">
-                        <div class="settings-block-title">Text file limit</div>
-                        <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
-                      </div>
-                      <SettingsDiscreteSlider
-                        value={props.settings.workspaceTextFileLimitMb ?? 10}
-                        values={Array.from({ length: 16 }, (_, index) => index + 1)}
-                        accent="sky"
-                        scaleValues={[1, 5, 10, 16]}
-                        valueLabel={value => `${value} MB`}
-                        description={value => `Open and save text files up to ${value} MB.`}
-                        onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
-                        onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
-                      />
-                    </SettingsToggleBlock>
-                    </div>
-                    <div class="settings-dashboard-column">
-                    <SettingsToggleBlock
+            </div>
+          </div>
+<div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={activeTab !== "modules" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
+<SettingsToggleBlock settingKey="cliIntegrationEnabled" title="Enable workspace" sub="Add chats and terminals to this dashboard." enabled={props.settings.cliIntegrationEnabled === true}   onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)} />
+<SettingsToggleBlock settingKey="teamWorkspaceEnabled" title="Enable Team workspace" sub="User accounts, permissions, shared tools, and database settings." enabled={props.settings.teamWorkspaceEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)} />
+<SettingsToggleBlock settingKey="apiAccessEnabled" title="Dashboard API" sub="Allow generated Bearer tokens to call the local dashboard API." enabled={props.settings.apiAccessEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)} />
+<SettingsToggleBlock settingKey="webSocketServerEnabled" title="WS Cross System" sub="Connect systems through a shared server." enabled={props.settings.webSocketServerEnabled !== false}   onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)} />
+<SettingsToggleBlock settingKey="encryptedSyncEnabled" title="Sync and Claim" sub="Sync account data and reserve accounts across your PCs." enabled={props.settings.encryptedSyncEnabled} disabled={props.crossPcSyncPending}  onToggle={props.onSetCrossPcSyncEnabled} />
+<SettingsToggleBlock settingKey="codexAppRestartEnabled" title="Desktop app restart" sub="Restart the desktop app after switching accounts." enabled={props.settings.codexAppRestartEnabled}   onToggle={(enabled) => patchAndSend("codexAppRestartEnabled", enabled)} />
+<SettingsToggleBlock settingKey="dailyTokenUsageEnabled" title="Usage log" sub="Record verified token usage for your accounts." enabled={props.settings.dailyTokenUsageEnabled === true}   onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)} />
+<SettingsToggleBlock settingKey="persistentLoggingEnabled" title="System Log" sub="Save diagnostic logs with account secrets hidden." enabled={props.settings.persistentLoggingEnabled === true}   onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)} /></div></div><div class="settings-tab-panel" id="settings-panel-dashboard" role="tabpanel" aria-labelledby="settings-tab-dashboard" hidden={activeTab !== "dashboard" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "dashboard")!} /><div class="settings-layout"><SettingsToggleBlock
                       title="Always Active"
                       sub="Keep the local dashboard and system services running after VS Code closes."
                       enabled={props.settings.alwaysActive === true}
@@ -373,28 +354,39 @@ export function SettingsOverlay(props: {
                           ? "The standalone Node host will keep using port 39875 after VS Code closes."
                           : "Enable Web Dashboard for this host to stay active."}
                       </div>
-                    </SettingsToggleBlock>
-                    <SystemStartupSetting
+                    </SettingsToggleBlock>{props.settings.alwaysActive === true ? <SystemStartupSetting
                       enabled={props.settings.alwaysActiveStartWithSystem === true}
                       connected={props.connected !== false && props.targetConnected !== false} parentOpen={props.open}
                       targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
-                    />
-                    <SettingsToggleBlock
-                      title="Dashboard API"
-                      sub="Allow generated Bearer tokens to call the local dashboard API."
-                      enabled={props.settings.apiAccessEnabled === true}
-                      onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)}
-                    />
-                  <SettingsToggleBlock
-                    title="WS Cross System"
-                    className="settings-dashboard-server"
-                    sub="Connect your systems through a shared server, even when Sync and Claim is off."
-                    enabled={props.settings.webSocketServerEnabled !== false}
-                    onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)}
-                  >
-                  <div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
+                    /> : null}</div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={activeTab !== "sessions" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
+                        <div class="settings-block-title">Text file limit</div>
+                        <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
+                      </div><SettingsDiscreteSlider
+                        value={props.settings.workspaceTextFileLimitMb ?? 10}
+                        values={Array.from({ length: 16 }, (_, index) => index + 1)}
+                        accent="sky"
+                        scaleValues={[1, 5, 10, 16]}
+                        valueLabel={value => `${value} MB`}
+                        description={value => `Open and save text files up to ${value} MB.`}
+                        onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
+                        onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
+                      /></div><SettingsToggleBlock
+                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
+                sub={
+                  props.copy.crossWindowAccountModeSub ??
+                  "Use a separate account in each VS Code window."
+                }
+                enabled={props.settings.crossWindowAccountModeEnabled === true}
+                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
+              >
+                <div class="settings-note">
+                  {props.settings.crossWindowAccountModeEnabled
+                    ? "Windows choose accounts independently."
+                    : "Windows share the current account."}
+                </div>
+              </SettingsToggleBlock></div></div><div class="settings-tab-panel" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab !== "connections" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "connections")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Shared dashboard address</div></div><div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
                     <input
                       class="settings-text-input"
                       type="text"
@@ -419,19 +411,7 @@ export function SettingsOverlay(props: {
                           ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
                           : "Set a password before sharing this dashboard."}
                     </div>
-                  </div>
-                  </SettingsToggleBlock>
-                  </div>
-                </div>
-                </SettingsToggleBlock>
-              </div>
-              <SettingsToggleBlock
-                title={props.copy.codexAppRestartTitle}
-                sub={props.copy.codexAppRestartSub}
-                enabled={props.settings.codexAppRestartEnabled}
-                onToggle={(enabled) => patchAndSend("codexAppRestartEnabled", enabled)}
-              >
-                <div class={`settings-stack ${props.settings.codexAppRestartEnabled ? "" : "is-hidden"}`}>
+                  </div></div></div></div><div class="settings-tab-panel" id="settings-panel-desktop" role="tabpanel" aria-labelledby="settings-tab-desktop" hidden={activeTab !== "desktop" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "desktop")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">{props.copy.codexAppRestartTitle}</div></div><div class={`settings-stack ${props.settings.codexAppRestartEnabled ? "" : "is-hidden"}`}>
                   <div class="settings-segment">
                     <button
                       class={`segment-btn ${props.settings.codexAppRestartMode === "auto" ? "active" : ""}`}
@@ -458,33 +438,100 @@ export function SettingsOverlay(props: {
                     onPick={props.onPickCodexAppPath}
                     onClear={props.onClearCodexAppPath}
                   />
-                </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
-                sub={
-                  props.copy.crossWindowAccountModeSub ??
-                  "Use a separate account in each VS Code window."
-                }
-                enabled={props.settings.crossWindowAccountModeEnabled === true}
-                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
-              >
-                <div class="settings-note">
-                  {props.settings.crossWindowAccountModeEnabled
-                    ? "Windows choose accounts independently."
-                    : "Windows share the current account."}
-                </div>
-              </SettingsToggleBlock>
-            </div>
-          </div>
-          <div
+                </div></div></div></div><div class="settings-tab-panel" id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" hidden={activeTab !== "sync" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sync")!} /><div class="settings-layout">{props.encryptedSyncNeedsConfiguration ? (
+                  <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
+                ) : null}{props.encryptedSyncNeedsSettingsSync ? (
+                  <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
+                ) : null}{!props.settings.encryptedSyncClaimAllAccountsEnabled && !props.settings.cloudflaredDomain ? (
+                  <div class="settings-note settings-notice-warning">Set the shared dashboard address in Connections.</div>
+                ) : null}<div class="settings-note">{transferCopy.syncNote}</div><div class="settings-actions">
+                  <button
+                    class="settings-action-btn"
+                    type="button"
+                    onClick={props.onSyncNow}
+                    disabled={props.crossPcSyncPending || props.syncPending}
+                    aria-busy={props.syncPending}
+                  >
+                    {props.syncPending ? `${transferCopy.syncNow}…` : transferCopy.syncNow}
+                  </button>
+                </div><SettingsToggleBlock
+                  title="Reserve all accounts"
+                  sub="Reserve every enabled account for this PC."
+                  enabled={props.settings.encryptedSyncClaimAllAccountsEnabled === true}
+                  onToggle={(enabled) => patchAndSend("encryptedSyncClaimAllAccountsEnabled", enabled)}
+                /><SettingsToggleBlock
+                  title={resolveFullAccountSyncText("title", props.lang)}
+                  sub={resolveFullAccountSyncText("sub", props.lang)}
+                  enabled={Boolean(props.settings.fullCrossPcAccountSyncEnabled)}
+                  onToggle={(enabled) => patchAndSend("fullCrossPcAccountSyncEnabled", enabled)}
+                >
+                  <div class="settings-note settings-notice-warning">
+                    {resolveFullAccountSyncText(props.settings.fullCrossPcAccountSyncEnabled ? "enabled" : "disabled", props.lang)}
+                  </div>
+                </SettingsToggleBlock><SettingsToggleBlock
+                  title={resolveRegistryOverrideText("title", props.lang)}
+                  sub={resolveRegistryOverrideText("sub", props.lang)}
+                  enabled={props.settings.encryptedSyncRegistryOverrideEnabled}
+                  disabled={props.registryOverridePending}
+                  onToggle={props.onSetRegistryOverride}
+                >
+                  <div class="settings-note settings-notice-warning">
+                    {props.registryOverridePending
+                      ? resolveRegistryOverrideText("pending", props.lang)
+                      : props.settings.encryptedSyncRegistryOverrideEnabled
+                        ? resolveRegistryOverrideText("enabled", props.lang)
+                        : resolveRegistryOverrideText("disabled", props.lang)}
+                  </div>
+                </SettingsToggleBlock><div class="settings-block settings-block-wide">
+                  <div class="settings-block-head">
+                    <div class="settings-block-title">Sync interval</div>
+                    <div class="settings-block-sub" title="How often to save changes with VS Code Sync.">How often to save changes with VS Code Sync.</div>
+                  </div>
+                  <SettingsDiscreteSlider
+                    value={props.settings.encryptedSyncVsCodeHeartbeatMinutes ?? 5}
+                    values={Array.from({ length: 60 }, (_, index) => index + 1)}
+                    accent="violet"
+                    scaleValues={[1, 15, 30, 45, 60]}
+                    valueLabel={(value) => `${value} min`}
+                    description={() => "VS Code Sync interval"}
+                    onPreview={(value) => props.onPatchSettings({ encryptedSyncVsCodeHeartbeatMinutes: value })}
+                    onCommit={(value) => patchAndSend("encryptedSyncVsCodeHeartbeatMinutes", value)}
+                  />
+                </div></div></div><div class="settings-tab-panel" id="settings-panel-usage" role="tabpanel" aria-labelledby="settings-tab-usage" hidden={activeTab !== "usage" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "usage")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Usage recording interval</div></div><SettingsDiscreteSlider
+                  value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
+                  values={TOKEN_HISTORY_GAP_VALUES}
+                  accent="sky"
+                  scaleValues={[1, 360, 720, 1080, 1440]}
+                  valueLabel={(value) => value === 1440 ? "1D" : value < 60 ? `${value}M` : `${Math.floor(value / 60)}H${value % 60 ? ` ${value % 60}M` : ""}`}
+                  description={() => "Gap between automatic checks; server retry delays still apply."}
+                  onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
+                  onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
+                /></div></div></div><div class="settings-tab-panel" id="settings-panel-system-log" role="tabpanel" aria-labelledby="settings-tab-system-log" hidden={activeTab !== "system-log" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "system-log")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Diagnostic logging</div></div><label class="settings-block-head">
+                  <span class="settings-block-title">Log level</span>
+                  <select class="settings-select" aria-label="Log level" value={props.settings.persistentLogLevel ?? "info"}
+                    onChange={(event) => patchAndSend("persistentLogLevel", event.currentTarget.value)}>
+                    <option value="debug">Debug — all details</option>
+                    <option value="info">Info — normal activity</option>
+                    <option value="warning">Warnings and errors</option>
+                    <option value="error">Errors only</option>
+                  </select>
+                </label><SettingsDiscreteSlider
+                  value={logRetentionPreview ?? props.settings.persistentLogRetentionDays ?? 3}
+                  values={Array.from({ length: 30 }, (_, index) => index + 1)}
+                  accent="violet"
+                  scaleValues={[1, 7, 14, 21, 30]}
+                  valueLabel={(days) => `${days} day${days === 1 ? "" : "s"}`}
+                  description={() => "Keep diagnostic logs"}
+                  onPreview={setLogRetentionPreview}
+                  onCommit={(days) => { setLogRetentionPreview(undefined); patchAndSend("persistentLogRetentionDays", days); }}
+                /><div class="settings-actions"><button class="settings-action-btn" type="button" onClick={props.onShowLogs}>Show log</button></div>{props.logConsole}</div></div></div>          <div
             class="settings-tab-panel"
             id="settings-panel-automation"
             role="tabpanel"
             aria-labelledby="settings-tab-automation"
-            hidden={activeTab !== "automation"}
+            hidden={activeTab !== "automation" || searching}
           >
-            <SettingsPanelIntro tab={tabs[1]!} />
+            <SettingsPanelIntro tab={allTabs[1]!} />
             <div class="settings-layout">
               <div class="settings-block settings-block-wide settings-refresh-group">
                 <SettingsToggleBlock
@@ -564,10 +611,29 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
-                  <SettingsToggleBlock title="Switch after model-capacity failures" sub="Count consecutive model-capacity failures only when no other session is running. Switch only if another verified capable account is available." enabled={props.settings.modelCapacityAutoSwitchEnabled !== false} onToggle={enabled => patchAndSend('modelCapacityAutoSwitchEnabled', enabled)}>
-                    <label class="settings-number-control"><span>Consecutive failures</span><input type="number" min={1} max={100} step={1} aria-label="Model-capacity failure count" value={props.settings.modelCapacityFailureCount ?? 3} disabled={props.settings.modelCapacityAutoSwitchEnabled === false} onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) patchAndSend('modelCapacityFailureCount', Math.max(1, Math.min(100, Math.round(value)))); }} /></label>
-                  </SettingsToggleBlock>
-                  <label class="settings-number-control"><span>Standalone capacity retry delay (seconds)</span><input type="number" min={1} max={60} step={1} aria-label="Standalone capacity retry delay in seconds" value={props.settings.standaloneCapacityRetryDelaySeconds ?? 5} onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) patchAndSend('standaloneCapacityRetryDelaySeconds', Math.max(1, Math.min(60, Math.round(value)))); }} /></label>
+                  <SettingsToggleBlock title="Switch after model-capacity failures" sub="Switch after repeated capacity errors when no other session is running and another account is available." enabled={props.settings.modelCapacityAutoSwitchEnabled !== false} onToggle={enabled => patchAndSend('modelCapacityAutoSwitchEnabled', enabled)} />
+                  {props.settings.modelCapacityAutoSwitchEnabled !== false ? <div class="settings-capacity-controls">
+                    <SettingsDiscreteSlider
+                      value={props.settings.modelCapacityFailureCount ?? 3}
+                      values={CAPACITY_FAILURE_VALUES}
+                      accent="violet"
+                      scaleValues={[1, 25, 50, 75, 100]}
+                      valueLabel={value => `${value}`}
+                      description={() => "Consecutive failures"}
+                      onPreview={value => props.onPatchSettings({ modelCapacityFailureCount: value })}
+                      onCommit={value => patchAndSend('modelCapacityFailureCount', value)}
+                    />
+                    <SettingsDiscreteSlider
+                      value={props.settings.standaloneCapacityRetryDelaySeconds ?? 5}
+                      values={CAPACITY_RETRY_VALUES}
+                      accent="sky"
+                      scaleValues={[1, 15, 30, 45, 60]}
+                      valueLabel={value => `${value}s`}
+                      description={() => "Capacity retry delay"}
+                      onPreview={value => props.onPatchSettings({ standaloneCapacityRetryDelaySeconds: value })}
+                      onCommit={value => patchAndSend('standaloneCapacityRetryDelaySeconds', value)}
+                    />
+                  </div> : null}
                   <div class="settings-integration-grid settings-switch-options">
                     <SettingsToggleBlock
                       title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
@@ -676,9 +742,9 @@ export function SettingsOverlay(props: {
             id="settings-panel-data"
             role="tabpanel"
             aria-labelledby="settings-tab-data"
-            hidden={activeTab !== "data"}
+            hidden={activeTab !== "data" || searching}
           >
-            <SettingsPanelIntro tab={tabs[2]!} />
+            <SettingsPanelIntro tab={allTabs[2]!} />
             <div class="settings-layout">
               <div class="settings-block settings-block-wide settings-history-block">
                 <div class="settings-toggle-head">
@@ -700,6 +766,7 @@ export function SettingsOverlay(props: {
                     {renderRemoveIcon()}
                   </button>
                 </div>
+                {clearQuotaOpen ? <section class="settings-inline-confirm" aria-label="Clear quota graph history?"><strong>Clear quota graph history?</strong><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></section> : null}
                 <SettingsDiscreteSlider
                   value={props.settings.usageHistoryRetentionDays}
                   values={USAGE_HISTORY_RETENTION_VALUES}
@@ -711,101 +778,8 @@ export function SettingsOverlay(props: {
                   onCommit={value=>patchAndSend('usageHistoryRetentionDays',value)}
                 />
               </div>
-              <SettingsToggleBlock
-                title="Usage log"
-                sub="Save verified VS Code token usage. History and account names stay when disabled or removed."
-                enabled={props.settings.dailyTokenUsageEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
-              >
-                <SettingsDiscreteSlider
-                  value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
-                  values={TOKEN_HISTORY_GAP_VALUES}
-                  accent="sky"
-                  scaleValues={[1, 360, 720, 1080, 1440]}
-                  valueLabel={(value) => value === 1440 ? "1D" : value < 60 ? `${value}M` : `${Math.floor(value / 60)}H${value % 60 ? ` ${value % 60}M` : ""}`}
-                  description={() => "Gap between automatic checks; server retry delays still apply."}
-                  onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
-                  onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
-                />
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title="Sync and Claim"
-                sub={transferCopy.syncSub}
-                enabled={props.settings.encryptedSyncEnabled}
-                disabled={props.crossPcSyncPending}
-                className="settings-block-wide"
-                onToggle={props.onSetCrossPcSyncEnabled}
-              >
-                {props.encryptedSyncNeedsConfiguration ? (
-                  <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
-                ) : null}
-                {props.encryptedSyncNeedsSettingsSync ? (
-                  <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
-                ) : null}
-                {!props.settings.encryptedSyncClaimAllAccountsEnabled && !props.settings.cloudflaredDomain ? (
-                  <div class="settings-note settings-notice-warning">Set the shared dashboard address in General.</div>
-                ) : null}
-                <div class="settings-note">{transferCopy.syncNote}</div>
-                <div class="settings-actions">
-                  <button
-                    class="settings-action-btn"
-                    type="button"
-                    onClick={props.onSyncNow}
-                    disabled={props.crossPcSyncPending || props.syncPending}
-                    aria-busy={props.syncPending}
-                  >
-                    {props.syncPending ? `${transferCopy.syncNow}…` : transferCopy.syncNow}
-                  </button>
-                </div>
-                <SettingsToggleBlock
-                  title="Reserve all accounts"
-                  sub="Reserve every enabled account for this PC."
-                  enabled={props.settings.encryptedSyncClaimAllAccountsEnabled === true}
-                  onToggle={(enabled) => patchAndSend("encryptedSyncClaimAllAccountsEnabled", enabled)}
-                />
-                <SettingsToggleBlock
-                  title={resolveFullAccountSyncText("title", props.lang)}
-                  sub={resolveFullAccountSyncText("sub", props.lang)}
-                  enabled={Boolean(props.settings.fullCrossPcAccountSyncEnabled)}
-                  onToggle={(enabled) => patchAndSend("fullCrossPcAccountSyncEnabled", enabled)}
-                >
-                  <div class="settings-note settings-notice-warning">
-                    {resolveFullAccountSyncText(props.settings.fullCrossPcAccountSyncEnabled ? "enabled" : "disabled", props.lang)}
-                  </div>
-                </SettingsToggleBlock>
-                <SettingsToggleBlock
-                  title={resolveRegistryOverrideText("title", props.lang)}
-                  sub={resolveRegistryOverrideText("sub", props.lang)}
-                  enabled={props.settings.encryptedSyncRegistryOverrideEnabled}
-                  disabled={props.registryOverridePending}
-                  onToggle={props.onSetRegistryOverride}
-                >
-                  <div class="settings-note settings-notice-warning">
-                    {props.registryOverridePending
-                      ? resolveRegistryOverrideText("pending", props.lang)
-                      : props.settings.encryptedSyncRegistryOverrideEnabled
-                        ? resolveRegistryOverrideText("enabled", props.lang)
-                        : resolveRegistryOverrideText("disabled", props.lang)}
-                  </div>
-                </SettingsToggleBlock>
-                <div class="settings-block settings-block-wide">
-                  <div class="settings-block-head">
-                    <div class="settings-block-title">Sync interval</div>
-                    <div class="settings-block-sub" title="How often to save changes with VS Code Sync.">How often to save changes with VS Code Sync.</div>
-                  </div>
-                  <SettingsDiscreteSlider
-                    value={props.settings.encryptedSyncVsCodeHeartbeatMinutes ?? 5}
-                    values={Array.from({ length: 60 }, (_, index) => index + 1)}
-                    accent="violet"
-                    scaleValues={[1, 15, 30, 45, 60]}
-                    valueLabel={(value) => `${value} min`}
-                    description={() => "VS Code Sync interval"}
-                    onPreview={(value) => props.onPatchSettings({ encryptedSyncVsCodeHeartbeatMinutes: value })}
-                    onCommit={(value) => patchAndSend("encryptedSyncVsCodeHeartbeatMinutes", value)}
-                  />
-                </div>
-              </SettingsToggleBlock>
+
+
               <div class="settings-block settings-block-wide">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{transferCopy.title}</div>
@@ -823,47 +797,20 @@ export function SettingsOverlay(props: {
                   <div class="settings-note">{transferCopy.note}</div>
                 </div>
               </div>
-              <SettingsToggleBlock
-                title="System Log"
-                sub="Include startup and recovery logs, with account secrets hidden. Off saves no logs."
-                enabled={props.settings.persistentLoggingEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)}
-              >
-                <label class="settings-block-head">
-                  <span class="settings-block-title">Log level</span>
-                  <select class="settings-select" aria-label="Log level" value={props.settings.persistentLogLevel ?? "info"}
-                    onChange={(event) => patchAndSend("persistentLogLevel", event.currentTarget.value)}>
-                    <option value="debug">Debug — all details</option>
-                    <option value="info">Info — normal activity</option>
-                    <option value="warning">Warnings and errors</option>
-                    <option value="error">Errors only</option>
-                  </select>
-                </label>
-                <SettingsDiscreteSlider
-                  value={logRetentionPreview ?? props.settings.persistentLogRetentionDays ?? 3}
-                  values={Array.from({ length: 30 }, (_, index) => index + 1)}
-                  accent="violet"
-                  scaleValues={[1, 7, 14, 21, 30]}
-                  valueLabel={(days) => `${days} day${days === 1 ? "" : "s"}`}
-                  description={() => "Keep diagnostic logs"}
-                  onPreview={setLogRetentionPreview}
-                  onCommit={(days) => { setLogRetentionPreview(undefined); patchAndSend("persistentLogRetentionDays", days); }}
-                />
-                <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={props.onShowLogs}>Show log</button></div>
-              </SettingsToggleBlock>
+
 
             </div>
           </div>
           </fieldset>
-          <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools"}>
-            <SettingsPanelIntro tab={tabs[3]!} />
+          <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools" || searching}>
+            <SettingsPanelIntro tab={tabs.find(tab => tab.id === "tools")!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
+          {canManageTeam && teamSection ? <div class="settings-tab-panel" id={`settings-panel-${teamSection}`} role="tabpanel" aria-labelledby={`settings-tab-${teamSection}`} hidden={searching || !TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)}><TeamManagementPage key={props.office?.id} office={props.office} section={teamSection} /></div> : null}
         </div>
       </div>
     </div>
-    <ModalShell open={props.open && clearQuotaOpen} title="Clear quota graph history?" closeLabel="Cancel clearing quota history" className="action-confirmation-modal" onClose={()=>setClearQuotaOpen(false)}><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></ModalShell>
+
     </>, document.body
   );
 }
@@ -964,8 +911,8 @@ function resolveSettingsNavigationCopy(lang: DashboardState["lang"]): {
       {
         id: "general",
         label: "General",
-        heading: "Workspace & appearance",
-        description: "Theme, language, dashboard access, and local sessions."
+        heading: "Appearance & notifications",
+        description: "Personalize this dashboard and device."
       },
       {
         id: "automation",
@@ -975,9 +922,9 @@ function resolveSettingsNavigationCopy(lang: DashboardState["lang"]): {
       },
       {
         id: "data",
-        label: "Data & sync",
-        heading: "Data & sync",
-        description: "Backups, automatic sync, recovery controls, and account claims."
+        label: "Data",
+        heading: "History & backups",
+        description: "Quota graph retention and manual backup transfer."
       }
     ]
   };

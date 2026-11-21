@@ -95,6 +95,7 @@ describe("sessions sidebar layout", () => {
     expect(cliSessionIndicator({ ...session, status: "running" }, {}, new Set([key]))).toBe("running");
     expect(cliSessionIndicator({ ...session, interrupted: true }, {}, new Set())).toBe("interrupted");
     expect(cliSessionIndicator({ ...session, status: "unknown" }, {}, new Set())).toBe("seen");
+    expect(cliSessionIndicator({ ...session, status: "unknown", locked: true }, {}, new Set())).toBe("seen");
     expect(cliSessionIndicator({ ...session, interrupted: true }, { [key]: `${session.updatedAt}:interrupted` }, new Set())).toBe("seen");
     expect(cliSessionIndicator({ ...session, interrupted: true }, { [key]: session.updatedAt }, new Set())).toBe("interrupted");
     expect(cliSessionIndicator({ ...session, interrupted: true, status: "running" }, {}, new Set())).toBe("running");
@@ -192,7 +193,7 @@ describe("sessions sidebar layout", () => {
   it("keeps queued sends single-shot and compresses the phone quota row", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(source).toContain("items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending')");
+    expect(source).toContain("items: queue.items.filter(item => item.state !== 'sent')");
     expect(source).not.toContain('> <span>Steering…</span>');
     expect(source).toContain('canDispatch: queueDispatchReady && (followUpMode');
     expect(css).toContain("@media (max-width: 480px)");
@@ -366,7 +367,7 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('aria-label="Needs improvement"');
     expect(source).toContain('class="cli-message-actions"');
     expect(source).not.toContain('class="cli-message-actions-toggle"');
-    expect(source).toContain("isCodexSessionRunning(session)");
+    expect(source).toContain("isCodexSessionRunningForDisplay(session)");
     expect(source).toContain('isCodexSessionRunning(props.selectedSession)');
     expect(css).toContain(".cli-turn-copy");
     expect(css).toContain('.cli-session-message:hover .cli-message-actions');
@@ -395,7 +396,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
-    const dashboardStart = settings.indexOf(': "Web Dashboard"');
+    const dashboardStart = settings.indexOf('title="Web Dashboard"');
     const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("WS Cross System"));
     expect(dashboardStart).toBeGreaterThan(-1);
     expect(dashboardEnd).toBeGreaterThan(dashboardStart);
@@ -950,6 +951,7 @@ describe("sessions sidebar layout", () => {
       { id: "host", total: 2, running: 1 }, { id: "other", total: 1, running: 1 }
     ]);
     expect(countPeerSessions([], [{ id: "host", local: true }])).toEqual([{ id: "host", total: 0, running: 0 }]);
+    expect(countPeerSessions([{ id: 'unknown', title: 'Checking', status: 'unknown', locked: true }], [{ id: 'host', local: true }])).toEqual([{ id: 'host', total: 1, running: 0 }]);
   });
 
   it("counts repeated edits once and shares correct diff line numbers with both views", () => {

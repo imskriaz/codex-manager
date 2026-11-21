@@ -70,12 +70,12 @@ it('preserves tasks when discovery fails and reports optional detail failures wi
 
 it('deletes only custom tasks with the current revision and keeps linked sessions protected', async () => {
   const task = saveProjectTask(root, { id: 'delete-me', title: 'Delete me', prompt: '', stage: 'planned', expectedRevision: 0 });
-  deleteProjectTask(root, task.id, task.revision);
+  await deleteProjectTask(root, task.id, task.revision);
   expect(readProjectTasks(root).tasks.find(item => item.id === task.id)).toBeUndefined();
   const linked = (await readProjectBoard(root)).tasks.find(item => item.sessionId)!;
-  expect(() => deleteProjectTask(root, linked.id, linked.revision)).toThrow(/linked conversation/);
+  await expect(deleteProjectTask(root, linked.id, linked.revision)).rejects.toThrow(/linked conversation/);
   const kept = saveProjectTask(root, { id: 'keep', title: 'Keep', prompt: '', stage: 'idea', expectedRevision: 0 });
-  expect(() => deleteProjectTask(root, kept.id, kept.revision - 1)).toThrow(/changed/);
+  await expect(deleteProjectTask(root, kept.id, kept.revision - 1)).rejects.toThrow(/changed/);
   expect(readProjectTasks(root).tasks.some(item => item.id === kept.id)).toBe(true);
 });
 

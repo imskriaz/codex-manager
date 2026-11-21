@@ -49,8 +49,8 @@ export function peekCliSessionListCache(deviceId?: string): CliSessionListCache 
   const sessions = record.value.sessions.filter(session => session && typeof session.id === 'string' && typeof session.title === 'string' && (deviceId ? session.deviceId === deviceId : !session.deviceId));
   return { ...record.value, sessions: ageMs > 5000 ? sessions.map(session => ({
     ...session,
-    // Keep the last verified visual state while live data catches up. Turning
-    // every stale row into unknown/locked made the whole rail look active.
+    // Keep brief refresh gaps stable, but never restore old running activity indefinitely.
+    status: session.status === 'running' && ageMs >= 30_000 ? 'unknown' : session.status,
     canStop: false,
     locked: session.status === 'running' || session.status === 'unknown',
     statusError: session.statusError ?? 'Session status is stale. Refresh to verify it before acting.'
@@ -218,7 +218,7 @@ export async function readCliSessionListCache(deviceId?: string): Promise<CliSes
 }
 
 export async function readCliComposerDraft(key: string): Promise<CliComposerDraft | undefined> {
-  const record = await readFreshRecord<unknown>(`composer:${key}`, MAX_DRAFT_AGE_MS);
+  const record = readRecoveryRecord(`composer:${key}`, MAX_DRAFT_AGE_MS) ?? await readFreshRecord<unknown>(`composer:${key}`, MAX_DRAFT_AGE_MS);
   return record ? normalizeCliComposerDraft(record.value) : undefined;
 }
 
@@ -237,6 +237,8 @@ export function hasUnsavedCliComposerDrafts(): boolean { return unsavedComposerD
 
 export async function writeCliComposerDraft(key: string, value: CliComposerDraft): Promise<boolean> {
   if (!normalizeCliComposerDraft(value)) return false;
+  const recovered = writeRecoveryRecord(`composer:${key}`, value);
+  if (!recovered) { try { localStorage.removeItem(`${DB_NAME}:recovery:composer:${key}`); } catch { /* database-only storage */ } }
   if (value.text || value.attachments.length) unsavedComposerDrafts.add(key);
   else unsavedComposerDrafts.delete(key);
   const result = new Promise<boolean>((resolve) => {
@@ -244,6 +246,7 @@ export async function writeCliComposerDraft(key: string, value: CliComposerDraft
     draftWrites.set(key, { value, waiters: [...(existing?.waiters ?? []), resolve] });
   });
   startComposerFlush();
+  if (recovered) { unsavedComposerDrafts.delete(key); return true; }
   return result;
 }
 
@@ -259,7 +262,7 @@ async function flushComposerWrites(): Promise<void> {
     const [key, pending] = draftWrites.entries().next().value!;
     draftWrites.delete(key);
     const saved = await saveCliComposerDraft(key, pending.value);
-    if (saved && !draftWrites.has(key)) unsavedComposerDrafts.delete(key);
+    if ((saved || readRecoveryRecord(`composer:${key}`, MAX_DRAFT_AGE_MS)) && !draftWrites.has(key)) unsavedComposerDrafts.delete(key);
     for (const resolve of pending.waiters) resolve(saved);
   }
 }
@@ -517,6 +520,8 @@ export function peekBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): T
   return undefined;
 }
 export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_MS): Promise<T | undefined> {
+  const recovery = readRecoveryRecord(`browser:${key}`, maxAgeMs);
+  if (recovery) return structuredClone(recovery.value) as T;
   const memory = peekBrowserCache<T>(key, maxAgeMs);
   if (memory !== undefined) return memory;
   let pending = browserReadLoads.get(key);
@@ -524,6 +529,7 @@ export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_
     pending = readFreshRecord<T>(`browser:${key}`, maxAgeMs).then(record => {
       if (browserReadLoads.get(key) !== pending) return browserReadMemory.get(key)?.value;
       if (record) rememberBrowserRead(key, record.value, Date.now() - record.ageMs);
+      if (key.startsWith('message-queue:')) writeRecoveryRecord(`browser:${key}`, record?.value ?? []);
       return record?.value;
     }).finally(() => { if (browserReadLoads.get(key) === pending) browserReadLoads.delete(key); });
     browserReadLoads.set(key, pending);
@@ -531,6 +537,21 @@ export async function readBrowserCache<T>(key: string, maxAgeMs = MAX_CACHE_AGE_
   return structuredClone(await pending) as T | undefined;
 }
 export async function writeBrowserCache(key: string, value: unknown): Promise<boolean> {
+  if (key.startsWith('message-queue:') || key.startsWith('workspace-drafts:')) {
+    if (writeRecoveryRecord(`browser:${key}`, value)) {
+      // The journal is the durable send fence; database maintenance never blocks dispatch.
+      queueRecoveryWrite(key, value);
+      return true;
+    }
+    await recoveryWrites.get(key);
+    let journal: string | null = null;
+    try { journal = localStorage.getItem(`${DB_NAME}:recovery:browser:${key}`); } catch { /* database-only storage */ }
+    const saved = key.startsWith('message-queue:') && Array.isArray(value) && !value.length ? await deleteBrowserCache(key) : await persistBrowserCache(key, value);
+    if (saved) {
+      try { if (localStorage.getItem(`${DB_NAME}:recovery:browser:${key}`) === journal) localStorage.removeItem(`${DB_NAME}:recovery:browser:${key}`); } catch { /* database-only storage */ }
+    }
+    return saved;
+  }
   if (key.startsWith('message-queue:') && Array.isArray(value) && value.length === 0) return deleteBrowserCache(key);
   const previous = browserReadMemory.get(key);
   browserReadLoads.delete(key);
@@ -542,6 +563,35 @@ export async function writeBrowserCache(key: string, value: unknown): Promise<bo
   const saved = await persistBrowserCache(key, value);
   if (saved && next && browserReadMemory.get(key) === next) next.persistedAt = Date.now();
   return saved;
+}
+const recoveryWrites = new Map<string, Promise<unknown>>();
+function queueRecoveryWrite(key: string, value: unknown): void {
+  const snapshot = structuredClone(value);
+  const work = (recoveryWrites.get(key) ?? Promise.resolve()).catch(() => undefined)
+    .then(() => key.startsWith('message-queue:') && Array.isArray(snapshot) && !snapshot.length ? deleteBrowserCache(key) : persistBrowserCache(key, snapshot)).finally(() => { if (recoveryWrites.get(key) === work) recoveryWrites.delete(key); });
+  recoveryWrites.set(key, work);
+}
+function writeRecoveryRecord(key: string, value: unknown): boolean {
+  try {
+    const record = JSON.stringify({ updatedAt: Date.now(), value });
+    if (record.length * 2 > MAX_DRAFT_BYTES) return false;
+    localStorage.setItem(`${DB_NAME}:recovery:${key}`, record);
+    return true;
+  } catch { return false; }
+}
+function readRecoveryRecord(key: string, maxAgeMs: number): { value: unknown; ageMs: number } | undefined {
+  let raw: string | null;
+  try { raw = localStorage.getItem(`${DB_NAME}:recovery:${key}`); } catch { return; }
+  if (!raw) return;
+  try {
+    const record = JSON.parse(raw) as { updatedAt: number; value: unknown };
+    const ageMs = Date.now() - record.updatedAt;
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) throw new Error('Invalid recovery record timing');
+    return { value: record.value, ageMs };
+  } catch {
+    if (key.startsWith('browser:message-queue:')) throw new Error('The saved queue journal needs repair. Its contents were preserved.');
+    return;
+  }
 }
 async function persistBrowserCache(key: string, value: unknown): Promise<boolean> {
   const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
@@ -599,6 +649,27 @@ export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value
     tx.oncomplete = () => { clearTimeout(timer); resolve(rows); };
     tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve([]); };
   }).catch(() => []);
+}
+export async function listBrowserMessageQueues(): Promise<Array<{ scope: string; value: unknown }>> {
+  const records = new Map<string, unknown>();
+  const tx = await openCacheTransaction('readonly');
+  if (tx) await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(); }, 3_000);
+    const finish = () => { clearTimeout(timer); resolve(); };
+    const cursor = tx.objectStore(STORE_NAME).openCursor(IDBKeyRange.bound('browser:message-queue:', 'browser:message-queue:\uffff'));
+    cursor.onsuccess = () => { const row = cursor.result; if (!row) return; const record = row.value as CacheRecord; if (record.key.startsWith('browser:message-queue:')) records.set(record.key.slice('browser:message-queue:'.length), record.value); row.continue(); };
+    tx.oncomplete = tx.onerror = tx.onabort = finish;
+  });
+  try {
+    const prefix = `${DB_NAME}:recovery:browser:message-queue:`;
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      try { const record = JSON.parse(localStorage.getItem(key)!) as { value: unknown }; records.set(key.slice(prefix.length), record.value); }
+      catch { records.set(key.slice(prefix.length), null); }
+    }
+  } catch { /* IndexedDB remains available when web storage is disabled. */ }
+  return [...records].filter(([, value]) => !Array.isArray(value) || value.length > 0).map(([scope, value]) => ({ scope, value }));
 }
 export async function deleteBrowserCache(key: string): Promise<boolean> {
   browserReadMemory.delete(key);

@@ -156,7 +156,7 @@ describe("Web Dashboard forwarded protocol", () => {
     await pending;
 
     expect(response.statusCode).toBe(401);
-    expect(body).toContain("Incorrect password.");
+    expect(body).toContain("Incorrect username or password.");
     expect(body).not.toBe("Forbidden");
     server.dispose();
   });

@@ -1,11 +1,11 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { promisify } from "node:util";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 export type OfficeRole = "admin" | "user" | "unrestricted-admin";
 export type OfficeFeature = "generalChat" | "tasks" | "files" | "browser" | "env" | "terminal" | "git" | "github";
@@ -159,7 +159,8 @@ function publicUser(user: StoredOfficeUser): OfficeUser {
 
 function normalizeUsername(value: string): string {
   const username = value.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(username)) throw new Error("Use a username with 2-64 letters, numbers, dots, dashes, or underscores.");
+  const email = username.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username);
+  if (!email) throw new Error("Use a valid email address for the username.");
   return username;
 }
 

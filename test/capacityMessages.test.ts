@@ -94,8 +94,8 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   const details = row;
   expect(row.props.class).toContain('cli-goal-strip');
   expect(details.type).toBe('details');
-  expect(details.props.open).toBe(true);
-  expect(details.props.children[1].props.children.some((child: VNode<any>) => child?.props?.role === 'alert')).toBe(true);
+  expect(details.props.open).toBeUndefined();
+  expect(details.props.children[0].props.children.some((child: VNode<any>) => child?.props?.role === 'alert' && child.props.title === item.error)).toBe(true);
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
   const css = readFileSync('media/webview/quotaSummary.css', 'utf8');
   expect(source).toContain('aria-label="Edit queued message"');
@@ -112,7 +112,7 @@ it('keeps queued messages visible above the composer with inline actions', () =>
   expect(source).not.toContain('className="dashboard-modal-compact cli-queue-modal"');
   expect(source).not.toContain('class="cli-local-queue-summary"');
   expect(QueuedMessages({queue:{...queue,items:[],ready:false,error:'Storage unavailable'},onRefresh:()=>{}})).toBeNull();
-  expect(QueuedMessages({queue:{...queue,items:[{...item,state:'sending'}],ready:true,connected:true},onRefresh:()=>{}})).toBeNull();
+  expect(QueuedMessages({queue:{...queue,items:[{...item,state:'sending'}],ready:true,connected:true},onRefresh:()=>{}})).not.toBeNull();
 });
 
 it('renders every waiting message and its controls without opening a dialog', () => {
@@ -124,9 +124,9 @@ it('renders every waiting message and its controls without opening a dialog', ()
   for (const [index, row] of rows.entries()) {
     const summary = row.props.children[0];
     expect(summary.props.children[1].props.children).toBe(`Message ${index}`);
-    const actions = summary.props.children[2].props.children.filter(Boolean);
+    const actions = summary.props.children.find((child: VNode<any>) => child?.props?.class === 'cli-queued-message-actions').props.children.filter(Boolean);
     for (const action of actions) action.props.onClick();
-    expect(row.props.open).toBe(index > 0);
+    expect(row.props.open).toBeUndefined();
   }
   expect(steerNow).toHaveBeenCalledExactlyOnceWith('queued');
   expect(resend.mock.calls).toEqual([['failed'], ['uncertain']]);

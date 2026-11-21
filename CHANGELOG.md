@@ -1,25 +1,42 @@
 # Changelog
 
+## 3.0.0-pre.34
+
+- Bound cached running indicators to 30 seconds without fresh confirmation, prefer current native status, and prevent old live snapshots from reviving stopped sessions. Keep history visible and show unverified status when checks remain inconclusive.
+
+## 3.0.0-pre.33
+
+- Bring Users, Workspace, MCP data access, Database, Logs, and Proxy into Settings; redirect legacy management links while retaining administrator checks.
+- Use the same compact Settings layout in VS Code and the browser. Hide Team tabs when Team workspace or Web Dashboard is off, and keep Access available to enable them again.
+- Keep user editors, maintenance previews, confirmations, results, logs, and startup setup in place. Remove duplicate tools and align the dashboard title with its action icons.
+- Restore the Settings gear at the top of every workspace sidebar.
+- Replace capacity failure count and retry-delay number fields with compact slider rows below their toggle.
+
 ## 3.0.0-pre.33
 
 - Make the Codex workspace logo open Dashboard home directly, including keyboard activation, while retaining the compact account menu on the bottom card.
+
+## 3.0.0-pre.32
+
+- Keep queued messages visible across focus and background changes, retain sending rows until confirmation, and expand messages only when requested. Replace routine queue notices and duplicate delivery toasts with compact status controls and detailed queue tools.
+- Persist a bounded recovery journal before dispatch, mirror it to IndexedDB in the background, recover browser storage failures, and retry only verified unsent owner failures with backoff. Preserve uncertain delivery and ownership checks.
+- Add Tools and Queue status to the account menu, with saved queue inspection, safe repair and confirmed clearing that preserves in-flight sends and composer drafts.
 
 ## 3.0.0-pre.31
 
 - Add a 1 to 30 day slider in Browser notifications settings for dismissed notification and app-install reminders, defaulting to one day. Save the preference per browser, show save failures, and use it for future dismissals.
 
+
 ## 3.0.0-pre.29
 
 - Remember dismissed notification and app-install offers for 24 hours on this browser, including cancelled permission and installation prompts. Keep cancellation feedback and manual Settings controls available.
 
-## 3.0.0-pre.28
-
-- Compact the Env panel with collapsible sections, tighter detail rows, and labels that stay on one line. Keep Project and Session open initially and retain all system, repository, tool, agent, and usage details.
 
 ## 3.0.0-pre.27
 
 - Open the compact Dashboard, Account center, Settings and Sign out menu from the bottom account card. Keep the workspace logo as a heading and omit the account avatar.
 - Hide the current-account details card on narrow dashboard panels while retaining the usage chart, quotas and account controls.
+
 
 ## 3.0.0-pre.25
 
@@ -50,13 +67,36 @@
 
 - Prefill the donation amount with USD 10.11 in the Donate dialog and onboarding.
 
+## 3.0.0-pre.17
+
+- Give Team members the shared session interface with private workspaces, conversations and message history, generic waiting states, persistent capacity queues and completion feedback. Model calls use the shared proxy without creating native Codex threads.
+- Restrict account, quota, provider and administrative data to administrators; reject overlapping user folders and workspace escapes, and filter private live updates and notifications by user. Remove session ownership labels from the UI.
+
 ## 3.0.0-pre.16
 
 - Keep the message queue in one compact row with a short failure status; preserve full errors in its tooltip and dialog without a duplicate warning line.
 
+## 3.0.0-pre.15
+
+- Hide the title, subtitle, and current account details in the Dashboard tab while preserving its toolbar, quota graph, and actions.
+
 ## 3.0.0-pre.14
 
 - Always show the master username in password settings and the Change password dialog for signed-in master administrators, including remote browsers; retain local-only rotation and deny Team users, API tokens, and peer requests.
+
+## 3.0.0-pre.13
+
+- Keep session running indicators and counts on one shared confirmed cache, retain display state during refresh, and update the cache after status checks while operations verify fresh ownership.
+
+## 3.0.0-pre.12
+
+- Show the browser sign-in form when a session no longer resolves to an enabled user, preserving the return page and avoiding the expired-session JSON screen and login redirect loop.
+
+## 3.0.0-pre.11
+
+- Run scheduled storage cleanup in both VS Code and the standalone host, including unused task/comment uploads, abandoned startup uploads, expired shares/title bridges, deleted-session metadata, and confirmed-deleted shell snapshots.
+- Retain archive and native-fork attachment references, retry only committed transcript deletions, and warn when task deletion succeeds but attachment cleanup remains pending.
+- Add MCP session discovery, work status, scoped peer mailboxes, explicit acknowledgements, retry-safe message IDs, bounded retention, and automatic cleanup on confirmed session deletion.
 
 ## 3.0.0-pre.10
 
@@ -68,15 +108,32 @@
 - Keep full send failures visible above the composer and inside the queue dialog; let task conversations recheck stale status through the host like workspace chats.
 - Recheck the current connection before syncing saved task drafts so an earlier online sync cannot send after disconnecting.
 
+## 3.0.0-pre.8
+
+- Show MCP approvals, typed forms, URL requests, and verification handoffs in browser and VS Code dashboards; inherit session Auto approve for MCP approvals that need no user input.
+- Preserve completed MCP request outcomes in chat history, clear requests resolved elsewhere, and show stdin/network approval context while retaining required human review.
+
+## 3.0.0-pre.7
+
+- Redesign sign-in with Email and Password fields. Team members sign in with their email; master sign-in requires a one-time random username and the shared password.
+- Show the read-only master username below Password in VS Code and the trusted local dashboard, with inline Copy and Rotate controls and conflict feedback.
+- Add administrator Logs and Proxy views under `/manage`, with initiating user, action outcome, request status, timing, and token use. Show signed-in and session-starting users without exposing the master sign-in value.
+
 ## 3.0.0-pre.6
 
 - Add a role-gated Team settings page at `/manage`, with user editing, permissions, workspace defaults, MCP access, and SQLite/PostgreSQL configuration; redirect `/admin` to `/manage`.
 - Match the searchable settings sidebar across Team and main Settings, compact the editor tabs, and align Dashboard controls in columns.
 
+
 ## 3.0.0-pre.5
 
 - Improve compact tab spacing by context: tighter workspace and Inspector tools, roomier task/API navigation, clearer counts, and clean task selection underlines.
 - Preserve separate settings and maintenance layouts, horizontal scrolling, keyboard focus, and visible close controls on touch screens.
+
+## 3.0.0-pre.3
+
+- Redesign the responsive sign-in page with generic Username and Password fields; require a random master username saved in the shared local environment file for VS Code and standalone hosts.
+- Align the Team enable toggle with the Dashboard settings grid and add the role-gated `/manage` Team administration route (`/admin` redirects there).
 
 ## 3.0.0-pre.2
 

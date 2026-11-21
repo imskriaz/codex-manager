@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.33",
+  "version": "3.0.0-pre.34",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -214,7 +214,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 20,
-          "default": 5,
+          "default": 0,
           "markdownDescription": "Switch when remaining 5-hour quota reaches this percentage or less."
         },
         "codexManager.autoSwitchWeeklyThreshold": {

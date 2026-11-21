@@ -22,10 +22,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
 import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_WIRE_BYTES, needsChatAttachmentFiles, prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput, materializeChatAttachments } from "./codexChatAttachments";
+import { adoptCodexAttachmentFiles } from './projectTaskAttachments';
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError, type AppServerTransport } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, autoApprovePendingCodexPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
-import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
+import { readCachedSessionDisplayStatuses, recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, removeDeletedSessionCache, isConfirmedSessionDeleted } from "../storage/sqliteSessions";
 import type {
@@ -36,10 +37,11 @@ import type {
 } from "../domain/dashboard/types";
 import { runCrossWindowExclusive, runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { recordSessionInitiator, withSessionInitiator } from "./officeAudit";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
-import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
+import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, markCodexSessionManualStop, clearCodexSessionManualStop, retireCodexSessionQueue } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
@@ -277,7 +279,7 @@ export async function readCodexCliSessions(
         try { saveSessionCatalogue(store, codexHome, generation, rows, startedAt); }
         catch (error) { recordPersistentEvent("warning", "session-list", "Session cache could not be saved; live history remains available", undefined, error); }
         if (!isSessionCatalogueGenerationCurrent(store, codexHome, generation)) throw new Error('Sessions changed during discovery. Reading current history instead.');
-        return withCurrentSessionStatuses(store,codexHome,rows);
+        return withCurrentSessionStatuses(codexHome,rows);
       }).finally(() => { if (catalogueRefreshes.get(key) === work) catalogueRefreshes.delete(key); });
       catalogueRefreshes.set(key, work);
       return work;
@@ -285,7 +287,7 @@ export async function readCodexCliSessions(
     if (!force && cached && !cached.invalidated) {
       const stale = Date.now() - cached.checkedAt >= 5_000 || cached.bootAt < Date.now() - os.uptime() * 1000 - 60_000;
       if (stale) void refresh().catch(error => recordPersistentEvent("warning", "session-list", "Saved history retained while discovery retries", undefined, error));
-      return withCurrentSessionStatuses(store,codexHome,cached.rows,stale);
+      return withCurrentSessionStatuses(codexHome,cached.rows,stale);
     }
     return await refresh();
   } catch (error) {
@@ -295,8 +297,8 @@ export async function readCodexCliSessions(
   }
 }
 
-function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:DashboardCliSessionSummary[],stale = false): DashboardCliSessionSummary[] {
-  const statuses = readSessionStatuses(store,home);
+function withCurrentSessionStatuses(home:string,rows:DashboardCliSessionSummary[],stale = false): DashboardCliSessionSummary[] {
+  const statuses = readCachedSessionDisplayStatuses(home);
   const preferences = readCodexSessionPreferences(home, rows.map(row => row.id));
   const titles = readCodexSessionTitleOverrides(home, rows.map(row => row.id));
   const autoResume = isAutoResumeEnabled();
@@ -313,10 +315,10 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
       decorated.queueError = preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined);
     }
     if (row.archived) return decorated;
-    const native = getNativeCodexSessionRunning(home,row.id);
-    const current = ownsSessionTurn(home, row.id) ? "running" : native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
+    const nativeRunning = getNativeCodexSessionRunning(home, row.id);
+    const current = ownsSessionTurn(home, row.id) ? "running" : nativeRunning === undefined ? statuses.get(row.id) : nativeRunning ? "running" : "idle";
     if (current === undefined && (!stale || row.status !== "running")) return decorated;
-    const status = current === "starting" ? "unknown" : current ?? "unknown";
+    const status = current === "starting" ? "running" : current ?? "unknown";
     if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
     const canStop = status === "running" && canStopSessionTurn(home,row.id);
     return { ...decorated,status,canStop,locked:status !== "idle",
@@ -581,11 +583,10 @@ export async function readCodexCliSessionSummary(
   const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
   const nativeRunning = requireNativeRuntime === true && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId, undefined, true) : getNativeCodexSessionRunning(codexHome, sessionId);
-  const store = requireNativeRuntime === "display" ? getSqliteStateStore() : undefined;
   let recordedStatus: string | undefined;
-  try { recordedStatus = store ? readSessionStatuses(store, codexHome).get(sessionId) : undefined; }
+  try { recordedStatus = requireNativeRuntime === "display" ? readCachedSessionDisplayStatuses(codexHome).get(sessionId) : undefined; }
   catch (error) { recordPersistentEvent("debug", "session-viewer", "Cached running state unavailable; history remains readable", undefined, error); }
-  const displayStatus = ownsSessionTurn(codexHome, sessionId) || nativeRunning === true ? "running" : nativeRunning === false ? "idle" : recordedStatus;
+  const displayStatus = ownsSessionTurn(codexHome, sessionId) ? "running" : nativeRunning !== undefined ? nativeRunning ? "running" : "idle" : recordedStatus === "starting" ? "running" : recordedStatus;
   const runtimeStatus: Pick<DashboardCliSessionSummary, "status" | "statusError"> | undefined = requireNativeRuntime === "display" ? {
     status: displayStatus === "running" || displayStatus === "idle" ? displayStatus : "unknown" as const,
     statusError: displayStatus !== "running" && displayStatus !== "idle" ? "Running state is being checked. Conversation history remains available." : undefined
@@ -714,7 +715,6 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
       return;
     }
     const active = await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId), false, signal);
-    recordNativeSessionStatus(codexHome,sessionId,active);
     if (active) {
       running.add(sessionId);
     }
@@ -768,6 +768,7 @@ function mergeSessionIndexEntry(state: StateSessionRecord, indexed?: CliSessionI
 }
 
 function withStoredSessionAccess(home: string, session: DashboardCliSessionSummary, stored: CodexSessionAccess | undefined): DashboardCliSessionSummary {
+  session = withSessionInitiator(session);
   if (!stored || getNativeCodexSessionAccess(home, session.id) || (session.access?.updatedAt ?? 0) >= stored.updatedAt) return session;
   return { ...session, access: stored, sandboxMode: stored.mode };
 }
@@ -1047,7 +1048,7 @@ export async function sendCodexCliSessionMessage(options: {
   const cwd = await resolveRecordedSessionProject(options.sessionId, options.projectPath);
   options.signal?.throwIfAborted();
   const attachmentHome = resolveCodexHome();
-  options.text = await materializeChatAttachments(options.text, options.attachments, cwd, options.signal);
+  options.text = await materializeChatAttachments(options.text, options.attachments, cwd, options.signal, { home: attachmentHome, sessionId: options.sessionId });
   if (resolveCodexHome() !== attachmentHome) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   options.signal?.throwIfAborted();
   if (options.clearManualStop) clearCodexSessionManualStop(resolveCodexHome(), options.sessionId);
@@ -1103,6 +1104,7 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
     let createdId: string | undefined;
     void runNewCodexCliSession(options, (id) => {
       createdId = id;
+      try { recordSessionInitiator(id); } catch (error) { console.warn("[codexManager] session creator could not be saved", error); }
       newSessionFailures.delete(id);
       recentNewSessions.set(id, { home, summary: { id, title: options.text.trim().slice(0, 80) || "New Codex chat", model: options.model, reasoningEffort: options.reasoningEffort, runningSince: Date.now(), status: "running", canStop: true, runningBy: "Codex Manager", projectPath: resolveCliProjectPath(options.projectPath), updatedAt: new Date().toISOString(), archived: false }, text: options.text });
       if (recentNewSessions.size > 30) recentNewSessions.delete(recentNewSessions.keys().next().value!);
@@ -1169,7 +1171,8 @@ async function startAppServerSession(options: {
   const home = path.resolve(resolveCodexHome());
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
-  options.text = await materializeChatAttachments(options.text, options.attachments, cwd);
+  const pendingUpload = needsChatAttachmentFiles(options.attachments ?? []) ? randomUUID() : undefined;
+  options.text = await materializeChatAttachments(options.text, options.attachments, cwd, undefined, pendingUpload ? { home, sessionId: pendingUpload, pending: true } : undefined);
   if (path.resolve(resolveCodexHome()) !== home) throw new Error("The Codex home changed while storing attachments. Refresh before sending.");
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
@@ -1189,6 +1192,8 @@ async function startAppServerSession(options: {
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
     if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
     threadId = candidateThreadId;
+    if (path.resolve(resolveCodexHome()) !== home) throw new Error('The Codex home changed while starting the conversation. No message was sent.');
+    if (pendingUpload) adoptCodexAttachmentFiles(home, pendingUpload, threadId);
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => isAppServerTurnCancelled(threadId!));
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, threadId);
     const applied = await syncCodexSessionAccess(rpc, threadId, { ...sessionAccessSettings(options.sandboxMode!, cwd), ...(options.autoApprove !== undefined ? { approvalPolicy: options.autoApprove ? "never" : "on-request" } : {}) }, result);
@@ -1247,6 +1252,14 @@ async function sendAppServerSessionMessage(options: {
 }, cwd: string, onAttempt?: (attempted: boolean) => void, home = resolveCodexHome()): Promise<'steered' | void> {
   const standalone = vscode.env.appHost === 'node';
   if (standalone) options = { ...options, sandboxMode: 'danger-full-access', preferPrivate: true };
+  // Guidance uses the owner's connection; its running turn already holds the mutation lease.
+  const owned = activeAppServerTurns.get(options.sessionId);
+  const steerTurnId = owned?.home === path.resolve(home) ? owned.turnId : undefined;
+  if (steerTurnId && !isAppServerTurnSettling(home, options.sessionId) && !options.interruptedOnly && !options.goalContinuation) {
+    await steerCodexCliSessionTurnOnce({ sessionId: options.sessionId, text: options.text, attachments: options.attachments?.filter(file => file.kind === 'image'), expectedTurnId: steerTurnId, projectPath: cwd }, onAttempt ?? (() => undefined), options.signal);
+    options.onStarted?.();
+    return 'steered';
+  }
   return runCliSessionMutation(options.sessionId, "Codex turn", async (): Promise<'steered' | void> => {
   options.signal?.throwIfAborted();
   if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
@@ -1264,6 +1277,7 @@ async function sendAppServerSessionMessage(options: {
   finally { inspection.abort(); }
   options.signal?.throwIfAborted();
   if (resolveCodexHome() !== activeHome) throw new Error('The Codex home changed. Your message was not sent.');
+  recordNativeSessionStatus(activeHome,options.sessionId,running);
   if (running) {
     const nativeRunning = await readNativeCodexSessionRunning(activeHome, options.sessionId, options.signal, true);
     options.signal?.throwIfAborted();
@@ -1281,7 +1295,7 @@ async function sendAppServerSessionMessage(options: {
       ? "Codex is running, but its active turn could not be verified. Your message was kept; refresh the session and retry or queue it until the turn finishes."
       : "The session has a live writer, but its Codex owner could not be reached. Your message was kept; open the original Codex window and retry.");
   }
-  if (wasRunning === true) publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: 'Stale session state was cleared. Sending your message.' });
+  if (wasRunning === true) recordPersistentEvent('info', 'session-send', 'Stale session state cleared before sending', { sessionRef: toSessionLogRef(options.sessionId) });
   const savedAccess = standalone ? readSavedCodexSessionAccess(resolveCodexHome(), options.sessionId)?.access : undefined;
   const standaloneApproval = savedAccess?.mode === 'danger-full-access' ? savedAccess.approvalPolicy ?? 'never' : 'never';
   const params = {
@@ -1608,7 +1622,7 @@ async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCode
   if (active) {
     if (active.home !== path.resolve(home) || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
     if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
-    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal) : prepared.text;
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal, { home, sessionId }) : prepared.text;
     signal?.throwIfAborted();
     if (resolveCodexHome() !== home || active.cancelRequested || active.turnId !== options.expectedTurnId) throw new Error("The active Codex turn changed. Refresh before sending guidance.");
     if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop) throw new Error('This session was explicitly stopped. Your follow-up was not sent.');
@@ -1628,7 +1642,7 @@ async function steerCodexCliSessionTurnOnce(options: Parameters<typeof steerCode
   const nativeTurnId = getNativeCodexSessionTurnId(home, sessionId);
   if (nativeTurnId) {
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
-    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal) : prepared.text;
+    const text = needsChatAttachmentFiles(prepared.attachments) ? await materializeChatAttachments(prepared.text, prepared.attachments, await resolveRecordedSessionProject(sessionId, options.projectPath), signal, { home, sessionId }) : prepared.text;
     signal?.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Refresh before sending guidance.");
     onAttempt(true);
@@ -2295,6 +2309,15 @@ function parseAppServerThreadItem(
           timestamp
         }
       : undefined;
+  }
+  if (type === "mcpServerElicitation") {
+    const params = item["params"] && typeof item["params"] === "object" ? item["params"] as Record<string, unknown> : {};
+    const completed = item["completed"] === true;
+    const action = item["action"];
+    const outcome = action === "accept" ? "Accepted" : action === "decline" ? "Declined" : action === "cancel" ? "Cancelled" : completed ? "Completed" : "Awaiting response";
+    return { id, kind: "tool-call", title: completed ? "Completed request" : "MCP request", subtitle: typeof params["serverName"] === "string" ? params["serverName"] : "MCP",
+      text: typeof params["message"] === "string" ? params["message"].slice(0, MAX_SESSION_MESSAGE_CHARS) : typeof params["description"] === "string" ? params["description"].slice(0, MAX_SESSION_MESSAGE_CHARS) : "MCP server requested user input.",
+      result: outcome, status: completed ? "completed" : "inProgress", timestamp };
   }
   if (type === "reasoning") {
     const summary = readStringArray(item["summary"]);
@@ -3369,7 +3392,12 @@ async function isCliSessionRunning(
 ): Promise<boolean> {
   return createSharedInspection(
     `codex-session-status:${path.resolve(codexHome)}:${sessionId}:${liveRunning ? "live" : "disk"}`,
-    (inspectionSignal) => inspectCliSessionRunning(codexHome, sessionId, knownTranscriptPath, liveRunning, inspectionSignal),
+    async (inspectionSignal) => {
+      const running = await inspectCliSessionRunning(codexHome, sessionId, knownTranscriptPath, liveRunning, inspectionSignal);
+      inspectionSignal.throwIfAborted();
+      recordNativeSessionStatus(codexHome,sessionId,running);
+      return running;
+    },
     signal,
     // Allow the bounded file reads, native IPC, and Windows probe to finish.
     25_000
@@ -4355,6 +4383,9 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       McpToolCall: "mcpToolCall",
       mcpToolCall: "mcpToolCall",
       mcp_tool_call: "mcpToolCall",
+      McpServerElicitation: "mcpServerElicitation",
+      mcpServerElicitation: "mcpServerElicitation",
+      mcp_server_elicitation: "mcpServerElicitation",
       CustomToolCall: "customToolCall",
       customToolCall: "customToolCall",
       custom_tool_call: "customToolCall",

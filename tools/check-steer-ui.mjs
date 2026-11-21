@@ -3,6 +3,12 @@ import path from 'node:path';
 
 export async function checkInlineQueueUi(page, { origin, parentId, output, width }) {
   const started = performance.now();
+  if (process.argv.includes('--queue-storage-fallback')) await page.addInitScript(sessionId => {
+    const scope = JSON.stringify(['fixture-local', 'session', sessionId]);
+    const key = `codex-manager-cache:recovery:browser:message-queue:${scope}`;
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ updatedAt: Date.now(), value: [] }));
+    Object.defineProperty(window, 'indexedDB', { configurable: true, value: { open() { throw new DOMException('Storage unavailable', 'UnknownError'); } } });
+  }, parentId);
   await page.goto(`${origin}/workspace/${parentId}`);
   const input = page.getByRole('textbox', { name: 'Message Codex', exact: true });
   await input.waitFor();
@@ -22,6 +28,14 @@ export async function checkInlineQueueUi(page, { origin, parentId, output, width
   await second.getByRole('button', { name: /Steer$/ }).waitFor();
   assert.equal(await rows.count(), 2, 'Every waiting message has an inline row');
   assert.equal(await first.isVisible(), true);
+  assert.equal(await first.evaluate(row => row.open), false, 'Queue rows start collapsed');
+  assert.ok(await first.locator('summary').evaluate(row => row.getBoundingClientRect().height >= 42), 'Queue controls have comfortable spacing');
+  assert.equal(await page.locator('.cli-local-queue-status').count(), 0, 'Routine queue status has no message row');
+  await page.evaluate(() => { Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false }); window.dispatchEvent(new Event('blur')); });
+  assert.equal(await first.isVisible(), true, 'Moving focus never hides a pending queue');
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
+  assert.equal(await first.isVisible(), true, 'Background visibility changes retain queued messages');
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
   assert.equal(await page.locator('.cli-local-queue-summary, .cli-queue-modal').count(), 0, 'No summary or modal hides queued messages');
   assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').length), 0, 'Queue mode waits for explicit steering');
   assert.ok(await first.evaluate(row => row.getBoundingClientRect().bottom <= document.querySelector('.cli-composer').getBoundingClientRect().top), 'Queue rows sit above the composer');
@@ -29,6 +43,7 @@ export async function checkInlineQueueUi(page, { origin, parentId, output, width
   assert.equal(await first.evaluate(row => row.open), true, 'Full text expands inline');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Queue rows fit the viewport');
   await page.screenshot({ path: path.join(output, `queue-inline-${width}.png`), animations: 'disabled' });
+  await first.locator(':scope > summary').click();
   await second.getByRole('button', { name: 'Edit queued message', exact: true }).click();
   await second.waitFor({ state: 'hidden' });
   assert.equal(await input.inputValue(), 'Second queued message', 'Edit restores the draft');
@@ -39,14 +54,40 @@ export async function checkInlineQueueUi(page, { origin, parentId, output, width
   await page.evaluate(() => { window.__holdNextSteer = true; window.__heldSteerResult = undefined; });
   await first.getByRole('button', { name: /Steer$/ }).click();
   await page.waitForFunction(() => window.__heldSteerResult);
+  assert.equal(await first.isVisible(), true, 'A sending queue remains visible until delivery is confirmed');
+  await first.locator('.cli-live-spinner').waitFor();
   await page.locator('.cli-session-message.is-user').filter({ hasText: 'First queued message' }).waitFor();
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSteerResult, status: 'failed', error: 'Steering could not be confirmed. Check before retrying.' } })));
   await first.getByRole('alert').waitFor();
-  assert.equal(await first.evaluate(row => row.open), true, 'Failed steering expands the full error automatically');
+  assert.equal(await page.locator('.dashboard-notice').filter({ hasText: 'Steering could not be confirmed.' }).count(), 0, 'Queue delivery feedback stays in its status tools without a toast');
+  assert.equal(await first.evaluate(row => row.open), false, 'Failure does not expand a row without user action');
+  assert.equal(await first.getByRole('alert').getAttribute('title'), 'Steering could not be confirmed. Check before retrying.', 'The error is available on the warning icon');
   await first.getByRole('button', { name: 'Resend queued message', exact: true }).waitFor();
   assert.equal(await input.inputValue(), 'Keep my newer draft', 'Steering and failure preserve newer input');
   assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').length), 1, 'Explicit steering dispatches once');
   await page.screenshot({ path: path.join(output, `queue-inline-failure-${width}.png`), animations: 'disabled' });
+  const sidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+  if (await sidebar.isVisible()) await sidebar.click();
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('menu', { name: 'Account menu', exact: true }).getByRole('menuitem', { name: 'Tools', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Tools', exact: true }).getByRole('button', { name: /Queue status/ }).click();
+  const tools = page.getByRole('dialog', { name: 'Queue status', exact: true });
+  await tools.getByText('1 queue · 1 message', { exact: true }).waitFor();
+  await tools.getByRole('button', { name: 'Fix queues', exact: true }).click();
+  await tools.getByText(/Checked 1 queue/).waitFor();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(item => item.action === 'steerCodexCliSessionTurn').length), 1, 'Fix never replays an ambiguous delivery');
+  await tools.locator('details > summary').click();
+  await tools.getByText('Steering could not be confirmed. Check before retrying.', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, `queue-tools-${width}.png`), animations: 'disabled' });
+  await tools.getByRole('button', { name: 'Clear all', exact: true }).click();
+  await tools.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(await rows.count(), 1, 'Cancelling Clear all preserves queued messages');
+  await tools.getByRole('button', { name: 'Clear all', exact: true }).click();
+  await tools.getByRole('button', { name: 'Confirm clear all', exact: true }).click();
+  await tools.getByText('0 queues · 0 messages', { exact: true }).waitFor();
+  await tools.getByRole('button', { name: 'Close tools', exact: true }).click();
+  assert.equal(await rows.count(), 0, 'Clear all updates the initiating queue immediately');
+  assert.equal(await input.inputValue(), 'Keep my newer draft', 'Tools preserve the current composer draft');
   console.log(`${width}px inline queue controls verified in ${Math.round(performance.now() - started)}ms`);
 }
 

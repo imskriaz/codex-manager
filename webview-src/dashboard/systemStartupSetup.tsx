@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardHostMessage } from '../../src/domain/dashboard/types';
 import type { SendAction } from './hookTypes';
 import { SettingsToggleBlock } from './components';
-import { ModalShell } from './primitives';
 
 export function SystemStartupSetting(props: {
   enabled: boolean; connected: boolean; parentOpen: boolean; targetDeviceId?: string; targetName: string;
@@ -41,8 +40,8 @@ export function SystemStartupSetting(props: {
       enabled={props.enabled} disabled={busy}
       onToggle={enabled => { setError(''); setNotice(''); if (enabled) setOpen(true); else props.onDisable(); }} />
     {notice ? <div class="settings-note" role="status">{notice}</div> : null}
-    <ModalShell open={props.parentOpen && open} title="Set up Windows boot startup" closeLabel="Cancel startup setup" className="action-confirmation-modal"
-      closeDisabled={busy} onClose={cancel}>
+    {props.parentOpen && open ? <section class="settings-inline-confirm" aria-label="Set up Windows boot startup">
+      <strong>Windows boot startup</strong>
       <p>Set up startup on <strong>{props.targetName}</strong>. The switch stays off until Windows confirms registration.</p>
       <ol><li>On this PC, close VS Code and reopen it using <strong>Run as administrator</strong>.</li>
         <li>Open Codex Manager settings again and choose <strong>Start with system</strong>.</li>
@@ -52,6 +51,6 @@ export function SystemStartupSetting(props: {
       {busy ? <p role="status">Registering and verifying Windows boot startup…</p> : null}
       <div class="modal-actions"><button type="button" disabled={busy} onClick={cancel}>Cancel</button>
         <button type="button" class="primary" disabled={busy || !props.connected} onClick={verify}>{busy ? 'Verifying…' : 'Verify and enable'}</button></div>
-    </ModalShell>
+    </section> : null}
   </>;
 }

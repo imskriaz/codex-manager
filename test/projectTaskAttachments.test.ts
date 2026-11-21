@@ -40,6 +40,7 @@ const draft = {
   uploads: [upload]
 };
 const folder = () => join(root, "manager", "attachments", projectTaskKey(root));
+const owner = () => ({ home: root, sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
 beforeEach(async () => {
   lease.signal = undefined;
   root = await fs.mkdtemp(join(tmpdir(), "manager-task-attachments-"));
@@ -250,15 +251,15 @@ it('stores a large text upload as a verified private file reference without putt
   const { materializeChatAttachments } = await import('../src/services/codexChatAttachments');
   const data = 'Large source file\n'.repeat(4000), files = validateChatAttachments([{ ...upload, data }]);
   const prepared = prepareChatInput('Read the source', files);
-  const input = await materializeChatAttachments(prepared.text, files, root);
+  const input = await materializeChatAttachments(prepared.text, files, root, undefined, owner());
   expect(input.length).toBeLessThan(1000); expect(input).not.toContain(data);
   const match = input.match(/"brief.md": ("[^\n]+")/);
   const saved = JSON.parse(match![1]!) as string;
   expect(await fs.readFile(saved, 'utf8')).toBe(data);
   expect(saved.startsWith(join(root, 'manager', 'attachments'))).toBe(true);
-  expect(await materializeChatAttachments(prepared.text, files, root)).toBe(input);
+  expect(await materializeChatAttachments(prepared.text, files, root, undefined, owner())).toBe(input);
   const abort = new AbortController(); abort.abort();
-  await expect(materializeChatAttachments(prepared.text, files, root, abort.signal)).rejects.toThrow();
+  await expect(materializeChatAttachments(prepared.text, files, root, abort.signal, owner())).rejects.toThrow();
 });
 
 it('stores and restores arbitrary document bytes for task upload, model input and download', async () => {
@@ -269,7 +270,7 @@ it('stores and restores arbitrary document bytes for task upload, model input an
   const { materializeChatAttachments } = await import('../src/services/codexChatAttachments');
   const { prepareChatInput } = await import('../src/domain/chatAttachments');
   const prepared = prepareChatInput('Read the document', [input]);
-  const prompt = await materializeChatAttachments(prepared.text, prepared.attachments, root);
+  const prompt = await materializeChatAttachments(prepared.text, prepared.attachments, root, undefined, owner());
   const match = prompt.match(/"report.docx": ("[^\n]+")/);
   expect(await fs.readFile(JSON.parse(match![1]!) as string)).toEqual(Buffer.from('UEsDBA==','base64'));
   expect(prompt).not.toContain(file.data);

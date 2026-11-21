@@ -20,6 +20,7 @@ import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqli
 import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 import { moveCodexCliSession, resolveRecordedSessionProject } from '../src/services/codexSessionResume';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
+import { saveSessionStatus } from '../src/storage/sqliteSessions';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -387,7 +388,7 @@ describe("native App Server new sessions", () => {
     expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ queue: true, priority: 3, autoResume: false });
     rpc.request.mockResolvedValueOnce({} as never);
     await mutate(id);
-    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ queue: false, autoResume: false });
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject(operation === 'delete' ? {} : { queue: false, autoResume: false });
     expect(readCodexSessionPreferences(root, [id]).get(id)?.priority).toBeUndefined();
   });
 
@@ -538,6 +539,7 @@ describe("native App Server new sessions", () => {
       if (scenario === 'active') {
         vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
         vi.mocked(getNativeCodexSessionTurnId).mockReturnValue("restored-turn");
+        saveSessionStatus(preferenceStore,root,id,'running');
         expect((await readCodexCliSessionSummary(id, root, "display"))?.steerTurnId).toBe("restored-turn");
         vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
         vi.mocked(getNativeCodexSessionTurnId).mockReturnValue(undefined);
@@ -830,7 +832,7 @@ describe("native App Server new sessions", () => {
       expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(root, id, expect.any(AbortSignal), true);
       expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
       expect(accepted).toHaveBeenCalledOnce();
-      expect(notices).toContainEqual(expect.objectContaining({ level: 'warning', message: expect.stringContaining('Stale session state') }));
+      expect(notices).toEqual([]);
       expect(steerNativeCodexSessionTurn).not.toHaveBeenCalled();
     } finally { unsubscribe(); }
   });
@@ -1012,6 +1014,25 @@ describe("native App Server new sessions", () => {
       expect(mocks.spawn).not.toHaveBeenCalled();
       expect(rpc.close).toHaveBeenCalled();
     } finally { Object.assign(vscode.workspace, { workspaceFolders: previousFolders }); }
+  });
+  it('steers a normal follow-up through the owned connection while its turn holds the mutation lease', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    let finish!: () => void;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    const rpc = { request: vi.fn(async (method: string) => method === 'turn/steer' ? { turnId: 'held-turn' } : { thread: { id } }), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('held-turn'); await completed; }) };
+    mocks.open.mockResolvedValue(rpc);
+    const first = sendCodexCliSessionMessage({ sessionId: id, text: 'Initial message' });
+    const accepted = vi.fn();
+    try {
+      await vi.waitFor(() => expect(getCodexSessionLiveState(id)?.turnId).toBe('held-turn'));
+      vi.mocked(readNativeCodexSessionRunning).mockImplementation(async () => { throw new Error('Optional native discovery must not block owned guidance'); });
+      await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Follow up immediately', onStarted: accepted })).resolves.toBe('steered');
+      expect(accepted).toHaveBeenCalledOnce();
+      expect(rpc.request).toHaveBeenCalledWith('turn/steer', expect.objectContaining({ threadId: id, expectedTurnId: 'held-turn' }));
+      expect(mocks.open).toHaveBeenCalledOnce();
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+    } finally { finish(); await first; }
   });
   it("steers only the expected owned turn through its existing connection", async () => {
     let finish!: () => void;

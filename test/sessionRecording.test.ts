@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
-import { readSessionDiscovery, readSessionStatus, saveSessionDiscovery } from "../src/storage/sqliteSessions";
-import { disposeSessionRecording, recordNativeSessionStatus, registerSessionRecording, recordSessionLive, flushSessionRecording, readRecordedSessionAccount } from "../src/services/sessionRecording";
+import { readSessionDiscovery, readSessionStatus, readSessionStatuses, saveSessionDiscovery, saveSessionStatus } from "../src/storage/sqliteSessions";
+import { disposeSessionRecording, recordNativeSessionStatus, registerSessionRecording, recordSessionLive, flushSessionRecording, readRecordedSessionAccount, readCachedSessionDisplayStatuses } from "../src/services/sessionRecording";
 import * as sessions from "../src/services/codexSessionResume";
 import * as nativeFs from "node:fs";
 import { EventEmitter } from "node:events";
@@ -18,6 +18,52 @@ vi.mock("../src/utils/crossWindowOperations", async importOriginal => {
 });
 
 const id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+it.each([true,false])('retains confirmed display state across pending and persisted unknown checks (%s)', running => {
+  recordNativeSessionStatus(root,id,running);
+  recordNativeSessionStatus(root,id,undefined);
+  const expected = running ? 'running' : 'idle';
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe(expected);
+  expect(readCachedSessionDisplayStatuses(path.join(root,'other')).has(id)).toBe(false);
+  flushSessionRecording();
+  expect(readSessionStatus(store,root,id)).toBe('unknown');
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe(expected);
+  vi.setSystemTime(Date.now()+31_000);
+  expect(readSessionStatuses(store,root).has(id)).toBe(false);
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe(running ? 'unknown' : 'idle');
+  recordNativeSessionStatus(root,id,!running);
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe(running ? 'idle' : 'running');
+  flushSessionRecording();
+  expect(readSessionStatus(store,root,id)).toBe(running ? 'idle' : 'running');
+});
+it('does not renew running display authority when pending unknown checks are flushed', () => {
+  recordNativeSessionStatus(root,id,true);
+  vi.setSystemTime(Date.now()+20_000);
+  recordNativeSessionStatus(root,id,undefined);
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe('running');
+  flushSessionRecording();
+  vi.setSystemTime(Date.now()+10_000);
+  recordNativeSessionStatus(root,id,undefined);
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe('unknown');
+  flushSessionRecording();
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe('unknown');
+});
+it('expires buffered running status even when persistence has not completed', () => {
+  recordNativeSessionStatus(root,id,true);
+  vi.setSystemTime(Date.now()+30_000);
+  recordNativeSessionStatus(root,id,undefined);
+  expect(readCachedSessionDisplayStatuses(root).get(id)).toBe('unknown');
+});
+it('shares confirmed display state across database connections without trusting it for actions', async () => {
+  saveSessionStatus(store,root,id,'running');
+  saveSessionStatus(store,root,id,'unknown');
+  const peer = await SqliteStateStore.open(path.join(root,'manager.sqlite'));
+  try {
+    expect(readSessionStatuses(peer,root,true).get(id)).toBe('running');
+    expect(readSessionStatuses(peer,root).get(id)).toBe('unknown');
+    saveSessionStatus(peer,root,id,'idle');
+    expect(readCachedSessionDisplayStatuses(root).get(id)).toBe('idle');
+  } finally { peer.close(); }
+});
 let root:string,store:SqliteStateStore;
 let subscriptions:Array<{dispose():void}>;
 beforeEach(async()=>{

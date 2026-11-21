@@ -63,7 +63,7 @@ export class ExtensionSettingsStore {
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", true),
       autoResumeEnabled: isAutoResumeEnabled(config),
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
-      autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
+      autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 0)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0), 0),
       autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", true),
       autoResetEnabled: config.get<boolean>("autoResetEnabled", true),

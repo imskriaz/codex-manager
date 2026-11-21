@@ -138,7 +138,7 @@ export async function handleDashboardSettingUpdate(
     case "autoSwitchHourlyThreshold":
     case "autoSwitchWeeklyThreshold":
       if (typeof value === "number") {
-        await updateDashboardConfiguration(config, key, normalizeAutoSwitchThreshold(value, key === "autoSwitchWeeklyThreshold" ? 0 : 5), target);
+        await updateDashboardConfiguration(config, key, normalizeAutoSwitchThreshold(value, 0), target);
         updated = true;
       }
       break;

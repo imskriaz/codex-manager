@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteStateStore, configureSqliteStateStore } from '../src/storage/sqliteState';
-import { deleteCodexSessionFromStorage } from '../src/services/codexSessionStorageDelete';
+import { deleteCodexSessionFromStorage, retryDeletedSessionFileCleanup } from '../src/services/codexSessionStorageDelete';
 import { removeTestDirectory } from './testFilesystem';
 let home: string, db: DatabaseSync, store: SqliteStateStore, file: string;
 const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -59,4 +59,33 @@ it('does not delete a replaced transcript during a cleanup retry', async () => {
   vi.restoreAllMocks(); await writeFile(file, 'new writer data must be kept');
   await expect(deleteCodexSessionFromStorage(home, id, true)).rejects.toThrow('transcript changed');
   expect((await stat(file)).size).toBe(28);
+});
+
+it('automatically finishes committed file cleanup but never replays a rolled-back deletion', async () => {
+  db.exec('BEGIN IMMEDIATE');
+  await expect(deleteCodexSessionFromStorage(home, id, true)).rejects.toThrow();
+  db.exec('ROLLBACK');
+  expect(store.keys('session-file-cleanup')).toHaveLength(1);
+  await retryDeletedSessionFileCleanup(home, new AbortController().signal);
+  expect(db.prepare('SELECT id FROM threads WHERE id=?').get(id)).toBeDefined();
+  expect((await stat(file)).size).toBeGreaterThan(0);
+  const original = store.set.bind(store);
+  vi.spyOn(store, 'set').mockImplementation((namespace, key, value) => { if (namespace === 'deleted-codex-sessions') throw new Error('Storage full'); original(namespace, key, value); });
+  await expect(deleteCodexSessionFromStorage(home, id, true)).rejects.toThrow('Storage full');
+  vi.restoreAllMocks();
+  await retryDeletedSessionFileCleanup(home, new AbortController().signal);
+  expect(store.keys('session-file-cleanup')).toEqual([]);
+  await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('removes shell snapshots only for confirmed deleted sessions', async () => {
+  const folder = path.join(home, 'shell_snapshots'); await mkdir(folder);
+  const deleted = path.join(folder, `${id}.ps1`), active = path.join(folder, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.sh');
+  await writeFile(deleted, 'deleted session'); await writeFile(active, 'active session');
+  await retryDeletedSessionFileCleanup(home, new AbortController().signal);
+  expect((await stat(deleted)).size).toBeGreaterThan(0);
+  await deleteCodexSessionFromStorage(home, id, true);
+  await retryDeletedSessionFileCleanup(home, new AbortController().signal);
+  await expect(stat(deleted)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect((await stat(active)).size).toBeGreaterThan(0);
 });

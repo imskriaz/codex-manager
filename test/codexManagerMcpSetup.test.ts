@@ -67,6 +67,13 @@ describe('automatic Codex Manager MCP setup', () => {
     await setupCodexManagerMcp(context, true);
     expect(mocks.create).not.toHaveBeenCalled();
   });
+  it.each([['coordinateCodexSessions'], ['workspacePanel', 'coordinateCodexSessions']])('upgrades the exact historical automatic grant missing %s', async (...missing: string[]) => {
+    owned();
+    const record = { id: 'token-id', name: 'Codex Manager MCP (automatic)', permissions: ['state', ...PROJECT_API_ACTIONS].filter(permission => !missing.includes(permission)) };
+    mocks.read.mockResolvedValue(record);
+    await setupCodexManagerMcp(context, true);
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith(context, expect.objectContaining({ id: record.id, expected: record, permissions: [...record.permissions, ...['state', ...PROJECT_API_ACTIONS].filter(permission => !record.permissions.includes(permission))] }));
+  });
   it('does not silently re-enable explicitly disabled API access after setup', async () => {
     owned(); mocks.config.get.mockImplementation((key, fallback) => key === 'apiAccessEnabled' ? false : fallback);
     await expect(setupCodexManagerMcp(context, true)).rejects.toThrow('Enable them');

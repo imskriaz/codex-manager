@@ -1,4 +1,3 @@
-import { userWorkspaceNotice } from './userWorkspacePresentation';
 import { retainOfflineAccounts } from './offlinePolicy';
 import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
@@ -132,7 +131,6 @@ import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 import { ConnectionRecovery, receiveReload, reconcileReloads, reloadStage, type Reloads, type ConnectionStage } from './connectionRecovery';
 
-import { TeamManagementPage } from './teamManagementPage';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 type AccountSort =
@@ -158,11 +156,7 @@ function isCliSessionsPath(pathname: string): boolean {
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/" || pathname === "/tasks" || pathname === "/manage" || pathname === "/admin" || apiViewFromPath(pathname) !== undefined || isCliSessionsPath(pathname);
-}
-
-function isTeamManagementPath(pathname: string): boolean {
-  return pathname === "/manage" || pathname === "/admin";
+  return pathname === "/" || pathname === "/tasks" || apiViewFromPath(pathname) !== undefined || isCliSessionsPath(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -231,6 +225,10 @@ function App() {
     try { window.localStorage.setItem(WEBVIEW_ZOOM_STORAGE_KEY, String(value)); } catch { /* optional persistence */ }
   }, [isBrowserDashboard, webviewZoom]);
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+  const [initialSettingsSection] = useState(() => isBrowserDashboard ? new URLSearchParams(window.location.search).get("settings") ?? undefined : undefined);
+  useEffect(() => {
+    if (initialSettingsSection) dispatch({ type: "open-settings" });
+  }, [initialSettingsSection]);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
@@ -492,7 +490,6 @@ function App() {
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardLocalNotice) => {
-      if(document.documentElement.dataset["dashboardUser"])next={...next,message:userWorkspaceNotice(next.message)};
       if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info") return;
       noticeControllerRef.current?.show(next);
@@ -654,11 +651,6 @@ function App() {
   }, [snapshot?.office?.role]);
   useEffect(() => {
     if (snapshot?.office?.role === "user" && isBrowserDashboard && ["/", "/tasks"].includes(browserPath)) navigateDashboardPath("/workspace", setBrowserPath);
-  }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
-  useEffect(() => {
-    if (!isBrowserDashboard || !isTeamManagementPath(browserPath)) return;
-    if (browserPath === "/admin") replaceDashboardPath("/manage", setBrowserPath);
-    else if (snapshot?.office?.role === "user") replaceDashboardPath("/workspace", setBrowserPath);
   }, [snapshot?.office?.role, isBrowserDashboard, browserPath]);
   const localCacheSystemId = snapshot?.office?.role === "user" ? `user:${snapshot.office.id}` : snapshot?.connectedPeers?.find(peer => peer.local)?.id;
   bindBrowserCacheSystem(localCacheSystemId);
@@ -1307,7 +1299,6 @@ function App() {
         steerRequests.current.delete(message.requestId);
         if (!target) return;
         if (message.status === "completed" && !message.payload?.cliSession) {
-          showCliSessionFeedback({ key: Date.now(), level: "warning", message: "The send response was incomplete. Your draft is saved; refresh the original conversation before sending again." });
           if (sameCliSessionTarget(target, currentSessionTarget())) requestCliSessionMessages(target.id, target.deviceId, true);
           return;
         }
@@ -1316,7 +1307,6 @@ function App() {
             if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current, message.payload?.cliSessionsDeviceId), cliLiveStatesRef.current));
             if (message.payload?.cliSessionMessages) void writeCliSessionMessagesCache(target.id, message.payload.cliSessionMessages, target.deviceId);
           }
-          showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : formatSessionReadError(message.action, message.error ?? "The turn in the original chat did not complete. Return to that chat and retry.") });
           return;
         }
         messageViewRevision.current++;
@@ -1337,14 +1327,8 @@ function App() {
               : selectedCliSession
           );
           setCliSessionMessagesError(undefined);
-          showCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Codex completed the turn." }) });
         } else {
-          const level = message.status === "cancelled" ? "warning" : "error";
-          showCliSessionFeedback({
-            key: Date.now(),
-            level,
-            message: formatSessionReadError(message.action, message.error ?? "Codex could not complete the turn.")
-          });
+
           if (selectedCliSession) requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true);
         }
       }
@@ -1375,13 +1359,9 @@ function App() {
         turnRequests.current.delete(message.requestId);
         steerRequests.current.delete(message.requestId);
         if (target && !sameCliSessionTarget(target, currentSessionTarget())) {
-          if (message.status !== "completed") {
-            showCliSessionFeedback({ key: Date.now(), level: message.status === "cancelled" ? "warning" : "error", message: formatSessionReadError(message.action, message.error ?? "The follow-up could not be confirmed in the original chat.") });
-          }
           return;
         }
         if (target && message.status === 'completed') requestCliSessionMessages(target.id, target.deviceId, true);
-        showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? formatSessionReadError(message.action, message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.")) });
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
         showCliSessionFeedback({
@@ -2840,7 +2820,7 @@ function App() {
               <span id="dashboard-sidebar-toggle-slot" class="content-sidebar-slot" />
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />
               <div class="brand-copy">
-                <h1>Codex Manager <span class="brand-version" aria-label={`Version ${packageJson.version}`}>v{packageJson.version}</span></h1>
+                <h1><span class="brand-name">Codex Manager</span><span class="brand-version" aria-label={`Version ${packageJson.version}`}>v{packageJson.version}</span></h1>
                 <p>{brandSubtitle}</p>
               </div>
             </div>
@@ -3089,7 +3069,7 @@ function App() {
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div>
-        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen ? (isTeamManagementPath(browserPath) ? (snapshot.office && snapshot.office.role !== "user" ? <TeamManagementPage /> : null) : snapshot.office?.role === "user" ? null : dashboardContent) : null}
+        {!dashboardTarget && browserPath !== '/tasks' && !apiTokenOpen && snapshot.office?.role !== "user" ? dashboardContent : null}
         </fieldset>
       </main>
 
@@ -3101,6 +3081,7 @@ function App() {
         onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
         crossPcSyncPending={isActionPending("setCrossPcSyncEnabled")}
         open={state.settingsOpen}
+        initialSection={initialSettingsSection}
         copy={snapshot.copy}
         lang={snapshot.lang}
         settings={snapshot.settings}
@@ -3124,7 +3105,19 @@ function App() {
         onClearCodexAppPath={() => postMessageToHost({ type: "dashboard:clearCodexAppPath" })}
         onClearUsageHistory={() => { sendAction('clearUsageHistory',undefined,{targetDeviceId:selectedPeerId}); }}
         onExportBackup={handleExportBackup}
-        onShowLogs={() => setLogConsoleOpen(true)}
+        onShowLogs={() => setLogConsoleOpen(current => !current)}
+        logConsole={logConsoleOpen ? (<section class="log-console-inline" aria-label="System Log">
+<button class="settings-action-btn" type="button" onClick={() => setLogConsoleOpen(false)}>Close log</button>
+        <div class="settings-note">Recent redacted logs load when opened. Use Refresh to query again.</div>
+        {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
+        {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
+        <SystemLogConsole records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
+        <div class="settings-actions">
+          <button class="settings-action-btn" type="button" disabled={isActionPending("viewLogs")} onClick={refreshLogConsole}>Refresh</button>
+          <button class="settings-action-btn" type="button" disabled={isActionPending("downloadLogs")} onClick={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}>Download</button>
+          <button class="settings-action-btn" type="button" disabled={isActionPending("clearLogs")} onClick={() => sendAction("clearLogs")}>{isActionPending("clearLogs") ? "Clearing…" : "Clear"}</button>
+        </div>
+      </section>) : null}
         sendAction={sendAction}
         targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
         targetName={getSensitiveDisplayValue(selectedPeer?.name ?? "This system", state.privacyMode, "name")}
@@ -3136,19 +3129,9 @@ function App() {
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />
 
-      <ModalShell open={logConsoleOpen} title="System Log" closeLabel={snapshot.copy.closeModal} onClose={() => setLogConsoleOpen(false)} className="log-console-modal">
-        <div class="settings-note">Recent redacted logs load when opened. Use Refresh to query again.</div>
-        {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
-        {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
-        <SystemLogConsole records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
-        <div class="settings-actions">
-          <button class="settings-action-btn" type="button" disabled={isActionPending("viewLogs")} onClick={refreshLogConsole}>Refresh</button>
-          <button class="settings-action-btn" type="button" disabled={isActionPending("downloadLogs")} onClick={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}>Download</button>
-          <button class="settings-action-btn" type="button" disabled={isActionPending("clearLogs")} onClick={() => sendAction("clearLogs")}>{isActionPending("clearLogs") ? "Clearing…" : "Clear"}</button>
-        </div>
-      </ModalShell>
 
-      {isBrowserDashboard && !isCliSessionsPath(browserPath) && !isTeamManagementPath(browserPath) && !state.settingsOpen && <BrowserNotifications offerOnLoad />}
+
+      {isBrowserDashboard && !isCliSessionsPath(browserPath) && !state.settingsOpen && <BrowserNotifications offerOnLoad />}
       <OnboardingModal
         open={onboardingOpen}
         step={onboardingStep}
@@ -3242,7 +3225,7 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) && !isTeamManagementPath(browserPath)
+      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
               officeUser={snapshot.office?.role === "user" ? snapshot.office : undefined}

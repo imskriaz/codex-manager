@@ -56,11 +56,13 @@ export async function setupCodexManagerMcp(context: vscode.ExtensionContext, aut
       token = undefined;
     }
     // Upgrade only our unchanged automatic grant; never broaden a user-edited token.
-    const legacyPermissions = ['state', ...PROJECT_API_ACTIONS].filter(permission => permission !== 'workspacePanel');
+    const currentPermissions = ['state', ...PROJECT_API_ACTIONS];
+    const legacyGrants = [['workspacePanel'], ['coordinateCodexSessions'], ['workspacePanel', 'coordinateCodexSessions']]
+      .map(missing => currentPermissions.filter(permission => !missing.includes(permission)));
     if (storedToken && previous?.tokenId === storedToken.id && storedToken.name === 'Codex Manager MCP (automatic)' &&
-      storedToken.permissions.length === legacyPermissions.length && legacyPermissions.every(permission => storedToken.permissions.includes(permission))) {
+      legacyGrants.some(permissions => storedToken.permissions.length === permissions.length && permissions.every(permission => storedToken.permissions.includes(permission)))) {
       await createDashboardApiToken(context, { id: storedToken.id, expected: storedToken, name: storedToken.name,
-        permissions: [...storedToken.permissions, 'workspacePanel'] });
+        permissions: [...storedToken.permissions, ...currentPermissions.filter(permission => !storedToken.permissions.includes(permission))] });
     }
     if (!token) {
       const result = await createDashboardApiToken(context, { name: 'Codex Manager MCP (automatic)', permissions: ['state', ...PROJECT_API_ACTIONS] });

@@ -5,14 +5,14 @@ vi.mock('preact/hooks', () => ({ useState: (value: unknown) => [value, vi.fn()],
 import { Composer, QueuedMessages, TurnUsageStrip } from '../webview-src/dashboard/cliSessionsModal';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
 
-it('shows saved send errors and waiting reasons without opening the queue row', () => {
+it('keeps queue rows collapsed with error details on the warning icon', () => {
   const tree = nodes(QueuedMessages({ queue: {
     items: [{ id: 'failed-send', state: 'failed', draft: { text: 'Keep this prompt', attachments: [] }, error: 'The owner disconnected.', createdAt: 0, seenIds: [] }],
     ready: true, connected: true, reason: 'Waiting for the current turn to finish.',
   } as Parameters<typeof QueuedMessages>[0]['queue'], onRefresh() {} }));
-  expect(tree.find(node => node.type === 'details')?.props.open).toBe(true);
-  expect(tree.find(node => node.props.role === 'alert')?.props.children).toBe('The owner disconnected.');
-  expect(tree.find(node => node.props.role === 'status')?.props.children).toBe('Waiting for the current turn to finish.');
+  expect(tree.find(node => node.type === 'details')?.props.open).toBeUndefined();
+  expect(tree.find(node => node.props.role === 'alert')?.props.title).toBe('The owner disconnected.');
+  expect(tree.some(node => node.props.role === 'status')).toBe(false);
   expect(tree.some(node => node.props['aria-label'] === 'Resend queued message')).toBe(true);
 });
 

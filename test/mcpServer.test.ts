@@ -47,12 +47,39 @@ it("requires initialization, negotiates a supported version, and discovers share
     const list = await send("tools/list");
     expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_browser");
     expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_workspace");
+    expect(list.result.tools.map((tool: any) => tool.name)).toContain("manager_coordination");
     const browser = list.result.tools.find((tool: any) => tool.name === "manager_browser");
     expect(browser.inputSchema.properties.request.properties.operation.enum).toContain("feedback");
     expect([...browser.inputSchema.properties.request.properties.operation.enum].sort()).toEqual([...BROWSER_OPERATIONS].sort());
     expect((await send("unknown/method")).error.code).toBe(-32601);
     expect((await send("tools/call", { name: "unknown", arguments: {} })).result.isError).toBe(true);
   });
+});
+
+it('routes coordination through the scoped action and preserves message IDs and failures', async () => {
+  const requests: any[] = []; let fail = false;
+  const server = createServer((request, response) => {
+    let body = ''; request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      const value = JSON.parse(body); requests.push(value);
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ messages: [{ type: 'dashboard:action-result', requestId: value.requestId, status: fail ? 'failed' : 'completed', error: fail ? 'Session belongs to another project' : undefined,
+        payload: fail ? undefined : { sessionCoordination: { message: { id: value.payload.coordinationRequest.messageId } } } }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await withClient(async send => {
+      await send('initialize');
+      const args = { projectPath: 'D:/demo', sessionId: 'self', request: { operation: 'send', toSessionId: 'peer', messageId: 'stable-id', text: 'Editing storage; please avoid the same files' } };
+      expect((await send('tools/call', { name: 'manager_coordination', arguments: args })).result.isError).not.toBe(true);
+      expect(requests[0]).toMatchObject({ action: 'coordinateCodexSessions', payload: { projectPath: args.projectPath, sessionId: 'self', coordinationRequest: args.request } });
+      fail = true;
+      const result = (await send('tools/call', { name: 'manager_coordination', arguments: args })).result;
+      expect(result.isError).toBe(true); expect(result.content[0].text).toContain('another project');
+      expect(requests[1].payload.coordinationRequest.messageId).toBe('stable-id');
+    }, `http://127.0.0.1:${(server.address() as { port: number }).port}`);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 it('uses the selected surface execution device and waits for visible tab confirmation', async () => {

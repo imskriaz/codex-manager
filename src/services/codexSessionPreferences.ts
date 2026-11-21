@@ -25,6 +25,7 @@ type TitleOverride = { title: string; writtenAt: number };
 const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`;
 
 function read(store: ReturnType<typeof getSqliteStateStore>, home: string, id: string): CodexSessionPreference {
+  if (store?.get('deleted-codex-sessions', key(home, id)) !== undefined) { pendingManualStops.delete(key(home, id)); return {}; }
   const value = normalizePreference(store?.get<CodexSessionPreference>(NAMESPACE, key(home, id)));
   return { ...value, ...pendingManualStops.get(key(home, id)) };
 }
@@ -42,6 +43,7 @@ function readNamespace(home: string, namespace: string, ids: readonly string[]):
   if (!store || !ids.length) return result;
   if (namespace === NAMESPACE) for (const [pendingKey, patch] of pendingManualStops) {
     try {
+      if (store.get('deleted-codex-sessions', pendingKey) !== undefined) { pendingManualStops.delete(pendingKey); continue; }
       store.transaction(() => store.set(NAMESPACE, pendingKey, { ...normalizePreference(store.get(NAMESPACE, pendingKey)), ...patch }));
       pendingManualStops.delete(pendingKey);
     } catch { /* Keep Stop effective in this host until durable storage recovers. */ }
@@ -71,6 +73,7 @@ export function writeCodexSessionPreference(home: string, id: string, patch: Par
   const store = getSqliteStateStore();
   if (!store) throw new Error('Session preference storage is unavailable. The change was not saved.');
   return store.transaction(() => {
+    if (store.get('deleted-codex-sessions', key(home, id)) !== undefined) throw new Error('This conversation was deleted. Session preferences were not saved.');
     const next = { ...read(store, home, id), ...patch };
     if (next.autoResume === undefined && next.manualStop !== true && next.queue !== true && next.priority === undefined && !next.queueClaimedAt && !next.queueError) store.set(NAMESPACE, key(home, id), undefined);
     else store.set(NAMESPACE, key(home, id), next);

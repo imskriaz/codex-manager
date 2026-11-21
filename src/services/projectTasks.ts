@@ -3,7 +3,8 @@ import * as path from 'path';
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { getSqliteStateStore, type SqliteStateStore } from '../storage/sqliteState';
 import type { ProjectTask, ProjectComment, ProjectTaskMutation, ProjectBoard, ProjectSharePermission, ProjectAttachment, ProjectCommentInput } from '../domain/projectTasks';
-import { saveProjectAttachments, readProjectAttachmentFile, describeProjectAttachments, removeProjectAttachmentFiles } from './projectTaskAttachments';
+import { saveProjectAttachments, readProjectAttachmentFile, describeProjectAttachments, removeProjectAttachmentFiles, pruneProjectAttachmentFiles } from './projectTaskAttachments';
+import { waitWithin } from '../utils/concurrency';
 import { runCrossWindowExclusive } from '../utils/crossWindowOperations';
 import { sessionTaskStage, projectTaskStages, PROJECT_SHARE_FEATURES, projectAttachmentPath } from '../domain/projectTasks';
 
@@ -106,7 +107,7 @@ export function syncProjectSessions(project: string, home: string, sessions: Pro
   if (previous.size >= 64) previous.delete(previous.keys().next().value!);
   previous.set(importKey, fingerprint); imported.set(store, previous);
 }
-export function deleteProjectTask(project: string, id: string, expectedRevision: number): void {
+export async function deleteProjectTask(project: string, id: string, expectedRevision: number): Promise<string | undefined> {
   identifier(id);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('The task revision is invalid. Refresh before deleting it.');
   const { store, key } = projectStorage(project);
@@ -120,6 +121,14 @@ export function deleteProjectTask(project: string, id: string, expectedRevision:
     store.prepare('DELETE FROM project_tasks WHERE project=? AND id=?').run(key, id);
   });
   publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
+  try {
+    await waitWithin(runCrossWindowExclusive(`project-attachments:${store.file}:${key}`, 'Remove unused task attachments', async signal => {
+      await pruneProjectAttachmentFiles(key, store, signal);
+    }), 1_000, 'Attachment cleanup is still pending. Scheduled maintenance will retry.');
+    return undefined;
+  } catch (error) {
+    return `Task deleted. Attachment cleanup is pending and will retry automatically: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 export function saveProjectTask(project: string, input: ProjectTaskMutation, attachments?: ProjectAttachment[], validateOnly = false): ProjectTask {

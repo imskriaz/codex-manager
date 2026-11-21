@@ -53,7 +53,8 @@ describe("mobile dashboard header", () => {
   it("keeps the rail navigation compact and makes the Codex mark a dashboard home", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("cli-new-chat-icon");
-    expect(source).toContain('aria-label="Open dashboard"');
+    expect(source).toContain('class="cli-dashboard-nav"');
+    expect(source).toContain('aria-label="Dashboard"');
     expect(source).not.toContain('<button type="button" onClick={() => startNewChat()}><PlusIcon /><span>New chat</span></button>');
   });
 });
@@ -66,4 +67,13 @@ it('keeps Account Center selectors beside search and More beside the account cou
   const toolbar = source.slice(source.indexOf('<div class="dashboard-account-toolbar">'), source.indexOf('<div class="accounts-grid">', source.indexOf('<div class="dashboard-account-toolbar">')));
   expect(toolbar.includes('{displayFilters}')).toBe(true);
   expect(toolbar.includes('{viewToggle}')).toBe(true);
+});
+
+
+it("keeps Settings directly accessible at the top of every workspace sidebar", () => {
+  const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+  const header = source.slice(source.indexOf('class="cli-rail-header"'), source.indexOf('class="cli-primary-nav"'));
+  expect(header).toContain('<IconButton label="Settings" className="cli-settings-shortcut"');
+  expect(header).not.toContain('{props.officeFeatures ? <IconButton');
+  expect(header).toContain('props.onSettings();');
 });

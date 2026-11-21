@@ -7,15 +7,16 @@ vi.mock("fs/promises", { spy: true });
 import { SqliteStateStore, configureSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexHomeStateKey } from "../src/codex/authFile";
 import { invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus, saveSessionLive, readStoredSessionLive } from "../src/storage/sqliteSessions";
-import { readCodexCliSessions } from "../src/services/codexSessionResume";
+import { readCodexCliSessions, readCodexCliSessionSummary } from "../src/services/codexSessionResume";
 import { writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import * as settings from '../src/infrastructure/config/extensionSettings';
 import { getNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
+import { disposeSessionRecording, recordNativeSessionStatus } from "../src/services/sessionRecording";
 import type { DashboardCliSessionSummary } from "../src/domain/dashboard/types";
 let root: string, store: SqliteStateStore;
 const row: DashboardCliSessionSummary = { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", title: "Older project work", projectPath: "D:/project", status: "idle", archived: false };
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "session-catalogue-")); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store); });
-afterEach(async () => { configureSqliteStateStore(undefined); store.close(); vi.useRealTimers(); vi.mocked(fs.access).mockReset(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { disposeSessionRecording(); configureSqliteStateStore(undefined); store.close(); vi.useRealTimers(); vi.mocked(fs.access).mockReset(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 it("shows persisted metadata immediately after reopening without scanning history", async () => {
   const generation = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, generation, [row], Date.now());
   store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
@@ -57,7 +58,7 @@ it("keeps verified running rows through stale metadata refresh using one batch s
   const query = vi.spyOn(store,"prepare");
   const result = await readCodexCliSessions(root);
   expect(result.every(item => item.status === "running" && !item.statusError)).toBe(true);
-  expect(query.mock.calls.filter(([sql]) => sql.startsWith("SELECT session_id,status FROM session_status"))).toHaveLength(1);
+  expect(query.mock.calls.filter(([sql]) => sql.startsWith("SELECT session_id,COALESCE(display_status,status) AS status,"))).toHaveLength(1);
   expect(query.mock.calls.filter(([sql]) => sql.includes("session_status WHERE home=? AND session_id=?"))).toHaveLength(0);
 });
 it.each(["running","idle","unknown"] as const)("overlays fresh %s status without rescanning cached history", async status => {
@@ -69,16 +70,43 @@ it.each(["running","idle","unknown"] as const)("overlays fresh %s status without
   if (status !== "unknown") expect((await readCodexCliSessions(root))[0]?.statusError).toBeUndefined();
   expect(scan).not.toHaveBeenCalled();
 });
-it("uses native transitions before their buffered write, and never promotes expired status", async () => {
+it("prefers fresh native status and bounds cached running display through refresh failures", async () => {
   vi.useFakeTimers({toFake:["Date"]});
   const generation = invalidateSessionCatalogue(store,root);
   saveSessionCatalogue(store,root,generation,[{...row,status:"running"}],Date.now());
   saveSessionStatus(store,root,row.id,"running");
   vi.mocked(getNativeCodexSessionRunning).mockReturnValueOnce(false);
   expect((await readCodexCliSessions(root))[0]?.status).toBe("idle");
+  saveSessionStatus(store,root,row.id,"unknown");
   vi.setSystemTime(Date.now()+31_000);
   vi.spyOn(fs,"access").mockRejectedValue(new Error("native storage offline"));
   expect((await readCodexCliSessions(root))[0]).toMatchObject({status:"unknown",locked:true,canStop:false});
+  recordNativeSessionStatus(root,row.id,false);
+  expect((await readCodexCliSessions(root))[0]).toMatchObject({status:"idle",locked:false,canStop:false});
+});
+it('shares buffered confirmed status between the session list and conversation details', async () => {
+  await writeFile(path.join(root,'session_index.jsonl'),JSON.stringify({id:row.id,thread_name:row.title}));
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  for (const running of [true,false]) {
+    recordNativeSessionStatus(root,row.id,running);
+    recordNativeSessionStatus(root,row.id,undefined);
+    const expected = running ? 'running' : 'idle';
+    expect((await readCodexCliSessions(root))[0]?.status).toBe(expected);
+    expect((await readCodexCliSessionSummary(row.id,root,'display'))?.status).toBe(expected);
+  }
+});
+it.each([true, false])('prefers current native status over an opposing saved status in list and details (%s)', async running => {
+  await writeFile(path.join(root,'session_index.jsonl'),JSON.stringify({id:row.id,thread_name:row.title}));
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[row],Date.now());
+  saveSessionStatus(store,root,row.id,running ? 'idle' : 'running');
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(running);
+  try {
+    const expected = running ? 'running' : 'idle';
+    expect((await readCodexCliSessions(root))[0]?.status).toBe(expected);
+    expect((await readCodexCliSessionSummary(row.id,root,'display'))?.status).toBe(expected);
+  } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
 });
 it("prevents an old scan from restoring deleted metadata and isolates Codex homes", () => {
   const old = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, old, [row], Date.now());
@@ -138,6 +166,7 @@ it("rolls back an incomplete oversized cache replacement", () => {
 });
 
 it('clears confirmed deleted recovery records and derived tasks while preserving another home and newer ownership', () => {
+  vi.useFakeTimers({toFake:["Date"]});
   const generation = invalidateSessionCatalogue(store,root);
   saveSessionCatalogue(store,root,generation,[row],Date.now());
   const other = root+'-other'; const otherGeneration = invalidateSessionCatalogue(store,other);

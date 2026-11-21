@@ -1,19 +1,13 @@
 import { OFFLINE_CACHE_READS } from './offlinePolicy';
 import { useEffect, useRef, useState } from "preact/hooks";
-import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, isMaintenanceJob, mergeMaintenanceJob, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../../src/domain/maintenance";
+import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, isMaintenanceJob, mergeMaintenanceJob, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../../src/domain/maintenance";
 import type { DashboardActionName, DashboardActionPayload, DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
 import { getActionTimeoutMs } from './host';
-import { ModalShell } from './primitives';
 import { renderRefreshIcon as RefreshIcon, renderRemoveIcon as TrashIcon } from './icons';
 
 const dialogTitles: Record<string, string> = { startup: "Codex UI startup", archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Find missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
 const sessionTools: MaintenanceTool[] = ["archives"];
-const codexManagerTools: Array<{ id: MaintenanceTool | CodexInspection; label: string; inspect: boolean }> = [
-  { id: "snapshots", label: "Shell snapshots", inspect: false },
-  { id: "startup", label: "Codex UI startup", inspect: true },
-  { id: "projects", label: "Missing projects", inspect: true }
-];
 const maintenanceLabels: Record<string, string> = {
   archives: "Archive manager",
   sessions: "Conversation cleanup",
@@ -39,6 +33,7 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
   const [error, setError] = useState<string>();
   const [report, setReport] = useState<MaintenanceReport>();
   const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const origin = useRef({ id: props.targetDeviceId, name: props.targetName });
   const pageKey = useRef("");
   const pending = useRef(new Map<string, { action: DashboardActionName; timer: ReturnType<typeof setTimeout>; pageKey?: string }> ());
@@ -49,7 +44,7 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
   const clearPending = (id: string) => { clearTimeout(pending.current.get(id)?.timer); pending.current.delete(id); };
   const updateBusy = () => setBusy([...pending.current.values()].some(item => item.action !== 'getMaintenanceStatus'));
   const clearRequests = () => { for (const id of pending.current.keys()) clearPending(id); };
-  useEffect(() => { if (!props.parentOpen) setDialog(undefined); }, [props.parentOpen]);
+  useEffect(() => { if (!props.parentOpen) { setDialog(undefined); setConfirmation(undefined); setProjectConfirmation(undefined); } }, [props.parentOpen]);
   const request = (action: DashboardActionName, payload: DashboardActionPayload = {}) => {
     if (currentProps.current.connected === false && !OFFLINE_CACHE_READS.has(action)) return;
     // Tools owns action feedback so a late transport timeout cannot contradict verified progress.
@@ -62,7 +57,7 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
   };
   const act = (action: DashboardActionName, payload: DashboardActionPayload = {}) => {
     if (action === 'runMaintenance') attempted.current = true;
-    setBusy(true); setError(undefined);
+    setBusy(true); setError(undefined); setFeedback("");
     if (!request(action, payload)) { setBusy(false); setError("This system could not connect. Retry when online."); }
   };
   const inspect = (tool: MaintenanceTool) => {
@@ -160,7 +155,6 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
     <div class="maintenance-scope"><span>System</span><strong>{props.targetName}</strong>{props.connected === false ? <small>Offline · reconnect to run tools.</small> : null}</div>
     <div class="maintenance-layout">
     {!dialog ? <section class="maintenance-dashboard" aria-label="Codex Manager Tools">
-      <header class="maintenance-dashboard-heading"><div><span class="maintenance-kicker">Codex Manager Tools</span><strong>Keep Codex fast, tidy, and recoverable</strong></div><button class="settings-action-btn" type="button" disabled={busy || running} onClick={() => check("storage")}>{busy ? "Reading…" : "About Codex"}</button></header>
       <section class="maintenance-dashboard-section" aria-labelledby="maintenance-manage-heading">
         <h3 id="maintenance-manage-heading">Manage data</h3>
         <div class="maintenance-dashboard-grid">
@@ -168,16 +162,16 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
         </div>
       </section>
       <section class="maintenance-dashboard-section" aria-labelledby="maintenance-inspect-heading">
-        <h3 id="maintenance-inspect-heading">Inspect system</h3>
+        <h3 id="maintenance-inspect-heading">Diagnostics</h3>
         <div class="maintenance-dashboard-grid">
-          {CODEX_INSPECTIONS.map(tool => <button key={`inspect-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Inspect`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => check(tool.id)}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span class="maintenance-dashboard-action" aria-hidden="true">›</span></button>)}
+          {CODEX_INSPECTIONS.filter(tool => tool.id !== "large-sessions").map(tool => <button key={`inspect-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Inspect`} class="maintenance-dashboard-card" type="button" disabled={busy || running} onClick={() => check(tool.id)}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span class="maintenance-dashboard-action" aria-hidden="true">›</span></button>)}
         </div>
       </section>
     </section> : null}
-    <ModalShell open={Boolean(dialog && props.parentOpen)} title={dialogTitles[dialog ?? ""] ?? 'Codex tools'} closeLabel="Close tool" className="maintenance-tool-modal" onClose={() => { if (confirmation) setConfirmation(undefined); else setDialog(undefined); }}>
+    {dialog && props.parentOpen ? <section class="maintenance-tool-panel" aria-label={dialogTitles[dialog] ?? "Codex tools"}>
       {dialog ? <section class="maintenance-workspace" role="region" aria-label={dialogTitles[dialog] ?? 'Codex tools'}>
+      <h3 class="maintenance-tool-title">{dialogTitles[dialog]}</h3>
       <div class="maintenance-toolbar"><span class="maintenance-system" title={origin.current.name}>{origin.current.name}</span><button class="settings-action-btn maintenance-back" type="button" onClick={() => setDialog(undefined)}><span aria-hidden="true">←</span> All tools</button></div>
-      {codexManagerTools.some(tool => tool.id === dialog) ? <div class="maintenance-tabs" role="tablist" aria-label="Codex Manager"><button type="button" role="tab" aria-selected={dialog === "snapshots"} onClick={() => dialog !== "snapshots" && inspect("snapshots")}>Snapshots</button><button type="button" role="tab" aria-selected={dialog === "startup"} onClick={() => dialog !== "startup" && check("startup")}>Startup</button><button type="button" role="tab" aria-selected={dialog === "projects"} onClick={() => dialog !== "projects" && check("projects")}>Projects</button></div> : null}
       {scopeChanged ? <p role="alert" class="settings-notice-warning">This preview belongs to {origin.current.name}. Choose a tool again to load {props.targetName} before changing data.</p> : null}
       {error ? <p class="settings-notice-warning" role="alert">{error}</p> : null}
       {dialog === 'startup' ? <button class="settings-action-btn" type="button" disabled={props.connected === false || busy || scopeChanged} onClick={() => act('reopenCodexUi')}>{busy ? 'Working...' : 'Open fresh Codex panel'}</button> : null}
@@ -208,18 +202,20 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
       </section> : null}
       {!busy && error && !preview && !job && !report ? <button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={() => MAINTENANCE_TOOLS.some(tool => tool.id === dialog) ? inspect(dialog as MaintenanceTool) : check(dialog!)}>Retry</button> : null}
       </section> : null}
-    </ModalShell>
-    <ModalShell open={Boolean(confirmation)} title={confirmation?.operation === "restore" ? "Restore conversations" : "Delete conversations permanently"} closeLabel="Close confirmation" className="maintenance-confirm-modal" onClose={() => { if (!busy) setConfirmation(undefined); }}>
-      {confirmation ? <div class="maintenance-confirm-content"><span class="maintenance-kicker">Confirm action</span><strong>{confirmation.operation === "restore" ? "Restore" : "Permanently delete"} {count.toLocaleString()} {count === 1 ? "conversation" : "conversations"}?</strong><p>{confirmation.operation === "restore" ? "Return the selected conversations to active Codex history. Their messages and goals stay intact." : "This cannot be undone. Running or unavailable conversations are kept and reported."}</p><div class="settings-actions"><button class="settings-action-btn" type="button" disabled={busy} onClick={() => setConfirmation(undefined)}>Cancel</button><button class={`settings-action-btn ${confirmation.operation === "delete" ? "is-danger" : ""}`} type="button" disabled={props.connected === false || busy || scopeChanged} onClick={() => { const action = { maintenanceToken: preview?.token, maintenanceIds: confirmation.ids, maintenanceOperation: confirmation.operation, confirmed: true }; setConfirmation(undefined); act("runMaintenance", action); }}>{busy ? "Starting…" : confirmation.operation === "restore" ? "Restore selected" : "Delete permanently"}</button></div></div> : null}
-    </ModalShell>
-    <ModalShell open={Boolean(projectConfirmation)} title="Remove project entry?" closeLabel="Close confirmation" className="maintenance-confirm-modal" onClose={() => { if (!busy) setProjectConfirmation(undefined); }}>
-      {projectConfirmation ? <div class="maintenance-confirm-content"><span class="maintenance-kicker">Project inventory</span><strong>Remove this project from the list?</strong><p>{projectConfirmation}</p><p>The project folder, its files, and linked conversations will stay unchanged.</p><div class="settings-actions"><button class="settings-action-btn" type="button" disabled={busy} onClick={() => setProjectConfirmation(undefined)}>Cancel</button><button class="settings-action-btn is-danger" type="button" disabled={props.connected === false || busy} onClick={() => { const project = projectConfirmation; setProjectConfirmation(undefined); act("dismissMaintenanceProject", { maintenanceProjectPath: project }); }}>Remove entry</button></div></div> : null}
-    </ModalShell>
-    <ModalShell open={Boolean(completedJob)} title={completedJob?.operation === "restore" ? "Restore result" : "Cleanup result"} closeLabel="Close result" className="maintenance-result-modal" onClose={() => setJob(undefined)}>
+    </section> : null}
+    {confirmation ? <section class="settings-inline-confirm" aria-label={confirmation.operation === "restore" ? "Restore conversations" : "Delete conversations permanently"} tabIndex={-1} ref={element => { if (element) { element.scrollIntoView({ block: "nearest" }); element.focus(); } }}>
+      {confirmation ? <div class="maintenance-confirm-content"><span class="maintenance-kicker">Confirm action</span><strong>{confirmation.operation === "restore" ? "Restore" : "Permanently delete"} {count.toLocaleString()} {count === 1 ? "conversation" : "conversations"}?</strong><p>{confirmation.operation === "restore" ? "Return the selected conversations to active Codex history. Their messages and goals stay intact." : "This cannot be undone. Running or unavailable conversations are kept and reported."}</p><div class="settings-actions"><button class="settings-action-btn" type="button" disabled={busy} onClick={() => { setConfirmation(undefined); setFeedback("Action cancelled. No data was changed."); }}>Cancel</button><button class={`settings-action-btn ${confirmation.operation === "delete" ? "is-danger" : ""}`} type="button" disabled={props.connected === false || busy || scopeChanged} onClick={() => { const action = { maintenanceToken: preview?.token, maintenanceIds: confirmation.ids, maintenanceOperation: confirmation.operation, confirmed: true }; setConfirmation(undefined); act("runMaintenance", action); }}>{busy ? "Starting…" : confirmation.operation === "restore" ? "Restore selected" : "Delete permanently"}</button></div></div> : null}
+    </section> : null}
+    {projectConfirmation ? <section class="settings-inline-confirm" aria-label="Remove project entry?" tabIndex={-1} ref={element => { if (element) { element.scrollIntoView({ block: "nearest" }); element.focus(); } }}>
+      {projectConfirmation ? <div class="maintenance-confirm-content"><span class="maintenance-kicker">Project inventory</span><strong>Remove this project from the list?</strong><p>{projectConfirmation}</p><p>The project folder, its files, and linked conversations will stay unchanged.</p><div class="settings-actions"><button class="settings-action-btn" type="button" disabled={busy} onClick={() => { setProjectConfirmation(undefined); setFeedback("Removal cancelled."); }}>Cancel</button><button class="settings-action-btn is-danger" type="button" disabled={props.connected === false || busy} onClick={() => { const project = projectConfirmation; setProjectConfirmation(undefined); act("dismissMaintenanceProject", { maintenanceProjectPath: project }); }}>Remove entry</button></div></div> : null}
+    </section> : null}
+    {dialog && completedJob ? <section class="maintenance-inline-result" aria-label={completedJob.operation === "restore" ? "Restore result" : "Cleanup result"} tabIndex={-1} ref={element => { if (element) { element.scrollIntoView({ block: "nearest" }); element.focus(); } }}>
+      <button class="settings-action-btn" type="button" onClick={() => setJob(undefined)}>Close result</button>
       {completedJob ? <section class="maintenance-result" aria-live="polite"><span class="maintenance-kicker">Operation complete</span><strong>{completedJob.processed} / {completedJob.total} checked</strong><div class="maintenance-result-metrics"><span><b>{completedJob.operation === "restore" ? completedJob.cleared : completedJob.cleared}</b><small>{completedJob.operation === "restore" ? "restored" : "cleared"}</small></span><span><b>{completedJob.skipped}</b><small>kept</small></span><span><b>{completedJob.failed}</b><small>failed</small></span></div><p>{completedJob.status === "unknown" ? "The host restarted or became unavailable. Review current data before retrying; the previous outcome is unconfirmed." : completedJob.status === "cancelled" ? "Cancelled. Remaining items were kept." : completedJob.status === "failed" ? "Some items could not be processed. Review the details before retrying." : "All checked items have been reported."}</p>{completedJob.errors.length ? <details open={completedJob.status === "failed"}><summary>Details ({completedJob.errors.length})</summary><ul>{completedJob.errors.map((text, index) => <li key={index}>{text}</li>)}</ul></details> : null}<div class="settings-actions"><button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={refreshStatus}>Refresh status</button><button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={() => { setJob(undefined); inspect(completedJob.tool); }}>Review current data</button></div></section> : null}
-    </ModalShell>
+    </section> : null}
     </div>
     {!dialog && job ? <div class="maintenance-job-summary" role="status"><span>{dialogTitles[job.tool]} · {running ? 'In progress' : 'Review result'}</span><button class="settings-action-btn" type="button" onClick={() => setDialog(job.tool)}>View {running ? 'progress' : 'result'}</button></div> : null}
     {!dialog && error ? <p class="settings-notice-warning" role="alert">{error}</p> : null}
+    {feedback ? <p class="settings-note" role="status">{feedback}</p> : null}
   </div>;
 }

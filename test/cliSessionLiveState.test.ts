@@ -1,12 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../src/domain/dashboard/types";
 import { acceptCliLiveState, combineCliLiveMessages, hasCurrentCliLiveHistory, isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { cliSessionTargetKey } from "../webview-src/dashboard/cliSessionRoute";
 
 const message = (id: string, text: string, turnId?: string, role: "user" | "assistant" = "assistant"): DashboardCliSessionMessage => ({ id, text, role, turnId });
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1000); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it.each(['idle', 'unknown'] as const)('does not let an expired running snapshot override %s status', status => {
+    const row = { id: 'chat', title: 'Task', status };
+    const live = snapshot();
+    const states = { [cliSessionTargetKey(row)]: live };
+    vi.setSystemTime(live.updatedAt + 29_999);
+    expect(reconcileCliSessionStatus(row, states).status).toBe('running');
+    vi.setSystemTime(live.updatedAt + 30_000);
+    expect(reconcileCliSessionStatus(row, states)).toBe(row);
+    expect(isCliLiveStateCurrent(row, live)).toBe(false);
+    expect(reconcileCliSessionStatus({ ...row, status: 'running' }, states).status).toBe('running');
+  });
   it('uses live history only after an initial load with current, complete running authority', () => {
     const row = { id: 'chat', title: 'Task', status: 'running' as const, steerTurnId: 'turn' };
     const live = snapshot();

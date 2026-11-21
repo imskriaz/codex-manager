@@ -49,6 +49,17 @@ it('denies ungranted actions, other projects and sessions, remote targets, and g
   await expect(createDashboardApiToken(context, { name: 'Invalid', projectPath: root, permissions: ['remove'] })).rejects.toThrow(/within that project/);
 });
 
+it('permits only granted local project coordination and preserves mailbox results', async () => {
+  const { record } = await createDashboardApiToken(context, { name: 'Coordination', projectPath: process.cwd(), permissions: ['coordinateCodexSessions'] });
+  await expect(authorizeApiMessage(record, message('coordinateCodexSessions', { sessionId: 'own', coordinationRequest: { operation: 'read' } }))).resolves.toMatchObject({ payload: { projectPath: process.cwd() } });
+  await expect(authorizeApiMessage(record, message('coordinateCodexSessions', { sessionId: 'outside', coordinationRequest: { operation: 'read' } }))).rejects.toThrow('outside');
+  await expect(authorizeApiMessage(record, message('coordinateCodexSessions', { projectPath: root, coordinationRequest: { operation: 'list' } }))).rejects.toThrow('another project');
+  await expect(authorizeApiMessage(record, message('coordinateCodexSessions', { targetDeviceId: 'peer', coordinationRequest: { operation: 'list' } }))).rejects.toThrow('outside');
+  await expect(authorizeApiMessage({ ...record, permissions: ['state'] }, message('coordinateCodexSessions'))).rejects.toThrow('does not permit');
+  const payload = { sessionCoordination: { messages: [{ id: 'message', fromSessionId: 'one', toSessionId: 'two', text: 'Hello', createdAt: 1 }] } };
+  expect(scopeApiResults(record, [{ type: 'dashboard:action-result', action: 'coordinateCodexSessions', requestId: 'r', status: 'completed', payload }])[0]).toMatchObject({ payload });
+});
+
 it('filters global refreshed state and secret-bearing fields from scoped mutation results', () => {
   const token = { id: 'a', name: 'Scoped', projectPath: process.cwd(), permissions: ['*'], createdAt: 1 };
   const messages: DashboardHostMessage[] = [{ type: 'dashboard:action-result', action: 'renameCodexCliSession', requestId: 'r', status: 'completed', payload: {

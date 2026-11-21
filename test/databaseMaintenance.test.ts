@@ -43,6 +43,20 @@ it('continues other maintenance when the optional read cache cannot be pruned', 
   expect(store.get('once-operations', 'expired')).toBeUndefined();
 });
 
+it('expires shared links and temporary title bridges while preserving permanent links and session recovery', () => {
+  const now = Date.now();
+  store.set('project-shares', 'expired', { expiresAt: now - 1 });
+  store.set('project-shares', 'permanent', { expiresAt: 0 });
+  store.set('project-shares', 'valid', { expiresAt: now + 1 });
+  store.set('codex-session-title-overrides', 'old', { title: 'Old', writtenAt: now - 60_001 });
+  store.set('codex-session-title-overrides', 'current', { title: 'Keep', writtenAt: now });
+  store.set('codex-session-preferences', 'keep', { queue: true });
+  pruneManagerCaches(store, now);
+  expect(store.keys('project-shares')).toEqual(['permanent', 'valid']);
+  expect(store.keys('codex-session-title-overrides')).toEqual(['current']);
+  expect(store.get('codex-session-preferences', 'keep')).toEqual({ queue: true });
+});
+
 it("caps a noisy log day in SQLite and retains only current diagnostic archives", () => {
   const value = JSON.stringify({ message: "x".repeat(1024 * 1024) });
   store.transaction(() => {

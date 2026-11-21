@@ -17,8 +17,8 @@ vi.mock('preact/hooks', () => ({
     harness.effects.push(() => { previous?.cleanup?.(); slot.cleanup = setup(); });
   }
 }));
-vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes }));
-import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, withAcceptedQueuedMessages, useCliMessageQueue } from '../webview-src/dashboard/cliMessageQueue';
+vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.writes, listBrowserMessageQueues: async () => [...harness.records].filter(([key]) => key.startsWith('message-queue:')).map(([key, value]) => ({scope:key.slice(14),value})) }));
+import { normalizeCliMessageQueue, queuedMessageEchoes, queuedMessageView, withAcceptedQueuedMessages, useCliMessageQueue, readCliQueueStatuses, maintainCliQueues } from '../webview-src/dashboard/cliMessageQueue';
 import { canRestoreCliComposerDraft } from '../webview-src/dashboard/cliSessionComposerState';
 import { cliComposerDraftKey } from '../webview-src/dashboard/cliSessionComposerState';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
@@ -47,6 +47,86 @@ beforeEach(() => {
   options = { scope: 'pc:session', messages: [], results: [], canDispatch: false, send, restore, feedback };
 });
 afterEach(() => { for (const slot of harness.slots) slot?.cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it('keeps pending messages visible and dispatches after a turn finishes in the background', async () => {
+  render(); await flush(); queue.enqueue(draft()); await flush();
+  pageVisibility.visibilityState = 'hidden'; pageVisibility.dispatchEvent(new Event('visibilitychange')); await flush();
+  expect(queue.ready).toBe(true); expect(queue.items[0]?.draft.text).toBe('First');
+  render({ canDispatch: true }); await flush(); expect(send).toHaveBeenCalledOnce();
+  render({ results: [{ requestId: 'request-1', status: 'completed' }], messages: [{ id: 'echo', role: 'user', text: 'First' }] }); await flush();
+  expect(queue.items).toEqual([]); expect(queue.ready).toBe(false);
+});
+
+it('never removes an unsent storage failure because an old message has the same text', async () => {
+  const old = { id: 'old', role: 'user' as const, text: 'First' };
+  expect(queuedMessageEchoes([entry({ state: 'failed', durable: false })], [old]).items).toHaveLength(1);
+});
+
+it('recovers an unsent storage failure quietly when persistence becomes available', async () => {
+  harness.writes.mockResolvedValue(false);
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
+  expect(send).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('failed');
+  harness.writes.mockResolvedValue(true);
+  await vi.advanceTimersByTimeAsync(2_001); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft()); expect(feedback).not.toHaveBeenCalled();
+});
+
+it('retries a verified unreachable owner in the background without retrying ambiguous delivery', async () => {
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
+  render({ results: [{ requestId: 'request-1', status: 'failed', message: 'The session has a live writer, but its Codex owner could not be reached. Your message was kept; open the original Codex window and retry.' }] }); await flush();
+  expect(queue.items[0]?.retryAt).toBeGreaterThan(Date.now());
+  await vi.advanceTimersByTimeAsync(2_001); await flush(); expect(send).toHaveBeenCalledTimes(2);
+  render({ results: [{ requestId: 'request-2', status: 'failed', message: 'Confirmation lost; the message may have been accepted.' }] }); await flush();
+  await vi.advanceTimersByTimeAsync(65_000); await flush(); expect(send).toHaveBeenCalledTimes(2);
+  expect(queue.items[0]?.state).toBe('failed'); expect(feedback).not.toHaveBeenCalled();
+});
+
+it.each([
+  'This window does not own an active Codex turn to steer. Refresh the session.',
+  'The active Codex turn changed or is stopping. Refresh before sending guidance.',
+  'The active Codex turn changed. Refresh before sending guidance.'
+])('retains unsent guidance and sends once after the active turn ends: %s', async message => {
+  render({ canDispatch: false, canSteer: true, turnId: 'native-turn', steer }); await flush();
+  queue.enqueue(draft()); await flush(); queue.steerNow(queue.items[0]!.id); await flush();
+  expect(steer).toHaveBeenCalledOnce();
+  render({ results: [{ requestId: 'steer-1', status: 'failed', message }], canSteer: false }); await flush();
+  await vi.advanceTimersByTimeAsync(2_001); await flush();
+  expect(steer).toHaveBeenCalledOnce(); expect(send).not.toHaveBeenCalled();
+  render({ canDispatch: true, turnId: undefined }); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith(draft());
+  expect(queue.items[0]?.state).toBe('sending');
+});
+
+it('lists active queues and clears waiting messages while preserving in-flight delivery', async () => {
+  render({ canDispatch: true }); await flush(); queue.enqueue(draft()); queue.enqueue(draft('Later')); await flush();
+  const statuses = await readCliQueueStatuses();
+  expect(statuses.find(status => status.scope === 'pc:session')?.items).toHaveLength(2);
+  const clearing = maintainCliQueues(true); await flush();
+  expect(await clearing).toEqual({ updated: 1, skipped: 0 });
+  expect(queue.items.map(item => item.draft.text)).toEqual(['First']); expect(send).toHaveBeenCalledOnce();
+});
+
+it('repairs only known unsent failures and preserves ambiguous delivery', async () => {
+  harness.records.set('message-queue:pc:session', [entry({ state: 'uncertain', requestId: 'pending' }), entry({ id: 'two', state: 'failed', draft: draft('Later') })]);
+  render(); await flush();
+  const repair = maintainCliQueues(false); await flush(); expect(await repair).toEqual({ updated: 1, skipped: 0 });
+  expect(queue.items.map(item => item.state)).toEqual(['uncertain', 'queued']); expect(send).not.toHaveBeenCalled();
+});
+
+it('does not maintain a saved queue owned by another tab', async () => {
+  harness.records.set('message-queue:other', [entry({ state: 'queued' })]);
+  locks.mockImplementation(async (_name, options, work) => { expect(options.ifAvailable).toBe(true); return work(null); });
+  expect(await maintainCliQueues(true)).toEqual({ updated: 0, skipped: 1 });
+  expect(harness.records.get('message-queue:other')).toHaveLength(1);
+});
+
+it('clears a corrupt queue and makes the open view usable again', async () => {
+  harness.records.set('message-queue:pc:session', 'broken');
+  render(); await flush(); expect(queue.ready).toBe(false);
+  const clearing = maintainCliQueues(true); await flush();
+  expect(await clearing).toEqual({ updated: 1, skipped: 0 });
+  await flush(); expect(queue.ready).toBe(true); expect(queue.items).toEqual([]);
+});
 
 it('keeps the original queue intact while the floating workspace dispatches its own queue', async () => {
   const original = cliComposerDraftKey('pc', 'session'), floating = cliComposerDraftKey('pc', 'session', undefined, true);
@@ -127,12 +207,12 @@ it.each(['offline', 'unverified-owner', 'access-change', 'storage-full', 'timeou
   expect(send).not.toHaveBeenCalled();
 });
 
-it('cancels the exact queued message from its recovery toast without sending it later', async () => {
+it('removes the exact queued message without a recovery toast or later dispatch', async () => {
   render({ dispatchReason: 'Reconnecting' }); await flush();
   const id = queue.enqueue(draft('Old queued work'))!; await flush();
   queue.steerNow(id);
-  const cancel = feedback.mock.lastCall![1] as () => Promise<boolean>;
-  const cancelling = cancel(); await flush();
+  expect(feedback).not.toHaveBeenCalled();
+  const cancelling = queue.remove(id); await flush();
   expect(await cancelling).toBe(true);
   expect(queue.items).toEqual([]);
   expect(harness.records.get('message-queue:pc:session')).toEqual([]);
@@ -148,17 +228,12 @@ it('returns the existing item when the same draft is submitted twice before conf
   expect(feedback).toHaveBeenCalledWith(expect.stringContaining('already queued'));
 });
 
-it.each(['scope', 'sending', 'storage'])('retains the cancellation fence after a %s change', async mode => {
-  render({ dispatchReason: 'Reconnecting' }); await flush();
-  const id = queue.enqueue(draft())!; await flush(); queue.steerNow(id);
-  const cancel = feedback.mock.lastCall![1] as () => Promise<boolean>;
-  if (mode === 'scope') { render({ scope: 'another-session' }); await flush(); }
-  if (mode === 'sending') { render({ canDispatch: true }); await flush(); }
-  if (mode === 'storage') harness.writes.mockResolvedValue(false);
-  const cancelling = cancel(); await flush();
-  expect(await cancelling).toBe(false);
-  if (mode === 'storage') expect(queue.items[0]).toMatchObject({ state: 'failed', error: expect.stringContaining('could not be removed') });
-  expect(send).toHaveBeenCalledTimes(mode === 'sending' ? 1 : 0);
+it('retains a failed removal without a notification', async () => {
+  render(); await flush(); const id = queue.enqueue(draft())!; await flush();
+  harness.writes.mockResolvedValue(false);
+  const removing = queue.remove(id); await flush();
+  expect(await removing).toBe(false); expect(queue.items[0]?.error).toContain('could not be removed');
+  expect(feedback).not.toHaveBeenCalled();
 });
 
 it('saves multiple offline messages immediately, fences each send, and drains in FIFO order after confirmation', async () => {
@@ -209,21 +284,23 @@ it('rejects queue overflow, isolates another session, and refuses a second tab o
   expect(queue.ready).toBe(false); expect(queue.enqueue(draft())).toBeUndefined(); expect(send).not.toHaveBeenCalled(); expect(harness.records.has('message-queue:pc:session')).toBe(true);
 });
 
-it('releases queue ownership in the background and reacquires it when the tab returns', async () => {
+it('keeps queue ownership and messages when focus moves away', async () => {
   render(); await flush(); expect(queue.ready).toBe(true);
+  queue.enqueue(draft()); await flush();
   hasPageFocus = false; pageFocus.dispatchEvent(new Event('blur')); await flush();
-  expect(queue.ready).toBe(false);
+  expect(queue.ready).toBe(true); expect(queue.items[0]?.draft.text).toBe('First');
   hasPageFocus = true; pageFocus.dispatchEvent(new Event('focus')); await flush();
-  expect(queue.ready).toBe(true); expect(locks).toHaveBeenCalledTimes(2);
+  expect(queue.ready).toBe(true); expect(locks).toHaveBeenCalledTimes(1);
 });
 
-it('keeps ownership until a background send is confirmed, then releases it', async () => {
+it('keeps a background send tracked through acknowledgement and echo', async () => {
   render({ canDispatch: true }); await flush(); queue.enqueue(draft()); await flush();
   expect(send).toHaveBeenCalledOnce();
   hasPageFocus = false; pageFocus.dispatchEvent(new Event('blur')); await flush();
   expect(queue.ready).toBe(true);
   render({ results: [{ requestId: 'request-1', status: 'completed' }] }); await flush();
-  expect(queue.ready).toBe(false);
+  expect(queue.ready).toBe(true);
+  render({ messages: [{ id: 'echo', role: 'user', text: 'First' }] }); await flush();
   hasPageFocus = true; pageFocus.dispatchEvent(new Event('focus')); await flush();
   expect(queue.ready).toBe(true); expect(queue.items).toEqual([]);
 });
@@ -280,25 +357,24 @@ it('steers explicitly in queue mode and shows processing before a slow storage f
   let finish!: (value: boolean) => void;
   harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
   queue.steerNow(id); queue.steerNow(id); await flush();
-  expect(queue.items[0]?.state).toBe('sending'); expect(steer).not.toHaveBeenCalled();
+  expect(queue.items[0]?.state).toBe('queued'); expect(steer).not.toHaveBeenCalled();
   finish(true); await flush();
   expect(steer).toHaveBeenCalledExactlyOnceWith(draft('Send now')); expect(send).not.toHaveBeenCalled();
   expect(options.canDispatch).toBe(false);
 });
 
-it.each(['offline', 'access-change', 'timeout', 'session-change', 'storage-full'] as const)('keeps a waiting steer unsent after %s', async failure => {
+it.each(['offline', 'access-change', 'session-change', 'storage-full'] as const)('keeps a waiting steer unsent after %s', async failure => {
   render({ canDispatch: false, canSteer: true, turnId: 'active', steer }); await flush();
   const id = queue.enqueue(draft())!; await flush();
   let finish!: (value: boolean) => void;
   harness.writes.mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));
-  queue.steerNow(id); await flush(); expect(queue.items[0]?.state).toBe('sending');
+  queue.steerNow(id); await flush(); expect(queue.items[0]?.state).toBe('queued');
   if (failure === 'offline') render({ connected: false });
   if (failure === 'access-change') render({ canSteer: false });
   if (failure === 'session-change') { render({ scope: 'other' }); await flush(); }
-  if (failure === 'timeout') { await vi.advanceTimersByTimeAsync(65_000); await flush(); }
   finish(failure !== 'storage-full'); await flush();
   expect(steer).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
-  if (failure !== 'session-change') expect(queue.items[0]?.state).toBe(failure === 'timeout' ? 'uncertain' : 'failed');
+  if (failure !== 'session-change') expect(queue.items[0]?.state).toBe(failure === 'storage-full' ? 'failed' : 'queued');
 });
 
 it.each(['new-turn', undefined])('sends explicit Steer to the current session state (%s) after saving', async turnId => {
@@ -318,7 +394,9 @@ it('does not send another explicit steer while the previous one awaits confirmat
   const first = queue.enqueue(draft())!, second = queue.enqueue(draft('Later'))!; await flush();
   queue.steerNow(first); await flush(); queue.steerNow(second); await flush();
   expect(steer).toHaveBeenCalledOnce(); expect(queue.items[1]?.state).toBe('queued');
-  expect(feedback).toHaveBeenCalledWith(expect.stringContaining('Wait for confirmation'));
+  expect(feedback).not.toHaveBeenCalled();
+  render({ results: [{ requestId: 'steer-1', status: 'completed' }] }); await flush();
+  expect(steer).toHaveBeenCalledTimes(2);
 });
 
 it('matches repeated submissions to distinct new user echoes and never consumes old or different-turn messages', () => {

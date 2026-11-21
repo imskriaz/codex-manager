@@ -420,12 +420,13 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
   });
 }
 
-type NativePromptMethod = "thread-follower-command-approval-decision" | "thread-follower-file-approval-decision" | "thread-follower-permissions-request-approval-response" | "thread-follower-submit-user-input";
+type NativePromptMethod = "thread-follower-command-approval-decision" | "thread-follower-file-approval-decision" | "thread-follower-permissions-request-approval-response" | "thread-follower-submit-user-input" | "thread-follower-submit-mcp-server-elicitation-response";
 const nativePromptMethods: Record<string, NativePromptMethod> = {
   "item/commandExecution/requestApproval": "thread-follower-command-approval-decision",
   "item/fileChange/requestApproval": "thread-follower-file-approval-decision",
   "item/permissions/requestApproval": "thread-follower-permissions-request-approval-response",
-  "item/tool/requestUserInput": "thread-follower-submit-user-input"
+  "item/tool/requestUserInput": "thread-follower-submit-user-input",
+  "mcpServer/elicitation/request": "thread-follower-submit-mcp-server-elicitation-response"
 };
 function readNativePrompts(value: unknown, threadId: string): AppServerRequest[] {
   if (!Array.isArray(value) || value.length > 64) return [];

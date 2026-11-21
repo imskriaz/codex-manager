@@ -22,10 +22,10 @@ export async function checkSendRecoveryUi(page, { origin, parentId, output, widt
   const failed = page.locator('.cli-queued-message.is-failed').filter({ hasText: 'Send despite stale status' });
   const inlineError = failed.getByRole('alert');
   await inlineError.waitFor({ state: 'visible' });
-  assert.equal(await inlineError.innerText(), 'Ownership check failed. Retry after reconnecting.', 'The full error is visible beside its message');
+  assert.equal(await inlineError.getAttribute('title'), 'Ownership check failed. Retry after reconnecting.', 'The full error is available on its message warning icon');
   assert.equal(await page.locator('.cli-local-queue > small').count(), 0, 'No repeated error row beneath the queue');
   assert.equal(await page.locator('.cli-local-queue-summary, .cli-queue-modal').count(), 0, 'Recovery needs no summary button or modal');
-  assert.equal(await failed.evaluate(element => element.open), true, 'Failed messages expand automatically');
+  assert.equal(await failed.evaluate(element => element.open), false, 'Failed messages stay collapsed until the user expands them');
   assert.equal(await input.inputValue(), 'Keep my newer draft', 'A failure preserves newer input');
   await page.screenshot({ path: path.join(output, `send-failure-${width}.png`) });
   await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });

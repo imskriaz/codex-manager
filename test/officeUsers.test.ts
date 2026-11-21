@@ -92,4 +92,16 @@ describe("office workspace boundaries", () => {
     expect(await fs.readdir(root)).not.toContainEqual(expect.stringMatching(/\.tmp$/));
   });
 
+  it("accepts a team member's email as the username and verifies their own password", async () => {
+    const store = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
+    configureSqliteStateStore(store);
+    try {
+      const user = await createOfficeUser({ username: " Alex+Work@Example.test ", password: "team-password", workspacePath: path.join(root, "alex") });
+      expect(user.username).toBe("alex+work@example.test");
+      const verifyMaster = vi.fn(async () => true);
+      await expect(authenticateOfficeUser("ALEX+WORK@EXAMPLE.TEST", "team-password", verifyMaster, "manager-owner")).resolves.toMatchObject({ id: user.id, role: "user" });
+      await expect(authenticateOfficeUser(user.username, "wrong-password", verifyMaster, "manager-owner")).resolves.toBeUndefined();
+      expect(verifyMaster).not.toHaveBeenCalled();
+    } finally { configureSqliteStateStore(undefined); store.close(); }
+  });
 });

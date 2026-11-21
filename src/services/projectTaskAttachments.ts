@@ -4,7 +4,10 @@ import * as path from "path";
 import { MAX_CHAT_ATTACHMENT_BYTES, validateChatAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import type { ProjectAttachment } from "../domain/projectTasks";
 import type { DashboardWorkspaceFile } from "../domain/dashboard/types";
-import { getSqliteStateStore } from "../storage/sqliteState";
+import { getSqliteStateStore, type SqliteStateStore } from "../storage/sqliteState";
+import { getCodexHomeStateKey } from '../codex/authFile';
+import { runCrossWindowExclusive, CrossWindowOperationBusyError } from '../utils/crossWindowOperations';
+import { createReadStream } from 'node:fs';
 import { waitWithin } from "../utils/concurrency";
 
 function storageError(error: unknown): Error {
@@ -99,7 +102,8 @@ export async function removeProjectAttachmentFiles(project: string, hashes: stri
 export async function saveProjectAttachments(
   project: string,
   value: unknown,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  owner?: { home: string; sessionId: string; pending?: boolean }
 ): Promise<ProjectAttachment[] | undefined> {
   try {
     signal?.throwIfAborted();
@@ -108,6 +112,15 @@ export async function saveProjectAttachments(
     if (files.some((file) => !/^[a-zA-Z0-9:_-]{1,160}$/.test(file.id)))
       throw new Error("The attachment identifier is invalid. Attach the file again.");
     if (!files.length) return [];
+    const store = getSqliteStateStore();
+    if (!store) throw new Error('Attachment storage is unavailable. Your draft was kept.');
+    store.transaction(() => {
+      if (owner && store.get('deleted-codex-sessions', `${getCodexHomeStateKey(owner.home)}:${owner.sessionId.toLowerCase()}`) !== undefined)
+        throw new Error('This conversation was deleted. Your attachments were not sent.');
+      store.set('attachment-folders', project, { kind: owner ? 'session' : 'project', ...(owner ? { home: path.resolve(owner.home) } : {}) });
+      if (owner) store.set('session-attachment-owners', JSON.stringify([getCodexHomeStateKey(owner.home), owner.sessionId.toLowerCase(), project]), project);
+      if (owner?.pending) store.set('pending-session-attachments', JSON.stringify([getCodexHomeStateKey(owner.home), owner.sessionId.toLowerCase()]), { expiresAt: Date.now() + 86_400_000 });
+    });
     const folder = await waitWithin(directory(project, true), 5000, "Attachment storage is busy. Your draft was kept.");
     const names: string[] = [];
     signal?.throwIfAborted();
@@ -181,16 +194,172 @@ export async function saveProjectAttachments(
   }
 }
 /** Session uploads reuse the verified, content-addressed private attachment store. */
-export async function saveCodexAttachmentFiles(projectPath: string, files: ChatAttachment[], signal?: AbortSignal): Promise<Array<{ name: string; path: string }>> {
+export async function saveCodexAttachmentFiles(projectPath: string, files: ChatAttachment[], signal?: AbortSignal, owner?: { home: string; sessionId: string; pending?: boolean }): Promise<Array<{ name: string; path: string }>> {
   const store = getSqliteStateStore();
-  const identity = createHash('sha256').update(`session-uploads:${projectPath}\0`);
+  if (!store || !owner) throw new Error('Choose a conversation before saving session attachments.');
+  if (!path.isAbsolute(owner.home) || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(owner.sessionId)) throw new Error('Session attachment ownership is invalid.');
+  const identity = createHash('sha256').update(`session-uploads:${projectPath}\0${getCodexHomeStateKey(owner.home)}:${owner.sessionId.toLowerCase()}\0`);
   for (const file of files) identity.update(file.name).update('\0').update(file.data).update('\0');
   const project = identity.digest('hex');
-  const saved = await saveProjectAttachments(project, files, signal);
-  signal?.throwIfAborted();
-  if (getSqliteStateStore() !== store) throw new Error("Manager storage changed while saving attachments. Refresh before sending.");
-  const folder = await directory(project);
-  return (saved ?? []).map(file => ({ name: file.name, path: path.join(folder, file.hash) }));
+  return runCrossWindowExclusive(`project-attachments:${store.file}:${project}`, 'Save session attachments', async lease => {
+    const combined = signal ? AbortSignal.any([signal, lease]) : lease;
+    combined.throwIfAborted();
+    if (getSqliteStateStore() !== store) throw new Error('Manager storage changed before saving attachments.');
+    const saved = await saveProjectAttachments(project, files, combined, owner);
+    combined.throwIfAborted();
+    if (getSqliteStateStore() !== store) throw new Error("Manager storage changed while saving attachments. Refresh before sending.");
+    const folder = await directory(project);
+    return (saved ?? []).map(file => ({ name: file.name, path: path.join(folder, file.hash) }));
+  });
+}
+
+export function adoptCodexAttachmentFiles(home: string, pendingId: string, sessionId: string): void {
+  const store = getSqliteStateStore();
+  if (!store) throw new Error('Session attachment ownership could not be saved. No message was sent.');
+  const scope = getCodexHomeStateKey(home);
+  store.transaction(() => {
+    for (const row of store.prepare("SELECT key,value FROM state WHERE namespace='session-attachment-owners' AND json_valid(key) AND json_extract(key,'$[0]')=? AND json_extract(key,'$[1]')=?").all(scope, pendingId)) {
+      const folder = JSON.parse(String(row['value'])) as string;
+      store.set('session-attachment-owners', JSON.stringify([scope, sessionId.toLowerCase(), folder]), folder);
+      store.set('session-attachment-owners', String(row['key']), undefined);
+    }
+    store.set('pending-session-attachments', JSON.stringify([scope, pendingId]), undefined);
+  });
+}
+
+/** Caller holds this folder's upload lease, so an upload cannot become referenced during deletion. */
+export async function pruneProjectAttachmentFiles(project: string, store: SqliteStateStore, signal?: AbortSignal, sessionReferences?: Set<string>): Promise<void> {
+  const check = () => { signal?.throwIfAborted(); if (getSqliteStateStore() !== store) throw new Error('Attachment cleanup storage changed. Files were kept.'); };
+  check();
+  const metadata = store.get<{ kind: string; home?: string }>('attachment-folders', project);
+  const referenced = new Set<string>();
+  if (metadata?.kind !== 'session' && store.get('project-migrations', project) !== true) throw new Error('Attachment folder ownership is unconfirmed. Files were kept.');
+  if (metadata?.kind === 'session') {
+    if (!sessionReferences || sessionReferences.has(project) || store.prepare("SELECT 1 FROM state WHERE namespace='session-attachment-owners' AND value=? LIMIT 1").get(JSON.stringify(project))) return;
+  } else {
+    const tables = new Set(store.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('project_tasks','project_comments')").all().map(row => row['name']));
+    for (const table of ['project_tasks', 'project_comments']) if (tables.has(table)) {
+      if (store.prepare(`SELECT 1 FROM ${table} WHERE project=? AND NOT json_valid(data) LIMIT 1`).get(project)) throw new Error('Attachment references are unreadable. Files were kept.');
+      for (const row of store.prepare(`SELECT json_extract(file.value,'$.hash') AS hash FROM ${table},json_each(${table}.data,'$.attachments') AS file WHERE project=?`).all(project)) {
+        if (typeof row['hash'] !== 'string' || !/^[a-f0-9]{64}$/.test(row['hash'])) throw new Error('Attachment references are invalid. Files were kept.');
+        referenced.add(row['hash']);
+      }
+    }
+  }
+  let folder: string;
+  try { folder = await directory(project); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { store.set('attachment-folders', project, undefined); return; } throw error; }
+  for await (const entry of await fs.opendir(folder)) {
+    check();
+    const target = path.join(folder, entry.name);
+    const temporary = /^[a-f0-9]{64}\.[a-f0-9-]{36}\.tmp$/.test(entry.name);
+    if (!temporary && (!/^[a-f0-9]{64}$/.test(entry.name) || referenced.has(entry.name))) continue;
+    const info = await fs.lstat(target);
+    if (!info.isFile() || info.isSymbolicLink() || temporary && Date.now() - info.mtimeMs < 86_400_000) continue;
+    check(); await fs.unlink(target);
+  }
+  check();
+  try { await fs.rmdir(folder); }
+  catch (error) {
+    if (['ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) return;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  store.set('attachment-folders', project, undefined);
+}
+
+/** Native forks can inherit file paths without passing through Manager. An incomplete scan never authorizes deletion. */
+async function referencedSessionUploadFolders(home: string, signal: AbortSignal, candidates: ReadonlySet<string>): Promise<Set<string>> {
+  const names = await fs.readdir(home);
+  if (!names.some(name => name === 'session_index.jsonl' || /^state_\d+\.sqlite$/.test(name))) throw new Error('Native history is unavailable. Session attachments were kept.');
+  const database = names.filter(name => /^state_\d+\.sqlite$/.test(name)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]))[0];
+  if (database) {
+    const file = path.join(home, database), info = await fs.lstat(file);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Native history database is linked. Session attachments were kept.');
+    const moduleName = 'node:sqlite';
+    const sqlite = await import(moduleName) as { DatabaseSync: new (file: string, options: { readOnly: boolean }) => { prepare(sql: string): { all(): Record<string, unknown>[] }; close(): void } };
+    const db = new sqlite.DatabaseSync(file, { readOnly: true });
+    try {
+      const rows = db.prepare('SELECT rollout_path FROM threads LIMIT 10001').all();
+      if (rows.length > 10_000) throw new Error('Native history database scan limit reached. Session attachments were kept.');
+      for (const row of rows) {
+        signal.throwIfAborted();
+        const transcript = row['rollout_path'];
+        if (typeof transcript !== 'string' || !/^(?:sessions|archived_sessions)[\\/]/.test(path.relative(home, path.resolve(transcript))))
+          throw new Error('Some native history is outside the scanned folders. Session attachments were kept.');
+        const stat = await fs.lstat(transcript);
+        if (!stat.isFile() || stat.isSymbolicLink() || !transcript.endsWith('.jsonl')) throw new Error('Some native history is unavailable. Session attachments were kept.');
+      }
+    } finally { db.close(); }
+  }
+  const referenced = new Set<string>();
+  let files = 0, entries = 0, bytes = 0;
+  const visit = async (folder: string): Promise<void> => {
+    signal.throwIfAborted();
+    const info = await fs.lstat(folder);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Native history is linked or unavailable. Session attachments were kept.');
+    for await (const entry of await fs.opendir(folder)) {
+      signal.throwIfAborted();
+      if (++entries > 20_000) throw new Error('Native history scan entry limit reached. Session attachments were kept.');
+      const target = path.join(folder, entry.name);
+      if (entry.isSymbolicLink()) throw new Error('Native history contains a link. Session attachments were kept.');
+      if (entry.isDirectory()) { await visit(target); continue; }
+      if (!entry.name.endsWith('.jsonl')) continue;
+      if (++files > 10_000) throw new Error('Native history scan limit reached. Session attachments were kept.');
+      let tail = '';
+      for await (const chunk of createReadStream(target, { encoding: 'utf8', signal })) {
+        if (typeof chunk !== 'string') throw new Error('Native history could not be decoded. Session attachments were kept.');
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > 256 * 1024 * 1024) throw new Error('Native history scan byte limit reached. Session attachments were kept.');
+        const text = tail + chunk;
+        for (const match of text.matchAll(/[a-f0-9]{64}/g)) if (candidates.has(match[0])) referenced.add(match[0]);
+        tail = text.slice(-128);
+      }
+    }
+  };
+  for (const name of ['sessions', 'archived_sessions']) if (names.includes(name)) await visit(path.join(home, name));
+  return referenced;
+}
+
+export async function maintainAttachmentStorage(store: SqliteStateStore, signal: AbortSignal): Promise<void> {
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
+  bounded.throwIfAborted();
+  if (getSqliteStateStore() !== store) return;
+  store.transaction(() => {
+    for (const row of store.prepare("SELECT key FROM state WHERE namespace='pending-session-attachments' AND json_valid(key) AND json_valid(value) AND json_extract(value,'$.expiresAt')<=? LIMIT 128").all(Date.now())) {
+      const [home, id] = JSON.parse(String(row['key'])) as string[];
+      store.prepare("DELETE FROM state WHERE namespace='session-attachment-owners' AND json_valid(key) AND json_extract(key,'$[0]')=? AND json_extract(key,'$[1]')=?").run(home!, id!);
+      store.set('pending-session-attachments', String(row['key']), undefined);
+    }
+  });
+  const projects = new Set(store.keys('project-migrations'));
+  const known = new Set([...projects, ...store.keys('attachment-folders')]);
+  const cursor = store.get<string>('attachment-cleanup', 'cursor') ?? '';
+  const ordered = [...known].filter(key => /^[a-f0-9]{64}$/.test(key)).sort();
+  const batch = [...ordered.filter(key => key > cursor), ...ordered.filter(key => key <= cursor)].slice(0, 128);
+  const scans = new Map<string, Set<string> | Error>();
+  for (const project of batch) {
+    bounded.throwIfAborted();
+    if (getSqliteStateStore() !== store) return;
+    try {
+      const metadata = store.get<{ kind: string; home?: string }>('attachment-folders', project);
+      let references: Set<string> | undefined;
+      if (metadata?.kind === 'session') {
+        if (!metadata.home || store.prepare("SELECT 1 FROM state WHERE namespace='session-attachment-owners' AND value=? LIMIT 1").get(JSON.stringify(project))) continue;
+        let scan = scans.get(metadata.home);
+        if (!scan) {
+          try { scan = await referencedSessionUploadFolders(metadata.home, bounded, known); }
+          catch (error) { scan = error instanceof Error ? error : new Error(String(error)); }
+          scans.set(metadata.home, scan);
+        }
+        if (scan instanceof Error) throw scan;
+        references = scan;
+      }
+      await runCrossWindowExclusive(`project-attachments:${store.file}:${project}`, 'Attachment cleanup', async lease => {
+        await pruneProjectAttachmentFiles(project, store, AbortSignal.any([bounded, lease]), references);
+      }, { background: true });
+    } catch (error) { if (!(error instanceof CrossWindowOperationBusyError)) console.warn('[codexManager] attachment cleanup postponed', error); }
+    finally { if (getSqliteStateStore() === store) store.set('attachment-cleanup', 'cursor', project); }
+  }
 }
 
 export async function readProjectAttachmentFile(

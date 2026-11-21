@@ -1,5 +1,7 @@
+import { removeSessionCoordination } from './sqliteCoordination';
 import { randomUUID } from "crypto";
 import * as os from "os";
+import * as path from 'path';
 import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { getCodexHomeStateKey } from "../codex/authFile";
@@ -101,6 +103,11 @@ export function initializeSessionStorage(store: SqliteStateStore): void {
   const columns = new Set(store.prepare('PRAGMA table_info(session_turns)').all().map(row => row['name']));
   if (!columns.has('started_at')) store.database.exec('ALTER TABLE session_turns ADD COLUMN started_at REAL');
   if (!columns.has('turn_id')) store.database.exec('ALTER TABLE session_turns ADD COLUMN turn_id TEXT');
+  const statusColumns = new Set(store.prepare('PRAGMA table_info(session_status)').all().map(row => row['name']));
+  if (!statusColumns.has('display_status')) {
+    store.database.exec('ALTER TABLE session_status ADD COLUMN display_status TEXT; ALTER TABLE session_status ADD COLUMN display_checked_at REAL');
+    store.database.exec("UPDATE session_status SET display_status=status,display_checked_at=checked_at WHERE status IN ('starting','running','idle')");
+  }
   store.database.exec("CREATE TABLE IF NOT EXISTS running_turns (session_id TEXT PRIMARY KEY,started_at REAL NOT NULL,owner_pid INTEGER,child_pid INTEGER,project_path TEXT NOT NULL,data TEXT NOT NULL)");
   store.watchTable("session_turns","sessions");
   store.watchTable("session_status","session-status");
@@ -149,14 +156,17 @@ export function saveSessionLive(store: SqliteStateStore, home: string, state: Da
   });
 }
 
-export function saveSessionStatus(store: SqliteStateStore, home: string, id: string, status: "starting" | "running" | "idle" | "unknown", at = Date.now()): void {
+export function saveSessionStatus(store: SqliteStateStore, home: string, id: string, status: "starting" | "running" | "idle" | "unknown", at = Date.now(), displayStatus = status, displayAt = at): void {
   if (isConfirmedSessionDeleted(store,home,id)) return;
   initializeSessionStorage(store);
   const scope = getCodexHomeStateKey(home);
   id = id.toLowerCase();
   store.transaction(() => {
-    const result = store.prepare(`INSERT INTO session_status(home,session_id,status,checked_at) VALUES(?,?,?,?)
-      ON CONFLICT(home,session_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at WHERE excluded.checked_at >= session_status.checked_at AND (excluded.status!=session_status.status OR excluded.checked_at>=session_status.checked_at+1000)`).run(scope,id,status,at) as { changes: number };
+    const confirmed = displayStatus !== "unknown";
+    const result = store.prepare(`INSERT INTO session_status(home,session_id,status,checked_at,display_status,display_checked_at) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(home,session_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at,
+      display_status=COALESCE(excluded.display_status,session_status.display_status),display_checked_at=COALESCE(excluded.display_checked_at,session_status.display_checked_at)
+      WHERE excluded.checked_at >= session_status.checked_at AND (excluded.status!=session_status.status OR excluded.checked_at>=session_status.checked_at+1000)`).run(scope,id,status,at,confirmed ? displayStatus : null,confirmed ? displayAt : null) as { changes: number };
     const cached = store.get<Discovery>("session-discovery",scope);
     if (!result.changes || !cached || !Array.isArray(cached.ids) || at < cached.startedAt) return;
     if (status === "unknown") {
@@ -198,6 +208,11 @@ export function removeDeletedSessionCache(store: SqliteStateStore, home: string,
       if (confirmedDeletion) {
         if (store.prepare("SELECT 1 FROM session_status WHERE home=? AND session_id=? AND status IN ('starting','running') AND checked_at>=?").get(getCodexHomeStateKey(home), id, startedAt)) continue;
         store.set("deleted-codex-sessions", `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`, Date.now());
+        removeSessionCoordination(store, getCodexHomeStateKey(home), id.toLowerCase());
+        for (const namespace of ['codex-session-preferences', 'codex-session-title-overrides', 'session-goal-explicit-pause'])
+          store.set(namespace, `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`, undefined);
+        store.set('session-access', JSON.stringify([path.resolve(home), id.toLowerCase()]), undefined);
+        store.prepare("DELETE FROM state WHERE namespace='session-attachment-owners' AND json_valid(key) AND json_extract(key,'$[0]')=? AND json_extract(key,'$[1]')=?").run(getCodexHomeStateKey(home), id.toLowerCase());
         store.prepare("DELETE FROM running_turns WHERE session_id=?").run(id);
         for (const row of store.prepare("SELECT namespace,key,value FROM state WHERE key IN ('codexManager.autoResumeSessionIds','codexManager.autoResumeOpenSessionIds')").all()) {
           const saved: unknown = JSON.parse(String(row['value']));
@@ -296,12 +311,15 @@ export function readSessionStatus(store:SqliteStateStore,home:string,id:string):
 }
 
 /** One bounded status read keeps catalogue age separate from current activity. */
-export function readSessionStatuses(store:SqliteStateStore,home:string): Map<string,string> {
+export function readSessionStatuses(store:SqliteStateStore,home:string,display = false): Map<string,string> {
   initializeSessionStorage(store);
   const now = Date.now();
-  return new Map(store.prepare("SELECT session_id,status FROM session_status WHERE home=? AND checked_at>? AND checked_at<=?")
-    .all(getCodexHomeStateKey(home),Math.max(now-30_000,now-os.uptime()*1000-1000),now+5_000)
-    .map(row => [String(row["session_id"]),String(row["status"])]));
+  // Bridge brief refresh gaps without treating old activity as proof a turn is still running.
+  return new Map(store.prepare(display
+    ? "SELECT session_id,COALESCE(display_status,status) AS status,COALESCE(display_checked_at,checked_at) AS confirmed_at FROM session_status WHERE home=? AND COALESCE(display_checked_at,checked_at)>? AND COALESCE(display_checked_at,checked_at)<=?"
+    : "SELECT session_id,status FROM session_status WHERE home=? AND checked_at>? AND checked_at<=?")
+    .all(getCodexHomeStateKey(home),display ? now-os.uptime()*1000-1000 : Math.max(now-30_000,now-os.uptime()*1000-1000),now+5_000)
+    .map(row => [String(row["session_id"]), display && ["starting", "running"].includes(String(row["status"])) && now - Number(row["confirmed_at"]) >= 30_000 ? "unknown" : String(row["status"])]));
 }
 
 export function readRunningTurnRows(store:SqliteStateStore):TrackedCliTurn[] {

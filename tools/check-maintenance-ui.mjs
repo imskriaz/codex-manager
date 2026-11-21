@@ -9,7 +9,9 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     const desktop = page.locator('#settingsOpenButton');
     if (await desktop.isVisible()) await desktop.click();
     else { await page.locator('.dashboard-mobile-actions > summary').click(); await page.getByRole('menuitem', exact('Settings')).click(); }
-    await page.locator('#settings-tab-tools').click();
+    const picker = page.getByRole('combobox', exact('Settings section'));
+    if (await picker.isVisible()) await picker.selectOption('tools');
+    else await page.locator('#settings-tab-tools').click();
   };
   const start = async () => {
     const archive = page.getByRole('region', exact('Archive manager'));
@@ -33,12 +35,12 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const closeSessions = page.getByRole('button', exact('Close sessions sidebar'));
   if (await closeSessions.isVisible()) await page.getByRole('button', exact('Hide sessions sidebar')).click();
   await open();
-  assert.equal(await page.locator('.maintenance-storage-operations > button').count(), 9, 'Every cleanup and inspection tool is reachable');
+  assert.equal(await page.locator('.maintenance-dashboard-card').count(), 8, 'Every cleanup and inspection tool is reachable');
   for (const [title, clear] of [['Archive manager','Clear all archives'],['Conversation cleanup','Clear all Codex data'],['Goal manager','Clear all goals'],['Shell snapshot cleanup','Clean old shell snapshots']]) {
     await page.getByRole('button', exact(title+' Manage')).click();
     const tool = page.getByRole('region', exact(title)), rows = tool.getByRole('group', exact('Tool items')).getByRole('checkbox');
     await rows.first().waitFor();
-    assert.equal(await page.getByRole('dialog').last().getByText(title, {exact:true}).count(), 1, 'The tool title appears once');
+    assert.equal(await page.locator('.maintenance-tool-panel').getByRole('heading', {name:title,exact:true}).count(), 1, 'The tool title appears once');
     const system = await tool.locator('.maintenance-system').innerText();
     assert.ok(system.length > 0, 'The source system remains visible, including privacy masking');
     assert.equal(await tool.getByText(system,{exact:true}).count(), 1, 'The source system appears once');
@@ -48,9 +50,9 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     assert.ok(rowHeight <= 44, 'Rows stay compact');
     await tool.locator('summary[aria-label="More cleanup actions"]').click();
     await tool.getByRole('button', exact(clear)).click();
-    await page.getByRole('dialog', exact('Delete conversations permanently')).waitFor();
+    await page.getByRole('region', exact('Delete conversations permanently')).waitFor();
     assert.equal(await actionCount('runMaintenance'), 0, 'Bulk cleanup still requires explicit confirmation');
-    await page.getByRole('dialog', exact('Delete conversations permanently')).getByRole('button', exact('Cancel')).click();
+    await page.getByRole('region', exact('Delete conversations permanently')).getByRole('button', exact('Cancel')).click();
     await tool.locator('summary[aria-label="More cleanup actions"]').click();
     await page.keyboard.press('Escape');
     assert.equal(await tool.locator('.maintenance-more[open]').count(), 0, 'Escape closes the action menu first');
@@ -83,7 +85,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(()=>document.activeElement?.outerHTML), await compact.locator('summary[aria-label="More cleanup actions"]').evaluate(element=>element.outerHTML), 'The action menu participates in modal keyboard navigation');
   await page.keyboard.press('Tab');
-  assert.equal(await page.getByRole('button', exact('Close tool')).evaluate(element=>element===document.activeElement), true, 'The last tool control wraps focus within its modal');
+  assert.equal(await page.locator('.settings-close').evaluate(element=>element===document.activeElement), true, 'Tool controls share the Settings focus boundary');
   await page.keyboard.press('Shift+Tab');
   await compact.locator('summary[aria-label="More cleanup actions"]').click();
   assert.equal(await compact.getByRole('button', exact('Clear all archives')).isDisabled(), true);
@@ -100,7 +102,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   assert.equal(await compact.getByRole('checkbox', exact('Select page')).evaluate(input=>input.indeterminate), true, 'Partial page selection remains visible');
   await page.screenshot({path:path.join(output,`maintenance-selected-${width}x${height}.png`),animations:'disabled'});
   await compact.getByRole('button', exact('Delete selected')).click();
-  const deletion = page.getByRole('dialog', exact('Delete conversations permanently'));
+  const deletion = page.getByRole('region', exact('Delete conversations permanently'));
   await deletion.getByText('Permanently delete 1 conversation?',{exact:true}).waitFor();
   assert.equal(await actionCount('runMaintenance'), 0, 'Selected cleanup also preserves confirmation');
   await deletion.getByRole('button', exact('Cancel')).click();
@@ -156,7 +158,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await progress({status:'completed',processed:1,cleared:1,revision:100}, 'other-pc');
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).isEnabled(), true, 'Another PC cannot complete this job');
   await archive.getByRole('button', exact('Cancel operation')).click();
-  const restored = page.getByRole('dialog', exact('Restore result'));
+  const restored = page.getByRole('region', exact('Restore result'));
   await restored.getByText('Cancelled. Remaining items were kept.', {exact:true}).waitFor();
   await progress({status:'running',processed:0,cleared:0,revision:0});
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).count(), 0, 'Late progress cannot restart a finished job');
@@ -179,13 +181,14 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await open();
   await page.getByRole('button', exact('View progress')).click();
   await archive.getByText('Restore in progress', {exact:true}).waitFor();
-  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:false}})));
+  await page.evaluate(() => { window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:false}})); window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:host-status',stage:'offline'}})); });
   await page.waitForFunction(() => document.querySelector('.settings-offline-fieldset')?.disabled);
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).isDisabled(), true, 'Offline cleanup actions stay disabled');
   await page.evaluate(() => {
     window.__uiSnapshot.connectedPeers.find(peer => peer.id === 'fixture-peer').connected = false;
     window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:structuredClone(window.__uiSnapshot)}}));
     window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:true}}));
+    window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:host-status',stage:'live'}}));
   });
   await page.waitForFunction(() => document.querySelector('.settings-offline-fieldset')?.disabled);
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).isDisabled(), true, 'A disconnected peer disables cleanup even while the browser is online');
@@ -197,8 +200,8 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await restored.getByText(/host restarted or became unavailable/).waitFor();
   assert.equal(await actionCount('runMaintenance'), 2, 'Reconnect and host restart never replay a mutation');
   await progress({status:'completed',processed:1,cleared:1,revision:100});
-  await page.getByRole('dialog', exact('Restore result')).waitFor();
-  await page.getByRole('dialog', exact('Restore result')).getByRole('button', exact('Close result')).click();
+  await page.getByRole('region', exact('Restore result')).waitFor();
+  await page.getByRole('region', exact('Restore result')).getByRole('button', exact('Close result')).click();
   await progress({status:'running',processed:0,cleared:0,revision:1});
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).count(), 0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Maintenance fits the viewport');
@@ -224,7 +227,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   assert.equal(await actionCount('runMaintenance'), beforeDelete+1, 'A rejected delete is never automatically replayed');
   await largest.getByRole('button', exact('Delete selected')).click();
   await deletion.getByRole('button', exact('Delete permanently')).click();
-  const cleaned = page.getByRole('dialog', exact('Cleanup result'));
+  const cleaned = page.getByRole('region', exact('Cleanup result'));
   await cleaned.getByText('All checked items have been reported.',{exact:true}).waitFor();
   const sent = await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='runMaintenance').at(-1));
   assert.deepEqual(sent.payload.maintenanceIds, ['tool-item-0']);

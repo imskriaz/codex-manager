@@ -1,4 +1,5 @@
 import * as proxyMapping from "../src/services/aiProxyModelMapping";
+import * as teamSettingsRequest from "../src/services/teamSettingsRequest";
 import { AlwaysOnlineServer } from '../src/services/alwaysOnlineServer';
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -177,6 +178,20 @@ describe('proxy Codex model discovery', () => {
     expect(result).toMatchObject({ status: 'completed', payload: {
       apiTokens: [], apiProxy: { models: [], modelDiscoveryWarning: 'Codex is unavailable.' }
     } });
+  });
+});
+
+describe("Team settings webview bridge", () => {
+  it.each(["browser", "remote"])("denies %s callers before using local administrator access", async caller => {
+    const request = vi.spyOn(teamSettingsRequest, "requestLocalTeamSettings");
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: caller === "browser" ? "browser" : "webview" }, {
+      type: "dashboard:action", action: "teamSettingsRequest", requestId: "team-settings-denied", payload: {
+        ...(caller === "remote" ? { targetDeviceId: "other-system" } : {}),
+        teamSettingsRequest: { path: "/api/office/users", method: "GET" }
+      }
+    });
+    expect(result.status).toBe("failed");
+    expect(request).not.toHaveBeenCalled();
   });
 });
 

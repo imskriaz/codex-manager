@@ -1,4 +1,5 @@
 import type { DashboardCodexServerRequest } from "../../src/domain/dashboard/types";
+import { mcpElicitationContent } from "../../src/domain/codexMcpElicitation";
 
 export type CodexPromptEntry = {
   request: DashboardCodexServerRequest;
@@ -11,6 +12,11 @@ export type CodexPromptState = { entries: CodexPromptEntry[]; responses: Record<
 export const emptyCodexPrompts: CodexPromptState = { entries: [], responses: {}, closed: [] };
 export const codexPromptKey = (request: Pick<DashboardCodexServerRequest, "id" | "deviceId">): string => JSON.stringify([request.deviceId ?? "local", request.id]);
 export function canAnswerCodexPrompt(entry: CodexPromptEntry): boolean {
+  if (entry.request.approvalWarning) return false;
+  if (entry.request.kind === "mcp") {
+    if (entry.responseId || entry.uncertain || entry.request.mcp?.mode === "external") return false;
+    try { mcpElicitationContent(entry.request.questions ?? [], entry.answers); return true; } catch { return false; }
+  }
   return !entry.responseId && !entry.uncertain && (entry.request.kind !== "question" ||
     Boolean(entry.request.questions?.length && entry.request.questions.every(question => {
       const raw = entry.answers[question.id];

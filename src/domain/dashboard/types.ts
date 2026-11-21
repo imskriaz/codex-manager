@@ -558,6 +558,7 @@ export type DashboardActionName =
   | "enableSystemStartup"
   | "workspaceBrowser"
   | "workspacePanel"
+  | "coordinateCodexSessions"
   | "browseWorkspaceFolders"
   | "createWorkspaceProject"
   | "renameWorkspaceProject"
@@ -592,6 +593,7 @@ export type DashboardActionName =
   | "restoreFromAuthJson"
   | "copyText"
   | "getMasterUsername"
+  | "teamSettingsRequest"
   | "rotateMasterUsername"
   | "openDashboard"
   | "openWebDashboard"
@@ -695,7 +697,9 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  coordinationRequest?: import('../sessionCoordination').SessionCoordinationRequest;
   masterUsername?: string;
+  teamSettingsRequest?: { path: string; method: string; body?: unknown };
   tags?: string[];
   expectedTags?: string[];
   tagName?: string;
@@ -813,6 +817,8 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  startedBy?: import("../../services/officeAudit").OfficeActor;
+  lastRunBy?: import("../../services/officeAudit").OfficeActor;
   access?: import("../codexSessionAccess").CodexSessionAccess;
   id: string;
   title: string;
@@ -1152,15 +1158,18 @@ export interface DashboardCodexServerRequest {
   createdAt?: number;
   sourceMessageId?: string;
   threadId: string;
-  kind: "command" | "file-change" | "permissions" | "question";
+  kind: "command" | "file-change" | "permissions" | "question" | "mcp";
   title: string;
   detail?: string;
   cwd?: string;
+  mcp?: { mode: "form" | "url" | "external"; url?: string; warning?: string };
+  approvalWarning?: string;
   questions?: Array<{
     id: string;
     header: string;
     question: string;
     isSecret: boolean;
+    field?: import("../codexMcpElicitation").McpFormField;
     options?: Array<{ label: string; description: string }>;
   }>;
   deviceId?: string;
@@ -1178,9 +1187,11 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  teamSettingsResponse?: unknown;
   masterUsername?: string;
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
   workspacePanel?: import('../workspaceSurface').WorkspaceSurfaceResult;
+  sessionCoordination?: import('../sessionCoordination').SessionCoordinationResult;
   workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };
   workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;

@@ -5,14 +5,16 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 function createRpc() {
   let receive: ((request: AppServerRequest) => void) | undefined;
+  let notify: ((method: string, params: unknown) => void) | undefined;
   const answerServerRequest = vi.fn();
   const rejectServerRequest = vi.fn();
   const rpc = {
     onServerRequest: (listener: (request: AppServerRequest) => void) => { receive = listener; return () => { receive = undefined; }; },
+    onNotification: (listener: (method: string, params: unknown) => void) => { notify = listener; return () => { notify = undefined; }; },
     answerServerRequest,
     rejectServerRequest
   } as unknown as CodexAppServerRpc;
-  return { rpc, emit: (request: AppServerRequest) => receive?.(request), answerServerRequest, rejectServerRequest };
+  return { rpc, emit: (request: AppServerRequest) => receive?.(request), notify: (method: string, params: unknown) => notify?.(method, params), answerServerRequest, rejectServerRequest };
 }
 afterEach(() => vi.useRealTimers());
 
@@ -60,6 +62,94 @@ it('keeps an app-server blocking question pending without rejecting it on a dash
 });
 
 describe("Codex app-server dashboard prompts", () => {
+  it('clears requests resolved in Codex without resending a response or clearing another owner', () => {
+    const fake = createRpc(), other = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, 'resolved'), detachOther = attachCodexAppServerPrompts(other.rpc, 'other');
+    try {
+      const params = { mode: 'form', requestedSchema: { type: 'object', properties: {} } };
+      fake.emit({ id: 1, method: 'mcpServer/elicitation/request', params });
+      other.emit({ id: 1, method: 'mcpServer/elicitation/request', params });
+      fake.notify('serverRequest/resolved', { threadId: 'wrong', requestId: 1 });
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(2);
+      fake.notify('serverRequest/resolved', { threadId: 'resolved', requestId: 1 });
+      expect(listPendingCodexAppServerPrompts()).toMatchObject([{ threadId: 'other' }]);
+      expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      expect(fake.rejectServerRequest).not.toHaveBeenCalled();
+    } finally { detach(); detachOther(); }
+  });
+  it('answers protocol time requests only for the attached thread', () => {
+    const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'clock');
+    try {
+      fake.emit({ id: 1, method: 'currentTime/read', params: { threadId: 'clock' } });
+      expect(fake.answerServerRequest).toHaveBeenCalledExactlyOnceWith(1, { currentTimeAt: Math.floor(Date.now() / 1000) });
+      fake.emit({ id: 2, method: 'currentTime/read', params: { threadId: 'other' } });
+      expect(fake.answerServerRequest).toHaveBeenCalledOnce();
+      expect(fake.rejectServerRequest).toHaveBeenCalledWith(2, expect.any(String));
+      expect(listPendingCodexAppServerPrompts()).toEqual([]);
+    } finally { detach(); }
+  });
+  it('shows stdin and managed-network context while retaining fresh human approval checks', async () => {
+    const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'human', () => true);
+    try {
+      fake.emit({ id: 1, method: 'item/commandExecution/requestApproval', params: { kind: 'humanCommand', command: 'deploy', availableDecisions: ['accept', 'decline'] } });
+      await Promise.resolve(); expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      respondCodexAppServerPrompt(listPendingCodexAppServerPrompts()[0]!.id, 'decline');
+      fake.emit({ id: 2, method: 'item/commandExecution/requestApproval', params: { kind: 'writeStdin', command: 'yes', networkApprovalContext: { host: 'example.com' }, availableDecisions: ['decline'] } });
+      await Promise.resolve();
+      const prompt = listPendingCodexAppServerPrompts()[0]!;
+      expect(prompt.title).toContain('input to a running command');
+      expect(prompt.detail).toContain('example.com');
+      expect(() => respondCodexAppServerPrompt(prompt.id, 'approve')).toThrow(/did not offer approval/);
+      expect(fake.answerServerRequest).toHaveBeenCalledTimes(1);
+    } finally { detach(); }
+  });
+  it('mirrors MCP approvals and inherits only confirmed auto approval for empty forms', async () => {
+    const fake = createRpc(); let enabled = false;
+    const detach = attachCodexAppServerPrompts(fake.rpc, 'mcp-auto', () => enabled);
+    const params = { threadId: 'mcp-auto', serverName: 'codex-manager', mode: 'form', message: 'Allow manager_schema?', requestedSchema: { type: 'object', properties: {} } };
+    try {
+      fake.emit({ id: 1, method: 'mcpServer/elicitation/request', params });
+      await Promise.resolve();
+      expect(listPendingCodexAppServerPrompts()[0]).toMatchObject({ kind: 'mcp', detail: 'Allow manager_schema?' });
+      expect(fake.answerServerRequest).not.toHaveBeenCalled();
+      enabled = true; autoApprovePendingCodexPrompts('mcp-auto'); await Promise.resolve();
+      expect(fake.answerServerRequest).toHaveBeenCalledExactlyOnceWith(1, { action: 'accept', content: {} });
+      fake.emit({ id: 2, method: 'mcpServer/elicitation/request', params }); await Promise.resolve();
+      expect(fake.answerServerRequest).toHaveBeenLastCalledWith(2, { action: 'accept', content: {} });
+      fake.emit({ id: 3, method: 'mcpServer/elicitation/request', params: { ...params, requestedSchema: { type: 'object', properties: { answer: { type: 'string' } } } } });
+      fake.emit({ id: 4, method: 'mcpServer/elicitation/request', params: { ...params, mode: 'url', url: 'https://example.com/verify' } });
+      fake.emit({ id: 5, method: 'mcpServer/elicitation/request', params: { ...params, mode: 'openai/userVerification' } });
+      await Promise.resolve(); expect(fake.answerServerRequest).toHaveBeenCalledTimes(2);
+      const form = listPendingCodexAppServerPrompts().find(item => item.questions?.length)!;
+      await respondCodexAppServerPrompt(form.id, 'approve', { answer: 'typed' });
+      expect(fake.answerServerRequest).toHaveBeenLastCalledWith(3, { action: 'accept', content: { answer: 'typed' } });
+      const external = listPendingCodexAppServerPrompts().find(item => item.mcp?.mode === 'external')!;
+      expect(() => respondCodexAppServerPrompt(external.id, 'approve')).toThrow(/verification/);
+      await respondCodexAppServerPrompt(external.id, 'decline');
+      expect(fake.answerServerRequest).toHaveBeenLastCalledWith(5, { action: 'decline' });
+    } finally { detach(); }
+  });
+  it('retains MCP input after write failure and declines with the MCP response shape', () => {
+    const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'mcp-fail');
+    try {
+      fake.emit({ id: 9, method: 'mcpServer/elicitation/request', params: { mode: 'form', serverName: 'test', requestedSchema: { type: 'object', properties: { count: { type: 'integer', minimum: 1 } }, required: ['count'] } } });
+      const prompt = listPendingCodexAppServerPrompts()[0]!;
+      expect(() => respondCodexAppServerPrompt(prompt.id, 'approve', { count: '0' })).toThrow(/count/);
+      fake.answerServerRequest.mockImplementationOnce(() => { throw new Error('write failed'); });
+      expect(() => respondCodexAppServerPrompt(prompt.id, 'approve', { count: '2' })).toThrow('write failed');
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+      respondCodexAppServerPrompt(prompt.id, 'decline');
+      expect(fake.answerServerRequest).toHaveBeenLastCalledWith(9, { action: 'decline' });
+    } finally { detach(); }
+  });
+  it('refuses legacy requests that name another conversation', () => {
+    const fake = createRpc(), detach = attachCodexAppServerPrompts(fake.rpc, 'owner');
+    try {
+      fake.emit({ id: 1, method: 'execCommandApproval', params: { conversationId: 'other', command: ['echo', 'test'] } });
+      expect(listPendingCodexAppServerPrompts()).toEqual([]);
+      expect(fake.rejectServerRequest).toHaveBeenCalledOnce();
+    } finally { detach(); }
+  });
   it.each(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'])('auto approves current and future %s prompts only after opt-in', async method => {
     const fake = createRpc(); let enabled = false;
     const detach = attachCodexAppServerPrompts(fake.rpc, 'auto', () => enabled);

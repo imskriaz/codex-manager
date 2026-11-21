@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { DashboardCodexServerRequest } from "../domain/dashboard/types";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import type { AppServerRequest, CodexAppServerRpc } from "./codexAppServerRpc";
+import { mcpElicitationContent, mcpElicitationRequest } from "../domain/codexMcpElicitation";
 
 type PendingPrompt = {
   rpc?: CodexAppServerRpc;
@@ -39,6 +40,7 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
   const off = rpc.onServerRequest((serverRequest) => {
     if (Buffer.byteLength(JSON.stringify(serverRequest.params ?? {}), "utf8") > 32 * 1024) {
       rpc.rejectServerRequest(serverRequest.id, "This approval request is too large to review safely in the dashboard.");
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message: "A Codex request was too large to display safely. Review it in the owning Codex window." });
       return;
     }
     const existing = [...pendingPrompts.values()].find((pending) => pending.rpc === rpc && pending.serverId === serverRequest.id);
@@ -50,8 +52,13 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
       return;
     }
     const request = toDashboardRequest(serverRequest, threadId);
+    if (serverRequest.method === "currentTime/read" && serverRequest.params && typeof serverRequest.params === "object" && (serverRequest.params as Record<string, unknown>)["threadId"] === threadId) {
+      rpc.answerServerRequest(serverRequest.id, { currentTimeAt: Math.floor(Date.now() / 1000) });
+      return;
+    }
     if (!request || pendingPrompts.size >= MAX_PENDING_PROMPTS || (threadId && request.threadId !== threadId)) {
       rpc.rejectServerRequest(serverRequest.id, `Codex Manager cannot safely answer ${serverRequest.method}.`);
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message: `Codex Manager could not display ${serverRequest.method}. Continue in the owning Codex window.` });
       return;
     }
     const blockingQuestion = request.kind === 'question' && !request.sourceMessageId;
@@ -66,8 +73,14 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
     publishDashboardRealtime({ type: "dashboard:codex-request", request });
     autoApprovePendingCodexPrompts(threadId);
   });
+  const offResolved = rpc.onNotification?.((method, params) => {
+    if (method !== "serverRequest/resolved" || !params || typeof params !== "object") return;
+    const resolved = params as Record<string, unknown>;
+    for (const [id, pending] of pendingPrompts) if (pending.rpc === rpc && pending.serverId === resolved["requestId"] && (!resolved["threadId"] || resolved["threadId"] === pending.request.threadId)) finishPrompt(id, pending);
+  });
   const cleanup = () => {
     off();
+    offResolved?.();
     for (const [id, pending] of pendingPrompts) {
       if (pending.rpc !== rpc) continue;
       try { pending.rpc?.rejectServerRequest(pending.serverId, "The Codex session ended before this prompt was answered."); } catch { /* disconnected */ }
@@ -111,7 +124,7 @@ export function syncNativeCodexPrompts(source: object, threadId: string, request
 /** Only a confirmed approval choice authorizes permission responses, never question answers. */
 export function autoApprovePendingCodexPrompts(threadId: string): void {
   for (const [id, pending] of pendingPrompts) {
-    if (pending.request.threadId !== threadId || pending.request.kind === 'question' || pending.responding || pending.autoAttempted || !pending.autoApprove?.()) continue;
+    if (pending.request.threadId !== threadId || pending.request.kind === 'question' || pending.request.approvalWarning || pending.params['kind'] === 'humanCommand' || pending.request.kind === 'mcp' && (pending.request.mcp?.mode !== 'form' || pending.request.questions?.length) || pending.responding || pending.autoAttempted || !pending.autoApprove?.()) continue;
     pending.autoAttempted = true;
     void Promise.resolve().then(() => {
       if (pendingPrompts.get(id) !== pending) return;
@@ -152,8 +165,12 @@ export function respondCodexAppServerPrompt(
     throw new Error("This Codex prompt expired. Refresh the session before continuing.");
   }
   if (pending.responding) return pending.responding;
+  if (decision === "approve" && pending.request.approvalWarning) throw new Error(pending.request.approvalWarning);
   let response: unknown;
-  if (pending.request.kind === "question") {
+  if (pending.request.kind === "mcp") {
+    if (decision === "approve" && pending.request.mcp?.mode === "external") throw new Error(pending.request.mcp.warning);
+    response = { action: decision === "approve" ? "accept" : "decline", ...(decision === "approve" && pending.request.mcp?.mode === "form" ? { content: mcpElicitationContent(pending.request.questions ?? [], answers ?? {}) } : {}) };
+  } else if (pending.request.kind === "question") {
     if (decision === "decline" && !pending.respondNative) {
       pending.rpc?.rejectServerRequest(pending.serverId, "The user dismissed the question.");
       finishPrompt(requestId, pending);
@@ -210,14 +227,17 @@ function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: s
   const params = serverRequest.params && typeof serverRequest.params === "object"
     ? serverRequest.params as Record<string, unknown> : {};
   const method = serverRequest.method;
-  const threadId = typeof params["threadId"] === "string" ? params["threadId"] : fallbackThreadId;
+  const threadId = typeof params["threadId"] === "string" ? params["threadId"] : typeof params["conversationId"] === "string" ? params["conversationId"] : fallbackThreadId;
   const id = randomUUID();
+  if (method === "mcpServer/elicitation/request") return { id, threadId, ...mcpElicitationRequest(params) };
   if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
     const rawCommand = params["command"];
     const command = typeof rawCommand === "string" ? rawCommand : Array.isArray(rawCommand) ? rawCommand.join(" ") : undefined;
     return {
-      id, threadId, kind: "command", title: "Approve Codex command?",
-      detail: [typeof params["reason"] === "string" ? params["reason"] : undefined, command].filter(Boolean).join("\n\n").slice(0, 8_000),
+      id, threadId, kind: "command", title: params["kind"] === "writeStdin" ? "Approve input to a running command?" : params["kind"] === "humanCommand" ? "Codex requires human approval" : "Approve Codex command?",
+      detail: [typeof params["reason"] === "string" ? params["reason"] : undefined, command,
+        ...["networkApprovalContext", "additionalPermissions", "commandActions"].flatMap(key => params[key] ? [`${key}: ${JSON.stringify(params[key])}`] : [])].filter(Boolean).join("\n\n").slice(0, 8_000),
+      ...(Array.isArray(params["availableDecisions"]) && !params["availableDecisions"].includes("accept") ? { approvalWarning: "Codex did not offer approval for this request alone. Review the available decisions in its owning Codex window." } : {}),
       cwd: typeof params["cwd"] === "string" ? params["cwd"] : undefined
     };
   }

@@ -3,12 +3,57 @@ import type { DashboardCliSessionMessage } from '../../src/domain/dashboard/type
 import { answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
 import { normalizeCliComposerDraft, type CliComposerDraft, type CliSubmissionResult, isCliSubmissionEcho } from './cliSessionComposerState';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
+import { readBrowserCache, writeBrowserCache, listBrowserMessageQueues } from './cliSessionCache';
 
-export type CliQueuedMessage = { id: string; draft: CliComposerDraft; state: 'queued' | 'sending' | 'sent' | 'failed' | 'uncertain'; createdAt: number; requestId?: string; seenIds: string[]; turnId?: string; durable?: boolean; error?: string };
+export type CliQueuedMessage = { id: string; draft: CliComposerDraft; state: 'queued' | 'sending' | 'sent' | 'failed' | 'uncertain'; createdAt: number; requestId?: string; seenIds: string[]; turnId?: string; durable?: boolean; steerRequested?: boolean; retryAt?: number; retryCount?: number; error?: string };
 export const CLI_MESSAGE_QUEUE_LIMIT = 20;
 export const MAX_CLI_MESSAGE_QUEUE_BYTES = MAX_CHAT_WIRE_BYTES * 2;
 const fallbackQueueOwners = new Map<string, symbol>();
+export function isRetryableCliSubmissionFailure(message = ''): boolean {
+  return [
+    'The session has a live writer, but its Codex owner could not be reached. Your message was kept;',
+    'Codex is running, but its active turn could not be verified. Your message was kept;',
+    'The native Codex owner is unavailable. Your follow-up was not sent;',
+    'The active Codex turn changed or could not be verified. Your follow-up was not sent;',
+    'The active Codex turn changed. Refresh the session before sending guidance.',
+    'The active Codex turn changed. Refresh before sending guidance.',
+    'The active Codex turn changed or is stopping. Refresh before sending guidance.',
+    'This window does not own an active Codex turn to steer. Refresh the session.'
+  ].some(reason => message.includes(reason));
+}
+type QueueRuntime = { items: CliQueuedMessage[]; ready: boolean; error?: string; reload: () => void; maintain: (clear: boolean) => Promise<boolean> };
+const queueRuntimes = new Map<string, QueueRuntime>();
+export type CliQueueStatus = { scope: string; items: CliQueuedMessage[]; active: boolean; ready: boolean; error?: string };
+export async function readCliQueueStatuses(): Promise<CliQueueStatus[]> {
+  const statuses = new Map<string, CliQueueStatus>();
+  for (const { scope, value } of await listBrowserMessageQueues()) {
+    try { statuses.set(scope, { scope, items: normalizeCliMessageQueue(value), active: false, ready: true }); }
+    catch (error) { statuses.set(scope, { scope, items: [], active: false, ready: false, error: String(error) }); }
+  }
+  for (const [scope, runtime] of queueRuntimes) if (runtime.items.length || runtime.error) statuses.set(scope, { scope, ...runtime, active: true });
+  return [...statuses.values()];
+}
+export async function maintainCliQueues(clear: boolean): Promise<{ updated: number; skipped: number }> {
+  let updated = 0, skipped = 0;
+  for (const status of await readCliQueueStatuses()) {
+    const runtime = queueRuntimes.get(status.scope);
+    const work = async () => {
+      if (runtime?.ready) return runtime.maintain(clear);
+      if (clear) return writeBrowserCache(`message-queue:${status.scope}`, []);
+      const value = await readBrowserCache(`message-queue:${status.scope}`, Number.MAX_SAFE_INTEGER);
+      const items = normalizeCliMessageQueue(value ?? []);
+      // Unconfirmed sends require an echo or explicit resend, never a blind repair replay.
+      const next = items.map(item => item.state === 'failed' && (!item.requestId || isRetryableCliSubmissionFailure(item.error)) ? { ...item, state: 'queued' as const, error: undefined, requestId: undefined, turnId: undefined, retryAt: undefined } : item);
+      return writeBrowserCache(`message-queue:${status.scope}`, next);
+    };
+    try {
+      const saved = runtime?.ready ? await work() : typeof navigator.locks?.request === 'function'
+        ? await navigator.locks.request(`codex-message-queue:${status.scope}`, { ifAvailable: true }, lock => lock ? work() : false) : false;
+      if (saved) { updated++; if (runtime && !runtime.ready) runtime.reload(); } else skipped++;
+    } catch { skipped++; }
+  }
+  return { updated, skipped };
+}
 export function normalizeCliMessageQueue(value: unknown): CliQueuedMessage[] {
   if (!Array.isArray(value) || value.length > CLI_MESSAGE_QUEUE_LIMIT || JSON.stringify(value).length * 2 > MAX_CLI_MESSAGE_QUEUE_BYTES) throw new Error('The saved message queue could not be read. It was kept for recovery.');
   const ids = new Set<string>();
@@ -18,13 +63,13 @@ export function normalizeCliMessageQueue(value: unknown): CliQueuedMessage[] {
     const draft = normalizeCliComposerDraft(item?.draft);
     if (!draft || !item || typeof item.id !== 'string' || item.id.length > 256 || ids.has(item.id) || typeof item.createdAt !== 'number' || !Number.isFinite(item.createdAt) || item.createdAt < 0 || item.createdAt > 8.64e15 || typeof item.state !== 'string' || !['queued','sending','sent','failed','uncertain'].includes(item.state) || !Array.isArray(item.seenIds) || item.seenIds.length > 3000 || item.seenIds.some((id: unknown) => typeof id !== 'string' || id.length > 256) || (!draft.text.trim() && !draft.attachments.length)) throw new Error('The saved message queue contains unreadable content. It was kept for recovery.');
     ids.add(item.id);
-    return { id: item.id, draft, state: item.state === 'sending' || item.state === 'sent' ? 'uncertain' : item.state, createdAt: item.createdAt, seenIds: item.seenIds, ...(typeof item.requestId === 'string' ? { requestId: item.requestId } : {}), ...(typeof item.turnId === 'string' ? { turnId: item.turnId } : {}), durable: true, ...(typeof item.error === 'string' ? { error: item.error } : {}) };
+    return { id: item.id, draft, state: item.state === 'sending' || item.state === 'sent' ? 'uncertain' : item.state, createdAt: item.createdAt, seenIds: item.seenIds, ...(typeof item.requestId === 'string' ? { requestId: item.requestId } : {}), ...(typeof item.turnId === 'string' ? { turnId: item.turnId } : {}), durable: true, ...(isRetryableCliSubmissionFailure(item.error) && Number.isFinite(item.retryAt) && item.retryAt! > 0 ? { retryAt: item.retryAt, retryCount: Math.min(6, Math.max(0, item.retryCount ?? 0)) } : {}), ...(item.steerRequested === true ? { steerRequested: true } : {}), ...(typeof item.error === 'string' ? { error: item.error } : {}) };
   });
 }
 export function queuedMessageEchoes(items: CliQueuedMessage[], messages: DashboardCliSessionMessage[]) {
   const consumed = new Set<string>(), matched = new Set<string>();
   for (const item of items) {
-    if (item.state === 'queued') continue;
+    if (item.state === 'queued' || item.state === 'failed' && !item.requestId) continue;
     // A confirmed native steer may be handed to the owner's next turn.
     const echo = messages.find(message => !consumed.has(message.id) && isCliSubmissionEcho(message, item.draft, new Set(item.seenIds), item.state === 'sent' ? undefined : item.turnId));
     if (echo) { consumed.add(echo.id); matched.add(item.id); }
@@ -71,7 +116,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     if (!props.scope) return;
     let release = () => {}, disposed = false, waiting = false;
     const scope = props.scope;
-    const isForeground = () => document.visibilityState === 'visible' && (props.webview === true || document.hasFocus());
+    const isForeground = () => document.visibilityState === 'visible';
     const hasNativeLocks = typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
     if (!hasNativeLocks && !props.webview) {
       loadFailed('This browser cannot safely own a saved message queue. Use a browser with Web Locks support. Your draft is kept.');
@@ -106,14 +151,14 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     };
     const foreground = () => {
       if (isForeground()) acquire();
-      else if (owned.current && !draining.current && !current.current.some(item => item.state === 'sending')) {
-        owned.current = false; setReady(false); setError(undefined); update([]); void writes.current.finally(release);
+      else if (owned.current && !draining.current && !current.current.length) {
+        owned.current = false; setReady(false); setError(undefined); void writes.current.finally(release);
       }
     };
     releaseInBackground.current = () => { if (!isForeground() && owned.current && !draining.current && !current.current.some(item => item.state === 'sending')) foreground(); };
-    document.addEventListener('visibilitychange', foreground); window.addEventListener('focus', foreground); window.addEventListener('blur', foreground);
+    document.addEventListener('visibilitychange', foreground); window.addEventListener('focus', foreground);
     foreground();
-    return () => { disposed = true; releaseInBackground.current = () => {}; document.removeEventListener('visibilitychange', foreground); window.removeEventListener('focus', foreground); window.removeEventListener('blur', foreground); if (generation.current === epoch) { owned.current = false; generation.current++; } void writes.current.finally(release); };
+    return () => { disposed = true; releaseInBackground.current = () => {}; document.removeEventListener('visibilitychange', foreground); window.removeEventListener('focus', foreground); if (generation.current === epoch) { owned.current = false; generation.current++; } void writes.current.finally(release); };
   }, [props.scope, props.webview, loadAttempt]);
   useEffect(() => {
     if (!ready || !owned.current) return;
@@ -128,17 +173,19 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       if (!result || !(['sending','uncertain'].includes(item.state) || item.state === 'failed' && result.status === 'completed')) return item;
       changed = true;
       window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'sendCodexCliSessionMessage', ...result, requestId: item.id } }));
-      return { ...item, state: result.status === 'completed' ? 'sent' as const : 'failed' as const, error: result.message };
+      const retryCount = Math.min((item.retryCount ?? 0) + 1, 6);
+      return { ...item, state: result.status === 'completed' ? 'sent' as const : 'failed' as const, error: result.message,
+        ...(result.status === 'failed' && isRetryableCliSubmissionFailure(result.message) ? { retryAt: Date.now() + Math.min(60_000, 2_000 * 2 ** (retryCount - 1)), retryCount } : { retryAt: undefined }) };
     });
     if (changed) { update(next); void save(next).finally(() => releaseInBackground.current()); }
   }, [props.messages, props.results, ready, items]);
   useEffect(() => {
     if (!ready || !owned.current || draining.current) return;
-    const steerAnswer = !props.canDispatch && props.connected !== false && props.canSteer && props.turnId && props.steer;
+    const steerAnswer = !props.canDispatch && props.connected !== false && props.canSteer && props.steer;
     if (!props.canDispatch && !steerAnswer) return;
     if (current.current.some(item => item.state === 'sending' || item.state === 'uncertain')) return;
     // A waiting turn needs its answer before ordinary queued follow-ups can run.
-    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0) : current.current.find(item => item.state !== 'sent');
+    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && (item.steerRequested || props.turnId && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0)) : current.current.find(item => item.state !== 'sent');
     if (!next || next.state !== 'queued' || !next.durable) return;
     draining.current = true;
     const epoch = generation.current;
@@ -149,7 +196,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       if (!current.current.some(item => item.id === next.id && item.state === 'sending')) return;
       if (!saved) throw new Error('Browser storage could not save the send state. Your message was kept and was not sent. Free storage before retrying.');
       const currentOptions = options.current;
-      const steer = answeredSessionQuestionIds([queuedMessageView(next)]).size > 0 && currentOptions.canSteer && currentOptions.turnId ? currentOptions.steer : undefined;
+      const steer = (next.steerRequested || currentOptions.turnId && answeredSessionQuestionIds([queuedMessageView(next)]).size > 0) && (currentOptions.canSteer ?? currentOptions.canDispatch) ? currentOptions.steer : undefined;
       if (currentOptions.connected === false || !currentOptions.canDispatch && !steer) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
       const turnId = currentOptions.turnId;
       const requestId = steer ? steer(next.draft) : currentOptions.send(next.draft);
@@ -171,6 +218,20 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     }, Math.max(65_000, chatUploadTimeoutMs(pending.draft.attachments)));
     return () => clearTimeout(timer);
   }, [items.find(item => item.state === 'sending')?.id]);
+  useEffect(() => {
+    const retryable = items.filter(item => item.state === 'failed' && (item.durable === false && !item.requestId || item.retryAt));
+    if (!ready || !owned.current || !retryable.length) return;
+    const epoch = generation.current;
+    const timer = setTimeout(() => {
+      const retryIds = new Set(retryable.filter(item => !item.retryAt || item.retryAt <= Date.now()).map(item => item.id));
+      const next = current.current.map(item => retryIds.has(item.id) ? { ...item, state: 'queued' as const, error: undefined, requestId: undefined, turnId: undefined, retryAt: undefined } : item);
+      void save(next).catch(() => false).then(saved => {
+        if (epoch !== generation.current) return;
+        update(current.current.map(item => retryIds.has(item.id) && item.state === 'failed' ? { ...item, ...(saved ? { state: 'queued' as const, error: undefined, requestId: undefined, turnId: undefined, retryAt: undefined, durable: true } : {}) } : item));
+      });
+    }, Math.max(2_000, Math.min(...retryable.map(item => (item.retryAt ?? Date.now() + 2_000) - Date.now()))));
+    return () => clearTimeout(timer);
+  }, [items, ready]);
   const remove = async (id: string, restore = false): Promise<boolean> => {
     const item = current.current.find(item => item.id === id);
     if (!owned.current || !item || item.state === 'sending') return false;
@@ -187,31 +248,33 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     }
     return false;
   };
+  useEffect(() => {
+    if (!props.scope) return;
+    const scope = props.scope;
+    const runtime: QueueRuntime = { items, ready, error, reload: () => setLoadAttempt(value => value + 1), maintain: async clear => {
+      if (!owned.current || draining.current) return false;
+      const before = current.current, epoch = generation.current;
+      const next = clear ? before.filter(item => item.state === 'sending') : before.map(item => item.state === 'failed' && (!item.requestId || isRetryableCliSubmissionFailure(item.error)) ? { ...item, state: 'queued' as const, error: undefined, requestId: undefined, turnId: undefined, retryAt: undefined, durable: false } : item);
+      update(next);
+      const saved = await save(next).catch(() => false);
+      if (epoch !== generation.current) return false;
+      if (!saved) { update(before); return false; }
+      update(current.current.map(item => item.state === 'queued' ? { ...item, durable: true } : item));
+      return true;
+    } };
+    if (!queueRuntimes.get(scope)?.ready || ready) queueRuntimes.set(scope, runtime);
+    return () => { if (queueRuntimes.get(scope) === runtime) queueRuntimes.delete(scope); };
+  }, [props.scope, items, ready, error]);
   return { items, ready, error, notice, reason: props.dispatchReason, connected: props.connected !== false, retryLoad: () => setLoadAttempt(value => value + 1),
     steerNow: (id: string) => {
-      const item = current.current.find(entry => entry.id === id), epoch = generation.current;
-      if (!owned.current || !ready || !item || item.state !== 'queued' || item.durable === false) { setNotice('This message is not ready to steer. Check its queue status before retrying.'); return; }
-      if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) { const message = options.current.dispatchReason ?? 'This session cannot accept a steer yet. The message remains queued.'; setNotice(message); options.current.feedback(message, async () => epoch === generation.current && current.current.some(entry => entry.id === id && entry.state === 'queued') ? remove(id) : false); return; }
-      if (draining.current || current.current.some(entry => entry.state === 'sending')) { const message = 'Another queued message is already sending. Wait for confirmation before steering this message.'; setNotice(message); options.current.feedback(message); return; }
-      draining.current = true;
-      const sending = { ...item, state: 'sending' as const, durable: false, seenIds: options.current.messages.map(message => message.id).slice(-3000), turnId: options.current.turnId };
-      update(current.current.map(entry => entry.id === id ? sending : entry)); setNotice('Steering…');
-      void save(current.current).then(saved => {
-        if (epoch !== generation.current || !owned.current) return;
-        if (!current.current.some(entry => entry.id === id && entry.state === 'sending')) return;
-        if (!saved) throw new Error('Browser storage could not save the steer state. The message was kept and was not sent.');
-        if (!(options.current.canSteer ?? options.current.canDispatch) || options.current.connected === false) throw new Error('The session cannot accept this message yet. It was kept and was not sent.');
-        const turnId = options.current.turnId;
-        const requestId = options.current.steer ? options.current.steer(item.draft) : options.current.send(item.draft);
-        if (!requestId) throw new Error('The steer was not sent. The message is kept in the queue.');
-        const sent = current.current.map(entry => entry.id === id ? { ...entry, requestId, durable: true, turnId } : entry);
-        update(sent); void save(sent);
-      }).catch(error => {
+      const item = current.current.find(entry => entry.id === id);
+      if (!owned.current || !ready || !item || item.state !== 'queued' || item.steerRequested) return;
+      const epoch = generation.current;
+      update(current.current.map(entry => entry.id === id ? { ...entry, steerRequested: true, durable: false } : entry));
+      void save(current.current).catch(() => false).then(saved => {
         if (epoch !== generation.current) return;
-        const message = error instanceof Error ? error.message : String(error);
-        const failed = current.current.map(entry => entry.id === id ? { ...entry, state: 'failed' as const, durable: true, error: message } : entry);
-        update(failed); void save(failed); setNotice(message);
-      }).finally(() => { if (epoch === generation.current) { draining.current = false; releaseInBackground.current(); } });
+        update(current.current.map(entry => entry.id === id ? { ...entry, durable: saved, ...(!saved ? { state: 'failed' as const, error: 'Steer could not be saved. The message is kept here.' } : {}) } : entry));
+      });
     },
     sendNow: (id: string) => {
       const item = current.current.find(item => item.id === id);

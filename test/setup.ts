@@ -1,4 +1,6 @@
 import { beforeEach, vi } from "vitest";
+
+// Server unit tests must never create identity files in the developer's Codex home.
 beforeEach(() => vi.stubEnv("CODEX_MANAGER_ADMIN_USERNAME", "manager-test"));
 
 vi.mock('../src/services/autoResumeKeepAwake', () => ({

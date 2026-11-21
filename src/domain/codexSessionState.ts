@@ -90,7 +90,7 @@ export function countPeerSessions(
     const rows = active.filter((session) =>
       peer.local ? !session.remote : session.remote && session.deviceId === peer.id
     );
-    return { id: peer.id, total: rows.length, running: rows.filter(isCodexSessionRunning).length };
+    return { id: peer.id, total: rows.length, running: rows.filter(isCodexSessionRunningForDisplay).length };
   });
 }
 

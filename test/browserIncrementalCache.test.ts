@@ -67,6 +67,57 @@ async function fixture() {
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+function recoveryStorage() {
+  const entries = new Map<string, string>();
+  const storage = { getItem: (key: string) => entries.get(key) ?? null, setItem: vi.fn((key: string, value: string) => { entries.set(key, value); }), removeItem: (key: string) => { entries.delete(key); }, get length() { return entries.size; }, key: (index: number) => [...entries.keys()][index] ?? null };
+  vi.stubGlobal('localStorage', storage);
+  return storage;
+}
+
+it('journals queue fences immediately while database opening is stalled', async () => {
+  const storage = recoveryStorage(), cache = await fixture(); cache.opening('pending');
+  const value = [{ id: 'one', state: 'sending' }];
+  expect(await cache.writeBrowserCache('message-queue:one', value)).toBe(true);
+  expect(storage.setItem).toHaveBeenCalledOnce();
+  expect(await cache.readBrowserCache('message-queue:one')).toEqual(value);
+  expect(await cache.writeBrowserCache('message-queue:one', [])).toBe(true);
+  expect(await cache.readBrowserCache('message-queue:one')).toEqual([]);
+});
+
+it('recovers queues, composer and file drafts when IndexedDB is unavailable', async () => {
+  recoveryStorage(); const cache = await fixture(); cache.opening('throw');
+  expect(await cache.writeBrowserCache('message-queue:new', [{ state: 'queued' }])).toBe(true);
+  expect(await cache.writeCliComposerDraft('one', { text: 'Keep this', attachments: [] })).toBe(true);
+  expect(await cache.writeBrowserCache('workspace-drafts:one', { 'file.txt': { text: 'Edited', revision: 'r1' } })).toBe(true);
+  vi.resetModules(); const reopened = await import('../webview-src/dashboard/cliSessionCache');
+  expect(await reopened.readBrowserCache('message-queue:new')).toEqual([{ state: 'queued' }]);
+  expect(await reopened.readCliComposerDraft('one')).toMatchObject({ text: 'Keep this' });
+  expect(await reopened.readBrowserCache('workspace-drafts:one')).toMatchObject({ 'file.txt': { text: 'Edited' } });
+  expect(await reopened.listBrowserMessageQueues()).toEqual([{ scope: 'new', value: [{ state: 'queued' }] }]);
+});
+
+it('falls back to the database without letting an older journal hide newer queue state', async () => {
+  const storage = recoveryStorage(), cache = await fixture();
+  expect(await cache.writeBrowserCache('message-queue:one', [{ state: 'queued' }])).toBe(true);
+  storage.setItem.mockImplementationOnce(() => { throw new DOMException('Full', 'QuotaExceededError'); });
+  expect(await cache.writeBrowserCache('message-queue:one', [{ state: 'sending' }])).toBe(true);
+  expect(await cache.readBrowserCache('message-queue:one')).toEqual([{ state: 'sending' }]);
+});
+
+it('preserves the last durable journal when both storage writes fail', async () => {
+  const storage = recoveryStorage(), cache = await fixture();
+  expect(await cache.writeBrowserCache('message-queue:one', [{ state: 'sending' }])).toBe(true);
+  storage.setItem.mockImplementationOnce(() => { throw new DOMException('Full', 'QuotaExceededError'); });
+  cache.fail();
+  expect(await cache.writeBrowserCache('message-queue:one', [{ state: 'sent' }])).toBe(false);
+  expect(await cache.readBrowserCache('message-queue:one')).toEqual([{ state: 'sending' }]);
+});
+
+it('does not overwrite an unreadable legacy queue by assuming it is empty', async () => {
+  recoveryStorage(); const cache = await fixture(); cache.opening('throw');
+  await expect(cache.readBrowserCache('message-queue:legacy')).rejects.toThrow('storage is unavailable');
+});
+
 it('reuses unchanged browser views and writes only changed entries', async () => {
   const cache = await fixture();
   expect(await cache.writeBrowserCache('board:pc:project', { rows: [1] })).toBe(true);

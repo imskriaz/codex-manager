@@ -10,6 +10,7 @@ import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironme
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
 import { startApiProxyLog } from "./aiProxyHistory";
+import { recordOfficeAudit } from "./officeAudit";
 import { readClaudeProxyMapping } from './aiProxyModelMapping';
 import { CLAUDE_PROXY_MODELS, claudeProxyModelName, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
 import type { ApiProxyRequestLog } from "../domain/dashboard/apiProxy";
@@ -234,6 +235,8 @@ export class AiProxy {
       if (!this.enabled() && !this.internalTokenAllowed(token.id)) throw new AiProxyError(401, "Dashboard API access is disabled.", "authentication_error");
       log.apiKeyId = token.id;
       log.apiKeyName = token.name;
+      log.actor = { id: token.id, name: token.name, ...(token.name.startsWith("Team: ") ? { email: token.name.slice(6) } : {}) };
+      response.once("finish", () => recordOfficeAudit(`proxy ${log.method} ${log.path}`, response.statusCode < 400 ? "completed" : "failed", log.actor));
       if (apiTokenProjects(token).length || !hasApiPermission(token, "aiProxy"))
         throw new AiProxyError(
           403,

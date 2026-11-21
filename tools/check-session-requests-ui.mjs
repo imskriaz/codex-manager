@@ -18,10 +18,49 @@ export async function checkSessionRequestsUi(page, width, height, output, thread
     { id: "secret", header: "Secret", question: "Enter the secret value", isSecret: true },
     { id: "notes", header: "Notes", question: "Add instructions", isSecret: false }
   ] };
+  await inject({ id: 'mcp-approval-ui', threadId, kind: 'mcp', title: 'Request from codex-manager', detail: 'Allow the codex-manager MCP server to run manager_schema?', mcp: { mode: 'form' }, questions: [] });
+  await panel.getByText('Allow the codex-manager MCP server to run manager_schema?', { exact: true }).waitFor();
+  assert.equal(await panel.getByRole('button', { name: 'Approve once', exact: true }).isEnabled(), true);
+  await page.screenshot({ path: path.join(output, 'mcp-approval-' + width + '.png') });
+  await panel.getByRole('button', { name: 'Approve once', exact: true }).click();
+  await panel.waitFor({ state: 'hidden' });
+  const mcpApproved = await page.evaluate(() => window.__uiActions.filter(item => item.action === 'respondCodexServerRequest').at(-1));
+  assert.equal(mcpApproved.payload.codexRequestId, 'mcp-approval-ui');
+  assert.equal(mcpApproved.payload.codexDecision, 'approve');
+
+  await inject({ id: 'mcp-form-ui', threadId, kind: 'mcp', title: 'MCP form', mcp: { mode: 'form' }, questions: [
+    { id: 'count', header: 'Count', question: 'Choose a count from 1 to 3', isSecret: false, field: { type: 'integer', required: true, minimum: 1, maximum: 3 } },
+    { id: 'enabled', header: 'Enabled', question: 'Enable the option?', isSecret: false, field: { type: 'boolean', required: true }, options: [{ label: 'true', description: 'Yes' }, { label: 'false', description: 'No' }] },
+    { id: 'choices', header: 'Choices', question: 'Choose items', isSecret: false, field: { type: 'array', required: true, enum: ['a', 'b'], minItems: 1 }, options: [{ label: 'a', description: 'Alpha' }, { label: 'b', description: 'Beta' }] }
+  ] });
+  const mcpSend = panel.getByRole('button', { name: 'Send answer', exact: true });
+  assert.equal(await mcpSend.isDisabled(), true);
+  await panel.locator('input[name="answer-0"]').fill('4');
+  await panel.locator('select[name="choice-1"]').selectOption('false');
+  await panel.locator('select[name="choice-2"]').selectOption(['a', 'b']);
+  assert.equal(await mcpSend.isDisabled(), true, 'MCP constraints prevent invalid submissions');
+  await panel.locator('input[name="answer-0"]').fill('2');
+  await page.screenshot({ path: path.join(output, 'mcp-form-' + width + '.png') });
+  await mcpSend.click();
+  await panel.waitFor({ state: 'hidden' });
+  const mcpForm = await page.evaluate(() => window.__uiActions.filter(item => item.action === 'respondCodexServerRequest').at(-1));
+  assert.deepEqual(mcpForm.payload.codexAnswers, { count: '2', enabled: 'false', choices: '["a","b"]' });
+
+  await inject({ id: 'mcp-url-ui', threadId, kind: 'mcp', title: 'Complete external step', mcp: { mode: 'url', url: 'https://example.com/verify' } });
+  const link = panel.getByRole('link', { name: 'Open request link', exact: true });
+  assert.equal(await link.getAttribute('href'), 'https://example.com/verify');
+  assert.equal(await link.getAttribute('rel'), 'noopener noreferrer');
+  await panel.getByRole('button', { name: 'Decline', exact: true }).click();
+  await panel.waitFor({ state: 'hidden' });
+  await inject({ id: 'mcp-external-ui', threadId, kind: 'mcp', title: 'Device verification', mcp: { mode: 'external', warning: 'Complete device verification in the owning Codex window.' } });
+  await panel.getByRole('alert').filter({ hasText: 'Complete device verification' }).waitFor();
+  assert.equal(await panel.getByRole('button', { name: 'Approve once', exact: true }).count(), 0);
+  await panel.getByRole('button', { name: 'Decline', exact: true }).click();
+  await panel.waitFor({ state: 'hidden' });
   await inject({ id: "permission-ui", threadId, kind: "permissions", title: "Allow requested permissions?", detail: 'Network access requested for this turn\n{"network":{"enabled":true}}', cwd: "D:/demo" });
   assert.ok((await panel.getByRole("button", { name: "Approve once", exact: true }).boundingBox()).height >= (width <= 760 ? 44 : 34));
   const approvalsBefore = await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").length);
-  assert.equal(approvalsBefore, 0, "A displayed permission prompt never approves itself");
+  assert.equal(approvalsBefore, 4, "Only the four explicitly reviewed MCP requests have responses");
   await panel.getByRole("button", { name: "Decline", exact: true }).click();
   await panel.waitFor({ state: "hidden" });
   const declined = await page.evaluate(() => window.__uiActions.filter(item => item.action === "respondCodexServerRequest").at(-1));

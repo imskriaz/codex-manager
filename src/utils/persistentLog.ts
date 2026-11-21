@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import { waitWithin } from "./concurrency";
 import { fireSqliteConfigurationChanges } from "../storage/configurationEvents";
 import { AsyncLocalStorage } from "async_hooks";
+import { currentOfficeActor, type OfficeActor } from "../services/officeAudit";
 import { randomUUID } from "crypto";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -27,6 +28,7 @@ type OperationContext = {
 };
 
 type PersistentLogRecord = {
+  actor?: OfficeActor;
   timestamp: string;
   hostRunId?: string;
   sequence?: number;
@@ -145,6 +147,7 @@ export class PersistentSqliteLogger {
     let line: string;
     try {
       const record: PersistentLogRecord = {
+        actor: currentOfficeActor(),
         timestamp: recordTime.toISOString(),
         hostRunId,
         sequence: ++this.sequence,

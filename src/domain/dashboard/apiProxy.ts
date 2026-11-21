@@ -20,6 +20,7 @@ export function claudeProxyModelName(role: keyof ClaudeProxyMapping, target: { i
 }
 
 export interface ApiProxyRequestLog {
+  actor?: { id: string; name: string; email?: string };
   id: string;
   startedAt: number;
   method: string;

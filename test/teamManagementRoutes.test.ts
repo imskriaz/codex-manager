@@ -31,11 +31,24 @@ describe("Team management routes", () => {
       expect(other.close).not.toHaveBeenCalled();
     } finally { internal.webSocketClients.clear(); server.dispose(); }
   });
-  it("retains the management route after login and redirects the old route", () => {
+  it("opens Settings after login for either legacy management route", () => {
     expect(isWebDashboardPagePath("/manage")).toBe(true);
-    expect(normalizeWebDashboardReturnPath("/manage")).toBe("/manage");
-    expect(normalizeWebDashboardReturnPath("/admin")).toBe("/manage");
+    expect(normalizeWebDashboardReturnPath("/manage")).toBe("/?settings=users");
+    expect(normalizeWebDashboardReturnPath("/admin")).toBe("/?settings=users");
+    expect(normalizeWebDashboardReturnPath("/?settings=users")).toBe("/?settings=users");
     expect(normalizeWebDashboardReturnPath("//external.example/manage")).toBe("/");
+  });
+  it.each(["/manage", "/admin"])("redirects administrator %s requests into Settings", async route => {
+    const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: { get: vi.fn(async () => undefined) } } as never, { getDashboardSettings: () => ({ teamWorkspaceEnabled: true }) } as never);
+    const internal = server as any;
+    vi.spyOn(internal, "isAuthorized").mockResolvedValue(true);
+    vi.spyOn(internal, "officeUserForRequest").mockResolvedValue({ id: "master", role: "unrestricted-admin", enabled: true });
+    const response = { statusCode: 200, setHeader: vi.fn(), end: vi.fn() };
+    try {
+      await internal.handle({ method: "GET", url: route, headers: { host: "127.0.0.1:39875" }, socket: { remoteAddress: "127.0.0.1" } }, response);
+      expect(response.statusCode).toBe(303);
+      expect(response.setHeader).toHaveBeenCalledWith("Location", "/?settings=users");
+    } finally { server.dispose(); }
   });
   it.each(["/manage", "/admin", "/api/office/settings", "/api/office/users", "/api/office/mcp"])(
     "denies regular users access to %s on the server",

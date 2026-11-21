@@ -13,14 +13,14 @@ let root:string,store:SqliteStateStore,server:WebDashboardServer,user:OfficeUser
 beforeEach(async()=>{
  root=await fs.mkdtemp(path.join(os.tmpdir(),"team-isolation-"));vi.stubEnv("CODEX_MANAGER_STORAGE_ROOT",root);
  await configureCrossWindowOperationCoordinator(root);store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
- user=await createOfficeUser({username:"alex",password:"password-123",workspacePath:path.join(root,"alex")});
+ user=await createOfficeUser({username:"alex@example.test",password:"password-123",workspacePath:path.join(root,"alex")});
  server=new WebDashboardServer({extensionUri:{fsPath:"extension"},secrets:{get:vi.fn(async()=>undefined)}} as never,{} as never);
 });
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();vi.unstubAllEnvs();await removeTestDirectory(root);});
 it("rejects overlapping user workspaces during creation and editing",async()=>{
- await expect(createOfficeUser({username:"same",password:"password-123",workspacePath:user.workspacePath})).rejects.toThrow("separate workspace");
- await expect(createOfficeUser({username:"nested",password:"password-123",workspacePath:path.join(user.workspacePath,"nested")})).rejects.toThrow("separate workspace");
- const other=await createOfficeUser({username:"sam",password:"password-123",workspacePath:path.join(root,"sam")});
+ await expect(createOfficeUser({username:"same@example.test",password:"password-123",workspacePath:user.workspacePath})).rejects.toThrow("separate workspace");
+ await expect(createOfficeUser({username:"nested@example.test",password:"password-123",workspacePath:path.join(user.workspacePath,"nested")})).rejects.toThrow("separate workspace");
+ const other=await createOfficeUser({username:"sam@example.test",password:"password-123",workspacePath:path.join(root,"sam")});
  await expect(updateOfficeUser(other.id,{workspacePath:root})).rejects.toThrow("separate workspace");
 });
 it("rejects another workspace, traversal, symlink escapes, peers and unknown native sessions",async()=>{

@@ -20,7 +20,7 @@ export function SettingsLanguageBlock(props: {
   onChange: (value: DashboardSettings["displayLanguage"]) => void;
 }) {
   return (
-    <div class="settings-block">
+    <div class="settings-block settings-language-block">
       <div class="settings-block-head">
         <div class="settings-block-title">{props.copy.languageTitle}</div>
         <div class="settings-block-sub" title={props.copy.languageSub}>{props.copy.languageSub}</div>
@@ -135,6 +135,7 @@ export function SettingsSegmentBlock(props: {
 }
 
 export function SettingsToggleBlock(props: {
+  settingKey?: string;
   title: string;
   sub: ComponentChildren;
   enabled: boolean;
@@ -144,7 +145,7 @@ export function SettingsToggleBlock(props: {
   children?: ComponentChildren;
 }) {
   return (
-    <div class={`settings-block ${props.className ?? ""}`}>
+    <div class={`settings-block ${props.className ?? ""}`} data-setting={props.settingKey}>
       <div class="settings-toggle-head">
         <div class="settings-block-head">
           <div class="settings-block-title">{props.title}</div>

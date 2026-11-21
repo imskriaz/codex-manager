@@ -47,8 +47,9 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(settings).toContain('role="tablist"');
     expect(settings).toContain('role="tab"');
     expect(settings).toContain('role="tabpanel"');
-    expect(settings).toContain('event.key === "ArrowRight"');
-    expect(settings).toContain('event.key === "ArrowLeft"');
+    expect(settings).toContain('handleTabKeyDown');
+    const primitives = readFileSync("webview-src/dashboard/primitives.tsx", "utf8");
+    expect(primitives).toContain("'ArrowLeft','ArrowRight','Home','End'");
     expect(settings).toContain("aria-selected={activeTab === tab.id}");
   });
 
@@ -82,13 +83,15 @@ describe("dashboard accessibility and interaction flow", () => {
 
   it("uses a labelled login form with password-manager and error semantics", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain('<label for="dashboard-username">Email</label>');
     expect(source).toContain('<label for="dashboard-password">Password</label>');
     expect(source).toContain('autocomplete="current-password"');
     expect(source).toContain('role="alert"');
-    expect(source).toContain('<button type="submit">Unlock dashboard</button>');
+    expect(source).toContain('<button type="submit">Sign in</button>');
+    expect(source).toContain('class="login-card"');
   });
 
-  it("places the shared password in General instead of the data and sync panel", () => {
+  it("places shared security settings in General", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const generalPanel = settings.indexOf('id="settings-panel-general"');
     const passwordSetting = settings.indexOf('data-setting="shared-password"');
@@ -158,8 +161,9 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(tools).toContain("Archive manager");
     expect(tools).toContain("Codex storage check");
     expect(tools).toContain("MAINTENANCE_TOOLS.map");
-    expect(tools).toContain('className="maintenance-confirm-modal"');
-    expect(tools).toContain('className="maintenance-result-modal"');
+    expect(tools).toContain('class="settings-inline-confirm"');
+    expect(tools).not.toContain('ModalShell');
+    expect(tools).toContain('class="maintenance-inline-result"');
     expect(tools).toContain('goals: "Goal manager"');
     expect(queue).toContain("Queue priority for");
     expect(queue).not.toContain("cli-session-control-markers");

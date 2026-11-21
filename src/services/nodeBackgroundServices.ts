@@ -7,6 +7,7 @@ import { registerAutoRefreshScheduler, registerTokenRefreshScheduler } from "../
 import { registerSessionRecording } from "./sessionRecording";
 import { registerCodexSessionQueue } from "./codexSessionQueue";
 import { registerCompletedGoalCleanup } from './completedGoalCleanup';
+import { registerStorageMaintenance } from './storageMaintenance';
 import { registerStandaloneCapacityRetry } from './standaloneCapacityRetry';
 import { registerWorkspaceTerminalMonitoring } from "./workspaceTools";
 import { registerModelCapacitySwitch } from "./modelCapacitySwitch";
@@ -37,6 +38,7 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   registerSessionRecording(context);
   registerCodexSessionQueue(context);
   registerCompletedGoalCleanup(context);
+  registerStorageMaintenance(context);
   registerStandaloneCapacityRetry(context, repo, canUseAccount);
   context.subscriptions.push(
     registerCodexSessionAutoResumeTracking(context),

@@ -8,6 +8,7 @@ import { getCodexHomeStateKey } from '../src/codex/authFile';
 import { hasCodexSessionAutoResumeOptIn } from '../src/services/codexSessionPreferences';
 import { filterAutoResumeGoalSessionIds } from '../src/services/codexSessionAutoResumeSelection';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
+import { removeDeletedSessionCache } from '../src/storage/sqliteSessions';
 import { clearCodexSessionManualStop, isCodexSessionAutoResumeDisabled, markCodexSessionManualStop, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim, retireCodexSessionQueue, readQueuedCodexSessionPreferences } from "../src/services/codexSessionPreferences";
 
 const ids = [
@@ -17,6 +18,18 @@ const ids = [
 ];
 let root: string | undefined;
 let store: SqliteStateStore | undefined;
+
+it('does not restore a deferred manual stop or late preference write after confirmed deletion', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-preference-deleted-'));
+  store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+  vi.spyOn(store, 'set').mockImplementationOnce(() => { throw new Error('Storage full'); });
+  expect(() => markCodexSessionManualStop(root!, ids[0]!)).toThrow('Storage full');
+  vi.restoreAllMocks();
+  removeDeletedSessionCache(store, root, [ids[0]!], undefined, Date.now() + 1, true);
+  expect(readCodexSessionPreferences(root, [ids[0]!]).get(ids[0]!)).toEqual({});
+  expect(store.keys('codex-session-preferences')).toEqual([]);
+  expect(() => writeCodexSessionPreference(root!, ids[0]!, { queue: true })).toThrow('deleted');
+});
 
 it('reads only requested preferences and titles, deduplicates keys, and isolates corrupt rows', async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'codex-preference-index-'));

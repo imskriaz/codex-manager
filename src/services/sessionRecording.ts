@@ -13,7 +13,7 @@ const pending = new Map<string,{ home:string; state:DashboardCodexSessionLiveSta
 let pendingBytes = 0;
 let timer: NodeJS.Timeout | undefined;
 const warned = new Set<string>();
-const pendingStatus = new Map<string,{home:string;id:string;status:"running"|"idle"|"unknown";at:number}>();
+const pendingStatus = new Map<string,{home:string;id:string;status:"running"|"idle"|"unknown";displayStatus?:"running"|"idle";displayAt?:number;at:number}>();
 type Revision = Pick<DashboardCodexSessionLiveState,"sessionId"|"deviceId"|"streamId"|"sequence"|"updatedAt"|"status">;
 const observed = new Map<string,Revision>();
 const revision = ({sessionId,deviceId,streamId,sequence,updatedAt,status}:DashboardCodexSessionLiveState):Revision => ({sessionId,deviceId,streamId,sequence,updatedAt,status});
@@ -104,7 +104,7 @@ export function flushSessionRecording(limit = 8): boolean {
       initializeSessionStorage(store);
       store.transaction(() => {
         for (const [,entry] of states) saveSessionLive(store,entry.home,entry.state,entry.accountId);
-        for (const [,entry] of statuses) saveSessionStatus(store,entry.home,entry.id,entry.status,entry.at);
+        for (const [,entry] of statuses) saveSessionStatus(store,entry.home,entry.id,entry.status,entry.at,entry.displayStatus ?? entry.status,entry.displayAt ?? entry.at);
       });
       for (const [key,entry] of states) if (pending.get(key) === entry) { pending.delete(key); pendingBytes -= entry.bytes; }
       for (const [key,entry] of statuses) if (pendingStatus.get(key) === entry) pendingStatus.delete(key);
@@ -137,8 +137,23 @@ export function recordNativeSessionStatus(home:string,id:string,running:boolean|
     warn(new Error("The session status recording queue is full; the oldest queued status was evicted to retain the newest state."));
     evictOldestStatus();
   }
-  pendingStatus.set(key,{home,id:id.toLowerCase(),status:running === undefined ? "unknown" : running ? "running" : "idle",at:Date.now()});
+  const status = running === undefined ? "unknown" : running ? "running" : "idle";
+  pendingStatus.set(key,{home,id:id.toLowerCase(),status,displayStatus:status === "unknown" ? pendingStatus.get(key)?.displayStatus : status,displayAt:status === "unknown" ? pendingStatus.get(key)?.displayAt : Date.now(),at:Date.now()});
   if (!timer) schedule(250);
+}
+
+/** Every dashboard reads the same confirmed cache, including writes still waiting for SQLite. */
+export function readCachedSessionDisplayStatuses(home: string): Map<string, string> {
+  const store = getSqliteStateStore();
+  const statuses = store ? readSessionStatuses(store,home,true) : new Map<string,string>();
+  const scope = getCodexHomeStateKey(home);
+  for (const entry of pendingStatus.values()) {
+    if (getCodexHomeStateKey(entry.home) === scope && (entry.displayStatus || !statuses.has(entry.id))) {
+      const expired = entry.displayStatus === "running" && Date.now() - (entry.displayAt ?? entry.at) >= 30_000;
+      statuses.set(entry.id,expired ? "unknown" : entry.displayStatus ?? entry.status);
+    }
+  }
+  return statuses;
 }
 
 /** Discovery is optional background work; native status events share the same bounded writer. */

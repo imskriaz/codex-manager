@@ -32,6 +32,7 @@ const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'te
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
 import { WorkspaceGit } from './workspaceGit';
 import { WorkspaceMenu } from './workspaceMenu';
+import { QueueToolsMenuItem } from './queueTools';
 import { ToolIcon as WorkspaceToolIcon } from './icons';
 import { readChatAttachmentFiles } from './attachmentUploads';
 import { createPortal } from "preact/compat";
@@ -338,7 +339,7 @@ function writeSessionSeen(value: Record<string, string>): void {
 }
 export function cliSessionIndicator(session: Pick<DashboardCliSessionSummary, "id" | "deviceId" | "status" | "updatedAt" | "interrupted" | "locked">, seen: Record<string, string>, attentionKeys: ReadonlySet<string>, live?: DashboardCodexSessionLiveState): "running" | "attention" | "complete" | "new" | "interrupted" | "seen" {
   const key = cliSessionTargetKey(session);
-  if (session.status === 'running' || session.locked) return 'running';
+  if (session.status === 'running') return 'running';
   if (attentionKeys.has(key)) return "attention";
   if (session.status === "unknown") return "seen";
   const version = sessionReadVersion(session, live);
@@ -658,7 +659,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const durable = pending && !value.text && !value.attachments.length ? { ...value, text: pending.text, attachments: pending.attachments } : value;
       void writeCliComposerDraft(key, durable).then((saved) => {
         if (saved || !durable.text && !durable.attachments.length) setDraftStorageError(previous => previous?.key === key ? undefined : previous);
-        else setDraftStorageError({ key, notice: { level: 'warning', message: 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.' } });
+        else console.warn('Composer draft recovery storage is unavailable; the draft remains in this tab.');
       });
     }
   }, [composerDrafts, draftReadyKeys]);
@@ -884,7 +885,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [composerSystemKey]);
   const activeSessions = filterCliSessionsBySection(orderedSessions, "active");
   const archivedSessions = filterCliSessionsBySection(orderedSessions, "archived");
-  const runningCount = activeSessions.filter((session) => isCodexSessionRunning(session)).length;
+  const runningCount = activeSessions.filter(isCodexSessionRunningForDisplay).length;
   const [sessionLimits, setSessionLimits] = useState<Record<string,number>>({});
   useEffect(() => setSessionLimits({}), [selectedSystem, search, section, layout.sessionView]);
   const growSessions = (key: string) => setSessionLimits(current => ({...current,[key]:(current[key] ?? 50)+50}));
@@ -956,7 +957,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (!props.browser || !restoredFileDraftKeys.includes(contextProjectKey)) return;
     const drafts = contextProjectState.fileDrafts;
     if (!drafts) return;
-    const save = () => { void writeBrowserCache(`workspace-drafts:${contextProjectKey}`, drafts).then(saved => { if (!saved) props.onActionFeedback({ level: 'warning', message: 'File draft could not be saved on this device. Copy it before closing.' }); }); };
+    const save = () => { void writeBrowserCache(`workspace-drafts:${contextProjectKey}`, drafts).then(saved => { if (!saved) console.warn('File draft recovery storage is unavailable; the draft remains in this tab.'); }); };
     const timer = setTimeout(save, 500);
     window.addEventListener('pagehide', save);
     return () => { clearTimeout(timer); window.removeEventListener('pagehide', save); save(); };
@@ -1245,7 +1246,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     </div>
   ) : (
     (() => {
-      const running = isCodexSessionRunning(session);
+      const running = isCodexSessionRunningForDisplay(session);
       const live = props.liveStates?.[cliSessionTargetKey(session)];
       const indicator = running ? "running" : cliSessionIndicator(session, sessionSeen, new Set(props.attentionSessionKeys), live && isCliLiveStateCurrent(session, live) ? live : undefined);
       const canResume = canResumeCodexSession(session);
@@ -1524,7 +1525,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
             {props.officeFeatures ? <div class="cli-rail-brand" aria-label="Team workspace" title="Team workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Team</strong></div> : <button type="button" class="cli-rail-brand" aria-label="Dashboard home" title="Dashboard home" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>}
             {props.browser && !props.officeUser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
-            {props.officeFeatures ? <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton> : null}
+            <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton>
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
@@ -3187,7 +3188,7 @@ function UserWorkspaceFooter(props: { user: import('../../src/domain/dashboard/t
     <span class="team-user-avatar" aria-hidden="true">{name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()}</span>
     <span class="team-user-footer-copy"><strong>{name}</strong><small>{props.user.username}</small></span>
     <div class="team-user-footer-menu"><button type="button" class="cli-icon-button" aria-label="User settings" aria-expanded={open} onClick={()=>setOpen(value=>!value)}><span aria-hidden="true">⚙</span></button>
-    {open ? <div class="cli-session-menu"><button type="button" onClick={()=>{setOpen(false);props.onSettings();}}>Settings</button><button type="button" onClick={()=>{
+    {open ? <div class="cli-session-menu"><QueueToolsMenuItem /><button type="button" onClick={()=>{setOpen(false);props.onSettings();}}>Settings</button><button type="button" onClick={()=>{
       if(!("Notification" in window)){setNotificationStatus("Notifications are unavailable in this browser.");return;}
       void Notification.requestPermission().then(permission=>setNotificationStatus(permission==="granted"?"Notifications enabled.":"Notifications were not enabled. Responses still appear here."),()=>setNotificationStatus("Notifications could not be enabled. Please try again."));
     }}>Enable notifications</button>{notificationStatus?<small role="status">{notificationStatus}</small>:null}<form method="post" action="/logout"><button type="submit">Sign out</button></form></div> : null}</div>
@@ -3326,6 +3327,7 @@ function SessionAccountFooter(props: {
       <button type="button" role="menuitem" onClick={props.onDashboard}><DashboardIcon />Dashboard</button>
       <button type="button" role="menuitem" aria-label="Open account center" onClick={() => props.onOpenPanel ? props.onOpenPanel() : openMenu(true)}><DashboardIcon />Account center</button>
       <button type="button" role="menuitem" onClick={props.onSettings}>Settings</button>
+      <QueueToolsMenuItem />
       {props.showLogout ? <form method="post" action="/logout"><button type="submit" role="menuitem"><SignOutIcon />Sign out</button></form> : null}
     </WorkspaceMenu>}
     {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={modal ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={modal || undefined} style={{ ...(size ? { '--account-center-width': `${size.width}px`, height: `min(${size.height}px, calc(100dvh - 24px))` } : {}), ...(position && !mobile ? { '--account-center-left': `${position.left}px`, '--account-center-top': `${position.top}px` } : {}) }} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""} ${position && !mobile ? 'is-moved' : ''}`} role="dialog" aria-label="Account center" >
@@ -3355,7 +3357,7 @@ function SessionAccountFooter(props: {
       {systemPickerOpen ? <SystemPicker anchor={systemPickerTrigger} systemInfoEnabled={props.systemInfoEnabled !== false} peers={peers} selectedId={peer.id} connected={(props.hostConnected ?? props.connected) !== false} privacyMode={props.privacyMode} accountCount={item => item.local ? props.localAccounts?.length : props.peerAccounts?.[item.id]?.length} onSelect={id => props.onPeerChange?.(id)} onClose={() => setSystemPickerOpen(false)} /> : null}
       {!connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <div class="cli-account-grid">{props.renderAccounts?.()}</div>
-      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
+      <nav class="cli-account-navigation" aria-label="Account shortcuts"><QueueToolsMenuItem /><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout"><SignOutIcon />Sign out</button></form> : null}</nav>
       <div class="cli-account-resize-footer"><div class="cli-account-resizer" role="separator" aria-label="Resize account center" aria-valuetext={size ? `${size.width} by ${size.height}` : 'Compact default'} tabIndex={0} onPointerDown={event => {
         if (event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
@@ -3589,17 +3591,15 @@ function SignOutIcon() { return <Icon><path d="M14 5h5v14h-5M4 12h11m-4-4 4 4-4 
 function QuoteIcon() { return <Icon><path d="M4 6h6v7H7c0 2-1 3-3 4m10-11h6v7h-3c0 2-1 3-3 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></Icon>; }
 
 export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof useCliMessageQueue>; onRefresh: () => void }) {
-  // Sending items are rendered in the transcript optimistically; keep only waiting/recovery rows here.
-  queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent' && item.state !== 'sending') };
+  queue = { ...queue, items: queue.items.filter(item => item.state !== 'sent') };
   const items = queue.items;
   if (!items.length) return null;
-  const reason = queue.notice ?? queue.reason;
   return <div class="cli-local-queue" aria-label="Local message queue">
-    {reason ? <small role="status" class="cli-local-queue-status">{reason}</small> : null}
-    {items.map(item => <details key={item.id} class={`cli-goal-strip cli-queued-message is-${item.state}`} open={Boolean(item.error)}>
+    {items.map(item => <details key={item.id} class={`cli-goal-strip cli-queued-message is-${item.state}`} >
       <summary title={item.draft.text || 'Attachment'}>
-        <span class="cli-goal-mark" aria-hidden="true">{item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : <QueueIcon />}</span>
+        <span class="cli-goal-mark" aria-hidden="true">{item.state === 'sending' ? <span class="cli-live-spinner" /> : item.draft.attachments[0]?.kind === 'image' ? <img class="cli-queued-message-thumb" src={item.draft.attachments[0].data} alt="" /> : <QueueIcon />}</span>
         <span class="cli-queued-message-copy">{item.draft.text || item.draft.attachments[0]?.name || 'Attachment'}</span>
+        {item.error ? <span role="alert" class="cli-queue-error-icon" title={item.error} aria-label={item.error}><WarningIcon /></span> : null}
       <span class="cli-queued-message-actions" onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
         {item.state === 'queued' ? <button type="button" class="cli-queued-steer" disabled={!queue.ready} onClick={() => queue.steerNow(item.id)}>↪ <span>Steer</span></button> : null}
         {item.state === 'uncertain' ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Check session" title="Check session" onClick={onRefresh}><RefreshIcon /></button> : null}
@@ -3609,7 +3609,7 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
       </span>
       <ChevronIcon />
       </summary>
-      <div class="cli-queued-message-expanded">{item.draft.text ? <p>{item.draft.text}</p> : null}{item.draft.attachments.length ? <div class="cli-queued-attachments">{item.draft.attachments.map(attachment => attachment.kind === 'image' ? <img key={attachment.id} src={attachment.data} alt={attachment.name} /> : <span key={attachment.id}>{attachment.name}</span>)}</div> : null}{item.error ? <small class="cli-queued-message-error" role="alert">{item.error}</small> : null}</div>
+      <div class="cli-queued-message-expanded">{item.draft.text ? <p>{item.draft.text}</p> : null}{item.draft.attachments.length ? <div class="cli-queued-attachments">{item.draft.attachments.map(attachment => attachment.kind === 'image' ? <img key={attachment.id} src={attachment.data} alt={attachment.name} /> : <span key={attachment.id}>{attachment.name}</span>)}</div> : null}</div>
     </details>)}
   </div>;
 }

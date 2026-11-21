@@ -103,7 +103,7 @@ export function useCodexSessionPrompts(props: {
     let responseId: string;
     try { responseId = options.current.sendAction("respondCodexServerRequest", undefined, {
       codexRequestId: entry.request.id, codexDecision: decision,
-      codexAnswers: decision === "approve" && entry.request.kind === "question" ? entry.answers : undefined,
+      codexAnswers: decision === "approve" && (entry.request.kind === "question" || entry.request.kind === "mcp") ? entry.answers : undefined,
       targetDeviceId: entry.request.deviceId
     });
       if (!responseId) throw new Error('Your response was not queued. Reconnect before retrying.');

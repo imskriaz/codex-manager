@@ -8,7 +8,7 @@ type Cleanup = { path: string; size: number; mtimeMs: number; ino: number };
 type Database = { exec(sql: string): void; prepare(sql: string): { all(...args: string[]): Record<string, unknown>[]; get(...args: string[]): Record<string, unknown> | undefined; run(...args: string[]): unknown }; close(): void };
 
 /** Bulk cleanup uses native SQLite transactions and retains unfinished file cleanup across restarts. */
-export async function deleteCodexSessionFromStorage(home: string, id: string, archivedOnly: boolean): Promise<boolean> {
+export async function deleteCodexSessionFromStorage(home: string, id: string, archivedOnly: boolean, retryOnly = false): Promise<boolean> {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) throw new Error('Invalid session identifier.');
   const names = (await fs.readdir(home)).filter(name => /^state_\d+\.sqlite$/.test(name)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));
   if (!names[0]) return false;
@@ -44,6 +44,7 @@ export async function deleteCodexSessionFromStorage(home: string, id: string, ar
     const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row['name']));
     if (!['id', 'rollout_path', 'archived'].every(column => columns.has(column))) return false;
     const row = db.prepare('SELECT rollout_path,archived FROM threads WHERE id=?').get(id);
+    if (retryOnly && row) return false;
     if (!row && !cleanup) return false;
     removed = !row;
     if (row) {
@@ -86,4 +87,32 @@ export async function deleteCodexSessionFromStorage(home: string, id: string, ar
     if (removed) throw new Error(`Conversation was deleted from the database, but cleanup is unfinished: ${error instanceof Error ? error.message : String(error)} Retry the cleanup to finish removing saved files.`);
     throw error;
   } finally { db.close(); }
+}
+
+/** Finish committed deletions only; a rolled-back or still-present conversation is never deleted by a timer. */
+export async function retryDeletedSessionFileCleanup(home: string, signal: AbortSignal): Promise<void> {
+  const store = getSqliteStateStore();
+  if (!store) return;
+  const prefix = `${getCodexHomeStateKey(home)}:`;
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+  for (const key of store.keys('session-file-cleanup').filter(key => key.startsWith(prefix)).slice(0, 16)) {
+    bounded.throwIfAborted();
+    if (getSqliteStateStore() !== store) return;
+    try { await deleteCodexSessionFromStorage(home, key.slice(prefix.length), true, true); }
+    catch (error) { console.warn('[codexManager] deleted conversation file cleanup postponed', error); }
+  }
+  const folder = path.join(home, 'shell_snapshots');
+  const directory = await fs.lstat(folder).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error; });
+  if (!directory) return;
+  if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error('Shell snapshot cleanup skipped linked storage.');
+  let inspected = 0;
+  for await (const entry of await fs.opendir(folder)) {
+    bounded.throwIfAborted();
+    if (getSqliteStateStore() !== store) return;
+    if (++inspected > 10_000) throw new Error('Shell snapshot inspection limit reached. Remaining snapshots were kept.');
+    const match = /^([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\.(?:sh|ps1)$/i.exec(entry.name);
+    if (!match || store.get('deleted-codex-sessions', prefix + match[1]!.toLowerCase()) === undefined) continue;
+    const file = path.join(folder, entry.name), stat = await fs.lstat(file);
+    if (stat.isFile() && !stat.isSymbolicLink()) await fs.unlink(file);
+  }
 }

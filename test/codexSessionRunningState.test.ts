@@ -69,7 +69,7 @@ describe("shared running-session detection and auto resume", () => {
     mocks.openRpc.mockResolvedValue(rpc);
     const send = sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' });
     if (held) {
-      await expect(send).rejects.toThrow('already working');
+      await expect(send).rejects.toThrow('live writer, but its Codex owner could not be reached');
       expect(mocks.openRpc).not.toHaveBeenCalled();
     } else {
       await expect(send).resolves.toBeUndefined();

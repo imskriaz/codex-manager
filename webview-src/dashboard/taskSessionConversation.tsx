@@ -72,7 +72,7 @@ export function TaskSessionConversation(props: {
     if (ready) void writeCliComposerDraft(scope, draft).then(saved => {
       if (!mounted.current) return;
       if (saved || !draft.text && !draft.attachments.length) setStorageError(previous => previous?.scope === scope ? undefined : previous);
-      else setStorageError({ scope, notice: { level: 'warning', message: 'Browser storage could not save this draft. Copy it before closing.' } });
+      else console.warn('Task draft recovery storage is unavailable; the draft remains in this tab.');
     });
   }, [draft, ready, scope]);
   const queue = useCliMessageQueue({ scope, messages, results, connected: props.connected,

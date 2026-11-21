@@ -1,5 +1,5 @@
-import { userWorkspaceNotice } from '../domain/teamWorkspacePresentation';
 import { getSystemStatus } from './systemStatus';
+import { userWorkspaceNotice } from '../domain/teamWorkspacePresentation';
 import { OfficeCapacityError, OfficeSessionService } from './officeSessions';
 import { createWorkspaceProject, renameWorkspaceProject, removeWorkspaceProject } from './workspaceProjects';
 import { listWorkspaceTerminals } from './workspaceTools';
@@ -78,6 +78,8 @@ import {
 } from "./dashboardUsageHistory";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { officeActor, readOfficeAudit, recordOfficeAudit, type OfficeActor } from "./officeAudit";
+import { readApiProxyHistory } from "./aiProxyHistory";
 import { readTeamSettings, saveTeamSettings } from "./teamSettings";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, listCodexSessionLiveStates } from "./codexSessionLive";
@@ -1178,7 +1180,7 @@ export class WebDashboardServer implements vscode.Disposable {
     // WebSocket upgrades retain the stricter origin checks below.
     if (method === "GET" && path === "/login") {
       const returnPath = normalizeWebDashboardReturnPath(requestUrl.searchParams.get("returnTo") ?? "/");
-      if (await this.isAuthorized(request)) {
+      if (await this.isAuthorized(request) && (await this.officeUserForRequest(request))?.enabled) {
         response.statusCode = 303;
         response.setHeader("Location", returnPath);
         response.end();
@@ -1220,19 +1222,33 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     const officeUser = apiAuthorized ? undefined : await this.officeUserForRequest(request);
     if (!apiAuthorized && (!officeUser || !officeUser.enabled)) {
-      response.statusCode = 401; this.sendJson(response, { error: "Your session expired. Sign in again." }); return;
+      if (path.startsWith("/api/") && apiViewFromPath(path) === undefined) {
+        response.statusCode = 401;
+        this.sendJson(response, { error: "Your session expired. Sign in again." });
+      } else {
+        const returnPath = normalizeWebDashboardReturnPath(`${path}${requestUrl.search}`);
+        this.sendHtml(response, loginPage(Boolean(await this.auth.hasDashboardPassphrase()), "Your dashboard session expired. Sign in again to continue.", returnPath));
+      }
+      return;
     }
     if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/state","/api/message"].includes(path)) {
       response.statusCode=403;this.sendJson(response,{error:"This page is unavailable in your workspace."});return;
+    }
+    if (path === "/api/office/logs" || path === "/api/office/proxy") {
+      if (method !== "GET" || !officeUser || !officeUser.enabled || officeUser.role === "user") { response.statusCode = 403; this.sendJson(response, { error: "Management logs are restricted to administrators." }); return; }
+      try { this.sendJson(response, path.endsWith("/logs") ? { entries: readOfficeAudit() } : readApiProxyHistory()); }
+      catch (error) { response.statusCode = 503; this.sendJson(response, { error: error instanceof Error ? error.message : "Management data is unavailable." }); }
+      return;
+    }
+    if (path.startsWith("/api/office/") && ["POST", "PUT", "PATCH", "DELETE"].includes(method) && officeUser && officeUser.role !== "user") {
+      const actor = officeActor(officeUser);
+      response.once?.("finish", () => recordOfficeAudit(`${method} ${path.startsWith("/api/office/users/") ? "/api/office/users/:id" : path}`, response.statusCode < 400 ? "completed" : "failed", actor));
     }
     if (method === "GET" && (path === "/manage" || path === "/admin")) {
       if (!officeUser || !officeUser.enabled || officeUser.role === "user") {
         response.statusCode = 403; response.end("Team management is restricted to administrators."); return;
       }
-      if (path === "/admin") {
-        response.statusCode = 303; response.setHeader("Location", "/manage"); response.end(); return;
-      }
-      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request), this.assetVersion)); return;
+      response.statusCode = 303; response.setHeader("Location", "/?settings=users"); response.end(); return;
     }
     if (officeUser?.role === "user" && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled !== true) {
       response.statusCode = 403;
@@ -1624,11 +1640,12 @@ export class WebDashboardServer implements vscode.Disposable {
         });
         response.statusCode = 401;
         response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(loginPage(configured, "Incorrect password.", returnPath));
+        response.end(loginPage(configured, "Incorrect username or password.", returnPath, username));
         return;
       }
       const token = crypto.randomBytes(32).toString("hex");
       await this.rememberSession(token, now + SESSION_TTL_MS, credential, officeUser);
+      recordOfficeAudit("sign-in", "completed", officeActor(officeUser));
       response.statusCode = 303;
       const secure = isForwardedHttpsRequest(request) ? "; Secure" : "";
       response.setHeader(
@@ -1792,7 +1809,7 @@ export class WebDashboardServer implements vscode.Disposable {
       else this.sendJson(response, { messages: [{ type: "dashboard:notice", level: "warning", message: "This setting is managed by your office administrator." }] });
       return;
     }
-    const processed = officeUser?.role === "user" ? await this.processOfficeMessage(officeUser,message) : await this.processClientMessage(message, !apiToken && isLocalWebDashboardRequest(request) && officeUser?.id === "master", !apiToken && officeUser?.id === "master" && officeUser.enabled);
+    const processed = officeUser?.role === "user" ? await this.processOfficeMessage(officeUser,message) : await this.processClientMessage(message, !apiToken && isLocalWebDashboardRequest(request) && officeUser?.id === "master", officeUser ? officeActor(officeUser) : apiToken ? { id: apiToken.id, name: apiToken.name } : undefined, !apiToken && officeUser?.id === "master" && officeUser.enabled);
     const messages = officeUser?.role === "user" ? this.sanitizeOfficeMessages(processed.messages) : processed.messages;
     const reloadAfterResponse = processed.reloadAfterResponse;
     this.sendJson(response, { messages: apiToken ? scopeApiResults(apiToken, messages) : messages });
@@ -1923,6 +1940,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async processClientMessage(
     message: DashboardClientMessage,
     localMasterAccess = false,
+    actor?: OfficeActor,
     authenticatedMasterAccess = false
   ): Promise<{ messages: DashboardHostMessage[]; reloadAfterResponse: boolean }> {
     const messages: DashboardHostMessage[] = [];
@@ -1965,6 +1983,7 @@ export class WebDashboardServer implements vscode.Disposable {
             hostKind: "browser",
             localMasterAccess,
             authenticatedMasterAccess,
+            actor,
             configureEncryptedSync: this.encryptedSync
               ? (passphrase, confirmation, currentPassphrase) =>
                   this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
@@ -2432,7 +2451,7 @@ export class WebDashboardServer implements vscode.Disposable {
       message: question ? request.questions?.some(item => item.isSecret) ? `${detail} Open the dashboard to answer privately.` : request.questions?.map(item => `${item.question}${item.options?.length ? " Choices: " + item.options.map(option => option.label).join(" / ") : ""}`).join(" · ") || detail : request.detail || detail,
       url: `/workspace/${encodeURIComponent(request.threadId)}${targetDeviceId ? `?device=${encodeURIComponent(targetDeviceId)}` : ""}`,
       replyAction: replyQuestionId ? "Reply" : undefined,
-      actions: question ? answers ? Object.keys(answers) : replyQuestionId ? ["Reply", "Answer"] : ["Answer"] : request.kind === "permissions" ? ["Approve", "Reject"] : (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
+      actions: question ? answers ? Object.keys(answers) : replyQuestionId ? ["Reply", "Answer"] : ["Answer"] : request.kind === "mcp" ? ["Review", "Decline"] : request.kind === "permissions" ? ["Approve", "Reject"] : (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
     });
   }
 
@@ -2671,7 +2690,7 @@ export class WebDashboardServer implements vscode.Disposable {
         sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:notice", level: "warning", message: "This feature is not enabled for your workspace." } satisfies DashboardHostMessage),true);
         return;
       }
-      const result = officeUser?.role === "user" ? await this.processOfficeMessage(officeUser,message) : await this.processClientMessage(message, this.localMasterSockets?.has(socket) === true, officeUser?.id === "master" && officeUser.enabled);
+      const result = officeUser?.role === "user" ? await this.processOfficeMessage(officeUser,message) : await this.processClientMessage(message, this.localMasterSockets?.has(socket) === true, officeUser ? officeActor(officeUser) : undefined, officeUser?.id === "master" && officeUser.enabled);
       for (const hostMessage of result.messages) {
         if (hostMessage.type === 'dashboard:snapshot') this.sendClientSnapshot(socket, hostMessage.state);
         else sendDashboardSocketMessage(socket, JSON.stringify(officeUser?.role === "user" ? this.sanitizeOfficeMessages([hostMessage])[0] : hostMessage),officeUser?.role === "user");
@@ -4042,9 +4061,9 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
   });
 }
 
-function loginPage(configured: boolean, error = "", returnPath = "/"): string {
+function loginPage(configured: boolean, error = "", returnPath = "/", username = ""): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Team users sign in with their username and password.</p><form method="post" action="${action}"><label for="dashboard-username">Username (required for Team users)</label><input id="dashboard-username" name="username" type="text" autocomplete="username" autofocus><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#0b1220"><title>Sign in · Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login-shell"><section class="login-card" aria-labelledby="login-title"><div class="login-brand"><span class="login-brand-mark" aria-hidden="true">CM</span><span>Codex Manager</span></div>${configured ? `<div class="login-heading"><p class="login-kicker">YOUR WORKSPACE</p><h1 id="login-title">Welcome back</h1><p id="login-hint">Sign in to continue to your dashboard.</p></div><form class="login-form" method="post" action="${action}"><div class="login-field"><label for="dashboard-username">Email</label><input id="dashboard-username" name="username" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" value="${escapeHtml(username)}" maxlength="254" autofocus required></div><div class="login-field"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" required></div><button type="submit">Sign in</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}<p class="login-footer">Codex Manager &middot; Workspace access</p>` : `<div class="login-heading"><p class="login-kicker">SETUP REQUIRED</p><h1 id="login-title">Dashboard locked</h1><p>Set a shared password in General settings to enable dashboard access.</p></div>`}</section></main></body></html>`;
 }
 
 function versionPublicAssets(html: string, version: string): string {
@@ -4056,7 +4075,7 @@ function dashboardPage(showLogout: boolean, version: string, workspaceUser?: str
   return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser" data-dashboard-remote="${showLogout ? "true" : "false"}"${workspaceUser ? ` data-dashboard-user="${escapeHtml(workspaceUser)}"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/icon-192.png"><link rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"><link rel="stylesheet" href="/assets/shared.css?v=${assetVersion}"><link rel="stylesheet" href="/assets/dashboard.css?v=${assetVersion}"></head><body><div id="app"><div class="loading-screen dashboard-bootstrap" role="status" aria-label="Loading dashboard"><div class="loading-shine" aria-hidden="true"><span></span></div><span class="loading-label">Loading workspace…</span></div></div><script src="/assets/browserHost.js?v=${assetVersion}"></script><script type="module" src="/assets/dashboard.js?v=${assetVersion}"></script></body></html>`;
 }
 
-const BASE_CSS = `:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111827;color:#edf2ff}body{margin:0;background:#111827}main{max-width:1100px;margin:0 auto;padding:28px 20px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:22px;margin:0;text-wrap:balance}label{display:block;margin-top:18px;font-size:14px;font-weight:700}button{border:0;border-radius:8px;padding:10px 14px;background:#4f8cff;color:#fff;font-weight:700;cursor:pointer;touch-action:manipulation}button:hover{background:#6aa0ff}button:focus-visible,input:focus-visible{outline:2px solid #8bb8ff;outline-offset:3px}input{display:block;width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #43516d;background:#1b2537;color:#fff;margin:8px 0 12px}.login{max-width:380px;margin:12vh auto}.login p{color:#a8b3c9;line-height:1.5}.error{color:#ff8c9b;margin-top:12px}`;
+const BASE_CSS = `:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b1220;color:#eef4ff}*{box-sizing:border-box}body{min-height:100vh;margin:0;background:#0b1220;overflow-x:hidden}body::before,body::after{position:fixed;z-index:0;content:"";pointer-events:none;border-radius:50%;filter:blur(2px)}body::before{width:520px;height:520px;top:-220px;right:-160px;background:radial-gradient(circle,#2d5fa9 0%,rgba(45,95,169,0) 68%);opacity:.35}body::after{width:420px;height:420px;bottom:-220px;left:-160px;background:radial-gradient(circle,#204a87 0%,rgba(32,74,135,0) 68%);opacity:.28}.login-shell{position:relative;z-index:1;display:grid;min-height:100vh;place-items:center;padding:32px 20px}.login-card{width:min(100%,440px);padding:42px;border:1px solid rgba(152,181,226,.18);border-radius:24px;background:linear-gradient(145deg,rgba(26,39,65,.94),rgba(14,23,40,.96));box-shadow:0 24px 80px rgba(0,0,0,.35),inset 0 1px rgba(255,255,255,.05);backdrop-filter:blur(18px)}.login-brand{display:flex;align-items:center;gap:12px;color:#dce9ff;font-size:15px;font-weight:700;letter-spacing:.01em}.login-brand-mark{display:grid;width:40px;height:40px;place-items:center;border-radius:12px;background:linear-gradient(135deg,#6ea5ff,#3475e8);box-shadow:0 8px 20px rgba(52,117,232,.3);color:#fff;font-size:12px;font-weight:800;letter-spacing:.08em}.login-heading{margin:42px 0 28px}.login-kicker{margin:0 0 11px;color:#7fb0ff;font-size:11px;font-weight:800;letter-spacing:.16em}.login-card h1{margin:0;color:#f5f8ff;font-size:32px;line-height:1.1;letter-spacing:-.035em;text-wrap:balance}.login-heading>p:last-child{max-width:34ch;margin:12px 0 0;color:#aebbd2;font-size:15px;line-height:1.55}.login-form{display:grid;gap:20px}.login-field{display:grid;gap:9px}.login-field label{margin:0;color:#dce7fa;font-size:13px;font-weight:700}.login-field input{width:100%;padding:13px 14px;border:1px solid #405274;border-radius:11px;background:rgba(9,17,31,.72);color:#f6f9ff;font:inherit;font-size:16px;transition:border-color .18s,box-shadow .18s,background .18s}.login-field input::placeholder{color:#6f7f9c}.login-field input:hover{border-color:#58719c}.login-field input:focus{border-color:#76aaff;background:#0a1528;box-shadow:0 0 0 4px rgba(86,144,255,.16);outline:0}.login-form button{width:100%;margin-top:4px;padding:13px 16px;border:0;border-radius:11px;background:linear-gradient(135deg,#5d98ff,#3d78ea);box-shadow:0 10px 22px rgba(50,110,231,.24);color:#fff;font:inherit;font-size:15px;font-weight:750;cursor:pointer;touch-action:manipulation;transition:transform .18s,box-shadow .18s,filter .18s}.login-form button:hover{filter:brightness(1.08);box-shadow:0 13px 28px rgba(50,110,231,.3);transform:translateY(-1px)}.login-form button:active{transform:translateY(0)}button:focus-visible,input:focus-visible{outline:2px solid #91bbff;outline-offset:3px}.login-footer{margin:28px 0 0;color:#96a6c0;font-size:12px;line-height:1.5;text-align:center}.error{margin-top:18px;padding:11px 13px;border:1px solid rgba(255,124,143,.28);border-radius:10px;background:rgba(120,31,53,.2);color:#ffacb8;font-size:13px;line-height:1.45}@media(max-width:520px){.login-shell{padding:20px 14px}.login-card{padding:30px 24px;border-radius:20px}.login-heading{margin-top:34px}.login-card h1{font-size:28px}}`;
 
 function escapeHtml(value: string): string {
   return value.replace(

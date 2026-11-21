@@ -18,6 +18,7 @@ export function hasCurrentCliLiveHistory(session: DashboardCliSessionSummary, li
 
 export function isCliLiveStateCurrent(session: DashboardCliSessionSummary | undefined, live: DashboardCodexSessionLiveState | undefined): boolean {
   return Boolean(session && live && sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId }) &&
+    (session.status === "running" || !isCliTurnActive(live) || Date.now() - live.updatedAt < 30_000) &&
     (!session.steerTurnId || session.steerTurnId === live.turnId) &&
     (session.status === "running" && !!session.steerTurnId && session.steerTurnId === live.turnId || !(Date.parse(session.updatedAt ?? "") > live.updatedAt)));
 }
