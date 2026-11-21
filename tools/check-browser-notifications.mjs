@@ -14,7 +14,7 @@ const screenshots = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(screenshots, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 try {
-  for (const scenario of ["dismiss-close", "dismiss-not-now", "subscribe", "registered", "login-conflict", "denied", "cancelled", "storage-failure", "timeout"]) {
+  for (const scenario of ["reminder-days", "dismiss-close", "dismiss-not-now", "subscribe", "registered", "login-conflict", "denied", "cancelled", "storage-failure", "timeout"]) {
     console.log(`Checking browser notification ${scenario}`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
     await context.addInitScript(({ scenario }) => {
@@ -57,14 +57,14 @@ try {
     for (const [asset, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]])
       await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
     console.log(`${scenario}: opening dashboard`);
-    await page.goto(`${origin}/`);
+    await page.goto(`${origin}/${scenario === 'reminder-days' ? '?settings=general' : ''}`);
     console.log(`${scenario}: dashboard loaded`);
     await page.locator("#dashboard-main").waitFor();
     console.log(`${scenario}: dashboard ready`);
     const offer = page.getByRole("region", { name: "Notification and app install offer", exact: true });
-    const checkDismissal = async () => {
+    const checkDismissal = async (days = 1) => {
       const until = await page.evaluate(() => Number(localStorage.getItem('codexManager.browserOfferDismissedUntil')));
-      assert.ok(until > Date.now() + 23 * 60 * 60 * 1000 && until <= Date.now() + 24 * 60 * 60 * 1000, 'Dismissal lasts one day');
+      assert.ok(until > Date.now() + (days * 24 - 1) * 60 * 60 * 1000 && until <= Date.now() + days * 24 * 60 * 60 * 1000, `Dismissal lasts ${days} days`);
       await page.reload();
       await page.locator('#dashboard-main').waitFor();
       await page.evaluate(async () => {
@@ -79,6 +79,48 @@ try {
       await page.reload();
       await page.locator('#dashboard-main').waitFor();
     };
+    if (scenario === 'reminder-days') {
+      const slider = page.getByRole('slider', { name: 'Notification and install reminder (days)', exact: true });
+      await slider.waitFor();
+      assert.equal(await slider.inputValue(), '1', 'The default is one day');
+      await slider.press('End');
+      assert.equal(await slider.inputValue(), '30', 'The maximum is 30 days');
+      await slider.press('Home');
+      for (let day = 1; day < 7; day++) await slider.press('ArrowRight');
+      await page.getByRole('status').filter({ hasText: 'Reminder saved: 7 days.' }).waitFor();
+      await page.reload();
+      await slider.waitFor();
+      assert.equal(await slider.inputValue(), '7', 'Reminder days survive reload');
+      for (const [width, height] of [[320, 667], [390, 844], [1440, 1000]]) {
+        await page.setViewportSize({ width, height });
+        await slider.scrollIntoViewIfNeeded();
+        const bounds = await slider.boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, `Reminder slider fits ${width}px`);
+        await page.screenshot({ path: path.join(screenshots, `notification-reminder-days-${width}.png`) });
+      }
+      await page.evaluate(() => {
+        const setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) {
+          if (key === 'codexManager.browserOfferDismissalDays') throw new Error('Storage blocked');
+          return setItem.call(this, key, value);
+        };
+      });
+      await slider.press('ArrowRight');
+      await page.getByRole('alert').filter({ hasText: 'Could not save reminder days. Storage blocked' }).waitFor();
+      assert.equal(await slider.inputValue(), '7', 'A failed save restores the previous value');
+      await page.locator('.settings-close').click();
+      await offer.getByRole('button', { name: 'Not now', exact: true }).click();
+      await page.goto(`${origin}/`);
+      await checkDismissal(7);
+      await offer.waitFor();
+      assert.equal(await page.evaluate(() => window.__permissionRequests), 0);
+      assert.deepEqual(errors, []);
+      assert.deepEqual(consoleErrors, []);
+      console.log('Reminder settings timing', await page.evaluate(() => Math.round(performance.getEntriesByType('navigation')[0].loadEventEnd)));
+      console.log(`Browser notification ${scenario}: passed`);
+      await context.close();
+      continue;
+    }
     if (scenario.startsWith('dismiss-')) {
       await offer.waitFor();
       await offer.getByRole('button', { name: scenario === 'dismiss-close' ? 'Dismiss notification offer' : 'Not now', exact: true }).click();

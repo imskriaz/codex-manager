@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { useBrowserAppInstall } from './browserAppInstall';
-import { dismissBrowserOffer, isBrowserOfferDismissed } from './browserOfferDismissal';
+import { dismissBrowserOffer, isBrowserOfferDismissed, loadBrowserOfferDismissalDays, saveBrowserOfferDismissalDays } from './browserOfferDismissal';
+import { SettingsDiscreteSlider } from './settingsControls';
+
+const reminderDayValues = Array.from({ length: 30 }, (_, index) => index + 1);
 
 export async function browserPushRequest(path: string, body?: unknown): Promise<{ publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number }> {
   const controller = new AbortController();
@@ -108,10 +111,23 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const [testBusy, setTestBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [failed, setFailed] = useState(false);
+  const [reminderDays, setReminderDays] = useState(loadBrowserOfferDismissalDays);
   const app = useBrowserAppInstall();
   const [initialized, setInitialized] = useState(!props.offerOnLoad || !supported);
   const [dismissed, setDismissed] = useState(isBrowserOfferDismissed);
   const dismiss = () => { dismissBrowserOffer(); setDismissed(true); };
+  const saveReminderDays = (days: number) => {
+    try {
+      saveBrowserOfferDismissalDays(days);
+      setReminderDays(days);
+      setFailed(false);
+      setFeedback(`Reminder saved: ${days} day${days === 1 ? '' : 's'}. Applies to future dismissals on this browser.`);
+    } catch (error) {
+      setReminderDays(loadBrowserOfferDismissalDays());
+      setFailed(true);
+      setFeedback(`Could not save reminder days.${error instanceof Error ? ` ${error.message}` : ''} Allow browser storage and try again.`);
+    }
+  };
   const revision = useRef(0);
   useEffect(() => {
     let disposed = false;
@@ -239,6 +255,18 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications</div><p class="settings-block-sub" title="Get account switches and alerts on this device.">{enabled ? "Notifications are on for this device." : "Get account switches and alerts on this device."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>
     {!supported ? <p class="settings-note">Notifications are unavailable in this browser.</p> : null}
     <div class="browser-notification-actions"><button type="button" class={`browser-notification-button ${enabled ? "" : "is-primary"}`} aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}</button><button type="button" class="browser-notification-button" aria-busy={testBusy} disabled={testBusy || !supported} onClick={() => void sendTest()}>{testBusy ? "Sending…" : "Send test notification"}</button>{app.available ? <button type="button" class="browser-notification-button" disabled={app.busy} aria-busy={app.busy} onClick={() => void app.installApp()}>Install app</button> : null}</div>
+    <div class="settings-note">
+      <SettingsDiscreteSlider
+        value={reminderDays}
+        values={reminderDayValues}
+        accent="sky"
+        valueLabel={days => `${days} day${days === 1 ? '' : 's'}`}
+        description={() => 'Notification and install reminder (days)'}
+        scaleValues={[1, 7, 14, 30]}
+        onPreview={setReminderDays}
+        onCommit={saveReminderDays}
+      />
+    </div>
     {feedbackView}{installFeedback}
     <details class="browser-notification-help"><summary>Install & offline help</summary><p class="settings-note">Install Codex Manager to open the workspace from your apps or taskbar while normal browser windows are closed. On iPhone or iPad, use Safari Share → Add to Home Screen. Live work needs a running host; enable Always Active to keep it running after VS Code closes. In the installed app, choose Keep on top in the conversation header to keep the workspace above other windows. Drafts stay saved while offline.</p></details>
   </div>;

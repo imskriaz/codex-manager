@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.31
+
+- Add a 1 to 30 day slider in Browser notifications settings for dismissed notification and app-install reminders, defaulting to one day. Save the preference per browser, show save failures, and use it for future dismissals.
+
 ## 3.0.0-pre.29
 
 - Remember dismissed notification and app-install offers for 24 hours on this browser, including cancelled permission and installation prompts. Keep cancellation feedback and manual Settings controls available.
