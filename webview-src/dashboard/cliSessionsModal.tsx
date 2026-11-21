@@ -1522,12 +1522,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       <div class={`cli-workspace-grid ${props.selectedSession ? "has-context" : ""}`}>
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label={props.officeUser ? "Your conversations" : "Codex sessions"}>
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
-            {props.officeFeatures ? <div class="cli-rail-brand" aria-label="Team workspace" title="Team workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Team</strong></div> : <span class="cli-rail-brand-menu"><WorkspaceMenu label="Workspace menu" icon={<>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<strong>Codex</strong><ChevronIcon /></>}>
-              <button type="button" role="menuitem" aria-label="Open dashboard" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon />Dashboard</button>
-              <button type="button" role="menuitem" onClick={() => openContextTab("accounts")}><DashboardIcon />Account center</button>
-              <button type="button" role="menuitem" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}>Settings</button>
-              {props.showLogout ? <form method="post" action="/logout"><button type="submit" role="menuitem"><SignOutIcon />Sign out</button></form> : null}
-            </WorkspaceMenu></span>}
+            <div class="cli-rail-brand" aria-label={props.officeFeatures ? "Team workspace" : "Codex workspace"} title={props.officeFeatures ? "Team workspace" : "Codex workspace"}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>{props.officeFeatures ? "Team" : "Codex"}</strong></div>
             {props.browser && !props.officeUser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
             {props.officeFeatures ? <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton> : null}
           </div>
@@ -3255,7 +3250,6 @@ function SessionAccountFooter(props: {
   const systemPickerTrigger = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const focusSearchOnOpen = useRef(false);
   const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
   const peer = peers.find(item => item.id === props.selectedPeerId) ?? peers.find(item => item.local) ?? peers[0]!;
@@ -3272,7 +3266,7 @@ function SessionAccountFooter(props: {
     setSystemPickerOpen(false);
     setOpen(false);
     props.onClose?.();
-    if (restoreFocus) triggerRef.current?.focus();
+    if (restoreFocus) rootRef.current?.querySelector<HTMLButtonElement>('.workspace-tool-menu > button')?.focus();
   };
   const previousAccount = useRef({ peerId: peer.id, accountId: props.account?.id });
   useEffect(() => {
@@ -3288,7 +3282,7 @@ function SessionAccountFooter(props: {
   };
   const modal = props.standalone || mobile;
   const accessibility = useModalAccessibility(open && modal, () => closeMenu(true));
-  useAnchoredPopover(open && !modal && !position, triggerRef, menuRef, 'start');
+  useAnchoredPopover(open && !modal && !position, rootRef, menuRef, 'start');
   useLayoutEffect(() => {
     if (!open || mobile || !position) return;
     const keepVisible = () => {
@@ -3325,10 +3319,15 @@ function SessionAccountFooter(props: {
     };
   }, [open]);
   return <footer class={`cli-account-footer ${props.standalone ? 'is-standalone' : ''}`} ref={rootRef}>
-    {props.standalone ? null : <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => props.onOpenPanel ? props.onOpenPanel() : open ? closeMenu() : openMenu(event.detail === 0)}>
+    {props.standalone ? null : <WorkspaceMenu label="Account menu" icon={<>
       <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!connected} /></span></span>
       <ChevronIcon />
-    </button>}
+    </>}>
+      <button type="button" role="menuitem" onClick={props.onDashboard}><DashboardIcon />Dashboard</button>
+      <button type="button" role="menuitem" aria-label="Open account center" onClick={() => props.onOpenPanel ? props.onOpenPanel() : openMenu(true)}><DashboardIcon />Account center</button>
+      <button type="button" role="menuitem" onClick={props.onSettings}>Settings</button>
+      {props.showLogout ? <form method="post" action="/logout"><button type="submit" role="menuitem"><SignOutIcon />Sign out</button></form> : null}
+    </WorkspaceMenu>}
     {open ? createPortal(<div ref={node => { menuRef.current = node; accessibility.modalRef.current = node; }} onKeyDown={modal ? accessibility.onKeyDown : undefined} tabIndex={-1} aria-modal={modal || undefined} style={{ ...(size ? { '--account-center-width': `${size.width}px`, height: `min(${size.height}px, calc(100dvh - 24px))` } : {}), ...(position && !mobile ? { '--account-center-left': `${position.left}px`, '--account-center-top': `${position.top}px` } : {}) }} class={`cli-account-menu cli-account-center ${props.standalone ? "is-standalone" : ""} ${position && !mobile ? 'is-moved' : ''}`} role="dialog" aria-label="Account center" >
       <header class="cli-account-center-header" onPointerDown={event => {
         if (mobile || event.button !== 0 || (event.target as Element).closest('button')) return;

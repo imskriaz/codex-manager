@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.27
+
+- Open the compact Dashboard, Account center, Settings and Sign out menu from the bottom account card. Keep the workspace logo as a heading and omit the account avatar.
+- Hide the current-account details card on narrow dashboard panels while retaining the usage chart, quotas and account controls.
+
 ## 3.0.0-pre.25
 
 - Restore individual queued message rows above the composer with inline Steer, Edit, Delete and recovery controls. Remove the queue dialog and keep full send errors visible beside the affected message.

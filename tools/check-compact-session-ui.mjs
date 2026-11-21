@@ -80,15 +80,15 @@ try {
 
     const showSidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
     if (await showSidebar.isVisible()) await showSidebar.click();
-    const menuTrigger = page.getByRole('button', { name: 'Workspace menu', exact: true });
+    const menuTrigger = page.getByRole('button', { name: 'Account menu', exact: true });
     await menuTrigger.click();
-    const menu = page.getByRole('menu', { name: 'Workspace menu', exact: true });
-    for (const name of ['Open dashboard', 'Account center', 'Settings', 'Sign out']) await menu.getByRole('menuitem', { name, exact: true }).waitFor();
+    const menu = page.getByRole('menu', { name: 'Account menu', exact: true });
+    for (const name of ['Dashboard', 'Open account center', 'Settings', 'Sign out']) await menu.getByRole('menuitem', { name, exact: true }).waitFor();
     assert.equal(await page.locator('.cli-account-footer .cli-account-avatar').count(), 0);
     await page.screenshot({ path: path.join(output, `menu-${width}.png`) });
     await page.keyboard.press('Escape');
     assert.equal(await menuTrigger.evaluate(element => document.activeElement === element), true);
-    await page.getByRole('button', { name: 'Project task board', exact: true }).click();
+    await page.locator('.cli-task-nav').click();
     const hideSidebar = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
     if (width <= 760 && await hideSidebar.isVisible()) await hideSidebar.click();
     await page.locator('.task-board-card').filter({ hasText: session.title }).click();
@@ -117,10 +117,10 @@ try {
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await useWorkspaceDashboardAssets(page, origin, context);
   const start = Date.now();
-  await page.goto(origin, { waitUntil: 'domcontentloaded' });
-  await page.locator('#dashboard-main .overview-shell').waitFor();
-  await page.getByRole('button', { name: 'Workspace menu', exact: true }).click();
-  await page.getByRole('menu', { name: 'Workspace menu', exact: true }).waitFor();
+  await page.goto(origin + '/workspace', { waitUntil: 'domcontentloaded' });
+  await page.locator('.cli-workspace').waitFor();
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('menu', { name: 'Account menu', exact: true }).waitFor();
   assert.deepEqual(errors, []);
   results.push({ live: true, width: 1440, loadMs: Date.now() - start, consoleErrors: errors.length });
   await page.screenshot({ path: path.join(output, 'live-menu-1440.png') });
