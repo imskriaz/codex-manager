@@ -24,41 +24,41 @@ Missing executables produce an inline error.
 
 ## MCP connection
 
-Enable Dashboard API and create a token with the necessary projects and action
-permissions. Browser needs `workspaceBrowser`; terminals need `workspaceTerminal`
-and `listWorkspaceTerminals`. Accounts and global settings need their own
-host-wide permissions. Keep tokens in local client configuration/environment.
+Internal MCP uses a local named pipe or private Unix socket shared by the VS Code
+and standalone hosts. No token or Dashboard API setting is required. Automatic
+setup preserves independently managed and disabled MCP entries.
 
 Claude Code JSON example (replace the installed extension path locally):
 
 ```json
-{
-  "mcpServers": {
-    "codex-manager": {
-      "command": "node",
-      "args": ["/path/to/extension/tools/codex-manager-mcp.mjs"],
-      "env": {
-        "CODEX_MANAGER_URL": "http://127.0.0.1:39875",
-        "CODEX_MANAGER_TOKEN": "<YOUR_MANAGER_TOKEN>"
-      }
-    }
-  }
-}
+{"mcpServers":{"codex-manager":{"command":"node","args":["/path/to/extension/tools/codex-manager-mcp.mjs"]}}}
 ```
 
-Codex `config.toml`, using credentials already in the launching environment:
+Codex config.toml:
 
 ```toml
 [mcp_servers.codex-manager]
 command = "node"
 args = ["/path/to/extension/tools/codex-manager-mcp.mjs"]
-env_vars = ["CODEX_MANAGER_URL", "CODEX_MANAGER_TOKEN"]
 ```
 
-`node tools/start-node.cjs mcp` is an alternate launcher. The VSIX includes the
-script and `skills/codex-manager/SKILL.md`; copy the skill folder into the
-client's skill directory if desired. Installing the VSIX does not modify client
-configuration or create tokens automatically.
+If using a custom storage directory, pass the same CODEX_MANAGER_STORAGE_ROOT to
+the MCP process. Explicit CODEX_MANAGER_URL connections retain token authentication
+and require Dashboard API on the remote host. Local OS transport does not expose
+unauthenticated access on the dashboard HTTP listener.
+
+manager_coordination supports list/status/send/read/acknowledge plus
+pause/stop/resume/handover/controlStatus. Controls require the calling sessionId,
+a toSessionId and a stable operationId. Pause and stop hold automatic recovery.
+Unreachable native owners receive a cooperative request; pending means the peer
+must read and end its turn, not that execution stopped. Handover adds
+handoverToSessionId and text; it requires an idle source before delivering the
+summary. start:true also starts an idle unlocked destination. Uncertain starts
+are retained and never automatically replayed. Remote tokens additionally need
+cancelCodexCliSessionTurn for stopping and sendCodexCliSessionMessage for starting.
+
+The VSIX includes tools/codex-manager-mcp.mjs and the packaged Manager skill.
+Restart existing MCP clients after upgrading to load the local transport and tools.
 
 ## System Info
 
@@ -86,7 +86,8 @@ not a claim that every browser-wide or future experimental API is supported.
 
 | Tool | Purpose |
 | --- | --- |
-| `manager_schema` | Permitted actions and token scope |
+| `manager_schema` | Available local actions or remote token scope |
+| `manager_coordination` | Project mailboxes, pause, stop, resume, handover, and control outcome inspection |
 | `manager_state` | Host state or a granted project |
 | `manager_action` | Existing session, account, task, file, terminal, Git, backup, sharing and maintenance actions |
 | `manager_setting` | Existing global setting updates |
@@ -124,7 +125,7 @@ Cancelling MCP does not prove the host cancelled a mutation.
 
 This version does not attach personal profiles or automate file
 uploads/downloads, stream continuous video, or host a remote MCP endpoint. A
-local stdio process uses the authenticated Manager API; peer WebSockets route
+local stdio process uses the OS-local Manager transport; peer WebSockets route
 workspace actions to another connected PC and its live dashboard views.
 Only existing Manager operations are exposed; private Codex/Claude APIs are not
 claimed.

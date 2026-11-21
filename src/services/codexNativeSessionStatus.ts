@@ -12,6 +12,7 @@ import { normalizeNativePath } from "../utils/nativePaths";
 import { waitWithin } from "../utils/concurrency";
 import type { AppServerRequest } from "./codexAppServerRpc";
 import { autoApprovePendingCodexPrompts, clearNativeCodexPrompts, CodexPromptNotSentError, syncNativeCodexPrompts } from "./codexAppServerPrompts";
+import { clearOwnerBridgeState, getOwnerBridgeState, ownerBridgeRunning, ownerBridgeTurnId, readOwnerBridgeState, requestOwnerBridge } from './codexOwnerBridge';
 
 type Observation = {
   home: string; canonicalHome: string; id: string; owner?: string; revision?: number; running?: boolean; ready?: boolean; turnId?: string; needsTurnSnapshot?: boolean; usedAt: number; verifiedAt?: number;
@@ -105,7 +106,7 @@ function receive(message: NativeMessage): void {
     return;
   }
   if (message.type !== "broadcast") return;
-  if (message.method === "ipc-connection-reset") { disposeNativeCodexSessionStatus(); return; }
+  if (message.method === "ipc-connection-reset") { disposeNativeCodexSessionStatus(false); return; }
   if (message.method === "client-status-changed" && message.params?.status === "disconnected") {
     for (const entry of observations.values()) if (entry.owner === message.params.clientId) {
       clearNativeCodexPrompts(entry); entry.prompts = undefined;
@@ -189,6 +190,8 @@ function updateAccess(entry: Observation, access: CodexSessionAccess | undefined
   if (access) publishDashboardRealtime({ type: 'dashboard:codex-session-access', sessionId: entry.id, access });
 }
 export function getNativeCodexSessionAccess(home: string, id: string): CodexSessionAccess | undefined {
+  const bridged = getOwnerBridgeState(home, id);
+  if (bridged) return parseCodexSessionAccess(bridged.thread.latestThreadSettings);
   const entry = observations.get(`${path.resolve(home)}:${id}`);
   return socket?.writable && entry?.owner && entry.ready && entry.revision !== undefined ? entry.access : undefined;
 }
@@ -238,11 +241,15 @@ function applySettingsPatch(entry: Observation, patch: { path?: unknown; op?: un
 }
 
 export function getNativeCodexSessionTurnId(home: string, id: string): string | undefined {
+  const bridged = getOwnerBridgeState(home, id);
+  if (bridged) return ownerBridgeTurnId(bridged.thread);
   const entry = socket?.writable ? observations.get(`${path.resolve(home)}:${id}`) : undefined;
   return entry?.owner && entry.revision !== undefined && entry.ready && entry.running === true ? entry.turnId : undefined;
 }
 
 export function getNativeCodexSessionRunning(home: string, id: string): boolean | undefined {
+  const bridged = getOwnerBridgeState(home, id);
+  if (bridged) return ownerBridgeRunning(bridged.thread);
   const entry = socket ? observations.get(`${path.resolve(home)}:${id}`) : undefined;
   if (entry) entry.usedAt = Date.now();
   return entry?.verifiedAt !== undefined && Date.now() - entry.verifiedAt < NATIVE_STATUS_LEASE_MS ? entry.running : undefined;
@@ -262,6 +269,8 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
       });
       signal?.throwIfAborted();
       if (Date.now() >= deadline) break;
+      const bridged = getOwnerBridgeState(home, id);
+      if (bridged && ownerBridgeRunning(bridged.thread) !== undefined) return true;
       const entry = observations.get(key);
       connected ||= Boolean(socket);
       if (entry?.ready) return true;
@@ -286,7 +295,8 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
   }
 }
 
-export function disposeNativeCodexSessionStatus(): void {
+export function disposeNativeCodexSessionStatus(includeBridge = true): void {
+  if (includeBridge) clearOwnerBridgeState();
   connectionRevision++;
   const old = socket; socket = undefined; clientId = "initializing-client";
   for (const request of requests.values()) { request.cleanup(); request.reject(new Error("The Codex owner disconnected. The request outcome is unconfirmed; check the conversation before retrying.")); }
@@ -313,7 +323,7 @@ async function connect(home: string): Promise<void> {
     if (!target) return;
     const current = net.createConnection(target); socket = current; current.unref();
     let header = Buffer.alloc(0), chunks: Buffer[] = [], remaining = 0;
-    const reset = () => { if (socket === current) disposeNativeCodexSessionStatus(); };
+    const reset = () => { if (socket === current) disposeNativeCodexSessionStatus(false); };
     const handshakeTimer = setTimeout(reset, 3000); handshakeTimer.unref();
     current.once("close", () => clearTimeout(handshakeTimer));
     current.on("error", reset); current.on("close", reset);
@@ -344,6 +354,13 @@ async function connect(home: string): Promise<void> {
 
 /** Send through the verified native owner; a missing owner is safe to fall back before sending. */
 export async function startNativeCodexSessionTurn(home: string, id: string, turn: Record<string, unknown>, signal?: AbortSignal, onStarted?: (turnId: string) => void): Promise<boolean> {
+  const bridged = await requestOwnerBridge(home, id, 'turn/start', turn, signal);
+  if (bridged) {
+    const turnId = (bridged.result as { turn?: { id?: string } } | undefined)?.turn?.id;
+    if (!turnId?.trim()) throw new Error('Codex did not confirm starting the owner turn. Check the conversation before retrying.');
+    onStarted?.(turnId);
+    return true;
+  }
   const reply = await requestNativeOwner(home, id, "thread-follower-start-turn", { conversationId: id, turnStart: { request: turn, context: { inheritThreadSettings: true } } }, signal);
   if (!reply) return false;
   const turnId = reply?.result?.result?.turn?.id;
@@ -356,6 +373,17 @@ export async function startNativeCodexSessionTurn(home: string, id: string, turn
 /** Only the exact turn accepted from this caller may be interrupted. */
 export async function cancelNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, onStopped?: () => void): Promise<boolean> {
   if (!expectedTurnId || expectedTurnId.length > 256) throw new Error("The turn to stop could not be verified. Refresh before retrying.");
+  const bridged = await requestOwnerBridge(home, id, 'turn/interrupt', { threadId: id, turnId: expectedTurnId });
+  if (bridged) {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const state = await readOwnerBridgeState(home, id);
+      if (state && ownerBridgeRunning(state.thread) === false) { onStopped?.(); return true; }
+      if (state && ownerBridgeTurnId(state.thread) && ownerBridgeTurnId(state.thread) !== expectedTurnId) throw new Error('A newer Codex turn started after Stop. It was left running.');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('Codex accepted Stop but has not confirmed completion. No handover was started.');
+  }
   await readNativeCodexSessionRunning(home, id);
   const entry = observations.get(`${path.resolve(home)}:${id}`);
   const owner = entry?.owner, revision = entry?.revision;
@@ -371,6 +399,12 @@ export async function cancelNativeCodexSessionTurn(home: string, id: string, exp
 
 export async function steerNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, input: unknown[], cwd: string, signal?: AbortSignal): Promise<boolean> {
   if (!expectedTurnId.trim() || expectedTurnId.length > 256) throw new Error('The active turn could not be verified. Refresh before steering.');
+  const bridged = await requestOwnerBridge(home, id, 'turn/steer', { threadId: id, expectedTurnId, input }, signal);
+  if (bridged) {
+    const acceptedTurnId = (bridged.result as { turnId?: string } | undefined)?.turnId;
+    if (!acceptedTurnId?.trim()) throw new Error('Codex did not confirm the follow-up. Check the conversation before retrying.');
+    return true;
+  }
   await readNativeCodexSessionRunning(home, id, signal);
   signal?.throwIfAborted();
   const key = `${path.resolve(home)}:${id}`, entry = observations.get(key), owner = entry?.owner, revision = connectionRevision;
@@ -480,6 +514,12 @@ function applyPromptPatch(entry: Observation, patch: { path?: unknown; op?: unkn
 /** Read native runtime state across windows; retained writer handles are not running turns. */
 export async function readNativeCodexSessionRunning(home: string, id: string, signal?: AbortSignal, forceRefresh = false): Promise<boolean | undefined> {
   signal?.throwIfAborted();
+  const bridged = await readOwnerBridgeState(home, id, signal);
+  if (bridged) {
+    const running = ownerBridgeRunning(bridged.thread);
+    recordNativeSessionStatus(home, id, running);
+    return running;
+  }
   const revision = connectionRevision;
   const key = `${path.resolve(home)}:${id}`;
   let entry = observations.get(key);

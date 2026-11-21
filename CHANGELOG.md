@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.46
+
+- Route dashboard Send, steering and Stop to the same Codex process used by the official VS Code conversation, including versions that no longer expose the legacy IPC channel. Preserve custom CLI choices and restrict owner controls to the matching loaded conversation and Codex home.
+- Confirm the source is idle before handover, use the destination owner when its writer is already loaded, and retain uncertain delivery without replaying a turn.
+
 ## 3.0.0-pre.45
 
 - Use compact searchable project pickers across the composer, task board, session move dialog, and API host controls. Keep only the cross removal icon and confirm removal from recents using the session-deletion dialog style.

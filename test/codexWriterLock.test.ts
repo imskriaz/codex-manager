@@ -10,7 +10,7 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, execFile: (...args: any[]) => {
     if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0])) && probe.nativeMode) {
       probe.calls.push({ command: args[0], args: args[1], options: args[2] });
-      if (probe.nativeMode === 'held') { args.at(-1)(null, JSON.stringify(probe.held)); return {}; }
+      if (probe.nativeMode === 'held') { args.at(-1)(null, JSON.stringify(probe.held.map(path => ({ path, ownerStartedAt: null })))); return {}; }
       if (probe.nativeMode === "slow") { setTimeout(() => args.at(-1)(null, "[]"), 5200); return {}; }
       if (probe.nativeMode === "incomplete") { args.at(-1)(null, "{}"); return {}; }
       if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });

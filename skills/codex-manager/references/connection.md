@@ -1,15 +1,13 @@
 # Connect the packaged Manager MCP server
 
-Start Manager, enable Dashboard API, and create a named token with the projects
-and actions the task needs. Browser needs `workspaceBrowser`; native terminal
-screen access needs `workspaceTerminal` and `listWorkspaceTerminals`.
-Visible panel control also needs `workspacePanel`. The unchanged automatic MCP
-grant is upgraded during setup; user-edited token grants are preserved.
+Start either the VS Code extension or standalone Manager host. Internal MCP uses
+an OS-local named pipe (Windows) or private Unix socket. No API token, dashboard
+login, or Dashboard API setting is needed. The browser dashboard may be disabled.
 
-Run the installed extension's `tools/codex-manager-mcp.mjs` with Node over stdio.
-Supply `CODEX_MANAGER_URL` (default `http://127.0.0.1:39875`) and
-`CODEX_MANAGER_TOKEN` in the launching process environment. Use an absolute
-path to the script. The bridge does not start Manager or create a token.
+Run the installed extension's tools/codex-manager-mcp.mjs with Node over stdio,
+using an absolute script path. Omit CODEX_MANAGER_URL and CODEX_MANAGER_TOKEN.
+If the host uses CODEX_MANAGER_STORAGE_ROOT, pass the same directory to the MCP
+process. Automatic setup configures this for both VS Code and standalone.
 
 Codex configuration example:
 
@@ -17,10 +15,14 @@ Codex configuration example:
 [mcp_servers.codex-manager]
 command = "node"
 args = ["/path/to/extension/tools/codex-manager-mcp.mjs"]
-env_vars = ["CODEX_MANAGER_URL", "CODEX_MANAGER_TOKEN"]
 ```
 
-For Claude Code, use the same command, arguments and environment under the
+For an explicit remote HTTP(S) connection, set CODEX_MANAGER_URL and a scoped
+CODEX_MANAGER_TOKEN. Enable Dashboard API on that host. Remote access retains
+its token, project, action, and origin checks. Internal local access trusts the OS
+user and exposes Manager actions without a bearer credential.
+
+For Claude Code, use the same command and arguments under the
 `mcpServers.codex-manager` entry in its MCP JSON configuration.
 
 After connecting, `manager_schema` checks host availability and permitted

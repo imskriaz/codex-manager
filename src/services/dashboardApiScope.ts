@@ -18,6 +18,11 @@ export async function authorizeApiMessage(token: DashboardApiToken, message: Das
     return message;
   }
   if (message.type !== 'dashboard:action' || !hasApiPermission(token, message.action)) throw new ApiPermissionError('This token does not permit that operation.');
+  if (message.action === 'coordinateCodexSessions') {
+    const operation = message.payload?.coordinationRequest?.operation;
+    if (['pause', 'stop', 'handover'].includes(operation ?? '') && !hasApiPermission(token, 'cancelCodexCliSessionTurn')) throw new ApiPermissionError('Session control requires cancelCodexCliSessionTurn permission.');
+    if ((operation === 'resume' || operation === 'handover' && message.payload?.coordinationRequest?.start === true) && !hasApiPermission(token, 'sendCodexCliSessionMessage')) throw new ApiPermissionError('Starting a coordinated session requires sendCodexCliSessionMessage permission.');
+  }
   if (message.action === 'workspaceBrowser' && message.payload?.browserRequest) message = { ...message, payload: { ...message.payload, browserRequest: { ...message.payload.browserRequest, openedBy: 'ai' } } };
   if (!projects.length) return message;
   const target = message.payload?.targetDeviceId;

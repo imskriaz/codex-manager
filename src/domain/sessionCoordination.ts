@@ -1,11 +1,15 @@
 export interface SessionCoordinationRequest {
-  operation: 'list' | 'status' | 'send' | 'read' | 'acknowledge';
+  operation: 'list' | 'status' | 'send' | 'read' | 'acknowledge' | 'pause' | 'stop' | 'resume' | 'handover' | 'controlStatus';
   toSessionId?: string;
   messageId?: string;
   text?: string;
   activity?: 'working' | 'blocked' | 'idle';
   note?: string;
   messageIds?: string[];
+  operationId?: string;
+  expectedTurnId?: string;
+  handoverToSessionId?: string;
+  start?: boolean;
 }
 
 export interface CoordinationMessage {
@@ -24,4 +28,5 @@ export interface SessionCoordinationResult {
   acknowledged?: number;
   more?: boolean;
   warning?: string;
+  control?: { operationId: string; status: 'pending' | 'completed' | 'unknown'; message: string; targetSessionId: string };
 }

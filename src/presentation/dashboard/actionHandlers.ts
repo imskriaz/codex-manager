@@ -457,7 +457,7 @@ async function runDashboardAction(
     case 'coordinateCodexSessions': {
       const result = await coordinateCodexSessions(payload?.projectPath, payload?.sessionId, payload?.coordinationRequest);
       const operation = payload?.coordinationRequest?.operation;
-      return { sessionCoordination: result, notice: { level: result.warning ? 'warning' : 'info', message: result.warning ??
+      return { sessionCoordination: result, notice: { level: result.warning ? 'warning' : 'info', message: result.warning ?? result.control?.message ??
         (operation === 'send' ? 'Coordination message queued. The recipient must read and acknowledge it through MCP.' :
           operation === 'status' ? 'Session activity updated.' : operation === 'acknowledge' ? 'Coordination messages acknowledged.' : 'Coordination data loaded.') } };
     }

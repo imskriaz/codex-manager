@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ held: false, beforeProbe: undefined as (() => 
 vi.mock("child_process", async original => ({ ...await original<typeof import("child_process")>(), execFile: vi.fn((_command, args, _options, callback) => {
   mocks.beforeProbe?.();
   const lock = path.join(process.env.CODEX_HOME!, "thread-writer-locks", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.lock");
-  callback(null, process.platform === "win32" ? JSON.stringify(mocks.held ? [lock] : []) : mocks.held ? `n${lock}` : "");
+  callback(null, process.platform === "win32" ? JSON.stringify(mocks.held ? [{ path: lock, ownerStartedAt: null }] : []) : mocks.held ? `n${lock}` : "");
 }) }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerDisconnectedError: class extends Error {}, CodexAppServerTurnInterruptedError: class extends Error {} }));
 import { readCodexArchiveMaintenanceState, deleteCodexCliSession } from "../src/services/codexSessionResume";

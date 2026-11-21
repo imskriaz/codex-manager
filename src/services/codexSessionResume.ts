@@ -12,6 +12,7 @@ import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicit
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexCapacityInterruption, isCodexPermissionInterruption, isCodexQuotaInterruption, isCodexSessionInspectionNotice } from "../domain/codexSessionState";
 import { getNativeCodexSessionAccess, updateNativeCodexSessionAccess, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
+import { getOwnerBridgeState } from './codexOwnerBridge';
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -609,7 +610,11 @@ export async function readCodexArchiveMaintenanceState(sessionId: string, home =
   const record = nativeRecord ?? (getSqliteStateStore()?.get('session-file-cleanup', `${getCodexHomeStateKey(home)}:${sessionId.toLowerCase()}`) ? { archived: true } : undefined);
   if (!record || record.archived === undefined) {
     const legacy = await readCodexCliSessionSummary(sessionId, home);
-    return legacy ? { archived: legacy.archived === true, status: legacy.status } : undefined;
+    if (!legacy) return undefined;
+    const lock = path.join(home, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
+    const stat = await fs.lstat(lock).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+    if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error("The session writer lock is invalid. This conversation was kept.");
+    return { archived: legacy.archived === true, status: stat && await isWriterLockHeld(lock) ? 'running' : legacy.status };
   }
   if (!record.archived && !includeActive) return { archived: false, status: "running" };
   if (ownsSessionTurn(home, sessionId) || getNativeCodexSessionRunning(home, sessionId) === true)
@@ -1343,7 +1348,7 @@ async function sendAppServerSessionMessage(options: {
       throw error;
     }
   };
-  if (!options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNative()) {
+  if ((getOwnerBridgeState(home, options.sessionId) || !options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase()))) && await startNative()) {
     options.onStarted?.();
     await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
     return;
@@ -1605,6 +1610,8 @@ async function observedNativeTurn(home: string, sessionId: string): Promise<stri
   if (activeAppServerTurns.has(sessionId)) return undefined;
   if (!nativeTurnObservers.has(`${home}:${sessionId}`) && getNativeCodexSessionRunning(home, sessionId) !== true &&
     await readNativeCodexSessionRunning(home, sessionId) !== true) return undefined;
+  const nativeTurnId = getNativeCodexSessionTurnId(home, sessionId);
+  if (nativeTurnId) return nativeTurnId;
   const transcript = await findCliSessionTranscript(home, sessionId);
   const state = await readRecentTranscriptTurnState(transcript);
   return state === 'active' && transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
@@ -1726,7 +1733,7 @@ export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandb
   });
 }
 
-export async function cancelCodexCliSessionTurn(sessionId: string): Promise<boolean> {
+export async function cancelCodexCliSessionTurn(sessionId: string, expectedTurnId?: string): Promise<boolean> {
   validateSessionId(sessionId);
   sessionId = sessionId.toLowerCase();
   const home = resolveCodexHome();
@@ -1746,6 +1753,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   };
   const native = ownedNativeTurn(home, sessionId);
   if (native) {
+    if (expectedTurnId && native.turnId !== expectedTurnId) throw new Error('The active turn changed. Refresh before stopping.');
     if (!native.stop) {
       suppressRecovery(native.turnId);
       const details = { sessionRef: toSessionLogRef(sessionId), turnRef: toSessionLogRef(native.turnId), actor: "manager", origin: "user", goalPauseRequested: true, transport: "official-native" };
@@ -1762,6 +1770,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   }
   const observedTurnId = await observedNativeTurn(home, sessionId);
   if (observedTurnId) {
+    if (expectedTurnId && observedTurnId !== expectedTurnId) throw new Error('The active turn changed. Refresh before stopping.');
     const key = `${home}:${sessionId}`;
     const existing = observedNativeStops.get(key);
     if (existing) return existing;
@@ -1775,6 +1784,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   }
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {
+    if (expectedTurnId && activeAppServer.turnId !== expectedTurnId) throw new Error('The active turn changed. Refresh before stopping.');
     if (activeAppServer.home !== path.resolve(home)) throw new Error("The active Codex home changed. Refresh before stopping this turn.");
     if (activeAppServer.stop) return activeAppServer.stop;
     suppressRecovery(activeAppServer.turnId);
@@ -3442,7 +3452,18 @@ async function inspectCliSessionRunning(
   if (liveRunning) return true;
   const hasLock = Boolean(stat?.isFile() && !stat.isSymbolicLink());
   // A recent orphaned lock is not a live Windows writer after a host crash.
-  if (hasLock && process.platform === "win32") return isWriterLockHeld(lockPath);
+  if (hasLock && process.platform === "win32") {
+    const held = await isWriterLockHeld(lockPath);
+    const ownerStartedAt = writerLockProbes.get(path.dirname(lockPath))?.owners?.get(path.resolve(lockPath).toLowerCase());
+    const activity = transcript ? cliTranscriptTurnStateCache.get(transcript) : undefined;
+    const activityAt = activity?.activityAt ?? activity?.mtimeMs;
+    // Restoring history reacquires its writer lock without resuming the old turn.
+    if (held && ownerStartedAt !== undefined && activityAt !== undefined && activityAt + 1000 < ownerStartedAt) {
+      if (refreshNative) throw new Error("This conversation was restored by a new Codex process and is idle, but that process still owns its writer. Your message was kept; open the original Codex window and retry.");
+      return false;
+    }
+    return held;
+  }
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
@@ -3464,21 +3485,21 @@ async function inspectCliSessionRunning(
   return hasLock && await isWriterLockHeld(lockPath);
 }
 
-const writerLockProbes = new Map<string, { expiresAt: number; paths: Promise<Set<string>> }>();
+const writerLockProbes = new Map<string, { expiresAt: number; paths: Promise<Set<string>>; owners?: Map<string, number> }>();
 async function isWriterLockHeld(lockPath: string): Promise<boolean> {
   if (process.platform === "win32") {
     const directory = path.dirname(lockPath);
     let cached = writerLockProbes.get(directory);
     if (!cached || cached.expiresAt <= Date.now()) {
       const directoryData = Buffer.from(directory, "utf8").toString("base64");
-      // Node permits shared reads of Windows byte-range locks. FileShare.None detects the live writer handle.
-      const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryData}')); $held=@(); foreach($p in [IO.Directory]::EnumerateFiles($d,'*.lock')) { try { $f=[IO.File]::Open($p,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); $f.Dispose() } catch { $e=$_.Exception; while($e.InnerException) { $e=$e.InnerException }; $code=$e.HResult -band 65535; if($code -eq 32 -or $code -eq 33) { $held+=,$p } elseif($code -ne 2 -and $code -ne 3) { throw } } }; ConvertTo-Json -InputObject @($held) -Compress`;
-      const entry = { expiresAt: Infinity, paths: Promise.resolve(new Set<string>()) };
+      const probeData = Buffer.from(path.join(__dirname, '..', '..', 'tools', 'inspect-session-writers.ps1'), 'utf8').toString('base64');
+      const script = `& ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${probeData}'))) -Directory ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryData}')))`;
+      const entry = { expiresAt: Infinity, paths: Promise.resolve(new Set<string>()), owners: new Map<string, number>() };
       entry.paths = new Promise<Set<string>>((resolve, reject) => {
         // CREATE_NO_WINDOW can prevent Windows PowerShell's runtime from
         // initializing on some Windows hosts (STATUS_DLL_INIT_FAILED).
         // Let PowerShell hide its own window instead on that specific failure.
-        const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+        const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
         const deadline = Date.now() + 15_000;
         const inspect = (windowsHide: boolean): void => {
           const completed = (error: unknown, stdout?: string | Buffer): void => {
@@ -3491,8 +3512,19 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
             if (error) { reject(new Error(`Windows session writer inspection failed. Retry after the PC responds. ${error instanceof Error ? error.message : code ?? "Unknown process failure"}`)); return; }
             try {
               const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
-              if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
-              resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
+              if (!Array.isArray(values)) throw new Error("Invalid lock response");
+              const paths = new Set<string>();
+              for (const raw of values as unknown[]) {
+                if (!raw || typeof raw !== 'object') throw new Error('Invalid writer identity');
+                const value = raw as { path?: unknown; ownerStartedAt?: unknown };
+                if (typeof value.path !== 'string' ||
+                    value.ownerStartedAt !== null && (typeof value.ownerStartedAt !== 'number' || !Number.isSafeInteger(value.ownerStartedAt) || value.ownerStartedAt <= 0 || value.ownerStartedAt > Date.now() + 1000)) throw new Error('Invalid writer identity');
+                const file = path.resolve(value.path).toLowerCase();
+                if (path.dirname(file) !== path.resolve(directory).toLowerCase() || !SESSION_ID_PATTERN.test(path.basename(file, '.lock'))) throw new Error('Invalid writer path');
+                paths.add(file);
+                if (value.ownerStartedAt !== null) entry.owners.set(file, value.ownerStartedAt);
+              }
+              resolve(paths);
             } catch { entry.expiresAt = 0; reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
           };
           try {
@@ -3555,6 +3587,7 @@ const cliTranscriptTurnStateCache = new Map<string, {
   cancelled?: boolean; resumeCancelled?: boolean;
   capacity?: boolean; resumeCapacity?: boolean;
   startedAt?: number; resumeStartedAt?: number;
+  activityAt?: number; resumeActivityAt?: number;
   access?: CodexSessionAccess; resumeAccess?: CodexSessionAccess; sandboxPolicy?: Record<string, unknown>; resumeSandboxPolicy?: Record<string, unknown>;
   model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; resumeModel?: string; resumeReasoningEffort?: string; resumeSandboxMode?: DashboardCliSandboxMode; tokenUsage?: DashboardCodexSessionLiveState["tokenUsage"]; resumeTokenUsage?: DashboardCodexSessionLiveState["tokenUsage"];
 }>();
@@ -3591,6 +3624,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let turnCancelled = incremental ? previous!.resumeCancelled : false;
     let capacityError = incremental ? previous!.resumeCapacity : false;
     let startedAt = incremental ? previous!.resumeStartedAt : undefined;
+    let activityAt = incremental ? previous!.resumeActivityAt : undefined;
     let model = incremental ? previous!.resumeModel : undefined;
     let reasoningEffort = incremental ? previous!.resumeReasoningEffort : undefined;
     let sandboxMode = incremental ? previous!.resumeSandboxMode : undefined;
@@ -3605,9 +3639,10 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     let resumeCancelled = turnCancelled;
     let resumeCapacity = capacityError;
     let resumeStartedAt = startedAt;
+    let resumeActivityAt = activityAt;
     let resumeModel = model, resumeReasoningEffort = reasoningEffort, resumeSandboxMode = sandboxMode, resumeTokenUsage = tokenUsage, resumeAccess = access, resumeSandboxPolicy = sandboxPolicy;
     for (const [index, line] of lines.entries()) {
-      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeCapacity = capacityError; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; resumeAccess = access; resumeSandboxPolicy = sandboxPolicy; }
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeCapacity = capacityError; resumeStartedAt = startedAt; resumeActivityAt = activityAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; resumeSandboxMode = sandboxMode; resumeTokenUsage = tokenUsage; resumeAccess = access; resumeSandboxPolicy = sandboxPolicy; }
       try {
         const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; willRetry?: unknown; will_retry?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown; sandbox_policy?: { type?: unknown }; sandbox_mode?: unknown; permission_profile?: { type?: unknown }; info?: unknown } };
         if (record?.type === "turn_context") {
@@ -3620,6 +3655,10 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
         }
         if (record?.type === "event_msg" && record.payload?.type === "token_count") tokenUsage = parseCodexTokenUsage(record.payload.info) ?? tokenUsage;
         const type = record?.type === "event_msg" ? record.payload?.type : record?.type;
+        if (["event_msg", "response_item", "token_usage_record"].includes(record?.type ?? "") && type !== 'thread_settings_applied') {
+          const timestamp = Date.parse(record.timestamp ?? '');
+          if (Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() + 60_000) activityAt = Math.max(activityAt ?? 0, timestamp);
+        }
         const eventTurnId = record?.type === "event_msg" ? record.payload?.turn_id : record?.turn_id;
         if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
           if (!eventTurnId || !turnId || eventTurnId === turnId) {
@@ -3663,7 +3702,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     }
     cliTranscriptTurnStateCache.set(transcriptPath, {
       size: snapshot.size, mtimeMs: snapshot.mtimeMs,
-      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, capacity: capacityError, resumeCapacity, startedAt, resumeStartedAt, access, resumeAccess, sandboxPolicy, resumeSandboxPolicy, model, reasoningEffort, sandboxMode, tokenUsage, resumeModel, resumeReasoningEffort, resumeSandboxMode, resumeTokenUsage
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, capacity: capacityError, resumeCapacity, startedAt, resumeStartedAt, activityAt, resumeActivityAt, access, resumeAccess, sandboxPolicy, resumeSandboxPolicy, model, reasoningEffort, sandboxMode, tokenUsage, resumeModel, resumeReasoningEffort, resumeSandboxMode, resumeTokenUsage
     });
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;

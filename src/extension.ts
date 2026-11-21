@@ -28,6 +28,7 @@ import { registerCompletedGoalCleanup } from './services/completedGoalCleanup';
 import { disposeSqliteContext, initializeSqliteContextWithRetry } from "./storage/sqliteContext";
 import { showStorageRecovery } from "./presentation/storageRecovery";
 import { registerCodexManagerMcpSetup, setupCodexManagerMcp } from './services/codexManagerMcpSetup';
+import { setupCodexOwnerBridge } from './services/codexOwnerBridgeSetup';
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -114,6 +115,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   void setupCodexManagerMcp(context, true).then(message => console.info('[codexManager]', message), error => {
     void vscode.window.showWarningMessage(`Codex Manager MCP setup could not finish: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  void setupCodexOwnerBridge(context).then(changed => {
+    if (changed) void vscode.window.showInformationMessage('Codex Manager connected the shared owner adapter. Reload VS Code to activate Send and Stop for official Codex conversations.');
+  }, error => {
+    void vscode.window.showErrorMessage(`Codex Manager owner connection setup failed: ${error instanceof Error ? error.message : String(error)}`);
   });
 }
 

@@ -15,6 +15,7 @@ export function pruneSessionCoordination(store: SqliteStateStore, now = Date.now
 export function removeSessionCoordination(store: SqliteStateStore, home: string, sessionId: string): void {
   store.prepare("DELETE FROM state WHERE namespace IN (?,?) AND json_valid(value) AND json_extract(value,'$.home')=? AND (json_extract(value,'$.sessionId')=? OR json_extract(value,'$.fromSessionId')=? OR json_extract(value,'$.toSessionId')=?)")
     .run(participants, messages, home, sessionId, sessionId, sessionId);
+  store.prepare("DELETE FROM state WHERE namespace='session-coordination-controls' AND json_valid(value) AND json_extract(value,'$.home')=? AND (json_extract(value,'$.sessionId')=? OR json_extract(value,'$.control.targetSessionId')=?)").run(home, sessionId, sessionId);
 }
 
 /** These are peer mailboxes, never native prompts or authorization to run commands. */

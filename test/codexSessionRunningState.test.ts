@@ -5,7 +5,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ heldLocks: new Set<string>(), nativeHeldLocks: new Set<string>(), nativeProbeError: false, lockError: undefined as string | undefined, openRpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ heldLocks: new Set<string>(), nativeHeldLocks: new Set<string>(), ownerStartedAt: undefined as number | undefined, nativeProbeError: false, lockError: undefined as string | undefined, openRpc: vi.fn() }));
 vi.mock("fs/promises", async (original) => {
   const fs = await original<typeof import("fs/promises")>();
   return { ...fs, open: (...args: Parameters<typeof fs.open>) => {
@@ -19,13 +19,13 @@ vi.mock("fs/promises", async (original) => {
 vi.mock("child_process", async (original) => {
   const child = await original<typeof import("child_process")>();
   return { ...child, execFile: (...args: any[]) => {
-    if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0]))) { args.at(-1)(mocks.nativeProbeError ? new Error("inspection timeout") : null, JSON.stringify([...mocks.nativeHeldLocks])); return {}; }
+    if (/(?:^|[\\/])powershell\.exe$/i.test(String(args[0]))) { args.at(-1)(mocks.nativeProbeError ? new Error("inspection timeout") : null, JSON.stringify([...mocks.nativeHeldLocks].map(path => ({ path, ownerStartedAt: mocks.ownerStartedAt ?? null })))); return {}; }
     if (args[0] === "lsof") { args.at(-1)(null, [...mocks.heldLocks].map((file) => `n${file}`).join("\n")); return {}; }
     return (child.execFile as any)(...args);
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessages, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, sendCodexCliSessionMessage } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexArchiveMaintenanceState, readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessages, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, sendCodexCliSessionMessage } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
@@ -55,12 +55,45 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.useRealTimers();
   if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
-  mocks.heldLocks.clear(); mocks.nativeHeldLocks.clear(); mocks.nativeProbeError = false; mocks.lockError = undefined; mocks.openRpc.mockReset();
+  mocks.heldLocks.clear(); mocks.nativeHeldLocks.clear(); mocks.ownerStartedAt = undefined; mocks.nativeProbeError = false; mocks.lockError = undefined; mocks.openRpc.mockReset();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
   await rm(home, { recursive: true, force: true });
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it.skipIf(process.platform !== 'win32').each([false, true])('does not mistake restored ownership for an executing turn (fresh settings: %s)', async settings => {
+    const old = new Date(Date.now() - 35 * 60_000);
+    await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { source: 'vscode', cwd: home } }) + '\n' + JSON.stringify({ timestamp: old.toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } }) + '\n');
+    mocks.nativeHeldLocks.add(lock);
+    mocks.ownerStartedAt = Date.now() - 10 * 60_000;
+    if (settings) await appendFile(transcript, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'thread_settings_applied' } }) + '\n');
+    else await utimes(transcript, old, old);
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: 'idle', interrupted: true, canStop: false, runningSince: undefined });
+    expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    expect(await select()).toEqual([]);
+    expect(await select([id])).toEqual([id]);
+    const sessions = await readCodexCliSessions(home);
+    expect(sessions[0]?.status).toBe('idle');
+    expect(getCodexSessionReadNotice(sessions)).toBeUndefined();
+    expect(await readCodexArchiveMaintenanceState(id, home, true)).toMatchObject({ status: 'running' });
+    await expect(sendCodexCliSessionMessage({ sessionId: id, text: 'Continue' })).rejects.toThrow('still owns its writer');
+    expect(mocks.openRpc).not.toHaveBeenCalled();
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
+    await appendFile(transcript, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'new-turn' } }) + '\n');
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+  });
+
+  it.skipIf(process.platform !== 'win32')('keeps a quiet long turn running when its writer predates execution', async () => {
+    const old = new Date(Date.now() - 35 * 60_000);
+    await utimes(transcript, old, old);
+    mocks.nativeHeldLocks.add(lock);
+    mocks.ownerStartedAt = Date.now() - 60 * 60_000;
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+    expect(await select()).toEqual([id]);
+  });
+
   it.skipIf(process.platform !== 'win32').each([false, true])('rechecks a cached writer on send without deleting its lock (still held: %s)', async held => {
     mocks.nativeHeldLocks.add(lock);
     expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: 'running', locked: true });

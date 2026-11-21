@@ -60,6 +60,17 @@ it('permits only granted local project coordination and preserves mailbox result
   expect(scopeApiResults(record, [{ type: 'dashboard:action-result', action: 'coordinateCodexSessions', requestId: 'r', status: 'completed', payload }])[0]).toMatchObject({ payload });
 });
 
+it('requires explicit stop/start permissions for coordination controls on remote API tokens', async () => {
+  const { record } = await createDashboardApiToken(context, { name: 'Mail', permissions: ['coordinateCodexSessions'] });
+  const command = (operation: string, start = false) => message('coordinateCodexSessions', { sessionId: 'own', coordinationRequest: { operation, start } });
+  await expect(authorizeApiMessage(record, command('stop'))).rejects.toThrow('cancelCodexCliSessionTurn');
+  await expect(authorizeApiMessage(record, command('handover', true))).rejects.toThrow('cancelCodexCliSessionTurn');
+  await expect(authorizeApiMessage(record, command('resume'))).rejects.toThrow('sendCodexCliSessionMessage');
+  const stops = { ...record, permissions: [...record.permissions, 'cancelCodexCliSessionTurn'] };
+  await expect(authorizeApiMessage(stops, command('stop'))).resolves.toBeDefined();
+  await expect(authorizeApiMessage(stops, command('handover', true))).rejects.toThrow('sendCodexCliSessionMessage');
+});
+
 it('filters global refreshed state and secret-bearing fields from scoped mutation results', () => {
   const token = { id: 'a', name: 'Scoped', projectPath: process.cwd(), permissions: ['*'], createdAt: 1 };
   const messages: DashboardHostMessage[] = [{ type: 'dashboard:action-result', action: 'renameCodexCliSession', requestId: 'r', status: 'completed', payload: {

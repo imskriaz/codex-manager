@@ -17,11 +17,13 @@ import { AccountsCommandService } from "../application/accounts/commandService";
 import { waitWithin } from '../utils/concurrency';
 import { resolveCodexHome } from './codexSessionResume';
 import { maybeAutoSwitchForActiveQuota, prepareAccountForAutoResume } from '../application/accounts/quota';
+import { setupCodexManagerMcp } from './codexManagerMcpSetup';
 
 /** Start only after this host owns the port, so a rejected competing host cannot automate accounts. */
 export function registerNodeBackgroundServices(context: vscode.ExtensionContext, repo: AccountsRepository, dashboard: WebDashboardServer,
   canUseAccount: (accountId: string) => boolean = () => !getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)): void {
   initAutoSwitchRuntimeState(context);
+  void setupCodexManagerMcp(context, true).catch(error => console.warn('[codexManager] automatic local MCP setup failed:', error));
   const refresh = () => dashboard.publishLocalStateChange();
   const view = { refresh };
   const commands = new AccountsCommandService(context, repo, view, canUseAccount, undefined, canUseAccount);

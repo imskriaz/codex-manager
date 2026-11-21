@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn(), realpath: vi.fn() }));
 vi.unmock("../src/services/codexNativeSessionStatus");
+vi.mock('../src/services/codexOwnerBridge', () => ({ clearOwnerBridgeState: vi.fn(), getOwnerBridgeState: vi.fn(), readOwnerBridgeState: vi.fn(async () => undefined), requestOwnerBridge: vi.fn(async () => undefined), ownerBridgeRunning: vi.fn(), ownerBridgeTurnId: vi.fn() }));
 vi.mock("node:net", () => ({ createConnection: mocks.connect }));
 vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: mocks.realpath }));
 import { getNativeCodexSessionAccess, updateNativeCodexSessionAccess, cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionTurnId, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";

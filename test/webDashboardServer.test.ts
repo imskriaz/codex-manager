@@ -23,6 +23,7 @@ it("allows remote batches and sync to reach the same deadline as their local act
   expect(getPeerActionTimeoutMs("batchRefresh", 4)).toBe(960_000);
   expect(getPeerActionTimeoutMs("batchResyncProfile", 2)).toBe(600_000);
   expect(getPeerActionTimeoutMs("syncNow")).toBe(135_000);
+  expect(getPeerActionTimeoutMs("coordinateCodexSessions")).toBe(90_000);
   expect(getPeerActionTimeoutMs("refresh")).toBe(240_000);
 });
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";

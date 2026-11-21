@@ -7,14 +7,16 @@ import { readCodexCliSessionSummary, readCodexCliSessions, resolveCodexHome } fr
 import { projectTaskKey } from './projectTasks';
 import { resolveWorkspaceProjectPathAsync } from './workspaceTools';
 import { waitWithin } from '../utils/concurrency';
+import { controlCoordinatedSession } from './sessionCoordinationControl';
 
 export async function coordinateCodexSessions(projectPath: string | undefined, sessionId: string | undefined, request: SessionCoordinationRequest | undefined): Promise<SessionCoordinationResult> {
-  if (!request || !['list', 'status', 'send', 'read', 'acknowledge'].includes(request.operation)) throw new Error('Choose a coordination operation.');
+  if (!request || !['list', 'status', 'send', 'read', 'acknowledge', 'pause', 'stop', 'resume', 'handover', 'controlStatus'].includes(request.operation)) throw new Error('Choose a coordination operation.');
   if (request.operation !== 'list' && !sessionId) throw new Error('Provide your current sessionId.');
   const store = getSqliteStateStore(), home = resolveCodexHome();
   if (!store) throw new Error('Coordination storage is unavailable. Reconnect and retry.');
   const project = await resolveWorkspaceProjectPathAsync(projectPath), projectKey = projectTaskKey(project);
-  const ids = [...new Set([sessionId, ...(request.operation === 'send' ? [request.toSessionId] : [])].filter((id): id is string => id !== undefined).map(id => typeof id === 'string' ? id.toLowerCase() : ''))];
+  const control = ['pause', 'stop', 'resume', 'handover', 'controlStatus'].includes(request.operation);
+  const ids = [...new Set([sessionId, ...(request.operation === 'send' || control ? [request.toSessionId, request.handoverToSessionId] : [])].filter((id): id is string => id !== undefined).map(id => typeof id === 'string' ? id.toLowerCase() : ''))];
   await Promise.all(ids.map(async id => {
     if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)) throw new Error('Provide a valid native session UUID.');
     const summary = await waitWithin(readCodexCliSessionSummary(id, home, 'display'), 5000, 'Session ownership could not be verified. Retry when connected.');
@@ -31,6 +33,8 @@ export async function coordinateCodexSessions(projectPath: string | undefined, s
     } catch (error) { warning = error instanceof Error ? error.message : String(error); }
   }
   if (home !== resolveCodexHome() || getSqliteStateStore() !== store) throw new Error('The active storage changed. Retry coordination.');
+  if (control) return controlCoordinatedSession(store, { home: getCodexHomeStateKey(home), project: projectKey }, home, project, sessionId!.toLowerCase(),
+    { ...request, toSessionId: request.toSessionId?.toLowerCase(), handoverToSessionId: request.handoverToSessionId?.toLowerCase() });
   const result = coordinateStoredSessions(store, { home: getCodexHomeStateKey(home), project: projectKey }, sessionId?.toLowerCase(), { ...request, toSessionId: request.toSessionId?.toLowerCase() });
   if (request.operation === 'list') {
     const peers = new Map(nativePeers.map(row => [row.sessionId, row]));

@@ -94,6 +94,7 @@ import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from '
 import { ProjectShareEvents } from './projectShareEvents';
 import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTaskWithAttachments, addProjectCommentWithAttachments, projectTaskKey } from './projectTasks';
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
+import { LocalMcpServer } from './localMcpServer';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterruption, isCodexCapacityInterruption } from "../domain/codexSessionState";
@@ -160,6 +161,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "workspaceTerminal") return 10_000;
   if (action === "workspaceGit" || action === "workspaceGitHub") return 135_000;
   if (action === "commitWorkspaceChanges") return 75_000;
+  if (action === "coordinateCodexSessions") return 90_000;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(action)) return 90_000;
   if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAccess"].includes(action)) return 75_000;
   if (action === "cancelCodexCliSessionTurn") return 40_000;
@@ -475,6 +477,7 @@ export class WebDashboardServer implements vscode.Disposable {
     return { status: result.status, errorMessage: result.error, payload: result.payload as import("../domain/dashboard/types").DashboardActionResultPayload | undefined };
   }
   private server: http.Server | undefined;
+  private localMcp?: LocalMcpServer;
   private serverStart: Promise<void> | undefined;
   private serverStartRevision = 0;
   private shuttingDown = false;
@@ -704,6 +707,9 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   async start(): Promise<void> {
+    this.localMcp ??= new LocalMcpServer();
+    void this.localMcp.start((request, response) => this.handle(request, response, true))
+      .catch(error => console.warn('[codexManager] local MCP transport unavailable:', error));
     if (!this.isEnabled()) return;
     if (this.settingsStore.getDashboardSettings().teamWorkspaceEnabled) this.teamSessions().start();
     if (this.serverStart) return this.serverStart;
@@ -797,6 +803,8 @@ export class WebDashboardServer implements vscode.Disposable {
   prepareForShutdown(): void { this.shuttingDown = true; this.aiProxy?.stop(); this.officeConversations?.stop(); for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer); this.sessionFailurePushTimers.clear(); }
 
   async stop(): Promise<void> {
+    await this.localMcp?.stop();
+    this.localMcp = undefined;
     this.officeConversations?.stop();
     await disposeWorkspaceBrowsers().catch(error => console.warn('[codexManager] browser shutdown failed', error));
     for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer);
@@ -888,6 +896,8 @@ export class WebDashboardServer implements vscode.Disposable {
       this.restartPeerSocket();
     } else {
       await this.stop();
+      // Disabling the browser dashboard does not disable OS-local MCP.
+      await this.start();
     }
   }
 
@@ -1007,7 +1017,7 @@ export class WebDashboardServer implements vscode.Disposable {
     return `http://127.0.0.1:${WEB_DASHBOARD_PORT}${pathname}`;
   }
 
-  private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+  private async handle(request: http.IncomingMessage, response: http.ServerResponse, localMcp = false): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
     if (isAiProxyPath(path)) {
@@ -1200,7 +1210,8 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     const bearer = readDashboardBearerToken(request);
-    const apiToken = bearer && this.settingsStore.getDashboardSettings().apiAccessEnabled ? await readDashboardApiToken(this.context, bearer) : undefined;
+    const apiToken: DashboardApiToken | undefined = localMcp ? { id: 'local-mcp', name: 'Local Codex Manager MCP', permissions: ['*'], createdAt: 0 } :
+      bearer && this.settingsStore.getDashboardSettings().apiAccessEnabled ? await readDashboardApiToken(this.context, bearer) : undefined;
     const apiAuthorized = !!apiToken;
     if (bearer && !apiAuthorized) { response.statusCode = 401; this.sendJson(response, { error: 'API access is disabled or the token is invalid.' }); return; }
     if (apiToken && !['/api/state', '/api/schema', '/api/message'].includes(path)) { response.statusCode = 403; this.sendJson(response, { error: 'Use the permitted dashboard API endpoints.' }); return; }
