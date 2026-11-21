@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { DashboardNotice } from '../../src/domain/dashboard/types';
+import { dismissBrowserOffer } from './browserOfferDismissal';
 
 type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> };
 type InstallWindow = Window & { codexInstallPrompt?: InstallPrompt; codexInstallPending?: boolean };
@@ -52,6 +53,7 @@ export function useBrowserAppInstall() {
       const result = await Promise.race([request, new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error('Installation was not confirmed in time. Check your browser before trying again.')), 15_000);
       })]);
+      if (result.outcome !== 'accepted') dismissBrowserOffer();
       if (revision.current === current) setNotice({ level: 'info', message: result.outcome === 'accepted' ? 'Installation requested. Finish in your browser, then open Codex Manager from your apps or taskbar.' : 'Installation cancelled.' });
     } catch (error) {
       if (revision.current === current) setNotice({ level: 'warning', message: `Installation failed. ${error instanceof Error ? error.message : 'Use your browser menu to install Codex Manager.'}` });

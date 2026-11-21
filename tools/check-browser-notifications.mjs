@@ -14,7 +14,7 @@ const screenshots = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(screenshots, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 try {
-  for (const scenario of ["subscribe", "registered", "login-conflict", "denied", "cancelled", "storage-failure", "timeout"]) {
+  for (const scenario of ["dismiss-close", "dismiss-not-now", "subscribe", "registered", "login-conflict", "denied", "cancelled", "storage-failure", "timeout"]) {
     console.log(`Checking browser notification ${scenario}`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
     await context.addInitScript(({ scenario }) => {
@@ -35,10 +35,11 @@ try {
     }, { scenario });
     const page = await context.newPage();
     page.setDefaultTimeout(30000);
-    const calls = [], errors = [];
+    const calls = [], errors = [], consoleErrors = [];
     let registered = scenario === "registered";
     let windowlessTestResult = { subscriptions: 1, accepted: 1, failed: 0 };
     page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
     await page.route("**/api/**", async route => {
       const pathname = new URL(route.request().url()).pathname;
       calls.push(pathname);
@@ -61,6 +62,35 @@ try {
     await page.locator("#dashboard-main").waitFor();
     console.log(`${scenario}: dashboard ready`);
     const offer = page.getByRole("region", { name: "Notification and app install offer", exact: true });
+    const checkDismissal = async () => {
+      const until = await page.evaluate(() => Number(localStorage.getItem('codexManager.browserOfferDismissedUntil')));
+      assert.ok(until > Date.now() + 23 * 60 * 60 * 1000 && until <= Date.now() + 24 * 60 * 60 * 1000, 'Dismissal lasts one day');
+      await page.reload();
+      await page.locator('#dashboard-main').waitFor();
+      await page.evaluate(async () => {
+        window.dispatchEvent(new Event('beforeinstallprompt', { cancelable: true }));
+        window.dispatchEvent(new Event('appinstalled'));
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      });
+      assert.equal(await offer.count(), 0, 'Dismissal survives reload and install events');
+      await page.screenshot({ path: path.join(screenshots, `notification-${scenario}-dismissed.png`) });
+      // Expire only this browser fixture's preference; the host is read-only.
+      await page.evaluate(() => localStorage.setItem('codexManager.browserOfferDismissedUntil', String(Date.now() - 1)));
+      await page.reload();
+      await page.locator('#dashboard-main').waitFor();
+    };
+    if (scenario.startsWith('dismiss-')) {
+      await offer.waitFor();
+      await offer.getByRole('button', { name: scenario === 'dismiss-close' ? 'Dismiss notification offer' : 'Not now', exact: true }).click();
+      assert.equal(await offer.count(), 0);
+      await checkDismissal();
+      await offer.waitFor();
+      assert.equal(await page.evaluate(() => window.__permissionRequests), 0);
+      assert.deepEqual(errors, []);
+      console.log(`Browser notification ${scenario}: passed`);
+      await context.close();
+      continue;
+    }
     if (["registered", "login-conflict"].includes(scenario)) {
       await page.waitForFunction(() => document.documentElement.dataset.pushSubscribed === "true");
       assert.equal(await offer.count(), 0, "Registered devices are not prompted again");
@@ -74,6 +104,7 @@ try {
           await offer.getByRole('button', { name: 'Install app', exact: true }).click();
           await offer.getByRole(outcome === 'failure' ? 'alert' : 'status').filter({ hasText: outcome === 'accepted' ? 'Installation requested' : outcome === 'dismissed' ? 'Installation cancelled' : 'Installation failed' }).waitFor();
           assert.equal(await page.evaluate(() => window.__permissionRequests), 0, 'Installing never requests notification permission');
+          if (outcome === 'dismissed') await checkDismissal();
         }
         await page.evaluate(() => window.dispatchEvent(new Event('appinstalled')));
         await offer.getByRole('status').filter({ hasText: 'App installed.' }).waitFor();
@@ -137,9 +168,18 @@ try {
         await offer.getByRole("alert").waitFor();
         assert.equal(await offer.getByRole("button", { name: "Subscribe to browser notifications", exact: true }).isEnabled(), true, "Failures leave a retryable terminal state");
         assert.equal(await page.evaluate(() => window.__unsubscribes), 0, "Failed registration keeps this browser's subscription available for retry");
+        if (['cancelled', 'denied'].includes(scenario)) {
+          await checkDismissal();
+          await offer.waitFor();
+        }
       }
     }
     assert.deepEqual(errors, [], `${scenario} has no console errors`);
+    assert.deepEqual(consoleErrors.filter(message => !message.includes('Failed to load resource: the server responded with a status of')), [], `${scenario} has no unexpected console errors`);
+    console.log('Dashboard timing', await page.evaluate(() => {
+      const navigation = performance.getEntriesByType('navigation')[0];
+      return { domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd), loadMs: Math.round(navigation.loadEventEnd) };
+    }));
     console.log(`Browser notification ${scenario}: passed`);
     await context.close();
   }

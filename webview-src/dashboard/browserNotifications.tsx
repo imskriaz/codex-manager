@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { useBrowserAppInstall } from './browserAppInstall';
+import { dismissBrowserOffer, isBrowserOfferDismissed } from './browserOfferDismissal';
 
 export async function browserPushRequest(path: string, body?: unknown): Promise<{ publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number }> {
   const controller = new AbortController();
@@ -109,7 +110,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const [failed, setFailed] = useState(false);
   const app = useBrowserAppInstall();
   const [initialized, setInitialized] = useState(!props.offerOnLoad || !supported);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(isBrowserOfferDismissed);
+  const dismiss = () => { dismissBrowserOffer(); setDismissed(true); };
   const revision = useRef(0);
   useEffect(() => {
     let disposed = false;
@@ -137,8 +139,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     const reconnect = () => { void refresh(); };
     window.addEventListener("online", reconnect);
     document.addEventListener("visibilitychange", reconnect);
-    const prompt = () => setDismissed(false);
-    const installed = () => setDismissed(false);
+    const prompt = () => setDismissed(isBrowserOfferDismissed());
+    const installed = () => setDismissed(isBrowserOfferDismissed());
     const changed = () => {
       revision.current++;
       setEnabled(document.documentElement.dataset["pushSubscribed"] === "true");
@@ -166,12 +168,14 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     try {
       // Permission must be requested directly in the click, before awaiting worker startup.
       const permission = enabled ? "granted" : await notificationDeadline(Notification.requestPermission());
-      if (permission !== "granted")
+      if (permission !== "granted") {
+        dismissBrowserOffer();
         throw new Error(
           permission === "denied"
             ? "Notifications are blocked. Allow them in browser settings."
             : "Notification permission cancelled."
         );
+      }
       const worker = await workerReady();
       if (registration) await registration.catch(() => undefined);
       const subscription = await notificationDeadline(worker.pushManager.getSubscription());
@@ -227,9 +231,9 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const installFeedback = app.notice ? <p class={`browser-notification-feedback ${app.notice.level === "warning" ? "is-failed" : ""}`} role={app.notice.level === "warning" ? "alert" : "status"}>{app.notice.message}</p> : null;
   const feedbackView = feedback ? <p class={`browser-notification-feedback ${failed ? "is-failed" : ""}`} role={failed ? "alert" : "status"}>{feedback}</p> : null;
   if (props.offerOnLoad) return <aside class={`browser-notification-offer ${enabled ? "is-enabled" : ""}`} aria-label="Notification and app install offer" role="region">
-    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{installAvailable && enabled ? "Install Codex Manager" : enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{installAvailable && enabled ? "Keep the dashboard ready while you work." : enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={() => setDismissed(true)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{installAvailable && enabled ? "Install Codex Manager" : enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{installAvailable && enabled ? "Keep the dashboard ready while you work." : enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={dismiss}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
     {feedbackView}{installFeedback}
-    <div class="browser-notification-actions">{enabled ? <button type="button" class="browser-notification-button is-primary" onClick={() => setDismissed(true)}>Done</button> : <><button type="button" class="browser-notification-button is-primary" aria-label="Subscribe to browser notifications" aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? <><span class="browser-notification-spinner" aria-hidden="true"/> Please wait…</> : "Enable notifications"}</button><button type="button" class="browser-notification-button is-quiet" disabled={busy} onClick={() => setDismissed(true)}>Not now</button></>}{installAvailable ? <button type="button" class="browser-notification-button" disabled={app.busy} aria-busy={app.busy} onClick={() => void app.installApp()}>Install app</button> : null}</div>
+    <div class="browser-notification-actions">{enabled ? <button type="button" class="browser-notification-button is-primary" onClick={dismiss}>Done</button> : <><button type="button" class="browser-notification-button is-primary" aria-label="Subscribe to browser notifications" aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? <><span class="browser-notification-spinner" aria-hidden="true"/> Please wait…</> : "Enable notifications"}</button><button type="button" class="browser-notification-button is-quiet" disabled={busy} onClick={dismiss}>Not now</button></>}{installAvailable ? <button type="button" class="browser-notification-button" disabled={app.busy} aria-busy={app.busy} onClick={() => void app.installApp()}>Install app</button> : null}</div>
   </aside>;
   return <div class="settings-block settings-block-wide browser-notification-settings">
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications</div><p class="settings-block-sub" title="Get account switches and alerts on this device.">{enabled ? "Notifications are on for this device." : "Get account switches and alerts on this device."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>

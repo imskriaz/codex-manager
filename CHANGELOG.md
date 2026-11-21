@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.29
+
+- Remember dismissed notification and app-install offers for 24 hours on this browser, including cancelled permission and installation prompts. Keep cancellation feedback and manual Settings controls available.
+
 ## 3.0.0-pre.27
 
 - Open the compact Dashboard, Account center, Settings and Sign out menu from the bottom account card. Keep the workspace logo as a heading and omit the account avatar.
