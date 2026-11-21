@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.47
+
+- Suppress duplicate browser pushes while a dashboard, workspace, or VS Code window is being viewed. Recheck queued delivery, expire disconnected viewers, and preserve in-app notices and explicit notification tests.
+- Carry foreground suppression through authenticated peer notice relays.
+
 ## 3.0.0-pre.46
 
 - Route dashboard Send, steering and Stop to the same Codex process used by the official VS Code conversation, including versions that no longer expose the legacy IPC channel. Preserve custom CLI choices and restrict owner controls to the matching loaded conversation and Codex home.

@@ -6,11 +6,18 @@ it('signs the same canonical fields regardless of incoming property order', () =
   expect(isPeerNotification(event, event.sentAt)).toBe(true);
   expect(peerNotificationPayload({ ...event, notice: { systemName: 'Remote PC', message: 'Switch failed.', level: 'warning' } })).toBe(peerNotificationPayload(event));
 });
+it('authenticates the optional foreground suppression hint without changing legacy signatures', () => {
+  const viewed = { ...event, notice: { ...event.notice, suppressPush: true } };
+  expect(isPeerNotification(viewed, event.sentAt)).toBe(true);
+  expect(peerNotificationPayload(viewed)).not.toBe(peerNotificationPayload(event));
+  expect(peerNotificationPayload(event)).not.toContain('suppressPush');
+});
 it.each([
   { ...event, sentAt: 700000 }, { ...event, sentAt: 1010001 }, { ...event, signature: '' },
   { ...event, deviceId: '' }, { ...event, eventId: 'x'.repeat(129) },
   { ...event, notice: { ...event.notice, message: 'x'.repeat(4097) } },
   { ...event, notice: { ...event.notice, actions: ['Switch'] } },
+  { ...event, notice: { ...event.notice, suppressPush: 'true' } },
   { ...event, actionPrompt: { kind: 'quotaWarning' } }
 ])('rejects stale, malformed, oversized or interactive remote data %#', invalid => {
   expect(isPeerNotification(invalid, event.sentAt)).toBe(false);

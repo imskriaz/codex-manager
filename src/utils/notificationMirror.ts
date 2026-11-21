@@ -12,6 +12,8 @@ export interface MirroredNotification {
   /** Optional human-readable subject used as the browser push title. */
   title?: string;
   systemName?: string;
+  /** The user is already viewing this notice in an active app surface. */
+  suppressPush?: boolean;
   message: string;
   actions?: string[];
   replyAction?: string;

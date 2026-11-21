@@ -594,7 +594,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if(!session)return false;
       if(!session.officeUserId||session.officeUserId==="master")return true;
       const user=await getOfficeUser(session.officeUserId);return !!user?.enabled && user.role!=="user";
-    });
+    }, () => this.isUserViewingNotifications());
     this.conversationShares = new ConversationShares(context.secrets);
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
@@ -2593,6 +2593,15 @@ export class WebDashboardServer implements vscode.Disposable {
       Date.now() - (this.peerLastSeenAt.get(peer.deviceId) ?? 0) <= PEER_OFFLINE_AFTER_MS);
   }
 
+  private isUserViewingNotifications(): boolean {
+    if (vscode.window.state?.focused === true) return true;
+    return [...this.workspaceViewerLastSeen].some(([socket, viewer]) =>
+      socket.readyState === WebSocket.OPEN && Date.now() - viewer.lastSeenAt <= WORKSPACE_VIEWER_LEASE_MS &&
+      this.browserSocketOfficeUser.get(socket)?.role !== "user") ||
+      [...this.peerSessions.values()].some(peer => peer.dashboardTargets?.includes(this.deviceId) &&
+        Date.now() - (this.peerLastSeenAt.get(peer.deviceId) ?? 0) <= PEER_OFFLINE_AFTER_MS);
+  }
+
   private updateWorkspaceViewer(socket: WebSocket, viewing: boolean, targetDeviceId?: string): void {
     const previous = this.workspaceViewerLastSeen.get(socket);
     const deviceId = targetDeviceId && targetDeviceId !== "local" ? targetDeviceId : this.deviceId;
@@ -2865,7 +2874,8 @@ export class WebDashboardServer implements vscode.Disposable {
     if (notice.level === 'info') return;
     if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
     const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ? crypto.createHash('sha256').update(notice.notificationId).digest('hex') : crypto.createHash('sha256').update(JSON.stringify([notice.level, notice.title, notice.message, notice.systemName])).digest('hex'), sentAt: Date.now(),
-      notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName, url: notificationTargetUrl(notice.url) } };
+      notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName, url: notificationTargetUrl(notice.url),
+        ...(notice.suppressPush || this.isUserViewingNotifications() ? { suppressPush: true } : {}) } };
     const revision = this.peerConnectionRevision;
     const signature = await waitWithin(Promise.resolve(this.encryptedSync?.signRealtimePeerPayload(peerNotificationPayload(unsigned))), 2000, 'Remote notification signing timed out.');
     const event = { ...unsigned, signature };
@@ -2887,7 +2897,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerNotifications.set(key, value);
     while (this.peerNotifications.size > 128) this.peerNotifications.delete(this.peerNotifications.keys().next().value!);
     // Remote notices are passive: choices must stay with their owning PC.
-    const notice = { level: value.notice.level, message: value.notice.message, title: value.notice.title, systemName: value.notice.systemName, notificationId: key, url: notificationTargetUrl(value.notice.url, value.deviceId) };
+    const notice = { level: value.notice.level, message: value.notice.message, title: value.notice.title, systemName: value.notice.systemName, notificationId: key, url: notificationTargetUrl(value.notice.url, value.deviceId), suppressPush: value.notice.suppressPush };
     this.browserPush.notify(notice);
     const raw = JSON.stringify({ type: 'dashboard:notice', ...notice });
     for (const socket of this.webSocketClients) {

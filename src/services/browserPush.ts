@@ -69,7 +69,8 @@ export class BrowserPushService {
   constructor(
     private readonly secrets: vscode.SecretStorage,
     private readonly password: () => Promise<string | undefined>,
-    private readonly ownerAllowed: (owner: string) => Promise<boolean> = () => Promise.resolve(true)
+    private readonly ownerAllowed: (owner: string) => Promise<boolean> = () => Promise.resolve(true),
+    private readonly userViewing: () => boolean = () => false
   ) {}
 
   private async read(): Promise<PushState> {
@@ -149,6 +150,7 @@ export class BrowserPushService {
   }
 
   notify(notice: MirroredNotification): void {
+    if (notice.suppressPush || this.userViewing()) return;
     if (notice.level === "info" && !notice.actions?.length) return;
     const key = createHash("sha256").update(JSON.stringify([notice.systemName?.trim() || hostname(),
       notice.notificationId ?? [notice.level, notice.title, notice.message]])).digest("hex");
@@ -204,6 +206,7 @@ export class BrowserPushService {
             expired.add(subscription.endpoint);
             return;
           }
+          if (this.userViewing()) { this.recent.delete(key); return; }
           try {
             await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {
               TTL: notice.actions?.length ? 120 : 300,

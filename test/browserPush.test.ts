@@ -8,7 +8,8 @@ vi.mock("web-push", async (original) => {
   return { default: { generateVAPIDKeys: api.generateVAPIDKeys.bind(api), sendNotification: send } };
 });
 import { BrowserPushService, BrowserPushRegistrationConflictError, validateBrowserPushSubscription } from "../src/services/browserPush";
-import { WebDashboardServer } from '../src/services/webDashboardServer';
+import { WebDashboardServer, fingerprintWebDashboardSession } from '../src/services/webDashboardServer';
+import * as vscode from 'vscode';
 import { publishDashboardRealtime } from "../src/services/dashboardRealtime";
 
 const subscription = (name = "one") => {
@@ -42,6 +43,93 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("persistent browser push", () => {
+  it("suppresses pushes while a dashboard, workspace, or VS Code window is being viewed, preserving in-app notices", async () => {
+    const secrets = { get: async (key: string) => stored.get(key), store: async (key: string, value: string) => { stored.set(key, value); } };
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets } as never, {} as never);
+    const host = server as any;
+    const socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    const nativeState = { focused: false };
+    Object.defineProperty(vscode.window, 'state', { configurable: true, value: nativeState });
+    await host.browserPush.subscribe(subscription(), fingerprintWebDashboardSession('local'), 'https://dashboard.example');
+    host.webSocketClients.add(socket);
+    vi.spyOn(host, 'refreshCliSessionRealtimeLifecycle').mockImplementation(() => undefined);
+    vi.spyOn(host, 'publishLocalPeerState').mockImplementation(() => undefined);
+    vi.spyOn(host, 'publishRealtimeState').mockImplementation(() => undefined);
+    const notify = async (message: string) => {
+      host.broadcastRealtimeNotice({ level: 'error', message });
+      await host.browserPush.flush();
+    };
+    try {
+      host.updateWorkspaceViewer(socket, true);
+      await notify('Dashboard action failed');
+      host.updateWorkspaceViewer(socket, true, 'worker');
+      host.notifyCodexRequest({ id: 'approval', threadId: 'thread', kind: 'command', title: 'Approve command', detail: 'Run tests' });
+      await host.browserPush.flush();
+      expect(send).not.toHaveBeenCalled();
+      expect(socket.send.mock.calls.map(call => JSON.parse(call[0]))).toContainEqual(expect.objectContaining({ type: 'dashboard:notice', message: 'Dashboard action failed' }));
+      host.updateWorkspaceViewer(socket, false);
+      nativeState.focused = true;
+      await notify('Native action failed');
+      expect(send).not.toHaveBeenCalled();
+      nativeState.focused = false;
+      await notify('Background action failed');
+      expect(send).toHaveBeenCalledOnce();
+      send.mockClear();
+      host.updateWorkspaceViewer(socket, true);
+      expect(await host.browserPush.sendTest()).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      delete (vscode.window as any).state;
+      host.webSocketClients.clear(); await server.stop(); server.dispose();
+    }
+  });
+
+  it("does not let stale, disconnected, or restricted viewers suppress administrator pushes", async () => {
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() } } as never, {} as never);
+    const host = server as any, socket = { readyState: 1 };
+    try {
+      host.workspaceViewerLastSeen.set(socket, { lastSeenAt: Date.now() - 45_001, deviceId: host.deviceId });
+      expect(host.isUserViewingNotifications()).toBe(false);
+      host.workspaceViewerLastSeen.set(socket, { lastSeenAt: Date.now(), deviceId: host.deviceId });
+      socket.readyState = 3;
+      expect(host.isUserViewingNotifications()).toBe(false);
+      socket.readyState = 1;
+      host.browserSocketOfficeUser.set(socket, { role: 'user' });
+      expect(host.isUserViewingNotifications()).toBe(false);
+      host.browserSocketOfficeUser.set(socket, { role: 'admin' });
+      expect(host.isUserViewingNotifications()).toBe(true);
+      host.workspaceViewerLastSeen.clear();
+      host.peerSessions.set('relay', { deviceId: 'relay', dashboardTargets: [host.deviceId] });
+      host.peerLastSeenAt.set('relay', Date.now());
+      expect(host.isUserViewingNotifications()).toBe(true);
+      host.peerLastSeenAt.set('relay', Date.now() - 120_001);
+      expect(host.isUserViewingNotifications()).toBe(false);
+    } finally { await server.stop(); server.dispose(); }
+  });
+
+  it("rechecks foreground viewing before queued delivery and permits later background delivery", async () => {
+    let viewing = false;
+    const foregroundService = new BrowserPushService({ get: async (key: string) => stored.get(key), store: async (key: string, value: string) => { stored.set(key, value); } } as never,
+      async () => password, async () => true, () => viewing);
+    await foregroundService.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
+    let finish!: () => void;
+    send.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    foregroundService.notify({ level: 'error', message: 'First failure' });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    const notice = { level: 'warning' as const, message: 'Approve command?', notificationId: 'queued', actions: ['Approve'] };
+    foregroundService.notify(notice);
+    viewing = true; finish();
+    await foregroundService.flush();
+    expect(send).toHaveBeenCalledOnce();
+    viewing = false;
+    foregroundService.notify(notice);
+    await foregroundService.flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    foregroundService.notify({ ...notice, notificationId: 'seen-at-origin', suppressPush: true });
+    await foregroundService.flush();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it("gives mirrored and realtime notices the same source for browser deduplication", async () => {
     const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never);
     const socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
@@ -70,6 +158,19 @@ describe("persistent browser push", () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ title: 'Remote PC · Codex Manager', body: 'Switch failed.' });
     } finally { await server.stop(); server.dispose(); }
+  });
+  it('preserves a signed foreground suppression hint through a relay while delivering the dashboard toast', async () => {
+    await service.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never,
+      { verifyRealtimePeerPayload: async () => true, setOnlineDeviceIds: vi.fn() } as never);
+    const host = server as any, socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    host.browserPush = service; host.peerSocket = socket; host.webSocketClients.add(socket);
+    const event = { type: 'peer:notice', deviceId: 'remote-pc', eventId: 'viewed-failure', sentAt: Date.now(), signature: 'signed', notice: { level: 'error', message: 'Switch failed.', suppressPush: true } };
+    try {
+      await host.acceptPeerNotification(event, socket); await settle();
+      expect(send).not.toHaveBeenCalled();
+      expect(socket.send).toHaveBeenCalledWith(expect.stringContaining('Switch failed.'));
+    } finally { host.webSocketClients.clear(); await server.stop(); server.dispose(); }
   });
   it("rebinds a proven browser after login and prunes expired conflicts without taking another device", async () => {
     const first = subscription(); await service.subscribe(first, "old-login", "https://dashboard.example", password);
