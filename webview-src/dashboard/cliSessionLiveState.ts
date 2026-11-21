@@ -17,6 +17,8 @@ export function hasCurrentCliLiveHistory(session: DashboardCliSessionSummary, li
 }
 
 export function isCliLiveStateCurrent(session: DashboardCliSessionSummary | undefined, live: DashboardCodexSessionLiveState | undefined): boolean {
+  if (session && live && (session.statusCheckedAt ?? 0) > live.updatedAt &&
+      (session.status === 'unknown' || (session.status === 'running') !== isCliTurnActive(live))) return false;
   return Boolean(session && live && sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId }) &&
     (session.status === "running" || !isCliTurnActive(live) || Date.now() - live.updatedAt < 30_000) &&
     (!session.steerTurnId || session.steerTurnId === live.turnId) &&
@@ -42,6 +44,7 @@ export function reconcileCliSessionStatus(
   const patch: Partial<DashboardCliSessionSummary> = isCliTurnActive(live) ? { status: "running", interrupted: false, stopped: false }
     : ["completed", "cancelled", "failed"].includes(live.status) ? { status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed", stopped: live.status === 'cancelled' }
     : live.status === 'disconnected' ? { status: 'unknown', canStop: false, steerTurnId: undefined, interrupted: true } : {};
+  if (patch.status && patch.status !== session.status) patch.statusCheckedAt = live.updatedAt;
   return Object.keys(patch).some(key => session[key as keyof DashboardCliSessionSummary] !== patch[key as keyof DashboardCliSessionSummary]) ? { ...session, ...patch } : session;
 }
 

@@ -203,6 +203,7 @@ describe("shared running-session detection and auto resume", () => {
   it("does not reuse a completed turn's start while the native owner starts new work", async () => {
     await writeFile(transcript, JSON.stringify({ timestamp: new Date(Date.now() - 60_000).toISOString(), type: "event_msg", payload: { type: "task_started", turn_id: "old-turn" } }) + "\n" + event("task_complete", "old-turn"));
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
     try {
       expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "running", runningSince: undefined });
     } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
@@ -214,6 +215,14 @@ describe("shared running-session detection and auto resume", () => {
       await appendFile(transcript, event("task_complete"));
       expect(await readRunningCodexSessionIds(home)).toEqual([]);
       expect(readNativeCodexSessionRunning).toHaveBeenCalledWith(home, id, expect.anything(), true);
+    } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
+  });
+  it('does not renew cached running activity when a terminal transcript is confirmed and native refresh is unavailable', async () => {
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
+    try {
+      await appendFile(transcript, event('task_complete'));
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
     } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
   it("retains recent verified checks for recovery while safety checks remain fresh", async () => {

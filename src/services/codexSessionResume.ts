@@ -321,7 +321,7 @@ function withCurrentSessionStatuses(home:string,rows:DashboardCliSessionSummary[
     const status = current === "starting" ? "running" : current ?? "unknown";
     if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
     const canStop = status === "running" && canStopSessionTurn(home,row.id);
-    return { ...decorated,status,canStop,locked:status !== "idle",
+    return { ...decorated,status,statusCheckedAt:Date.now(),canStop,locked:status !== "idle",
       steerTurnId: status === "running" ? steerableSessionTurn(home, row.id) : undefined,
       statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
       runningBy:status === "running" ? ownsSessionTurn(home, row.id) ? "Codex Manager" : "another Codex process" : undefined,
@@ -790,6 +790,7 @@ async function toCliSessionSummary(
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const state = archived ? { status: "idle" as const } : ownsSessionTurn(codexHome, entry.id) ? { status: "running" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
+  const statusCheckedAt = Date.now();
   const canStop = running && canStopSessionTurn(codexHome, entry.id);
   const startedAt = archived ? undefined : inspectTurn ? await readCliRunningSince(transcriptPath) : transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.startedAt : undefined;
   const runningSince = running ? startedAt : undefined;
@@ -815,6 +816,7 @@ async function toCliSessionSummary(
     stopped: !running && (turnState === 'stopped' || turnMetadata?.cancelled === true),
     updatedAt,
     ...state,
+    statusCheckedAt,
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
@@ -3431,7 +3433,7 @@ async function inspectCliSessionRunning(
     if (cachedNative !== true) return false;
     if (refreshNative) return cachedNative;
     const refreshedNative = await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);
-    return refreshedNative ?? cachedNative;
+    return refreshedNative ?? false;
   }
   if (cachedNative !== undefined) return cachedNative;
   const nativeRunning = refreshNative ? undefined : await readNativeCodexSessionRunning(codexHome, sessionId, signal, true);

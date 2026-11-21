@@ -834,6 +834,8 @@ export interface DashboardCliSessionSummary {
   stopped?: boolean;
   updatedAt?: string;
   status: "running" | "idle" | "unknown";
+  /** Runtime observation time, independent of transcript modification time. */
+  statusCheckedAt?: number;
   /** Inspection failure retained while read-only history remains available. */
   statusError?: string;
   archived?: boolean;

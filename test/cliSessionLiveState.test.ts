@@ -9,6 +9,18 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1000); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it.each(['idle', 'unknown'] as const)('keeps a newer %s check despite unchanged transcript time and a recent running event', status => {
+    const row = { id: 'chat', title: 'Task', status, statusCheckedAt: 2000, updatedAt: new Date(100).toISOString() };
+    const states = { [cliSessionTargetKey(row)]: snapshot({ updatedAt: 1000 }) };
+    expect(isCliLiveStateCurrent(row, states[cliSessionTargetKey(row)])).toBe(false);
+    expect(reconcileCliSessionStatus(row, states)).toBe(row);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ updatedAt: 3000 }) }).status).toBe('running');
+  });
+  it('keeps a freshly verified running turn despite an older completed stream', () => {
+    const row = { id: 'chat', title: 'Task', status: 'running' as const, statusCheckedAt: 2000 };
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: 'completed', updatedAt: 1000 }) })).toBe(row);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: 'completed', updatedAt: 3000 }) }).status).toBe('idle');
+  });
   it.each(['idle', 'unknown'] as const)('does not let an expired running snapshot override %s status', status => {
     const row = { id: 'chat', title: 'Task', status };
     const live = snapshot();

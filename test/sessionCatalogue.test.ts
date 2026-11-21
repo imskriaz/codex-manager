@@ -77,6 +77,7 @@ it("prefers fresh native status and bounds cached running display through refres
   saveSessionStatus(store,root,row.id,"running");
   vi.mocked(getNativeCodexSessionRunning).mockReturnValueOnce(false);
   expect((await readCodexCliSessions(root))[0]?.status).toBe("idle");
+  expect((await readCodexCliSessions(root))[0]?.statusCheckedAt).toBe(Date.now());
   saveSessionStatus(store,root,row.id,"unknown");
   vi.setSystemTime(Date.now()+31_000);
   vi.spyOn(fs,"access").mockRejectedValue(new Error("native storage offline"));

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.37
+
+- Reconcile running indicators by runtime observation time rather than transcript modification time, so recent cached live events cannot override fresh status checks.
+- Stop renewing cached running state when the transcript confirms completion and a native refresh is unavailable.
+
 ## 3.0.0-pre.36
 
 - Hide the dashboard header row inside the workspace right panel while keeping it visible on dashboard home.

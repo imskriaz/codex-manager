@@ -16,6 +16,11 @@ it('settles thrown draft writes as failed and prevents automatic reopening until
 });
 
 describe("CLI session cache merging", () => {
+  it('carries fresh runtime observation time when transcript metadata arrives out of order', () => {
+    const previous = { id: 's', title: 'Task', status: 'running' as const, statusCheckedAt: 100, updatedAt: '2026-11-03T10:00:00Z' };
+    const incoming = { ...previous, status: 'idle' as const, statusCheckedAt: 200, updatedAt: '2026-11-03T09:00:00Z' };
+    expect(mergeCachedCliSession(incoming, previous)).toMatchObject({ status: 'idle', statusCheckedAt: 200, updatedAt: previous.updatedAt });
+  });
   it('applies confirmed preferences, renames and goal changes independently of a newer transcript timestamp', () => {
     const previous = { id: 'session', title: 'Old title', status: 'running' as const, canStop: true, updatedAt: '2026-11-01T12:00:00Z', autoResumeEnabled: true, queueEnabled: true, queuePriority: 2 as const, queueError: 'Old failure', goal: { objective: 'Work', status: 'active' as const } };
     const incoming = { ...previous, status: 'idle' as const, canStop: false, updatedAt: '2026-11-01T11:00:00Z', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined, title: 'Confirmed title', goal: null };

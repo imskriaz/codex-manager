@@ -89,7 +89,7 @@ export function mergeCachedCliSession(
   if (previous && sameCliSessionTarget(incoming, previous) && (previous.access?.updatedAt ?? 0) > (incoming.access?.updatedAt ?? 0)) incoming = { ...incoming, access: previous.access, sandboxMode: previous.access?.mode };
   // Transcript timestamps do not version current runtime ownership or capability.
   if (previous && sameCliSessionTarget(incoming,previous) && Date.parse(incoming.updatedAt ?? '') < Date.parse(previous.updatedAt ?? '')) return {
-    ...previous, status: incoming.status, locked: incoming.locked, canStop: incoming.canStop,
+    ...previous, status: incoming.status, statusCheckedAt: incoming.statusCheckedAt, locked: incoming.locked, canStop: incoming.canStop,
     steerTurnId: incoming.steerTurnId, statusError: incoming.statusError,
     runningBy: incoming.runningBy, runningSince: incoming.runningSince,
     access: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.access : previous.access,
