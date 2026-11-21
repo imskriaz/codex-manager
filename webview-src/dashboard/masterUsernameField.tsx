@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
-import { CopyIcon, renderRefreshIcon } from "./icons";
+import { CopyIcon, ToolIcon } from "./icons";
 
 export function MasterUsernameField(props: { sendAction: SendAction; authenticatedMaster?: boolean }) {
   const id = useId();
@@ -74,7 +74,7 @@ export function MasterUsernameField(props: { sendAction: SendAction; authenticat
       <div class="master-username-input">
         <input id={id} ref={input} class="modal-input" readOnly value={username} autoComplete="off" spellcheck={false} placeholder={pending ? "Loading…" : "Username unavailable"} />
         <button type="button" title="Copy master username" aria-label="Copy master username" disabled={!username || pending || needsReload} onClick={() => void copy()}><CopyIcon /></button>
-        {local || needsReload ? <button type="button" title={needsReload ? "Reload master username" : "Rotate master username"} aria-label={needsReload ? "Reload master username" : "Rotate master username"} disabled={pending} onClick={() => needsReload ? run("getMasterUsername") : setConfirmRotation(true)}>{renderRefreshIcon()}</button> : null}
+        {local || needsReload ? <button type="button" title={needsReload ? "Reload master username" : "Rotate master username"} aria-label={needsReload ? "Reload master username" : "Rotate master username"} disabled={pending} onClick={() => needsReload ? run("getMasterUsername") : setConfirmRotation(true)}><ToolIcon kind="key" /></button> : null}
       </div>
     <small>Generated once. Required with your password for master sign-in.</small>
     {confirmRotation ? <div class="master-username-confirm"><span>Replace this username? The current username will stop working for new sign-ins.</span><div><button type="button" onClick={() => { setConfirmRotation(false); setStatus("Username rotation cancelled."); }}>Cancel</button><button type="button" onClick={() => run("rotateMasterUsername")}>Rotate</button></div></div> : null}

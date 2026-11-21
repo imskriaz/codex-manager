@@ -245,15 +245,7 @@ export function WorkspaceGit(props: {
         >
           ↑{environment?.ahead ?? 0} ↓{environment?.behind ?? 0}
         </span>
-        <button
-          type="button"
-          title="Refresh Git"
-          aria-label="Refresh Git"
-          disabled={busy || !props.connected}
-          onClick={() => void read()}
-        >
-          <ToolIcon kind="refresh" />
-        </button>
+
         <WorkspaceMenu label="Repository actions" icon={<ToolIcon kind="more" />}>
           <div>
             {(["fetch", "pull", "push"] as const).map((operation) => (
@@ -463,16 +455,6 @@ export function WorkspaceGit(props: {
             <section class="workspace-history">
               <header>
                 <strong>Project history</strong>
-                <button
-                  type="button"
-                  disabled={busy || !props.connected}
-                  onClick={() => void loadHistory()}
-                  class="workspace-icon-action"
-                  title="Refresh"
-                  aria-label="Refresh"
-                >
-                  <ToolIcon kind="refresh" />
-                </button>
               </header>
               {history?.commits.map((commit) => (
                 <button

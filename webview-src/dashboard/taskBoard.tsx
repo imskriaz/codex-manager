@@ -24,7 +24,7 @@ import { TaskSessionConversation } from './taskSessionConversation';
 import { AgentWorkspace, SessionMessage, TurnCopyButton } from './cliSessionsModal';
 import { cliSessionTargetKey } from './cliSessionRoute';
 import type { SendAction } from './hookTypes';
-import { renderRefreshIcon, renderSyncIcon } from './icons';
+import { renderSyncIcon } from './icons';
 import { loadTaskBoardColumns, saveTaskBoardColumns, loadTaskBoardView, saveTaskBoardView, loadTaskBoardShowArchive, saveTaskBoardShowArchive } from './preferences';
 
 type Outbox = { savedAt: number; project: string; device?: string; lastError?: string; task?: ProjectTaskMutation; comment?: ProjectCommentInput };
@@ -545,7 +545,7 @@ export function TaskBoard(props: {
       }}>Use project</button></details> : null}
         {!props.shared ? <button type="button" role="menuitemcheckbox" aria-checked={showArchive} onClick={() => { const next = !showArchive; setShowArchive(next); if (!saveTaskBoardShowArchive(next)) setStatus('Archive visibility is kept in this tab only. Browser storage is unavailable.'); }}>{showArchive ? '✓ ' : ''}Show archive · {cards.filter(archived).length}</button> : null}
         {!props.shared ? <button type="button" role="menuitem" onClick={() => { setHiddenSearch(''); setHiddenLimit(100); setHiddenOpen(true); }}>Hidden sessions <span>{cards.filter(task => task.hidden).length}</span></button> : null}
-        <button type="button" role="menuitem" disabled={!project || !props.connected || busy} onClick={() => { void refresh(false, false); }}>{renderRefreshIcon()} Refresh board</button>
+
         {!props.shared ? <button type="button" role="menuitem" disabled={!project || !props.connected || busy} onClick={() => { void sync(true); }}>{renderSyncIcon()} Sync drafts{rows.length ? ` · ${rows.length}` : ''}</button> : null}
         {!props.shared ? <button type="button" role="menuitem" disabled={!project || !props.connected || busy} onClick={() => { setStatus(''); setShareOpen(true); }}><ShareIcon /> Share project</button> : null}
       </TaskMenu>

@@ -208,15 +208,7 @@ export default function WorkspaceTerminal(props: {
         >
           <ToolIcon kind="split" />
         </button>
-        <button
-          type="button"
-          title="Refresh terminals"
-          aria-label="Refresh terminals"
-          disabled={busy || !props.connected}
-          onClick={() => void refresh(true)}
-        >
-          <ToolIcon kind="refresh" />
-        </button>
+
         <button type="button" title="Find in terminal (Ctrl+Shift+F)" aria-label="Find in terminal" disabled={!current?.shared} onClick={() => screenActions.current?.find()}>
           <ToolIcon kind="search" />
         </button>

@@ -12,7 +12,6 @@ import { getSensitiveDisplayValue, isAccountAttention } from "./helpers";
 import {
   renderDetailsIcon,
   DownloadIcon,
-  renderRefreshIcon,
   renderReauthorizeIcon,
   renderReloadIcon,
   renderRemoveIcon,
@@ -164,7 +163,6 @@ export function SavedAccountCard(props: {
       : hant
         ? "啟用權杖自動重新整理"
         : "Enable token refresh";
-  const manualTokenRefreshLabel = zh ? "立即刷新令牌" : hant ? "立即重新整理權杖" : "Refresh token now";
   const queuedLabel = zh ? "排队中" : hant ? "排隊中" : "Queued";
   const unloadLabel = zh ? "卸载" : hant ? "卸載" : "Unload";
   const resetLabel = copy.resetCreditsBtn ?? (zh ? "重置配额" : hant ? "重置配額" : "Reset quota");
@@ -542,14 +540,7 @@ export function SavedAccountCard(props: {
               disabled={accessActionDisabled}
               onClick={runAccessAction}
             />
-            <ActionButton
-              icon={renderRefreshIcon()}
-              iconOnly
-              label={copy.refreshBtn}
-              pending={props.refreshPending}
-              disabled={props.refreshPending}
-              onClick={() => onAction("refresh", account.id)}
-            />
+
             <div class="saved-overflow-wrap" ref={actionsMenuRef}>
               <button
                 class={`saved-overflow-trigger ${actionsOpen ? "active" : ""}`}
@@ -592,23 +583,7 @@ export function SavedAccountCard(props: {
                           {renderResyncProfileIcon()} <span>{resyncButtonLabel}</span>
                         </button>
                       ) : null}
-                      {account.canRefreshToken ? (
-                        <button
-                          type="button"
-                          disabled={props.manualTokenRefreshPending}
-                          onClick={() => {
-                            setActionsOpen(false);
-                            onAction("refreshToken", account.id);
-                          }}
-                        >
-                          {props.manualTokenRefreshPending ? (
-                            <span class="saved-toggle-spinner" aria-hidden="true"></span>
-                          ) : (
-                            renderRefreshIcon()
-                          )}
-                          <span>{manualTokenRefreshLabel}</span>
-                        </button>
-                      ) : null}
+
                       <button
                         type="button"
                         disabled={props.tokenRefreshPending}
@@ -812,14 +787,7 @@ export function SavedAccountCard(props: {
                   disabled={accessActionDisabled}
                   onClick={runAccessAction}
                 />
-                <ActionButton
-                  icon={renderRefreshIcon()}
-                  iconOnly
-                  label={copy.refreshBtn}
-                  pending={props.refreshPending}
-                  disabled={props.refreshPending}
-                  onClick={() => onAction("refresh", account.id)}
-                />
+
                 <div class="saved-overflow-wrap" ref={actionsMenuRef}>
                   <button
                     class={`saved-overflow-trigger ${actionsOpen ? "active" : ""}`}
@@ -862,23 +830,7 @@ export function SavedAccountCard(props: {
                               {renderResyncProfileIcon()} <span>{resyncButtonLabel}</span>
                             </button>
                           ) : null}
-                          {account.canRefreshToken ? (
-                            <button
-                              type="button"
-                              disabled={props.manualTokenRefreshPending}
-                              onClick={() => {
-                                setActionsOpen(false);
-                                onAction("refreshToken", account.id);
-                              }}
-                            >
-                              {props.manualTokenRefreshPending ? (
-                                <span class="saved-toggle-spinner" aria-hidden="true"></span>
-                              ) : (
-                                renderRefreshIcon()
-                              )}
-                              <span>{manualTokenRefreshLabel}</span>
-                            </button>
-                          ) : null}
+
                           <button
                             type="button"
                             disabled={props.tokenRefreshPending}

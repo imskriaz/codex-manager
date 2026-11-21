@@ -447,7 +447,7 @@ export default function WorkspaceBrowser(props: {
       <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); const nextUrl = normalizeBrowserInput(url); if (!nextUrl) { setFailed(true); setNotice("Enter a website address."); return; } setUrl(nextUrl); command({ operation: current ? "navigate" : "open", url: nextUrl }); }}>
         <button class="workspace-browser-icon-button" aria-label="Go back" title="Go back" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "back" })}><ToolIcon kind="left" /></button>
         <button class="workspace-browser-icon-button" aria-label="Go forward" title="Go forward" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "forward" })}><ToolIcon kind="right" /></button>
-        <button class="workspace-browser-icon-button" aria-label="Reload page" title="Reload page" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "reload" })}><ToolIcon kind="refresh" /></button>
+
         <input aria-label="Browser URL" type="text" inputMode="url" placeholder="Search or enter a URL" value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
         <button class="workspace-browser-icon-button workspace-browser-go" type="submit" aria-label="Go to URL" title="Go to URL" disabled={busy || !props.connected || !url.trim()}><ToolIcon kind="right" /></button>
       <div class="workspace-browser-actions">
@@ -462,7 +462,6 @@ export default function WorkspaceBrowser(props: {
           <button type="button" role="menuitem" onClick={() => zoomBy(25)} disabled={zoom >= 300}>Zoom in +</button>
           <button type="button" role="menuitem" onClick={() => setZoom(100)}>Reset zoom ({zoom}%)</button>
         </WorkspaceMenu>
-
       </div>
       </form>
       {credentialsOpen ? <BrowserCredentials request={request} pageId={selected} revision={revision} url={current?.url} onFilled={() => void run({ operation: 'screenshot', pageId: selected }, true)} onClose={() => setCredentialsOpen(false)} /> : null}

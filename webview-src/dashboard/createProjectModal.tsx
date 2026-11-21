@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardActionResultPayload, DashboardCliProject, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
-import { renderRefreshIcon } from './icons';
 import { ModalShell } from "./primitives";
 
 export const CREATE_PROJECT_OPTION = "__create_workspace_project__";
@@ -107,7 +106,6 @@ export function CreateProjectModal(props: {
       <div class="folder-picker-toolbar">
         <button type="button" class="folder-picker-icon-button" aria-label="Up one level" title="Up one level" disabled={blocked || !listing || listing.path === listing.parent} onClick={() => browse(listing!.parent)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>
         <form class="folder-picker-path" onSubmit={event => { event.preventDefault(); if (!blocked && location.trim()) browse(location.trim()); }}><FolderIcon /><input autoFocus aria-label="Folder path" value={location} disabled={blocked} maxLength={4096} spellcheck={false} autoComplete="off" placeholder="Enter a folder path" onInput={event => setLocation(event.currentTarget.value)} /><button type="submit" aria-label="Go to folder" title="Go to folder" disabled={blocked || !location.trim()}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 5 7 7-7 7" /></svg></button></form>
-        <button type="button" class="folder-picker-icon-button" aria-label="Refresh folders" title="Refresh folders" disabled={blocked || !listing} onClick={() => browse(listing!.path)}>{renderRefreshIcon()}</button>
       </div>
       <div class="folder-picker-layout">
         <aside class="folder-picker-locations"><small>LOCATIONS</small><nav aria-label="Folder locations"><button type="button" disabled={blocked} onClick={() => browse()}><FolderIcon />Home</button>{listing?.roots.map(root => <button type="button" key={root} class={listing.path.toLowerCase().startsWith(root.toLowerCase()) ? 'is-active' : ''} disabled={blocked} onClick={() => browse(root)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 17h2" /></svg><span>{root.replace(/[\\/]+$/, '') || 'File system'}</span></button>)}</nav></aside>

@@ -300,7 +300,7 @@ export function WorkspaceGitHub(props: {
               title={item.state === "closed" ? "Reopen item" : "Close item"}
               aria-label={item.state === "closed" ? "Reopen item" : "Close item"}
             >
-              <ToolIcon kind={item.state === "closed" ? "refresh" : "close"} />
+              <ToolIcon kind={item.state === "closed" ? "play" : "close"} />
             </button>
           ) : null}
           {section === "pulls" && ["open", "draft"].includes(item.state) ? (
@@ -389,7 +389,7 @@ export function WorkspaceGitHub(props: {
             title="Rerun workflow"
             aria-label="Rerun workflow"
           >
-            <ToolIcon kind="refresh" />
+            <ToolIcon kind="play" />
           </button>
         </>
       ) : (
@@ -444,15 +444,7 @@ export function WorkspaceGitHub(props: {
               : "Public repository · sign in for private data and actions"}
           </small>
         </span>
-        <button
-          type="button"
-          title="Refresh GitHub"
-          aria-label="Refresh GitHub"
-          disabled={busy || !props.connected}
-          onClick={() => void load()}
-        >
-          <ToolIcon kind="refresh" />
-        </button>
+
         {!authenticated ? (
           <button
             type="button"

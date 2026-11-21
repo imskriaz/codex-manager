@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { useWorkspaceRequest } from './workspaceRequest';
 import { ModalShell } from './primitives';
-import { ToolIcon } from './icons';
 
 type Login = { id: string; name: string; origin: string; username: string; usernameSelector?: string; passwordSelector?: string };
 type Vault = { locked: boolean; exists: boolean; entries: Login[]; message?: string };
@@ -41,7 +40,7 @@ export function BrowserCredentials(props: { request: ReturnType<typeof useWorksp
       <small>{vault.exists ? 'Unlock your vault. The master password is never saved.' : 'Create a vault with at least 12 characters. Keep the master password; it cannot be recovered.'}</small>
       <button disabled={busy} type="submit">{vault.exists ? 'Unlock vault' : 'Create vault'}</button>
     </form> : <>
-      <div class="workspace-browser-pane-toolbar"><button type="button" disabled={busy} onClick={() => openEditor()}>Add login</button><span class="workspace-browser-pane-actions"><button disabled={busy} type="button" onClick={() => void command('lock')}>Lock vault</button><button disabled={busy} type="button" aria-label="Refresh credentials" onClick={() => void command('list')}><ToolIcon kind="refresh" /></button></span></div>
+      <div class="workspace-browser-pane-toolbar"><button type="button" disabled={busy} onClick={() => openEditor()}>Add login</button><span class="workspace-browser-pane-actions"><button disabled={busy} type="button" onClick={() => void command('lock')}>Lock vault</button></span></div>
       <div class="workspace-browser-credential-table"><table aria-label="Saved logins"><thead><tr><th>Login</th><th>Website</th><th>User</th><th>Actions</th></tr></thead><tbody>{vault.entries.map(row => <tr key={row.id}><td title={row.name}>{row.name}</td><td title={row.origin}>{row.origin}</td><td title={row.username}>{row.username}</td><td><button type="button" title="Fill login" aria-label={`Fill ${row.name}`} disabled={busy || !props.pageId} onClick={() => void command('fill', { id: row.id })}>↳</button><button type="button" title="Edit login" aria-label={`Edit ${row.name}`} disabled={busy} onClick={() => openEditor(row)}>✎</button><button type="button" title="Delete login" aria-label={`Delete ${row.name}`} disabled={busy} onClick={() => void command('delete', { id: row.id })}>×</button></td></tr>)}</tbody></table>{!vault.entries.length ? <p>No saved logins.</p> : null}</div>
     </>}
   </ModalShell><ModalShell open={editor} title={editing ? 'Edit login' : 'Add login'} closeLabel="Close login editor" className="workspace-browser-credentials workspace-browser-login-editor" closeDisabled={busy} onClose={closeEditor}>

@@ -140,10 +140,10 @@ describe("overview actions", () => {
   });
 
   it("distributes the full toolbar across every visible action", () => {
-    expect(resolveOverviewToolbarActionCount(true, true, false)).toBe(4);
-    expect(resolveOverviewToolbarActionCount(true, true, true)).toBe(4);
-    expect(resolveOverviewToolbarActionCount(true, false, true)).toBe(4);
-    expect(resolveOverviewToolbarActionCount(false, false, true)).toBe(4);
+    expect(resolveOverviewToolbarActionCount(true, true, false)).toBe(3);
+    expect(resolveOverviewToolbarActionCount(true, true, true)).toBe(3);
+    expect(resolveOverviewToolbarActionCount(true, false, true)).toBe(3);
+    expect(resolveOverviewToolbarActionCount(false, false, true)).toBe(3);
   });
 
   it("keeps the overview layout mounted with inline account controls when no account is loaded", () => {
@@ -166,12 +166,12 @@ describe("overview actions", () => {
     expect(source).toContain("props.onResumeSessions()");
   });
 
-  it("refreshes all account quotas from the More menu", () => {
+  it("relies on automatic quota updates without a manual refresh control", () => {
     const source = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
 
-    expect(source).toContain("props.onRefreshAll();");
-    expect(source).toContain("props.copy.refreshAll");
-    expect(source).toContain("disabled={props.refreshAllPending}");
+    expect(source).not.toContain("props.onRefreshAll();");
+    expect(source).not.toContain("props.copy.refreshAll");
+    expect(source).not.toContain("renderRefreshIcon");
   });
 
   it("offers Disable All in More and routes it as a global dashboard action", () => {

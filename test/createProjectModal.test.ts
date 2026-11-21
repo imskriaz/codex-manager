@@ -121,14 +121,15 @@ it('reports browse timeout and offline failure with input preserved', () => {
   vi.stubGlobal('navigator', { onLine: false }); button('Browse folders…').props.onClick();
   expect(fixture.send).toHaveBeenCalledTimes(2); expect(find('input')[0]?.props.value).toBe('D:\\Projects');
 });
-it('does not select a stale listing after typed navigation fails and retains refresh for recovery', () => {
+it('does not select a stale listing after typed navigation fails and supports navigation recovery', () => {
   button('Browse folders…').props.onClick(); reply('create-id', listing());
   (input('Folder path').props.onInput ?? input('Folder path').props.oninput)({ currentTarget: { value: 'D:\\Missing' } });
   expect(button('Select folder').props.disabled).toBe(true);
   find('form')[1]!.props.onSubmit({ preventDefault() {} }); reply('request-2', undefined, 'failed', 'Folder not found');
   expect(button('Select folder').props.disabled).toBe(true);
   expect(props.onFeedback).toHaveBeenCalledWith({ level: 'error', message: 'Folder not found' });
-  button('Refresh folders').props.onClick();
+  (input('Folder path').props.onInput ?? input('Folder path').props.oninput)({ currentTarget: { value: 'D:\\Selected' } });
+  find('form')[1]!.props.onSubmit({ preventDefault() {} });
   expect(fixture.send).toHaveBeenLastCalledWith(expect.objectContaining({ payload: expect.objectContaining({ parentFolder: 'D:\\Selected' }) }));
   reply('request-3', listing()); expect(button('Select folder').props.disabled).toBe(false);
 });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.53
+
+- Remove manual refresh icons throughout the dashboard and workspace; retain automatic updates and error recovery actions.
+
 ## 3.0.0-pre.52
 
 - Keep Windows standalone restarts independent of the initiating terminal's process tree, preserving hidden windows, startup confirmation, authorization checks, and failure logs when that terminal closes.

@@ -133,18 +133,7 @@ export function ApiProxyPanel(props: {
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
               {props.clearing ? 'Clearing…' : 'Clear'}
             </button>
-            <button
-              type="button"
-              aria-label="Refresh proxy"
-              title="Refresh proxy"
-              disabled={!props.connected || props.loading}
-              onClick={props.onRefresh}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7">
-                <path d="M20 7v5h-5M4 17v-5h5" />
-                <path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
-              </svg>
-            </button>
+
             <button
               type="button"
               aria-label={allLogs ? "Show recent" : "Show all logs"}
