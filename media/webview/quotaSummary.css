@@ -12904,12 +12904,23 @@ body.is-dashboard-workspace-route #dashboard-main {
   pointer-events: auto;
 }
 .workspace-dashboard { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
-.workspace-dashboard-content.panel { width: 100%; max-width: none; min-width: 0; margin: 0; padding: 12px; }
+.workspace-dashboard-content.panel { width: 100%; max-width: none; min-width: 0; min-height: 0; margin: 0; padding: 4px; }
+.workspace-dashboard-content .dashboard-content > .section { margin: 0 0 4px; padding: 2px; }
+.workspace-dashboard-content .dashboard-content > .section:last-child { margin-bottom: 0; }
 .workspace-dashboard-content .dashboard-content .brand,
 .workspace-dashboard-content .dashboard-content .overview-account { display: none; }
 .workspace-dashboard-content .dashboard-content .hero { display: none; }
-.workspace-dashboard-content .dashboard-content .overview-shell { grid-template-columns: minmax(0, 1fr); }
-.workspace-dashboard-content .dashboard-content .overview-main { grid-column: 1 / -1; }
+.workspace-dashboard-content .dashboard-content .overview-shell { grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 4px; }
+.workspace-dashboard-content .dashboard-content .overview-main { grid-column: 1 / -1; gap: 4px; }
+.workspace-dashboard-content .dashboard-content .overview-bottom-row,
+.workspace-dashboard-content .dashboard-content .overview-metrics .metrics { gap: 4px; }
+.workspace-dashboard-content .dashboard-content :is(.usage-graph-card, .overview-metrics) { padding: 4px; }
+.workspace-dashboard-content .dashboard-content .overview-metrics .metric-gauge { padding: 3px 4px; }
+.workspace-dashboard-content .dashboard-content .accounts-section-header h2 { margin: 0 0 4px; }
+.workspace-dashboard-content .dashboard-content .dashboard-account-toolbar { margin-bottom: 4px; }
+.workspace-dashboard-content .dashboard-content .accounts-grid { gap: 4px; }
+.workspace-dashboard-content .dashboard-content :is(.saved-card-front, .saved-table-row) { padding: 4px; }
+.workspace-dashboard-content .dashboard-content .saved-progress { margin-top: 2px; padding-bottom: 0; }
 .workspace-route-dashboard-hidden { display: none !important; }
 @media (max-width: 760px) {
   body.is-dashboard-workspace-route #dashboard-main {

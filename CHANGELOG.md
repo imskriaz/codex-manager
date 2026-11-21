@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.42
+
+- Reduce outer padding, section spacing, chart and quota insets, and account card padding in the workspace right-panel dashboard.
+
 ## 3.0.0-pre.41
 
 - Compact mobile queue rows to 32px, with smaller text, spacing and 24px Steer and recovery controls. Preserve inline expansion, background visibility and delivery safeguards.
