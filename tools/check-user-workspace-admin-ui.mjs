@@ -15,11 +15,12 @@ const output=path.join(os.tmpdir(),'codex-manager-user-workspace-admin');await m
 try {for(const width of [1440,390]){
   const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(15000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  let settings={workspaceRoot:'C:/workspaces',databaseProvider:'sqlite',postgresConfigured:false,maxActiveRequests:2,globalPrompt:'Help users get work done.'},saved,fail=true;
+  let settings={workspaceRoot:'C:/workspaces',databaseProvider:'sqlite',postgresConfigured:false,maxActiveRequests:2,defaultModel:'fast',globalPrompt:'Help users get work done.'},saved,fail=true;
   await useWorkspaceDashboardAssets(page,origin,context);
   await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:host}));
   await context.route('**/api/office/**',async route=>{
     const url=new URL(route.request().url());
+    if(url.pathname==='/api/office/models')return route.fulfill({json:{models:[{id:'fast',label:'Fast'},{id:'quality',label:'Quality'}]}});
     if(url.pathname==='/api/office/settings'){
       if(route.request().method()==='PUT'){
         saved=route.request().postDataJSON();
@@ -33,6 +34,7 @@ try {for(const width of [1440,390]){
   const start=Date.now();await page.goto(origin+'/?settings=workspace');
   const prompt=page.getByRole('textbox',{name:'Global User Workspace Prompt',exact:true});await prompt.waitFor();
   assert.equal(await prompt.inputValue(),'Help users get work done.');
+  const model=page.getByRole('combobox',{name:'Default User Workspace model',exact:true});await model.selectOption('quality');
   await prompt.fill('Use clear language and ask when requirements are unclear.');
   const slider=page.getByRole('slider',{name:'Maximum active workspace requests',exact:true});
   await slider.evaluate(input=>{input.value='4';input.dispatchEvent(new Event('input',{bubbles:true}));});
@@ -41,6 +43,7 @@ try {for(const width of [1440,390]){
   assert.equal(await prompt.inputValue(),'Use clear language and ask when requirements are unclear.');
   await page.getByRole('button',{name:'Save workspace settings',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Team settings saved.'}).waitFor();
+  assert.equal(saved.defaultModel,'quality');assert.equal(await model.inputValue(),'quality');
   assert.equal(saved.maxActiveRequests,4);assert.equal(saved.globalPrompt,await prompt.inputValue());
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));assert.deepEqual(errors,[]);
   await page.screenshot({path:path.join(output,`workspace-${width}.png`),fullPage:true});

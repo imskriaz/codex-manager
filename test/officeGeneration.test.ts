@@ -1,3 +1,4 @@
+import * as teamSettings from "../src/services/teamSettings";
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -50,4 +51,24 @@ it('cannot escape the workspace through malicious model tool calls or prompt ins
   expect(report.mock.calls.filter(([activity])=>activity.status==='failed')).toHaveLength(2);
   const last=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);
   expect(JSON.stringify(last.messages.filter((message:any)=>message.role==='tool'))).not.toContain('Host-only data');
+});
+it('never probes the catalogue or silently selects a model when no selection or default exists',async()=>{
+ vi.mocked(upstream).mockClear();vi.spyOn(teamSettings,'readTeamSettings').mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:''});
+ await expect((server as any).teamSessions().options.generate(user,undefined,[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn())).rejects.toThrow('Choose a model');
+ expect(upstream).not.toHaveBeenCalled();
+});
+it('uses the master default directly without catalogue discovery',async()=>{
+ vi.spyOn(teamSettings,'readTeamSettings').mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:'configured-model'});
+ vi.mocked(upstream).mockClear().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'Hello'}}],usage:{total_tokens:10}})) as never);
+ expect(await (server as any).teamSessions().options.generate(user,undefined,[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn())).toBe('Hello');
+ expect(upstream).toHaveBeenCalledTimes(1);expect(JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string).model).toBe('configured-model');
+});
+it('returns the user-model catalogue only to an administrator',async()=>{
+ const internal=server as any;
+ internal.settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true})};
+ vi.spyOn(internal,'isAuthorized').mockResolvedValue(true);vi.spyOn(internal,'officeUserForRequest').mockResolvedValue({...user,id:'master',role:'unrestricted-admin'});
+ vi.mocked(upstream).mockClear().mockResolvedValue(new Response(JSON.stringify({data:[{id:'fast',account:'private identity'}]})) as never);
+ const response={statusCode:200,setHeader:vi.fn(),end:vi.fn()};
+ await internal.handle({method:'GET',url:'/api/office/models',headers:{host:'127.0.0.1:39875'},socket:{remoteAddress:'127.0.0.1'}},response);
+ expect(response.statusCode).toBe(200);expect(JSON.parse(response.end.mock.calls[0][0])).toEqual({models:[{id:'fast',label:'fast',reasoningEfforts:[]}]});
 });

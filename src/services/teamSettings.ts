@@ -8,6 +8,7 @@ export function readTeamSettings() {
   return {
     maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
     globalPrompt: config.get<string>("officeGlobalPrompt", ""),
+    defaultModel: config.get<string>("officeDefaultModel", ""),
     workspaceRoot:
       config.get<string>("officeWorkspaceRoot", "").trim() ||
       path.join(getCodexManagerStorageRoot(), "office-workspaces"),
@@ -19,6 +20,10 @@ export function readTeamSettings() {
 export async function saveTeamSettings(input: Record<string, unknown>): Promise<ReturnType<typeof readTeamSettings>> {
   const config = getCodexManagerConfiguration();
   const updates: Array<[string, string | number]> = [];
+  if (input["defaultModel"] !== undefined) {
+    if (typeof input["defaultModel"] !== "string" || input["defaultModel"] !== '' && !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(input["defaultModel"])) throw new Error("Choose a valid default User Workspace model.");
+    updates.push(["officeDefaultModel", input["defaultModel"]]);
+  }
   if (input["globalPrompt"] !== undefined) {
     if (typeof input["globalPrompt"] !== "string" || input["globalPrompt"].length > 16_000) throw new Error("Use up to 16,000 characters for the global User Workspace prompt.");
     updates.push(["officeGlobalPrompt", input["globalPrompt"]]);

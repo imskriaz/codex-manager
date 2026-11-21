@@ -15,6 +15,7 @@ type Turn = { id: string; requestId: string; fingerprint: string; user: Dashboar
 type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; archived?: boolean; updatedAt: string; turns: Turn[] };
 type Action = Extract<import("../domain/dashboard/types").DashboardClientMessage, { type: "dashboard:action" }>;
 export class OfficeCapacityError extends Error {}
+export class OfficeModelSelectionError extends Error {}
 const WAITING = "Your message is queued. We will start as soon as an assistant is available.";
 const UNCERTAIN = "The response could not be confirmed. Your message is saved. Check the conversation before sending again.";
 const namespace = (owner: string) => `office-sessions:${owner}`;
@@ -72,9 +73,9 @@ export class OfficeSessionService {
     if (action.action === "listCodexCliSessions") {
       const projects=readWorkspaceProjects(`office-projects:${user.id}`).filter(project=>{const relative=path.relative(user.workspacePath,project.path);return relative!==""&&!relative.startsWith("..")&&!path.isAbsolute(relative);});
       let models: import("../domain/dashboard/types").DashboardCliModelOption[] = [], modelDiscoveryWarning: string | undefined;
-      try { models = await this.options.models?.(user) ?? []; if (!models.length) modelDiscoveryWarning = "Models are temporarily unavailable. You can still send a message using automatic selection, or refresh to try again."; }
-      catch { modelDiscoveryWarning = "Models could not be loaded. You can still send a message using automatic selection, or refresh to try again."; }
-      return { cliSessions: this.list(user.id), cliComposerConfig: { models, modelDiscoveryWarning, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
+      try { models = await this.options.models?.(user) ?? []; if (!models.length) modelDiscoveryWarning = "Models are temporarily unavailable. Your selected model is kept. Try again shortly."; }
+      catch { modelDiscoveryWarning = "Models could not be loaded. Your selected model is kept. Try again shortly."; }
+      return { cliSessions: this.list(user.id), cliComposerConfig: { models, modelDiscoveryWarning, defaultModel: readTeamSettings().defaultModel || undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
     if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {
@@ -95,11 +96,13 @@ export class OfficeSessionService {
         }
         session = action.action === "startCodexCliSession" ? { id: randomUUID(),owner: user.id,title: text.slice(0,80) || "New conversation",projectPath: p.projectPath || user.workspacePath,model: p.model,updatedAt: new Date().toISOString(),turns: [] } : this.read(user.id,p.sessionId!);
         if (session.archived) throw new Error("Restore this conversation before sending a message.");
+        const model = p.model || session.model || readTeamSettings().defaultModel;
+        if (!model || !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(model)) throw new OfficeModelSelectionError('Choose a model before sending your message.');
         if (session.turns.length >= 200 || session.turns.filter(turn => ["queued","working","waiting"].includes(turn.state)).length >= 20) throw new Error("This conversation is full. Start a new chat or wait for queued messages to finish.");
         claimOfficeRequest(user);
         const id = randomUUID();
-        session.turns.push({ id,requestId:action.requestId,fingerprint,model:p.model ?? session.model ?? "",state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
-        if (p.model !== undefined) session.model = p.model || undefined;
+        session.turns.push({ id,requestId:action.requestId,fingerprint,model,state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
+        session.model = model;
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
       this.publish(session); this.start();
@@ -197,11 +200,11 @@ export class OfficeSessionService {
         completed=true;
         if(content){current.assistant={id:randomUUID(),role:"assistant",text:content,timestamp:new Date().toISOString()};current.state="done";}
         else if(failure instanceof OfficeCapacityError && !controller.signal.aborted){current.state="waiting";current.retryAt=Date.now()+5_000;}
-        else if (failure instanceof OfficeQuotaError) {current.state="done"; current.error=failure.message; for (const activity of current.activities ?? []) if (activity.status === "inProgress") activity.status = "unknown";}
+        else if (failure instanceof OfficeQuotaError || failure instanceof OfficeModelSelectionError) {current.state="done"; current.error=failure.message; for (const activity of current.activities ?? []) if (activity.status === "inProgress") activity.status = "unknown";}
         else {current.state="uncertain";for(const activity of current.activities??[])if(activity.status==="inProgress")activity.status="unknown";}
         this.save(updated);
       });
-      if(completed)this.publish(updated,content?"Your response is ready.":failure instanceof OfficeQuotaError?failure.message:failure instanceof OfficeCapacityError?officeCapacityMessage(updated.turns.find(value=>value.id===turn.id)?.retryAt ?? Date.now()+5000):UNCERTAIN);
+      if(completed)this.publish(updated,content?"Your response is ready.":failure instanceof OfficeQuotaError || failure instanceof OfficeModelSelectionError?failure.message:failure instanceof OfficeCapacityError?officeCapacityMessage(updated.turns.find(value=>value.id===turn.id)?.retryAt ?? Date.now()+5000):UNCERTAIN);
     }catch(error){console.warn("[codexManager] Team response could not be saved",error);}
     finally{this.running.delete(turn.id);if(!this.stopped)void this.pump();}
   }

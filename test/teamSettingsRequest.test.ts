@@ -32,3 +32,9 @@ it("reports an unconfirmed write after a timeout without replay", async () => {
   controller.abort(); await outcome;
   expect(fetch).toHaveBeenCalledOnce();
 });
+it("allows read-only model discovery through the local administrator bridge",async()=>{
+ const fetch=vi.fn(async()=>new Response(JSON.stringify({models:[{id:"chosen",label:"Chosen"}]})));vi.stubGlobal("fetch",fetch);
+ expect(await requestLocalTeamSettings({path:"/api/office/models",method:"GET"})).toEqual({models:[{id:"chosen",label:"Chosen"}]});
+ await expect(requestLocalTeamSettings({path:"/api/office/models",method:"PUT",body:{}})).rejects.toThrow("valid Team settings action");
+ expect(fetch).toHaveBeenCalledOnce();
+});

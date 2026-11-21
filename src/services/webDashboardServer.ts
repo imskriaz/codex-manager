@@ -4,7 +4,7 @@ import { readOfficeInstructions, saveOfficeInstructions } from "./officePreferen
 import { createOfficeWorkspaceFile } from "./officeWorkspaceFile";
 import { getSystemStatus } from './systemStatus';
 import { userWorkspaceNotice } from '../domain/teamWorkspacePresentation';
-import { OfficeCapacityError, OfficeSessionService } from './officeSessions';
+import { OfficeCapacityError, OfficeModelSelectionError, OfficeSessionService } from './officeSessions';
 import { createWorkspaceProject, renameWorkspaceProject, removeWorkspaceProject } from './workspaceProjects';
 import { listWorkspaceTerminals } from './workspaceTools';
 import { apiViewFromPath } from '../domain/dashboard/apiRoutes';
@@ -1299,6 +1299,12 @@ export class WebDashboardServer implements vscode.Disposable {
       } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Team settings could not be saved." }); }
       return;
     }
+    if (method === "GET" && path === "/api/office/models") {
+      if (!officeUser || !officeUser.enabled || officeUser.role === "user") { response.statusCode = 403; this.sendJson(response, {error: "Model settings are restricted to administrators."}); return; }
+      try { this.sendJson(response, {models: await this.userWorkspaceModels(officeUser)}); }
+      catch { response.statusCode = 503; this.sendJson(response, {error: "Models could not be loaded. Please try again."}); }
+      return;
+    }
     if (method === "GET" && path === "/api/office/users") {
       if (!officeUser || (officeUser.role !== "admin" && officeUser.role !== "unrestricted-admin")) { response.statusCode = 403; this.sendJson(response, { error: "Office administration is restricted." }); return; }
       this.sendJson(response, { users: await listOfficeUsers() });
@@ -1347,8 +1353,10 @@ export class WebDashboardServer implements vscode.Disposable {
         const globalPrompt = readTeamSettings().globalPrompt;
         if (globalPrompt) messages.unshift({role:"system",content:globalPrompt});
         if (officeUser.defaultPrompt) messages.unshift({ role: "system", content: officeUser.defaultPrompt });
+        const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : readTeamSettings().defaultModel;
+        if (!model) throw new OfficeModelSelectionError('Choose a model before sending your message.');
         const token = await this.officeProxyToken(officeUser.id);
-        const upstream = await undiciFetch(this.getUrl("/v1/chat/completions"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : "gpt-4o-mini", messages, stream: false }) });
+        const upstream = await undiciFetch(this.getUrl("/v1/chat/completions"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ model, messages, stream: false }) });
         const text = await upstream.text();
         if (!upstream.ok) {
           const generic = upstream.status === 429 || upstream.status === 402 || /quota|credit|capacity|rate.?limit/i.test(text) ? "Out of credits. We'll retry when capacity is available." : "General chat is temporarily unavailable. Retry shortly.";
@@ -1479,26 +1487,23 @@ export class WebDashboardServer implements vscode.Disposable {
     response.end("Not found");
   }
 
+  private async userWorkspaceModels(user: OfficeUser): Promise<import("../domain/dashboard/types").DashboardCliModelOption[]> {
+    const token = await this.officeProxyToken(user.id);
+    const response = await undiciFetch(this.getUrl("/v1/models"), {headers: {Authorization: `Bearer ${token}`}, signal: AbortSignal.timeout(3000)});
+    if (!response.ok) { await response.body?.cancel(); throw new Error("Models unavailable."); }
+    const result = await response.json() as {data?: Array<{id?: string}>};
+    return (result.data ?? []).filter((item): item is {id: string} => typeof item.id === "string").map(item => ({id: item.id, label: item.id, reasoningEfforts: []}));
+  }
+
   private teamSessions(): OfficeSessionService {
     return this.officeConversations ??= new OfficeSessionService({
-      models: async user => {
-        const token = await this.officeProxyToken(user.id);
-        const response = await undiciFetch(this.getUrl("/v1/models"), { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) });
-        if (!response.ok) { await response.body?.cancel(); throw new Error("Models unavailable."); }
-        const result = await response.json() as { data?: Array<{id?: string}> };
-        return (result.data ?? []).filter((item): item is {id: string} => typeof item.id === "string").map(item => ({id: item.id, label: item.id, reasoningEfforts: []}));
-      },
+      models: user => this.userWorkspaceModels(user),
       readUser: async id => this.settingsStore.getDashboardSettings().teamWorkspaceEnabled ? getOfficeUser(id) : undefined,
       generate: async (user, model, messages, signal, projectPath, report) => {
         const token = await this.officeProxyToken(user.id);
         const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-        if (!model) {
-          const catalogue = await undiciFetch(this.getUrl("/v1/models"), { headers, signal });
-          if (!catalogue.ok) { await catalogue.body?.cancel(); if ([402,429,503].includes(catalogue.status)) throw new OfficeCapacityError(); throw new Error("Model unavailable."); }
-          const models = await catalogue.json() as { data?: Array<{id?: string}> };
-          model = models.data?.find(item => typeof item.id === "string")?.id;
-          if (!model) throw new OfficeCapacityError();
-        }
+        model ||= readTeamSettings().defaultModel;
+        if (!model) throw new OfficeModelSelectionError("Choose a model before sending your message.");
         const tools=user.features.includes("files") ? [
           {type:"function",function:{name:"list_files",description:"List files in this private workspace.",parameters:{type:"object",properties:{},additionalProperties:false}}},
           {type:"function",function:{name:"read_file",description:"Read a workspace file and its revision before editing.",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}}},

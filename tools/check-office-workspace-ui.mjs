@@ -17,8 +17,9 @@ const mockHost=`(()=>{
 document.documentElement.dataset.dashboardUser='fixture-alex';
 const state=${JSON.stringify(state)},key='private-workspace-fixture';
 const saved=JSON.parse(localStorage.getItem(key)||'null');let session=saved?.session,messages=saved?.messages||[];
-const config={models:[{id:'fast',label:'Fast',reasoningEfforts:[]},{id:'quality',label:'Quality',reasoningEfforts:[]}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
+const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]},{id:'quality',label:'Quality',reasoningEfforts:[]}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
+window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
 const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
 window.__privateActions=[];
 window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueRetryAt:undefined,queueError:undefined,updatedAt:new Date().toISOString()};messages.push(...${JSON.stringify(activities)},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
@@ -55,7 +56,17 @@ try{for(const width of [1440,390]){
  let instructions='';await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT')instructions=route.request().postDataJSON().instructions;await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
  await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
  await page.locator('.cli-composer textarea').waitFor();
+ await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
+ assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').filter({hasText:'Automatic'}).count(),0);
  await assertPlainUserInterface(page);
+ await page.evaluate(()=>window.__setModelDefault(''));
+ await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='');
+ await page.locator('.cli-composer textarea').fill('Keep this draft until I choose a model');
+ assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true);
+ await page.locator('.cli-composer textarea').press('Control+Enter');
+ assert.equal(await page.evaluate(()=>window.__privateActions.filter(item=>item.action==='startCodexCliSession').length),0);
+ await page.evaluate(()=>window.__setModelDefault('fast'));
+ await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
  await page.locator('.cli-composer textarea').fill('/model');
  assert.equal(await page.getByRole('listbox',{name:'Commands and skills'}).count(),0);
  await page.locator('.cli-composer textarea').fill('');

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.55
+
+- Replace Automatic in User Workspace with explicit model selection and a master-configured default for new chats. Keep existing conversation choices and queued requests tied to their selected model.
+- Add a default model picker in master User Workspace settings. Model-list failures preserve saved choices and do not silently select another model.
+
 ## 3.0.0-pre.54
 
 - Block host shell, Git, GitHub, external URL launching, and host browser execution for User Workspace accounts until an isolated runtime is configured. Add adversarial access tests.

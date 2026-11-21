@@ -41,6 +41,7 @@ describe("Team storage settings", () => {
     await saveTeamSettings({ workspaceRoot: "C:/new-users" });
     expect(readTeamSettings()).toEqual({
       globalPrompt: "",
+      defaultModel: "",
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
       databaseProvider: "postgres",
@@ -62,5 +63,12 @@ it("saves and clears the global prompt without exposing database credentials or 
  config.update.mockClear();
  await expect(saveTeamSettings({workspaceRoot:"C:/team",globalPrompt:"x".repeat(16001)})).rejects.toThrow("16,000");
  await expect(saveTeamSettings({globalPrompt:42})).rejects.toThrow("16,000");
+ expect(config.update).not.toHaveBeenCalled();
+});
+it("saves and clears the default model and validates the entire form before writing",async()=>{
+ expect((await saveTeamSettings({defaultModel:"chosen-model"})).defaultModel).toBe("chosen-model");
+ expect((await saveTeamSettings({defaultModel:""})).defaultModel).toBe("");
+ config.update.mockClear();
+ for(const defaultModel of [42,"bad model","x".repeat(129)])await expect(saveTeamSettings({globalPrompt:"changed",defaultModel})).rejects.toThrow("valid default");
  expect(config.update).not.toHaveBeenCalled();
 });

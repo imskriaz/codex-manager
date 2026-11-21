@@ -12,7 +12,7 @@ import { removeTestDirectory } from "./testFilesystem";
 let root:string,storage:SqliteStateStore;
 const services:OfficeSessionService[]=[];
 const user:OfficeUser={id:"alex",username:"alex",displayName:"Alex",role:"user",enabled:true,features:["generalChat","files"],workspacePath:"C:/team/alex",mcpServers:[],defaultPrompt:"Help with office work.",createdAt:0};
-beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);});
+beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:"configured-model"});});
 afterEach(async()=>{vi.restoreAllMocks();services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
 function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
@@ -21,7 +21,7 @@ const start=(requestId="request-1",text="Hello")=>({type:"dashboard:action" as c
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,undefined,[{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function));
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function));
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -116,11 +116,33 @@ it("offers available models and preserves chat when discovery fails",async()=>{
  expect((await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"models"})).cliComposerConfig?.models[0]?.id).toBe("fast");
  models.mockRejectedValueOnce(new Error("provider-secret"));
  const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"fallback"});
- expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain("automatic selection");expect(JSON.stringify(result)).not.toContain("provider-secret");
+ expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain("selected model is kept");expect(JSON.stringify(result)).not.toContain("provider-secret");
 });
 it("charges accepted requests once and rejects requests beyond the daily allowance",async()=>{
  const {service}=setup(),limited={...user,limits:{storageMb:0,dailyTokens:0,dailyRequests:1}};
  const first=await service.handle(limited,start());
  expect((await service.handle(limited,start())).cliSession?.id).toBe(first.cliSession?.id);
  await expect(service.handle(limited,start("over-limit"))).rejects.toThrow("daily request allowance");
+});
+it("uses the configured default and preserves explicit models on existing conversations",async()=>{
+ const {service,generate}=setup();const first=await service.handle(user,start());
+ expect(first.cliSession?.model).toBe("configured-model");await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
+ vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:"new-default"});
+ await service.handle(user,{type:"dashboard:action",action:"sendCodexCliSessionMessage",requestId:"same-conversation",payload:{sessionId:first.cliSession!.id,text:"Follow up"}});
+ await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));expect(generate.mock.calls[1]?.[1]).toBe("configured-model");
+ const next=await service.handle(user,start("new-chat"));expect(next.cliSession?.model).toBe("new-default");
+});
+it("requires a user model when no default is configured and does not charge a rejected message",async()=>{
+ vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:""});
+ const {service,generate}=setup();
+ await expect(service.handle(user,start())).rejects.toThrow("Choose a model");
+ expect(service.list(user.id)).toEqual([]);expect(generate).not.toHaveBeenCalled();
+ expect(storage.get(`office-usage:${user.id}`,new Date().toISOString().slice(0,10))).toBeUndefined();
+ const selected=await service.handle(user,{...start(),payload:{text:"Hello",model:"chosen"}});
+ expect(selected.cliSession?.model).toBe("chosen");
+});
+it("returns the master default even when the optional model catalogue cannot load",async()=>{
+ const {service}=setup();
+ const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"config"});
+ expect(result.cliComposerConfig?.defaultModel).toBe("configured-model");expect(result.cliComposerConfig?.models).toEqual([]);
 });

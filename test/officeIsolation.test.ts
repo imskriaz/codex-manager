@@ -88,7 +88,7 @@ it("does not broadcast master notices, native sessions or account activity to a 
    expect(team.send).not.toHaveBeenCalled();expect(master.send).toHaveBeenCalled();
  }finally{internal.webSocketClients.clear();}
 });
-it.each(["/api/office/users","/api/office/settings","/api/push/test","/api/share/create","/api/schema"])("denies user access to admin endpoint %s",async url=>{
+it.each(["/api/office/users","/api/office/models","/api/office/settings","/api/push/test","/api/share/create","/api/schema"])("denies user access to admin endpoint %s",async url=>{
  const internal=server as any;vi.spyOn(internal,"isAuthorized").mockResolvedValue(true);vi.spyOn(internal,"officeUserForRequest").mockResolvedValue(user);
  const response={statusCode:200,setHeader:vi.fn(),end:vi.fn()};await internal.handle({method:url==="/api/share/create"?"POST":"GET",url,headers:{host:"127.0.0.1:39875"},socket:{remoteAddress:"127.0.0.1"}},response);expect(response.statusCode).toBe(403);
 });

@@ -10,7 +10,7 @@ import { ModalShell } from "./primitives";
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
-type TeamSettings = { globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
+type TeamSettings = { defaultModel: string; globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
   limits?: OfficeLimits;
   id?: string;
@@ -63,6 +63,20 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const [users, setUsers] = useState<OfficeUser[]>([]);
   const [servers, setServers] = useState<OfficeMcpServer[]>([]);
   const [settings, setSettings] = useState<TeamSettings>();
+  const [defaultModel, setDefaultModel] = useState("");
+  const [modelOptions, setModelOptions] = useState<Array<{id: string; label: string}>>([]);
+  const [modelsLoading, setModelsLoading] = useState(false), [modelWarning, setModelWarning] = useState("");
+  const [modelRetry, setModelRetry] = useState(0);
+  useEffect(() => {
+    if (props.open === false || section !== "workspace") return;
+    let active = true;
+    setModelsLoading(true); setModelWarning("");
+    void request<{models: Array<{id: string; label: string}>}>("/api/office/models").then(value => {
+      if (active) { setModelOptions(value.models); if (!value.models.length) setModelWarning("No models are available right now. Please try again shortly."); }
+    }).catch(() => { if (active) setModelWarning("Models could not be loaded. Your saved default is kept."); })
+      .finally(() => { if (active) setModelsLoading(false); });
+    return () => { active = false; };
+  }, [props.open, section, modelRetry]);
   const [globalPrompt, setGlobalPrompt] = useState("");
   const [maxActiveRequests, setMaxActiveRequests] = useState(2);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
@@ -92,7 +106,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       ]);
       setUsers(userData.users);
       setServers(mcpData.servers);
-      setSettings(teamSettings); setGlobalPrompt(teamSettings.globalPrompt ?? "");
+      setSettings(teamSettings); setDefaultModel(teamSettings.defaultModel ?? ""); setGlobalPrompt(teamSettings.globalPrompt ?? "");
       setWorkspaceRoot(teamSettings.workspaceRoot); setMaxActiveRequests(teamSettings.maxActiveRequests ?? 2);
       setDatabaseProvider(teamSettings.databaseProvider);
     } catch (value) {
@@ -176,7 +190,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const saveSettings = (fields: Record<string, string | number>): void => {
     void mutate(async () => {
       const result = await request<TeamSettings>("/api/office/settings", "PUT", fields);
-      setSettings(result); setGlobalPrompt(result.globalPrompt ?? "");
+      setSettings(result); setDefaultModel(result.defaultModel ?? ""); setGlobalPrompt(result.globalPrompt ?? "");
       setWorkspaceRoot(result.workspaceRoot); setMaxActiveRequests(result.maxActiveRequests ?? 2);
       setDatabaseProvider(result.databaseProvider);
       setPostgresUrl("");
@@ -254,10 +268,20 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               class="team-settings-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt });
+                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt, defaultModel });
               }}
             >
               <label>
+                Default User Workspace model
+                <select aria-label="Default User Workspace model" value={defaultModel} disabled={pending || modelsLoading} onChange={event => setDefaultModel(event.currentTarget.value)}>
+                  <option value="">Require users to choose</option>
+                  {defaultModel && !modelOptions.some(model => model.id === defaultModel) ? <option value={defaultModel}>{defaultModel}</option> : null}
+                  {modelOptions.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                </select>
+                <small>Preselected for new chats. Users can pick another model before sending. Existing conversations keep their selected model.</small>
+                {modelsLoading ? <small role="status">Loading models…</small> : null}
+                {modelWarning ? <span role="status">{modelWarning} <button type="button" disabled={pending} onClick={() => setModelRetry(value => value + 1)}>Try again</button></span> : null}
+              </label><label>
                 Global User Workspace Prompt
                 <textarea aria-label="Global User Workspace Prompt" rows={7} maxLength={16000} value={globalPrompt} disabled={pending} placeholder="Define your assistant’s purpose, tone, response style, and how it should help every user." onInput={event => setGlobalPrompt(event.currentTarget.value)} />
                 <small>Applies to every User Workspace from the next message, including existing conversations. Global guidance comes first, followed by per-user defaults and personal instructions. Workspace permissions remain enforced.</small>

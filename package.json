@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.54",
+  "version": "3.0.0-pre.55",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -402,6 +402,13 @@
           "maxLength": 16000,
           "scope": "machine",
           "markdownDescription": "Global guidance applied to every User Workspace conversation. Does not affect master workspace sessions."
+        },
+        "codexManager.officeDefaultModel": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "maxLength": 128,
+          "markdownDescription": "Default model for new User Workspace chats. Users may select another model. Leave empty to require users to choose."
         }
       }
     },
