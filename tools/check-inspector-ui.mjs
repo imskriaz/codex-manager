@@ -85,15 +85,46 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   assert.equal(sidebarFonts.session,sidebarFonts.project,'Project and conversation titles use the same sidebar text size');
   const closeSidebar = page.getByRole('button', exact('Hide sessions sidebar'));
   if (await closeSidebar.isVisible()) await closeSidebar.click();
-  await page.evaluate(() => { window.__inspectorMode = true; });
+  await page.evaluate(() => {
+    window.__inspectorMode = true;
+    window.__uiSnapshot.settings.systemInfoEnabled = true;
+    window.__uiSnapshot.connectedPeers[0].systemStatus = { observedAt: Date.now(), networkConnected: true, cpuPercent: 20, memoryUsed: 69, memoryTotal: 100, diskFree: 122 * 1024 ** 3, uptimeSeconds: 7440 };
+    dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } }));
+  });
   if (process.argv.includes('--agent-inspector')) { await checkAgentInspector(page, { width, output, tool, hide, show }); return; }
   await show();
   await page.getByRole('tab', exact('Env')).click();
+  const environment = page.getByRole('region', exact('Environment'));
+  const sections = environment.locator('.cli-environment-section');
+  assert.deepEqual(await sections.locator(':scope > summary h3').allTextContents(), ['System information', 'Project', 'Session', 'Repository', 'Tools overview', 'Agents', 'Session usage'], 'All existing sections remain available');
+  assert.deepEqual(await sections.evaluateAll(elements => elements.filter(element => element.open).map(element => element.querySelector('h3').textContent)), ['Project', 'Session'], 'Only Project and Session start expanded');
+  const contentHeight = () => sections.evaluateAll(elements => elements.reduce((height, element) => height + element.getBoundingClientRect().height, 0));
+  const compactHeight = await contentHeight();
+  await page.screenshot({ path: path.join(output, `workspace-env-compact-${width}.png`), animations: 'disabled' });
+  for (const section of await sections.all()) {
+    const summary = section.locator(':scope > summary');
+    const initial = await section.evaluate(element => element.open);
+    await summary.focus(); await page.keyboard.press('Enter');
+    assert.equal(await section.evaluate(element => element.open), !initial, 'Enter toggles a section');
+    await page.keyboard.press('Space');
+    assert.equal(await section.evaluate(element => element.open), initial, 'Space restores the section');
+    if (!initial) await summary.click();
+  }
+  assert.ok(await contentHeight() > compactHeight, 'Collapsed sections reduce content height even when the panel has spare room');
+  assert.ok(await environment.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Expanded content stays inside the panel');
+  assert.ok(await sections.locator('dt').evaluateAll(elements => elements.every(element => element.getBoundingClientRect().height < parseFloat(getComputedStyle(element).lineHeight) * 1.5)), 'Labels including Auto Resume and Ahead / behind stay on one line');
+  const project = sections.filter({ has: page.getByRole('heading', exact('Project')) });
+  await project.locator(':scope > summary').click();
+  await page.evaluate(() => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } })));
+  assert.equal(await project.evaluate(element => element.open), false, 'Snapshot refresh preserves a manually collapsed section');
+  await project.locator(':scope > summary').click();
+  await page.screenshot({ path: path.join(output, `workspace-env-expanded-${width}.png`), animations: 'disabled' });
   await page.getByRole('button', exact('Open Git')).waitFor();
-  const overview = page.locator('.cli-inspector-body section').filter({ has: page.getByRole('heading', exact('Tools overview')) });
+  const overview = sections.filter({ has: page.getByRole('heading', exact('Tools overview')) });
   assert.deepEqual(await overview.locator('button > span').allTextContents(), ['Git', 'Files', 'Terminals', 'Agents', 'Reviews'], 'Env includes every inspector tool in one list');
   assert.match(await overview.getByRole('button', { name: /^Agents/ }).textContent(), /1 recorded · 1 running/, 'Env summarizes recorded agents and running state');
   await page.locator('.cli-inspector-shortcuts button').filter({ hasText: 'Reviewer' }).waitFor();
+  if (process.argv.includes('--environment')) return;
   assert.equal(await page.locator('.cli-context-tab-scroll [role=tab]').first().textContent(), 'Env');
   assert.equal(await page.getByRole('button', exact('Close Env')).count(), 0);
   assert.equal(await page.locator('.cli-terminal-panel button[aria-label="Hide workspace tools"]').count(), 0, 'Header owns panel visibility');

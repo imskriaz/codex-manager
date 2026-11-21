@@ -1691,7 +1691,7 @@ try {
       await checkInspectorUi(page, {origin,parentId,width,height,output});
       assert.deepEqual(errors, [], 'Inspector browser runtime errors');
       assert.deepEqual(errors,[], 'Inspector browser runtime errors');
-      results.push({width,height,checks:'Fixed Env, Git, scoped drafts/results, file revision conflicts, pending saves, top-layer tools, terminal lifecycle, offline/reconnect'});
+      results.push({width,height,checks:process.argv.includes('--environment') ? 'Collapsible Env sections, compact rows, keyboard toggles, preserved refresh state, expanded tools, no overflow' : 'Fixed Env, Git, scoped drafts/results, file revision conflicts, pending saves, top-layer tools, terminal lifecycle, offline/reconnect'});
       await context.close(); continue;
     }
     if (process.argv.includes('--queue')) {
@@ -2220,6 +2220,7 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 4, status: 'completed', tokenUsage: { input: 40740, cachedInput: 0, output: 99, reasoningOutput: 72, total: 40839, contextWindow: 475000 }, rateLimits: { primary: { usedPercent: 32, resetsAt: 1793445000 }, secondary: { usedPercent: 60, resetsAt: 1793790000 } } } } })));
     const showUsageTools = page.getByRole('button',{name:'Show workspace tools',exact:true}); if (await showUsageTools.isVisible()) await showUsageTools.click();
     await page.getByRole('tab',{name:'Env',exact:true}).click();
+    await page.locator('.cli-environment-section[aria-label="Session usage details"] > summary').click();
     const turnUsage = page.locator('.cli-inspector-view .cli-turn-usage');
     assert.equal(await turnUsage.locator(':scope > summary').count(),0,'Session usage is expanded without a toggle');
     assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
