@@ -24,6 +24,7 @@ try {
     await page.locator('#dashboard-main .overview-shell').waitFor();
     const loadMs = Date.now() - started;
     async function inspect(scope, label) {
+      assert.equal(await scope.locator('.hero').isVisible(), label.startsWith('home-'), `${label}: header appears only on dashboard home`);
       const toolbar = scope.locator('.dashboard-account-toolbar');
       async function inspectControls() {
         const controls = await toolbar.evaluate(element => [...element.children].map(child => ({
@@ -145,9 +146,10 @@ try {
     await page.locator('.cli-workspace').waitFor();
     const sidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
     if (await sidebar.isVisible()) await sidebar.click();
-    await page.getByRole('button', { name: 'Open account center', exact: true }).click();
+    await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Open account center', exact: true }).click();
     const dashboard = page.locator('.workspace-dashboard');
-    await dashboard.locator('.hero').waitFor();
+    await dashboard.locator('.overview-shell').waitFor();
     const tab = page.getByRole('tab', { name: 'Dashboard', exact: true });
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
     assert.equal(await tab.locator('svg').innerHTML(), await page.locator('.cli-dashboard-nav[aria-label="Dashboard"] svg').innerHTML(), 'Dashboard icons match');
@@ -158,8 +160,9 @@ try {
     await page.getByRole('button', { name: 'Close Dashboard', exact: true }).click();
     await dashboard.waitFor({ state: 'detached' });
     if (await sidebar.isVisible()) await sidebar.click();
-    await page.getByRole('button', { name: 'Open account center', exact: true }).click();
-    await dashboard.locator('.hero').waitFor();
+    await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Open account center', exact: true }).click();
+    await dashboard.locator('.overview-shell').waitFor();
     assert.deepEqual(errors, [], `${width}: no browser errors`);
     await context.close();
     console.log(`${width}px: compact home and Dashboard tool passed`);

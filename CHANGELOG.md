@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.36
+
+- Hide the dashboard header row inside the workspace right panel while keeping it visible on dashboard home.
+
 ## 3.0.0-pre.35
 
 - Rename Access to Modules, move feature options into their sections, and hide sections when their module is disabled.
