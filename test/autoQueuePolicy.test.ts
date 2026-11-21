@@ -18,6 +18,11 @@ const policy = createAutoQueuePolicy({ autoSwitchEnabled: true, autoResetEnabled
 const candidate = (id: string, overrides: Partial<AutoQueueCandidate> = {}): AutoQueueCandidate => ({ id, autoResetAllowed: true, windows: [{ percentage: 70 }, { percentage: 70 }, {}], lastQuotaAt: now - 1_000, ...overrides });
 
 describe("shared auto queue policy", () => {
+  it("defaults switching thresholds to zero and preserves explicit thresholds", () => {
+    expect(policy.hourlyThreshold).toBe(0);
+    expect(policy.weeklyThreshold).toBe(0);
+    expect(createAutoQueuePolicy({ autoSwitchHourlyThreshold: 5 }, now).hourlyThreshold).toBe(5);
+  });
   it('prefers older eligible accounts while preserving stars, urgency, freshness and deterministic missing dates', () => {
     const older = candidate('older', { addedAt: now - 90 * 86400_000, windows: [{ percentage: 10 }, { percentage: 10 }] });
     const newer = candidate('newer', { addedAt: now - 86400_000 });
@@ -47,7 +52,7 @@ describe("shared auto queue policy", () => {
 
   it("keeps usable current quota even when future selection is disabled", () => {
     expect(shouldKeepCurrentAutoQueueAccount(candidate("current", { disabled: true }), policy)).toBe(true);
-    expect(shouldKeepCurrentAutoQueueAccount(candidate("current", { windows: [{ percentage: 5 }, { percentage: 70 }] }), policy)).toBe(false);
+    expect(shouldKeepCurrentAutoQueueAccount(candidate("current", { windows: [{ percentage: 0 }, { percentage: 70 }] }), policy)).toBe(false);
   });
 
   it("rejects malformed limits and does not revive exhausted quota with credits or resets", () => {

@@ -7,7 +7,9 @@ import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 
 // Both host modes use an intercepted in-memory host. No real settings or users change.
 const origin = 'http://127.0.0.1:39875';
-const original = await (await fetch(`${origin}/api/state`)).json();
+const snapshotResponse = await fetch(`${origin}/api/state`, { signal: AbortSignal.timeout(15_000) });
+if (!snapshotResponse.ok) throw new Error('Local snapshot returned '+snapshotResponse.status);
+const original = await snapshotResponse.json();
 const output = path.join(tmpdir(), 'codex-manager-settings-hosts');
 await mkdir(output, { recursive: true });
 const team = { users: [], servers: [], workspaceRoot: 'D:/team', databaseProvider: 'sqlite', postgresConfigured: false, entries: [], requests: [] };
@@ -15,7 +17,7 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const host of ['browser', 'webview']) for (const [width, height] of [[1440, 900], [390, 844], [844, 390]]) {
     const state = { ...original, accounts: [], connectedPeers: [{ id: 'local-fixture', local: true, connected: true, name: 'This system' }], peerAccounts: {}, office: host === 'browser' ? { id: 'master', role: 'unrestricted-admin', displayName: 'Administrator', features: [] } : undefined, onboardingCompleted: true,
-      settings: { ...original.settings, dashboardTheme: 'dark', cliIntegrationEnabled: true, webDashboardEnabled: true, teamWorkspaceEnabled: true, autoSwitchEnabled: true, modelCapacityAutoSwitchEnabled: true } };
+      settings: { ...original.settings, dashboardTheme: 'dark', cliIntegrationEnabled: true, webDashboardEnabled: true, teamWorkspaceEnabled: true, persistentLoggingEnabled: true, dailyTokenUsageEnabled: true, codexAppRestartEnabled: true, encryptedSyncEnabled: true, webSocketServerEnabled: true, apiAccessEnabled: true, autoSwitchEnabled: true, modelCapacityAutoSwitchEnabled: true } };
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width < 760, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(12_000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -48,12 +50,12 @@ try {
         },10);
       }});
     })();` }));
-    await page.goto(origin, { waitUntil: 'domcontentloaded' });
+    await page.goto(origin + '/workspace', { waitUntil: 'domcontentloaded' });
     await page.locator('#settingsOpenButton').waitFor({ state: 'attached' });
     if (host === 'browser') {
       const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
       if (await rail.isVisible()) await rail.click();
-      await page.locator('#cli-session-sidebar .cli-settings-shortcut').click();
+      try { await page.locator('#cli-session-sidebar .cli-settings-shortcut').click(); } catch (error) { await page.screenshot({ path: path.join(output, 'sidebar-failure.png') }); console.log(JSON.stringify({ url: page.url(), errors, body: (await page.locator('body').innerText()).slice(0,2500) })); throw error; }
     }
     const brand = page.locator('.hero .brand-copy').first();
     if (await brand.isVisible()) {
@@ -66,11 +68,22 @@ try {
     const select = async id => { if (await picker.isVisible()) await picker.selectOption(id); else await settings.locator(`#settings-tab-${id}`).click(); };
     const sections = await picker.locator('option').evaluateAll(options => options.map(option => option.value));
     assert.ok(sections.includes('users') && sections.includes('tools'), `${host}: same sections are available`);
-    for (const section of ['general', 'modules', 'tools', 'users']) {
+    for (const section of sections) {
       await select(section); await settings.locator(`#settings-panel-${section}`).waitFor();
       assert.ok(await settings.locator('.settings-modal-body').evaluate(element => element.scrollWidth <= element.clientWidth + 1), `${host}/${width}/${section}: no horizontal scroll`);
       await page.screenshot({ path: path.join(output, `${host}-${section}-${width}x${height}.png`) });
     }
+    const search = settings.getByRole('searchbox', { name: 'Search all settings' });
+    assert.equal(await settings.getByRole('searchbox').count(), 1, 'Only one settings search exists');
+    assert.equal(await search.getAttribute('placeholder'), 'Search');
+    await search.fill('file limit');
+    await settings.getByRole('button', { name: /Text file limit/ }).click();
+    await settings.locator('#settings-panel-sessions').waitFor();
+    await search.fill('retry capacity');
+    await settings.getByRole('button', { name: /Capacity retry delay/ }).click();
+    await settings.locator('#settings-panel-automation').waitFor();
+    const toggleSizes = await settings.locator('.settings-inline-toggle:visible').evaluateAll(elements => elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height })));
+    assert.ok(toggleSizes.every(size => size.width === 38 && size.height === 22), 'Toggles stay compact in both hosts and touch layouts: ' + JSON.stringify(toggleSizes));
     await select('automation');
     const failures = settings.getByRole('slider', { name: 'Consecutive failures', exact: true });
     const retry = settings.getByRole('slider', { name: 'Capacity retry delay', exact: true });
@@ -101,6 +114,18 @@ try {
     await settings.locator('#settings-panel-general').waitFor();
     assert.equal(await picker.locator('option[value=users]').count(), 0, 'The main toggle hides dependent tabs in both pickers');
     assert.equal(await settings.locator('#settings-tab-users').count(), 0);
+    for (const [section, key] of [['sessions','cliIntegrationEnabled'], ['sync','encryptedSyncEnabled'], ['desktop','codexAppRestartEnabled'], ['usage','dailyTokenUsageEnabled'], ['system-log','persistentLoggingEnabled'], ['connections','webSocketServerEnabled']]) {
+      await select(section);
+      await page.evaluate(key => window.__setSettings({ [key]: false }), key);
+      await settings.locator('#settings-panel-general').waitFor();
+      assert.equal(await picker.locator('option[value="'+section+'"]').count(), 0);
+      await page.evaluate(key => window.__setSettings({ [key]: true }), key);
+    }
+    await page.evaluate(() => window.__setSettings({ cliIntegrationEnabled: false }));
+    await search.fill('file limit');
+    await settings.getByRole('button', { name: /Text file limit/ }).click();
+    await settings.locator('#settings-panel-modules').waitFor();
+    await page.evaluate(() => window.__setSettings({ cliIntegrationEnabled: true }));
     await select('modules');
     assert.ok(await settings.getByRole('button', { name: 'Enable Team workspace', exact: true }).isVisible(), 'Access keeps the main toggle reachable');
     await page.evaluate(() => window.__setSettings({ teamWorkspaceEnabled: true }));

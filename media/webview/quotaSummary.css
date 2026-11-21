@@ -18761,12 +18761,17 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .team-user-footer{display:flex;align-items:center;gap:10px;padding:14px 12px;border-top:1px solid var(--border-default);color:var(--text)}.team-user-avatar{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;border-radius:50%;background:var(--bg-selected);font-size: calc(12px * var(--dashboard-text-scale, 1));font-weight:600}.team-user-footer-copy{display:grid;gap:3px;min-width:0;flex:1}.team-user-footer-copy strong,.team-user-footer-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-user-footer-copy strong{font-size: calc(12px * var(--dashboard-text-scale, 1))}.team-user-footer-copy small,.team-composer-hint{font-size: calc(11px * var(--dashboard-text-scale, 1));color:var(--muted)}.team-user-footer-menu{position:relative}.team-user-footer-menu .cli-session-menu{bottom:100%;top:auto;right:0}.team-user-footer-menu form{margin:0}.team-user-footer-menu form button{width:100%}.team-request-state{padding:8px 16px;color:var(--muted);font-size: calc(12px * var(--dashboard-text-scale, 1));line-height:1.5}
 
 /* Unified settings: compact rows, one navigation, and tools in place. */
+.settings-modal.settings-master-modal { grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .settings-modal.settings-master-modal > .settings-mobile-picker { grid-row: 3; grid-column: 1 / -1; }
+  .settings-modal.settings-master-modal > .settings-modal-body { grid-row: 4; grid-column: 1 / -1; }
+}
 .settings-modal.settings-master-modal {
   width: min(960px, calc(var(--dashboard-viewport-width, 100vw) - 32px));
   max-width: none;
   height: min(680px, calc(var(--dashboard-viewport-height, 100dvh) - 32px));
   max-height: calc(var(--dashboard-viewport-height, 100dvh) - 32px);
   grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -18888,14 +18893,21 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .settings-master-modal .settings-capacity-controls .step-slider { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
 .settings-master-modal .settings-capacity-controls .step-slider-head { margin: 0; }
 
-/* Search individual options while retaining the full module navigation. */
-.settings-modal.settings-master-modal { grid-template-rows: auto auto minmax(0, 1fr); }
+/* One settings search, shared by the browser and VS Code. */
+.settings-master-modal .settings-tab-panel { gap: 0; }
+.settings-master-modal .settings-layout > .settings-refresh-group { padding: 0; border: 0; gap: 0; }
+.settings-modal.settings-master-modal { grid-template-rows: auto minmax(0, 1fr); }
 .settings-master-modal > .settings-modal-head { grid-column: 1 / -1; grid-row: 1; }
-.settings-master-modal > .settings-search { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); }
-.settings-search input { flex: 1; min-width: 0; width: 100%; margin: 0; padding: 7px 9px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 5px; color: var(--text); font-size: calc(12px * var(--dashboard-text-scale, 1)); }
-.settings-search > button { width: 28px; height: 28px; padding: 0; }
-.settings-master-modal > .settings-sidebar { grid-column: 1; grid-row: 3; overflow-y: auto; }
-.settings-master-modal > .settings-modal-body { grid-column: 2; grid-row: 3; min-height: 0; }
+.settings-modal.settings-master-modal > .settings-sidebar { display: flex; flex-direction: column; grid-column: 1; grid-row: 2; min-height: 0; overflow: hidden; }
+.settings-master-modal .settings-sidebar .settings-tab-list { min-height: 0; overflow-y: auto; }
+.settings-modal.settings-master-modal > .settings-modal-body { grid-column: 2; grid-row: 2; min-height: 0; }
+.settings-master-modal .settings-search { display: flex; align-items: center; flex-shrink: 0; gap: 4px; margin-bottom: 8px; }
+.settings-search input { flex: 1; width: 100%; min-width: 0; margin: 0; padding: 7px 8px; border: 1px solid var(--border-default); border-radius: 5px; background: var(--bg-base); color: var(--text); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+.settings-search > button { flex-shrink: 0; width: 22px; min-width: 22px; height: 28px; min-height: 28px; padding: 0; }
+.settings-master-modal .settings-layout .settings-inline-toggle { width: 38px; min-width: 38px; max-width: 38px; height: 22px; min-height: 22px; max-height: 22px; padding: 0; border-radius: 999px; box-shadow: none; align-self: center; }
+.settings-master-modal .settings-layout .settings-inline-toggle-track { position: relative; display: block; width: 100%; height: 100%; }
+.settings-master-modal .settings-layout .settings-inline-toggle-thumb { top: 2px; left: 2px; width: 16px; height: 16px; box-sizing: border-box; }
+.settings-master-modal .settings-layout .settings-inline-toggle.active .settings-inline-toggle-thumb { transform: translateX(16px); }
 .settings-master-modal .settings-sidebar .settings-tab { position: relative; border: 1px solid transparent; border-radius: 5px; gap: 9px; color: var(--muted); }
 .settings-master-modal .settings-sidebar .settings-tab:hover { color: var(--text); background: var(--bg-elevated); }
 .settings-master-modal .settings-sidebar .settings-tab.active { color: var(--text); border-color: var(--border-default); background: var(--bg-selected); box-shadow: inset 2px 0 var(--accent-blue); }
@@ -18907,7 +18919,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .settings-search-result:hover { background: var(--bg-selected); }
 @media (max-width: 760px) {
   .settings-modal.settings-master-modal { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); }
-  .settings-master-modal > .settings-mobile-picker { grid-column: 1; grid-row: 3; }
-  .settings-master-modal > .settings-modal-body { grid-column: 1; grid-row: 4; }
-  .settings-master-modal > .settings-search { padding: 6px 10px; }
+  .settings-modal.settings-master-modal > .settings-sidebar { display: block; grid-column: 1; grid-row: 2; padding: 6px 12px; border: 0; }
+  .settings-master-modal .settings-sidebar .settings-tab-list { display: none; }
+  .settings-master-modal .settings-search { margin: 0; }
+  .settings-modal.settings-master-modal > .settings-mobile-picker { grid-column: 1; grid-row: 3; }
+  .settings-modal.settings-master-modal > .settings-modal-body { grid-column: 1; grid-row: 4; }
 }

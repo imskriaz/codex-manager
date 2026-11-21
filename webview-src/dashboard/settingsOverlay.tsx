@@ -25,6 +25,7 @@ import { clampWebviewZoom } from "./webviewZoom";
 import { BrowserNotifications } from "./browserNotifications";
 import { MaintenanceTools } from "./maintenanceTools";
 import { SystemStartupSetting } from './systemStartupSetup';
+import { MasterUsernameField } from './masterUsernameField';
 import type { SendAction } from "./hookTypes";
 import { TeamManagementPage, TEAM_SETTINGS_SECTIONS, type TeamSettingsSection } from "./teamManagementPage";
 import { isSettingsSectionEnabled, matchesSettingsSearch, SETTINGS_MODULE_KEYS } from "./settingsNavigation";
@@ -171,7 +172,7 @@ export function SettingsOverlay(props: {
   useEffect(() => {
     if (!props.open) return;
     const items: SettingsSearchItem[] = [];
-    accessibility.modalRef.current?.querySelectorAll<HTMLElement>(".settings-tab-panel .settings-block-title, .settings-tab-panel .step-slider-copy, .settings-tab-panel input[aria-label], .settings-tab-panel select[aria-label], .settings-tab-panel .maintenance-tool-title").forEach(element => {
+    accessibility.modalRef.current?.querySelectorAll<HTMLElement>(".settings-tab-panel .settings-block-title, .settings-tab-panel .step-slider-copy, .settings-tab-panel input[aria-label], .settings-tab-panel select[aria-label], .settings-tab-panel .maintenance-tool-title, .settings-tab-panel .maintenance-dashboard-card strong, .settings-tab-panel .settings-action-btn, .settings-tab-panel label").forEach(element => {
       const tab = element.closest<HTMLElement>(".settings-tab-panel")?.id.replace("settings-panel-", "") as SettingsTabId;
       const title = (element.getAttribute("aria-label") ?? element.textContent ?? "").trim();
       if (!title || items.some(item => item.tab === tab && item.title === title)) return;
@@ -200,7 +201,7 @@ export function SettingsOverlay(props: {
       <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="settings-modal-head"><div><div class="settings-modal-kicker">Workspace</div><div class="settings-modal-title" id="office-user-settings-title">User settings</div></div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
         <div class="settings-modal-body">
-          {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{tabs.some(tab => tab.id === item.tab) ? "Open ?" : "Enable module ?"}</span></button>)}</section> : null}<div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace access</div><div class="settings-block-sub">Your administrator controls the tools available to you.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Your files and projects are private to your workspace." : "File access is disabled for this workspace."}</div></div></div>
+<div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace access</div><div class="settings-block-sub">Your administrator controls the tools available to you.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Your files and projects are private to your workspace." : "File access is disabled for this workspace."}</div></div></div>
       </div>
     </div>, document.body);
   }
@@ -235,9 +236,9 @@ export function SettingsOverlay(props: {
             {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
           </select>
         </label>
-        <div class="settings-search"><input type="search" aria-label="Search all settings" placeholder="Search all settings?" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />{searching ? <button type="button" aria-label="Clear settings search" onClick={() => setSectionSearch("")}>?</button> : null}</div>
+
         <aside class="settings-sidebar">
-        <input type="search" aria-label="Find a settings section" placeholder="Find a section…" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />
+        <div class="settings-search"><input type="search" aria-label="Search all settings" placeholder="Search" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />{searching ? <button type="button" aria-label="Clear settings search" onClick={() => setSectionSearch("")}>×</button> : null}</div>
         <div class="settings-tab-list" role="tablist" aria-orientation="vertical" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
           {tabs.map((tab, index) => (
             <button
@@ -285,6 +286,7 @@ export function SettingsOverlay(props: {
 
         </aside>
         <div class="settings-modal-body">
+          {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{tabs.some(tab => tab.id === item.tab) ? "Open" : "Enable module"}</span></button>)}</section> : null}
           <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
           <div
             class="settings-tab-panel"
@@ -333,6 +335,22 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
+<div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
+                <div class="settings-block-head">
+                  <div class="settings-block-title">{passwordCopy.title}</div>
+                  <div class="settings-block-sub" title={passwordCopy.sub}>{passwordCopy.sub}</div>
+                </div>
+                {props.encryptedSyncNeedsConfiguration ? (
+                  <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
+                ) : null}
+                <div class="settings-note">{passwordCopy.note}</div>
+                <div class="settings-actions">
+                  <button class="settings-action-btn" type="button" onClick={props.onConfigureSync}>
+                    {passwordCopy.configure}
+                  </button>
+                </div>
+                <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.office?.id === "master"} />
+              </div>
             </div>
           </div>
 <div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={activeTab !== "modules" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
@@ -354,13 +372,13 @@ export function SettingsOverlay(props: {
                           ? "The standalone Node host will keep using port 39875 after VS Code closes."
                           : "Enable Web Dashboard for this host to stay active."}
                       </div>
-                    </SettingsToggleBlock>{props.settings.alwaysActive === true ? <SystemStartupSetting
+                    </SettingsToggleBlock><SystemStartupSetting
                       enabled={props.settings.alwaysActiveStartWithSystem === true}
                       connected={props.connected !== false && props.targetConnected !== false} parentOpen={props.open}
                       targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
-                    /> : null}</div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={activeTab !== "sessions" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
+                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={activeTab !== "sessions" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
                         <div class="settings-block-title">Text file limit</div>
                         <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
                       </div><SettingsDiscreteSlider
@@ -830,6 +848,23 @@ function SettingsPanelIntro(props: {
 }
 
 function SettingsTabIcon(props: { tab: SettingsTabId }) {
+  const paths: Partial<Record<SettingsTabId, string>> = {
+    modules: "M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3zM12 12h5v5h-5z",
+    dashboard: "M2 3h16v11H2zM7 18h6M10 14v4",
+    sessions: "M3 3h14v11H8l-5 3zM6 7h8M6 10h5",
+    connections: "M7 7 5 5a3 3 0 0 0-4 4l4 4a3 3 0 0 0 4 0M13 13l2 2a3 3 0 0 0 4-4l-4-4a3 3 0 0 0-4 0M6 6l8 8",
+    sync: "M3 7a7 7 0 0 1 12-3l2 2M17 2v4h-4M17 13A7 7 0 0 1 5 16l-2-2M3 18v-4h4",
+    desktop: "M3 3h14v10H3zM6 17h8M10 13v4M7 6l-2 2 2 2M10 10h3",
+    usage: "M3 17h14M5 14V8M10 14V3M15 14v-4",
+    "system-log": "M5 2h10l2 2v14H3V2zM6 6h8M6 10h8M6 14h5",
+    logs: "M5 2h10l2 2v14H3V2zM6 6h8M6 10h8M6 14h5",
+    users: "M6 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 17v-2a5 5 0 0 1 10 0v2M13 4a3 3 0 0 1 0 6M14 12a5 5 0 0 1 5 5",
+    workspace: "M2 5h6l2 2h8v10H2z",
+    mcp: "M7 3v4M13 3v4M4 7h12v3a6 6 0 0 1-12 0zM10 16v3",
+    proxy: "M2 6h14l-3-3M18 14H4l3 3",
+    database: "M4 5v10c0 3 12 3 12 0V5M4 5c0-3 12-3 12 0s-12 3-12 0M4 10c0 3 12 3 12 0"
+  };
+  if (paths[props.tab]) return <svg class="settings-tab-icon" viewBox="0 0 20 20" aria-hidden="true"><path d={paths[props.tab]} /></svg>;
   if (props.tab === "tools") return <svg class="settings-tab-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m12 3-1 4 3 3 4-1a6 6 0 0 1-7 6l-5 4-3-3 5-5a6 6 0 0 1 4-8Z" /></svg>;
   if (props.tab === "automation") {
     return (

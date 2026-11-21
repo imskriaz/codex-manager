@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.35
+
+- Rename Access to Modules, move feature options into their sections, and hide sections when their module is disabled.
+- Search individual settings with one compact search field in browser and VS Code; fix touch toggle sizing and responsive layout.
+- Default automatic account switching to 0% while preserving configured thresholds.
+
 ## 3.0.0-pre.34
 
 - Bound cached running indicators to 30 seconds without fresh confirmation, prefer current native status, and prevent old live snapshots from reviving stopped sessions. Keep history visible and show unverified status when checks remain inconclusive.

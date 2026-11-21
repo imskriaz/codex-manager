@@ -155,7 +155,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(feedback).toContain("done.`");
   });
 
-  it("keeps maintenance actions grouped behind separate confirmation and result dialogs", () => {
+  it("keeps maintenance confirmations and results in place", () => {
     const tools = readFileSync("webview-src/dashboard/maintenanceTools.tsx", "utf8");
     const queue = readFileSync("webview-src/dashboard/sessionQueueControl.tsx", "utf8");
     expect(tools).toContain("Archive manager");
@@ -183,13 +183,12 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(css).toContain(".cli-sessions-running-row.is-running .cli-sessions-running-title");
     expect(tools).toContain('class={`maintenance-report${storage ? " has-storage" : ""}`}');
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
-    const webDashboard = settings.indexOf('props.lang === "zh" ? "浏览器面板"');
-    const alwaysActive = settings.indexOf('title="Always Active"');
-    const dashboardApi = settings.indexOf('title="Dashboard API"');
-    expect(webDashboard).toBeGreaterThanOrEqual(0);
-    expect(alwaysActive).toBeGreaterThan(webDashboard);
+    const modules = settings.indexOf('id="settings-panel-modules"');
+    const dashboard = settings.indexOf('id="settings-panel-dashboard"');
+    expect(settings.indexOf('title="Web Dashboard"')).toBeGreaterThan(modules);
+    expect(settings.indexOf('title="Dashboard API"')).toBeLessThan(dashboard);
+    expect(settings.indexOf('title="Always Active"')).toBeGreaterThan(dashboard);
     expect(settings).not.toContain('title="Project task board"');
-    expect(dashboardApi).toBeGreaterThan(alwaysActive);
     expect(tools.indexOf('class="maintenance-sort"')).toBeLessThan(tools.indexOf('class="maintenance-selected-count"'));
     expect(tools).not.toContain('aria-label="Sessions Management"');
     expect(tools).toContain("projectEntries");

@@ -190,7 +190,7 @@ export function isHourlyQuotaControlEnabled(): boolean {
   return true;
 }
 
-export function normalizeAutoSwitchThreshold(value: number, fallback = 5): number {
+export function normalizeAutoSwitchThreshold(value: number, fallback = 0): number {
   return normalizeAutoQueueThreshold(value, fallback, 20);
 }
 

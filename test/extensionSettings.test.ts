@@ -102,7 +102,7 @@ describe("5-hour quota control defaults", () => {
       get: (key: string, fallback?: unknown) => /Threshold$/.test(key) ? Number.NaN : fallback
     } as never);
     const settings = new ExtensionSettingsStore().getDashboardSettings();
-    expect(settings.autoSwitchHourlyThreshold).toBe(5);
+    expect(settings.autoSwitchHourlyThreshold).toBe(0);
     expect(settings.autoSwitchWeeklyThreshold).toBe(0);
     expect(settings.autoResetWeeklyThreshold).toBe(0);
   });
@@ -214,7 +214,7 @@ describe("5-hour quota control defaults", () => {
     } as never);
 
     const settings = new ExtensionSettingsStore().getDashboardSettings();
-    expect(settings.autoSwitchHourlyThreshold).toBe(5);
+    expect(settings.autoSwitchHourlyThreshold).toBe(0);
     expect(settings.autoSwitchWeeklyThreshold).toBe(0);
     expect(settings.quotaWarningThreshold).toBe(10);
     expect(settings.quotaWarningWeeklyThreshold).toBe(1);
