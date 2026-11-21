@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.52
+
+- Keep Windows standalone restarts independent of the initiating terminal's process tree, preserving hidden windows, startup confirmation, authorization checks, and failure logs when that terminal closes.
+
 ## 3.0.0-pre.50
 
 - Show the weekly or monthly reset date and countdown in the 5-hour dashboard metric when the main quota is exhausted.

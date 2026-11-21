@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
@@ -16,6 +16,7 @@ for (const key of Object.keys(environment)) if (key.startsWith('CODEX_MANAGER_')
 const pending = new Set();
 let port;
 let token;
+let db;
 
 function launch(script, args = [], env = {}) {
   const child = spawn(process.execPath, [path.join(fixture, 'tools', script), ...args], {
@@ -66,7 +67,7 @@ try {
           response.end('Stopping');
           process.send?.({ type: 'codex-manager-stopping' });
           fs.writeFileSync(path.join(process.env.CODEX_MANAGER_STORAGE_ROOT, 'stopping'), '1');
-          setTimeout(() => server.close(() => process.exit(0)), 400);
+          setTimeout(() => server.close(() => process.exit(0)), 1500);
         } else if (request.url === '/crash') { response.end('Exiting'); setTimeout(() => process.exit(0), 10); }
         else response.end(JSON.stringify({ pid: process.pid }));
       });
@@ -82,7 +83,7 @@ try {
   port = socket.address().port;
   await new Promise(resolve => socket.close(resolve));
   const configPath = path.join(storage, 'always-online-relay.json');
-  const db = new DatabaseSync(path.join(storage, 'manager.sqlite'));
+  db = new DatabaseSync(path.join(storage, 'manager.sqlite'));
   db.exec('CREATE TABLE state(namespace TEXT,key TEXT,value TEXT,PRIMARY KEY(namespace,key))');
   const configModule = require(path.join(fixture, 'tools', 'standalone-config.cjs'));
   const initial = await launch('start-node.cjs', ['--background', '--data-dir', storage, '--port', String(port)]).done;
@@ -128,10 +129,12 @@ try {
   await rm(path.join(storage, 'stopping'));
   const interrupted = launch('update-standalone.cjs', ['--restart-only', '--data-dir', storage]);
   await until(async () => (await readFile(path.join(storage, 'stopping'), 'utf8')) === '1');
-  interrupted.child.kill();
+  if (process.platform === 'win32') {
+    execFileSync('taskkill.exe', ['/PID', String(interrupted.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'pipe' });
+  } else interrupted.child.kill();
   await interrupted.done;
   const thirdPid = await until(async () => { const current = await state(); return current.pid !== secondPid && current.pid; });
-  assert.notEqual(thirdPid, secondPid, 'Detached restart survives losing the initiating process after shutdown');
+  assert.notEqual(thirdPid, secondPid, 'Restart survives losing the initiating process tree after shutdown');
 
   const npmFixture = path.join(fixture, 'npm-cli.cjs');
   await writeFile(npmFixture, `require('node:fs').appendFileSync(${JSON.stringify(path.join(fixture, 'npm-trace'))},process.argv.slice(2).join(' ')+String.fromCharCode(10)); process.exit(process.argv.includes('compile')?7:0);`);
@@ -165,10 +168,12 @@ try {
     .run(JSON.stringify({ text: null }), 'files', path.basename(configPath));
   assert.equal(configModule.readConfig(configPath), undefined, 'Deleted SQLite config never falls back to stale disk credentials');
   db.close();
-  console.log('PASS: crash and unexpected clean-exit recovery without VS Code, intentional shutdown stays stopped, direct launch, old-version cleanup, SQLite priority, custom port, detached restart, Windows npm invocation, build and authorization failures, preserved startup errors.');
+  db = undefined;
+  console.log('PASS: crash and unexpected clean-exit recovery without VS Code, intentional shutdown stays stopped, direct launch, old-version cleanup, SQLite priority, custom port, process-tree-independent restart, Windows npm invocation, build and authorization failures, preserved startup errors.');
 } finally {
   try { await stop(); } catch { /* Fixture may not have started. */ }
   for (const child of pending) child.kill();
+  db?.close();
   assert.ok(path.resolve(fixture).startsWith(path.resolve(os.tmpdir()) + path.sep));
   await rm(fixture, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
 }
