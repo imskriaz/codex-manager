@@ -35,7 +35,7 @@ export function useSessionAccess(props: { session?: DashboardCliSessionSummary; 
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
   }, [scope]);
-  return { mode: access ? access.mode : props.session?.sandboxMode, profile: access?.profile, autoApprove: access?.approvalPolicy === "never", pending, status,
+  return { mode: access ? access.mode : props.session?.sandboxMode, profile: access?.profile, autoApprove: (access?.approvalPolicy ?? 'never') === 'never', pending, status,
     change: (mode?: DashboardCliSandboxMode, autoApprove?: boolean) => {
       if (!props.session || !props.connected || request.current || !props.send) return;
       let id: string | undefined;

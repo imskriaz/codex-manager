@@ -88,7 +88,10 @@ export async function startNodeHost(): Promise<void> {
     await waitWithin(disposePersistentLogging(true), 500, 'Standalone failure logs did not finish saving.').catch(() => undefined);
     throw error;
   });
-  const exit = (): void => { void shutdown().then(() => process.exit(0), error => { console.error("[codexManager] Node shutdown failed", error); process.exit(1); }); };
+  const exit = (): void => {
+    if (process.connected) process.send?.({ type: 'codex-manager-stopping' });
+    void shutdown().then(() => process.exit(0), error => { console.error("[codexManager] Node shutdown failed", error); process.exit(1); });
+  };
   process.once("SIGINT", exit);
   process.once("SIGTERM", exit);
   try {

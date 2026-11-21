@@ -12,6 +12,7 @@ for (const key of Object.keys(process.env)) if (key.startsWith("CODEX_MANAGER_")
 const root = await mkdtemp(path.join(os.tmpdir(), "manager-node-handoff-"));
 const project = path.resolve(import.meta.dirname, "..");
 process.env.CODEX_MANAGER_STORAGE_ROOT = root;
+process.env.CODEX_MANAGER_ADMIN_USERNAME = 'manager-test';
 process.env.CODEX_HOME = root;
 process.env.NODE_PATH = path.join(project, "tools", "node-vscode-shim");
 const require = createRequire(import.meta.url);
@@ -97,7 +98,9 @@ try {
   await new Promise(resolve => placeholder.close(resolve));
   await ready();
   timings.handoffReadyMs = Math.round(performance.now() - started);
-  assert.equal(readSqliteStateFile(pidPath), String(first.child.pid));
+  let workerPid = readSqliteStateFile(pidPath);
+  assert.notEqual(workerPid, String(first.child.pid), 'The supervisor keeps the port-owning worker in a separate process');
+  process.kill(Number(workerPid), 0);
   let response = await remote("/api/state", { headers: { cookie: `codex_dashboard_session=${legacyToken}` } });
   assert.equal(response.status, 200, "existing browser login must survive VS Code -> Node");
   assert.equal((await response.json()).connectedPeers.find(peer => peer.local).id, deviceId, "Node must retain the VS Code device identity");
@@ -106,15 +109,24 @@ try {
   response = await remote("/login", { method: "POST", body: "password=wrong", headers: { "content-type": "application/x-www-form-urlencoded" } });
   assert.equal(response.status, 401);
   const loginStarted = performance.now();
-  response = await remote("/login", { method: "POST", body: new URLSearchParams({ password }), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  response = await remote("/login", { method: "POST", body: new URLSearchParams({ username: 'manager-test', password }), headers: { "content-type": "application/x-www-form-urlencoded" } });
   timings.loginMs = Math.round(performance.now() - loginStarted);
   assert.equal(response.status, 303);
   const cookie = response.headers.get("set-cookie").split(";")[0];
   assert.equal((await remote("/api/state", { headers: { cookie } })).status, 200);
+  process.kill(Number(workerPid), 'SIGKILL');
+  const recoveryDeadline = Date.now() + 15_000;
+  while (readSqliteStateFile(pidPath) === workerPid) {
+    assert.ok(Date.now() < recoveryDeadline, 'Standalone must recover a killed worker without VS Code');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  workerPid = readSqliteStateFile(pidPath);
+  await ready();
+  assert.equal((await remote('/api/state', { headers: { cookie } })).status, 200, 'Browser login survives automatic crash recovery');
   const competing = await launch(["--data-dir", root, "--port", String(port)]).done;
   assert.equal(competing.code, 1, "a competing host must fail");
   assert.match(competing.output, /already owned by another host/);
-  assert.equal(readSqliteStateFile(pidPath), String(first.child.pid), "competing launch must not remove the owner's PID");
+  assert.equal(readSqliteStateFile(pidPath), workerPid, "competing launch must not remove the owner's PID");
   await stop();
   assert.equal((await first.done).code, 0);
   const background = await launch(["--background", "--config", configPath]).done;

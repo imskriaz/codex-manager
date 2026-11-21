@@ -122,7 +122,7 @@ if (args.includes("--background")) {
     if (message?.type !== "codex-manager-ready" || ready) return;
     ready = true;
     clearTimeout(timer);
-    console.log(`Codex Manager running in background at ${message.url} (PID ${child.pid}).`);
+    console.log(`Codex Manager running in background at ${message.url} (PID ${message.pid ?? child.pid}).`);
     child.disconnect();
     child.unref();
   });
@@ -130,6 +130,11 @@ if (args.includes("--background")) {
 }
 
 const shim = path.join(__dirname, "node-vscode-shim");
+if (!args.includes('--host-worker')) {
+  require('./standalone-supervisor.cjs').supervise(args, startupLog);
+  return;
+}
+
 process.env.NODE_PATH = [shim, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
 Module._initPaths();
 

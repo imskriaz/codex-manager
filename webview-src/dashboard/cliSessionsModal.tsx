@@ -550,7 +550,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const setModel = (value?: string) => updateDraftSettings({ model: value });
   const setReasoningEffort = (value?: string) => updateDraftSettings({ reasoningEffort: value });
   const setSandboxMode = (value: DashboardCliSandboxMode) => updateDraftSettings({ sandboxMode: value });
-  const autoApprove = composerDrafts[draftKey]?.autoApprove ?? Boolean(standaloneLocal);
+  const autoApprove = composerDrafts[draftKey]?.autoApprove ?? true;
   const draft = composerDrafts[draftKey]?.text ?? "";
   const attachments = composerDrafts[draftKey]?.attachments ?? EMPTY_CHAT_ATTACHMENTS;
   const setDraft = (value: string | ((current: string) => string)): void => {

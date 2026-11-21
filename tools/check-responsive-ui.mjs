@@ -6,6 +6,7 @@ import { checkSessionFormattingUi } from './check-session-formatting-ui.mjs';
 import { checkWorkMonitorUi } from './check-work-monitor-ui.mjs';
 import { checkComposerResumeUi } from './check-composer-resume-ui.mjs';
 import { checkRecoveryToastUi } from './check-recovery-toast-ui.mjs';
+import { checkConnectionBannerUi } from './check-connection-banner-ui.mjs';
 import { checkImagesUi } from './check-images-ui.mjs';
 import { checkSessionAccessUi } from './check-session-access-ui.mjs';
 import { checkUploadsUi } from './check-uploads-ui.mjs';
@@ -730,6 +731,12 @@ try {
       await checkSystemStartupUi(page, { origin, width, output });
       assert.deepEqual(errors, [], 'Startup setup has no browser runtime errors');
       results.push({ width, height, readyMs: Math.round(performance.now() - started), checks: 'Independent startup, cancellation, verification failure, timeout, stale result, verified success' });
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--connection-banner')) {
+      await checkConnectionBannerUi(page, { origin, parentId, width, output });
+      assert.deepEqual(errors, [], 'Connection warnings have no browser errors');
+      results.push({ width, height, checks: 'compact warning geometry, recovery, screenshots and console' });
       await context.close(); continue;
     }
     if (process.argv.includes('--recovery-toasts')) {

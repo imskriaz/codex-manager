@@ -54,7 +54,7 @@ try {
   await mkdir(path.join(fixture, 'tools'), { recursive: true });
   await mkdir(path.join(fixture, 'out'));
   await mkdir(storage);
-  for (const file of ['update-standalone.cjs', 'start-node.cjs', 'standalone-config.cjs'])
+  for (const file of ['update-standalone.cjs', 'start-node.cjs', 'standalone-config.cjs', 'standalone-supervisor.cjs'])
     await copyFile(new URL(file, import.meta.url), path.join(fixture, 'tools', file));
   await writeFile(path.join(fixture, 'out', 'node.js'), `
     const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
@@ -64,9 +64,11 @@ try {
         if (request.url === '/shutdown') {
           if (request.headers['x-codex-admin'] !== process.env.CODEX_MANAGER_ADMIN_TOKEN) { response.statusCode = 403; response.end(); return; }
           response.end('Stopping');
+          process.send?.({ type: 'codex-manager-stopping' });
           fs.writeFileSync(path.join(process.env.CODEX_MANAGER_STORAGE_ROOT, 'stopping'), '1');
           setTimeout(() => server.close(() => process.exit(0)), 400);
-        } else response.end(JSON.stringify({ pid: process.pid }));
+        } else if (request.url === '/crash') { response.end('Exiting'); setTimeout(() => process.exit(0), 10); }
+        else response.end(JSON.stringify({ pid: process.pid }));
       });
       server.once('error', reject);
       server.listen(Number(process.env.CODEX_MANAGER_PORT), '127.0.0.1', () => {
@@ -87,7 +89,13 @@ try {
   assert.equal(initial.code, 0, initial.output);
   token = configModule.readConfig(configPath).adminToken;
   assert.ok(token.length >= 43, 'Fresh standalone launch saves restart credentials even with an existing database');
-  const firstPid = (await state()).pid;
+  const initialPid = (await state()).pid;
+  process.kill(initialPid, 'SIGKILL');
+  const crashPid = await until(async () => { const current = await state(); return current.pid !== initialPid && current.pid; });
+  assert.notEqual(crashPid, initialPid, 'A killed standalone host restarts without VS Code');
+  await fetch(`http://127.0.0.1:${port}/crash`);
+  const firstPid = await until(async () => { const current = await state(); return current.pid !== crashPid && current.pid; });
+  assert.notEqual(firstPid, crashPid, 'Unexpected clean exit also recovers automatically');
 
   // Version cleanup must preserve a host while its replacement is installed.
   const oldTools = path.join(fixture, 'extensions', 'old', 'tools');
@@ -150,11 +158,14 @@ try {
   const recovered = await launch('update-standalone.cjs', ['--restart-only', '--data-dir', storage]).done;
   assert.equal(recovered.code, 0, recovered.output);
   await state();
+  await stop();
+  await new Promise(resolve => setTimeout(resolve, 1_500));
+  await assert.rejects(state, 'An intentional shutdown must not restart the host');
   db.prepare('UPDATE state SET value=? WHERE namespace=? AND key=?')
     .run(JSON.stringify({ text: null }), 'files', path.basename(configPath));
   assert.equal(configModule.readConfig(configPath), undefined, 'Deleted SQLite config never falls back to stale disk credentials');
   db.close();
-  console.log('PASS: direct launch, old-version cleanup preserves the live host, SQLite priority, custom port, detached restart after parent loss, Windows npm invocation, build failure, authorization failure, startup error details, retry after failed startup, persistent failure log.');
+  console.log('PASS: crash and unexpected clean-exit recovery without VS Code, intentional shutdown stays stopped, direct launch, old-version cleanup, SQLite priority, custom port, detached restart, Windows npm invocation, build and authorization failures, preserved startup errors.');
 } finally {
   try { await stop(); } catch { /* Fixture may not have started. */ }
   for (const child of pending) child.kill();

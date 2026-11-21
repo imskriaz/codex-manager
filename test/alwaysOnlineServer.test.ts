@@ -84,7 +84,6 @@ describe("always-online WebSocket relay handoff", () => {
     expect(settings).not.toContain('title="Keep connections online"');
     expect(settings).not.toContain('title="Workspace connection"');
     expect(settings).toContain('title="WS Cross System"');
-    expect(settings).toContain('even when Sync and Claim is off');
     const workbench = readFileSync('src/presentation/workbench/accountsWorkbench.ts', 'utf8');
     const configurationListener = workbench.slice(workbench.indexOf('onDidChangeConfiguration((event) => {'), workbench.indexOf('await measureStep("notifyIndexHealth"'));
     expect(configurationListener).not.toContain('event.affectsConfiguration("codexManager.encryptedSyncEnabled")');

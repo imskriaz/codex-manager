@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.39
+
+- Size connection warnings to their contents on desktop and mobile.
+- Supervise standalone hosts and restart unexpected exits without reopening VS Code; preserve intentional shutdown and ownership checks.
+- Default Auto approve to On for fresh sessions and unset preferences, preserving explicit Off choices.
+
 ## 3.0.0-pre.37
 
 - Reconcile running indicators by runtime observation time rather than transcript modification time, so recent cached live events cannot override fresh status checks.

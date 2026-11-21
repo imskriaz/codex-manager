@@ -1139,7 +1139,7 @@ async function runNewCodexCliSession(options: {
   autoApprove?: boolean;
   projectPath?: string;
 }, onStarted: (sessionId: string) => void): Promise<string> {
-  options = { ...options, sandboxMode: options.sandboxMode ?? 'danger-full-access' };
+  options = { ...options, sandboxMode: options.sandboxMode ?? 'danger-full-access', autoApprove: options.autoApprove === undefined ? true : options.autoApprove };
   if (options.autoApprove !== undefined && typeof options.autoApprove !== 'boolean') throw new Error('Auto approval must be on or off.');
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
@@ -1380,7 +1380,7 @@ async function sendAppServerSessionMessage(options: {
       const preserved = savedAccess && inherited === savedAccess.access ? savedAccess.settings : undefined;
       const opaqueProfile = Boolean(recorded && !transcriptPolicy || stored?.access && !stored.sandboxPolicy);
       const defaultSandbox = !options.sandboxMode && !inherited && !stored?.access;
-      const approvalPolicy = inherited?.approvalPolicy ?? stored?.approvalPolicy;
+      const approvalPolicy = inherited?.approvalPolicy ?? stored?.approvalPolicy ?? 'never';
       if (approvalPolicy) Object.assign(params, { approvalPolicy });
       const restore = defaultSandbox || options.sandboxMode === 'danger-full-access' ? { permissions: ':danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
       const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });

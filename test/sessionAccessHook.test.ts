@@ -39,11 +39,20 @@ it('keeps a newer Codex change instead of replacing it with an older acknowledge
 });
 
 it('changes approval independently, blocks duplicates, and waits for confirmation', () => {
-  const hook = render(); hook.change(undefined, true); hook.change(undefined, true);
+  const hook = render({ session: { ...options.session!, access: { approvalPolicy: 'on-request', updatedAt: 100000 } } }); hook.change(undefined, true); hook.change(undefined, true);
   expect(send).toHaveBeenCalledExactlyOnceWith(undefined, true);
   expect(render().autoApprove).toBe(false);
   emit({ type: 'dashboard:action-result', action: 'setCodexSessionAccess', requestId: 'access-1', status: 'completed', payload: { cliSession: { ...options.session!, access: { mode: 'workspace-write', approvalPolicy: 'never', updatedAt: 100001 } } } });
   expect(render().autoApprove).toBe(true); expect(render().mode).toBe('workspace-write');
+});
+
+it('defaults missing approval preferences to On and preserves every explicit policy', () => {
+  expect(render().autoApprove).toBe(true);
+  expect(render({ session: { ...options.session!, access: { mode: 'read-only', updatedAt: 100000 } } }).autoApprove).toBe(true);
+  for (const approvalPolicy of ['on-request', 'on-failure', 'untrusted', 'never'] as const) {
+    expect(render({ session: { ...options.session!, access: { mode: 'read-only', approvalPolicy, updatedAt: 100000 } } }).autoApprove).toBe(approvalPolicy === 'never');
+  }
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('turns auto approval off without changing Full access and preserves it on failure', () => {

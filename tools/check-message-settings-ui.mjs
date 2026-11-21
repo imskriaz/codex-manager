@@ -7,6 +7,13 @@ export async function checkMessageSettingsUi(page, width, height, output) {
   await page.getByRole('button', { name: 'Message settings', exact: true }).click();
   const panel = page.locator('.cli-composer-options');
   await panel.waitFor();
+  const approval = panel.getByRole('checkbox', { name: 'Auto approve', exact: true });
+  assert.equal(await approval.isChecked(), true, 'Sessions without an approval preference default to On');
+  await approval.click();
+  await page.waitForFunction(() => !document.querySelector('.cli-approval-control input')?.checked);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  assert.equal(await approval.isChecked(), false, 'Explicit Off survives reopening settings');
   const openMs = Date.now() - started;
   assert.equal(await page.locator('.cli-usage-banner').count(), 0);
   const layout = await panel.evaluate(element => {
@@ -44,5 +51,16 @@ export async function checkMessageSettingsUi(page, width, height, output) {
   await page.evaluate(() => { window.__failResume = false; });
   await page.keyboard.press('Escape');
   assert.equal(await panel.count(), 0);
+  const sidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+  if (await sidebar.isVisible()) await sidebar.click();
+  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  assert.equal(await approval.isChecked(), true, 'Fresh chat defaults to Auto approve On');
+  await approval.click();
+  assert.equal(await approval.isChecked(), false, 'New chat allows an explicit Off draft');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Message settings', exact: true }).click();
+  assert.equal(await approval.isChecked(), false, 'Explicit Off draft survives reopening');
+  await page.keyboard.press('Escape');
   console.log(JSON.stringify({ width, height, openMs, checkMs: Date.now() - started, columns: layout.columns, fontsMatch: layout.fontsMatch, panelHeight: bounds.height }));
 }
