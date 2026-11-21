@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-pre.43
+
+- Use compact single-row Settings tables with detail dialogs for users, connections, activity, proxy requests, and system logs. Open new data connections in a separate form dialog.
+- Keep one sidebar search, find collapsed options, focus required module switches, and preserve local zoom while a target is offline.
+- Show the master username before the password button and remove it from the password dialog. Correct activity-load errors and tab scroll position.
+
+
 ## 3.0.0-pre.42
 
 - Reduce outer padding, section spacing, chart and quota insets, and account card padding in the workspace right-panel dashboard.

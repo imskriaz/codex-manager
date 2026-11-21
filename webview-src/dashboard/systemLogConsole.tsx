@@ -1,6 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 
-const consoleDateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+import { SettingsRecordList, SettingsRecordDetails } from "./settingsRecordList";
+
+
 
 export function parseSystemLogRecords(records: unknown[]) {
   return records.slice(-1_000).flatMap((value, index) => {
@@ -17,7 +19,7 @@ export function parseSystemLogRecords(records: unknown[]) {
   });
 }
 
-export function SystemLogConsole(props: { records: unknown[]; loading: boolean; emptyMessage?: string }) {
+export function SystemLogConsole(props: { records: unknown[]; loading: boolean; emptyMessage?: string; open?: boolean }) {
   const records = useMemo(() => parseSystemLogRecords(props.records), [props.records]);
   const [filter, setFilter] = useState("all");
   const [following, setFollowing] = useState(true);
@@ -46,10 +48,7 @@ export function SystemLogConsole(props: { records: unknown[]; loading: boolean; 
         follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
         setFollowing(follow.current);
       }}>
-      {!visible.length ? <div class="system-log-empty">{props.emptyMessage ?? (records.length ? "No entries match this level." : props.loading ? "Loading logs…" : "No saved logs.")}</div> : visible.map(row => <details class={`system-log-entry is-${row.level}`} key={row.key} onToggle={event => { if (event.currentTarget.open) { follow.current = false; setFollowing(false); } }}>
-        <summary><time dateTime={row.timestamp} title={row.timestamp ? new Date(row.timestamp).toLocaleString() : "Date unavailable"}>{row.timestamp ? consoleDateFormat.format(new Date(row.timestamp)) : "—"}</time><span class="system-log-level">{row.level === "warning" ? "warn" : row.level}</span><span class="system-log-message"><span class="system-log-scope">{row.scope}</span>{row.message}</span></summary>
-        <pre>{row.details}</pre>
-      </details>)}
+      {!visible.length ? <div class="system-log-empty">{props.emptyMessage ?? (records.length ? "No entries match this level." : props.loading ? "Loading logs…" : "No saved logs.")}</div> : <SettingsRecordList label="System log entries" open={props.open} onOpen={() => {follow.current=false;setFollowing(false);}} columns={["Message", "Scope", "Level", "Time"]} rows={visible.map(row => ({id:row.key,label:"Log entry details",cells:[row.message,row.scope,row.level,row.timestamp ? new Date(row.timestamp).toLocaleTimeString() : "Date unavailable"], details:<><SettingsRecordDetails fields={[["Time",row.timestamp ? new Date(row.timestamp).toLocaleString() : "Date unavailable"],["Level",row.level],["Scope",row.scope],["Message",row.message]]}/><pre class="settings-record-json">{row.details}</pre></>}))}/>}
     </div>
     <div class="system-log-follow"><span>{following ? "Following latest entries" : "Auto-scroll paused"}</span><button class="settings-action-btn" type="button" disabled={following} onClick={scrollToLatest}>Latest ↓</button></div>
   </>;

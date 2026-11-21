@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canShowTeamSettings } from "../webview-src/dashboard/settingsOverlay";
 import type { DashboardOfficeView, DashboardSettings } from "../src/domain/dashboard/types";
-import { isSettingsSectionEnabled, matchesSettingsSearch } from "../webview-src/dashboard/settingsNavigation";
+import { isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "../webview-src/dashboard/settingsNavigation";
 
 const enabled = { webDashboardEnabled: true, teamWorkspaceEnabled: true } as DashboardSettings;
 const admin = { id: "master", role: "unrestricted-admin" } as DashboardOfficeView;
@@ -24,6 +24,13 @@ describe("conditional Settings sections", () => {
     expect(isSettingsSectionEnabled("proxy", { apiAccessEnabled: true } as DashboardSettings, true)).toBe(true);
     expect(isSettingsSectionEnabled("proxy", { apiAccessEnabled: false } as DashboardSettings, true)).toBe(false);
     expect(isSettingsSectionEnabled("proxy", { apiAccessEnabled: true } as DashboardSettings, false)).toBe(false);
+  });
+  it("routes disabled Team search results to the first required module", () => {
+    expect(resolveSettingsModuleKey("proxy", { webDashboardEnabled: false } as DashboardSettings)).toBe("webDashboardEnabled");
+    expect(resolveSettingsModuleKey("proxy", { webDashboardEnabled: true, teamWorkspaceEnabled: false } as DashboardSettings)).toBe("teamWorkspaceEnabled");
+    expect(resolveSettingsModuleKey("proxy", enabled)).toBe("apiAccessEnabled");
+    expect(resolveSettingsModuleKey("sessions", enabled)).toBe("cliIntegrationEnabled");
+    expect(resolveSettingsModuleKey("general", enabled)).toBeUndefined();
   });
   it("shows the same Team sections to the local VS Code user and browser administrators", () => {
     expect(canShowTeamSettings(enabled)).toBe(true);

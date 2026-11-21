@@ -18911,6 +18911,14 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .settings-master-modal .settings-capacity-controls .step-slider-head { margin: 0; }
 
 /* One settings search, shared by the browser and VS Code. */
+.team-connection-modal { width: min(560px, calc(100vw - 24px)); }
+.team-connection-modal .team-settings-form { margin: 0; gap: 12px; }
+.team-connection-modal .team-field-grid { gap: 10px; }
+.team-connection-modal .team-form-footer { margin-top: 0; padding-top: 12px; }
+@media (max-width: 760px) { .team-connection-modal input { font-size: max(16px, calc(12px * var(--dashboard-text-scale, 1))); } }
+.settings-master-modal .settings-toggle-content { display: contents; }
+.settings-master-modal .settings-toggle-content[hidden], .settings-master-modal .settings-capacity-controls[hidden] { display: none; }
+
 .settings-master-modal .settings-tab-panel { gap: 0; }
 .settings-master-modal .settings-layout > .settings-refresh-group { padding: 0; border: 0; gap: 0; }
 .settings-modal.settings-master-modal { grid-template-rows: auto minmax(0, 1fr); }
@@ -18941,4 +18949,26 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
   .settings-master-modal .settings-search { margin: 0; }
   .settings-modal.settings-master-modal > .settings-mobile-picker { grid-column: 1; grid-row: 3; }
   .settings-modal.settings-master-modal > .settings-modal-body { grid-column: 1; grid-row: 4; }
+  .settings-master-modal input:not([type=range]):not([type=checkbox]), .settings-master-modal select, .settings-master-modal textarea { font-size: max(16px, calc(12px * var(--dashboard-text-scale, 1))); }
 }
+
+/* Settings lists keep one compact line per record; full values open in a dialog. */
+.settings-record-scroll { width:100%; min-width:0; overflow:auto; }
+.settings-record-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.settings-record-table th, .settings-record-table td { padding:5px 8px; height:30px; box-sizing:border-box; border-bottom:1px solid var(--border-muted); text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.settings-record-table th { color:var(--muted); font-weight:500; }
+.settings-record-table th:first-child { width:40%; }
+.settings-record-table tbody tr { cursor:pointer; }
+.settings-record-table tbody tr:hover, .settings-record-table tbody tr:focus-within { background:var(--bg-selected); }
+.settings-record-table .settings-record-open { display:block; width:100%; min-height:0; padding:0; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; line-height:20px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.settings-record-modal { width:min(680px, calc(100vw - 24px)); }
+.settings-record-details { display:grid; gap:10px; margin:0; }
+.settings-record-details > div { display:grid; grid-template-columns:100px minmax(0, 1fr); gap:12px; }
+.settings-record-details dt { color:var(--muted); font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.settings-record-details dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:calc(12px * var(--dashboard-text-scale, 1)); }
+.settings-record-json { max-height:240px; overflow:auto; padding:10px; border:1px solid var(--border-muted); white-space:pre-wrap; overflow-wrap:anywhere; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+@media(max-width:440px) { .settings-record-details > div { grid-template-columns:80px minmax(0, 1fr); gap:8px; } .settings-record-table th, .settings-record-table td { padding:5px 4px; } }
+
+
+.settings-record-table.maintenance-record-table th:first-child { width:48px; }
+.settings-record-table.maintenance-record-table th:nth-child(2) { width:45%; }

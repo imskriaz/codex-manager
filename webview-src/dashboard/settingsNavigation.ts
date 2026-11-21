@@ -19,3 +19,11 @@ export function matchesSettingsSearch(text: string, query: string): boolean {
   const normalized = text.toLocaleLowerCase();
   return query.trim().toLocaleLowerCase().split(/\s+/).every(word => normalized.includes(word));
 }
+
+export function resolveSettingsModuleKey(section: string, settings: DashboardSettings): keyof DashboardSettings | undefined {
+  if (["users", "workspace", "mcp", "database", "logs", "proxy"].includes(section)) {
+    if (!settings.webDashboardEnabled) return "webDashboardEnabled";
+    if (settings.teamWorkspaceEnabled !== true) return "teamWorkspaceEnabled";
+  }
+  return SETTINGS_MODULE_KEYS[section];
+}

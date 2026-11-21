@@ -46,8 +46,13 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     assert.equal(await tool.getByText(system,{exact:true}).count(), 1, 'The source system appears once');
     assert.equal(await tool.locator('.maintenance-footer').count(), 0, 'No disabled action footer');
     assert.equal(await tool.getByRole('button', exact('Delete selected')).count(), 0, 'Selection actions appear when useful');
-    const rowHeight = await tool.locator('.maintenance-item').first().evaluate(row=>row.getBoundingClientRect().height);
-    assert.ok(rowHeight <= 44, 'Rows stay compact');
+    const rowHeight = await tool.locator('.settings-record-table tbody tr').first().evaluate(row=>row.getBoundingClientRect().height);
+    assert.ok(rowHeight <= 34, 'Rows stay compact');
+    await tool.getByRole('button', {name:/^Details for /}).first().click();
+    const itemDetails=page.getByRole('dialog').filter({has:page.getByRole('button',{name:'Close item details',exact:true})});
+    await itemDetails.waitFor();
+    await itemDetails.getByRole('button',{name:'Close item details',exact:true}).click();
+    assert.equal(await rows.first().isChecked(), false, 'Viewing item details never selects cleanup');
     await tool.locator('summary[aria-label="More cleanup actions"]').click();
     await tool.getByRole('button', exact(clear)).click();
     await page.getByRole('region', exact('Delete conversations permanently')).waitFor();
@@ -93,7 +98,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await page.evaluate(()=>{window.__maintenanceCount=2;window.__maintenanceLongTitle=true;});
   await page.getByRole('button', exact('Archive manager Manage')).click();
   await compact.getByRole('group', exact('Tool items')).getByRole('checkbox').last().waitFor();
-  assert.ok(await compact.locator('.maintenance-item strong').first().evaluate(element=>element.scrollWidth>element.clientWidth), 'Long titles truncate visually without widening the dialog');
+  assert.ok(await compact.locator('.settings-record-open').first().evaluate(element=>element.scrollWidth>element.clientWidth), 'Long titles truncate visually without widening the dialog');
   await page.screenshot({path:path.join(output,`maintenance-compact-${width}x${height}.png`),animations:'disabled'});
   await page.evaluate(()=>document.documentElement.setAttribute('data-theme','dark'));
   await page.screenshot({path:path.join(output,`maintenance-compact-dark-${width}x${height}.png`),animations:'disabled'});
@@ -212,7 +217,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const largest = page.getByRole('region', exact('Largest conversations'));
   await largest.getByRole('group', exact('Tool items')).getByRole('checkbox').first().waitFor();
   await largest.getByText('2 conversation file(s) could not be inspected and were kept. Available conversations are listed by size.',{exact:true}).waitFor();
-  assert.match(await largest.locator('.maintenance-item small').first().innerText(), /^63 MB/);
+  assert.match(await largest.locator('.settings-record-table tbody td:last-child').first().innerText(), /^63 MB/);
   assert.equal(await largest.locator('.maintenance-more').count(), 0, 'Largest conversations offers selected deletion without a whole-history cleanup action');
   await largest.getByRole('group', exact('Tool items')).getByRole('checkbox').first().check();
   const beforeDelete = await actionCount('runMaintenance');

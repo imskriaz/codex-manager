@@ -12,7 +12,7 @@ if (!snapshotResponse.ok) throw new Error('Local snapshot returned '+snapshotRes
 const original = await snapshotResponse.json();
 const output = path.join(tmpdir(), 'codex-manager-settings-hosts');
 await mkdir(output, { recursive: true });
-const team = { users: [], servers: [], workspaceRoot: 'D:/team', databaseProvider: 'sqlite', postgresConfigured: false, entries: [], requests: [] };
+const team = { users: [], servers: [], workspaceRoot: 'D:/team', databaseProvider: 'sqlite', postgresConfigured: false, entries: [{id:'audit-fixture',at:Date.now(),actor:{id:'master',name:'Master'},action:'Fixture action',status:'completed',sessionId:'fixture-session'}], requests: [{id:'proxy-fixture',startedAt:Date.now(),method:'POST',path:'/v1/responses',status:'completed',apiKeyName:'Fixture key',inputTokens:12,outputTokens:4}] };
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const host of ['browser', 'webview']) for (const [width, height] of [[1440, 900], [390, 844], [844, 390]]) {
@@ -22,8 +22,10 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(12_000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await useWorkspaceDashboardAssets(page, origin);
+    let activityFailure = false;
     await page.route('**/api/**', route => {
       const request = route.request();
+      if (activityFailure && request.url().endsWith('/api/office/logs')) return route.fulfill({ status: 503, json: { error: 'Activity storage is temporarily unavailable.' } });
       if (request.method() !== 'GET') return route.fulfill({ status: 409, json: { error: 'The user changed in another window. Refresh before retrying.' } });
       return route.fulfill({ json: team });
     });
@@ -32,6 +34,7 @@ try {
       const state=${JSON.stringify(state)}, team=${JSON.stringify(team)};
       const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
       window.__settingsActions=[];
+      window.__setPeerConnected=connected=>{state.connectedPeers[0].connected=connected;dispatch({type:'dashboard:snapshot',state});};
       window.__setSettings=patch=>{Object.assign(state.settings,patch);dispatch({type:'dashboard:snapshot',state});};
       window.acquireVsCodeApi=()=>({setState(){},postMessage(message){
         window.__settingsActions.push(message);
@@ -42,8 +45,10 @@ try {
           let payload={},error;
           if(message.action==='listCodexCliSessions')payload={cliSessions:[],cliComposerConfig:{models:[],projects:[],terminalSupported:false}};
           if(message.action==='getMasterUsername')payload={masterUsername:'fixture-admin'};
+          if(message.action==='viewLogs')payload={logDownload:{text:JSON.stringify({records:[{timestamp:new Date().toISOString(),level:'error',scope:'fixture',message:'Fixture system log',sequence:1}]})}};
           if(message.action==='teamSettingsRequest'){
             if(message.payload.teamSettingsRequest.method!=='GET')error='The user changed in another window. Refresh before retrying.';
+            else if(window.__teamActivityFailure && message.payload.teamSettingsRequest.path==='/api/office/logs')error='Activity storage is temporarily unavailable.';
             else payload={teamSettingsResponse:team};
           }
           dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',error,payload});
@@ -73,8 +78,47 @@ try {
       assert.ok(await settings.locator('.settings-modal-body').evaluate(element => element.scrollWidth <= element.clientWidth + 1), `${host}/${width}/${section}: no horizontal scroll`);
       await page.screenshot({ path: path.join(output, `${host}-${section}-${width}x${height}.png`) });
     }
+    for (const [section, table, label] of [['logs','User audit log','Fixture action'],['proxy','Proxy requests','POST /v1/responses']]) {
+      await select(section);
+      const list = settings.getByRole('table', {name:table});
+      await list.getByRole('button', {name:label,exact:true}).click();
+      const details=page.getByRole('dialog',{name:label,exact:true});await details.waitFor();
+      await details.getByRole('button',{name:'Close record details'}).click();
+      const heights=await list.locator('tbody tr').evaluateAll(rows=>rows.map(row=>row.getBoundingClientRect().height));
+      assert.ok(heights.every(height=>height<=34),'Record rows stay compact: '+JSON.stringify(heights));
+      await page.screenshot({path:path.join(output,host+'-table-'+section+'-'+width+'x'+height+'.png')});
+    }
+    await select('system-log');
+    await settings.getByRole('button',{name:'Show log',exact:true}).click();
+    await settings.getByRole('table',{name:'System log entries'}).getByRole('button',{name:'Log entry details'}).click();
+    const logDetail=page.getByRole('dialog',{name:'Log entry details'});await logDetail.waitFor();
+    await logDetail.getByRole('button',{name:'Close record details'}).click();
+    await settings.getByRole('button',{name:'Close log',exact:true}).click();
+    await select('mcp');
+    assert.equal(await settings.getByRole('textbox', { name: 'Connection ID', exact: true }).count(), 0, 'Connections tab shows the list without an always-open add form');
+    await settings.getByRole('button', { name: 'Add connection', exact: true }).click();
+    const connectionModal = page.getByRole('dialog', { name: 'Add data connection', exact: true });
+    await connectionModal.waitFor();
+    await connectionModal.getByRole('textbox', { name: 'Connection ID', exact: true }).fill('fixture');
+    await connectionModal.getByRole('textbox', { name: 'Display name', exact: true }).fill('Fixture');
+    await connectionModal.getByRole('textbox', { name: 'MCP endpoint', exact: true }).fill('https://example.test/mcp');
+    await connectionModal.getByRole('button', { name: 'Add connection', exact: true }).click();
+    await connectionModal.getByRole('alert').getByText('The user changed in another window. Refresh before retrying.', { exact: true }).waitFor();
+    await page.screenshot({ path: path.join(output, host+'-add-connection-'+width+'x'+height+'.png') });
+    assert.ok(await connectionModal.evaluate(element => {const r=element.getBoundingClientRect();return r.x>=0 && r.right<=innerWidth+1 && r.y>=0 && r.bottom<=innerHeight+1;}), 'Add connection fits viewport');
+    await connectionModal.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await connectionModal.waitFor({ state: 'hidden' });
+    await settings.getByText('Adding a data connection cancelled.', { exact: true }).waitFor();
+    await select('logs');
+    activityFailure = true;
+    await page.evaluate(() => { window.__teamActivityFailure = true; });
+    await settings.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await settings.getByRole('alert').getByText('Activity storage is temporarily unavailable.', { exact: true }).waitFor();
+    assert.equal(await settings.getByText('No activity has been recorded yet.', { exact: true }).count(), 0, 'A failed load never looks like an empty successful result');
+    activityFailure = false;
+    await page.evaluate(() => { window.__teamActivityFailure = false; });
     const search = settings.getByRole('searchbox', { name: 'Search all settings' });
-    assert.equal(await settings.getByRole('searchbox').count(), 1, 'Only one settings search exists');
+    assert.equal(await settings.locator('.settings-search input').count(), 1, 'Only one settings search exists');
     assert.equal(await search.getAttribute('placeholder'), 'Search');
     await search.fill('file limit');
     await settings.getByRole('button', { name: /Text file limit/ }).click();
@@ -84,6 +128,23 @@ try {
     await settings.locator('#settings-panel-automation').waitFor();
     const toggleSizes = await settings.locator('.settings-inline-toggle:visible').evaluateAll(elements => elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height })));
     assert.ok(toggleSizes.every(size => size.width === 38 && size.height === 22), 'Toggles stay compact in both hosts and touch layouts: ' + JSON.stringify(toggleSizes));
+    await search.fill('a query that cannot match any setting');
+    await settings.getByText('0 matching options', { exact: true }).waitFor();
+    await settings.getByRole('button', { name: 'Clear settings search' }).click();
+    assert.equal(await search.evaluate(element => document.activeElement === element), true, 'Clearing search keeps keyboard focus');
+    assert.equal(await search.getAttribute('type'), 'text', 'No duplicate native search clear control');
+    if (width < 760) assert.ok(await search.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), 'Search does not trigger mobile input zoom');
+    await page.evaluate(() => window.__setSettings({ autoSwitchEnabled: false, quotaWarningEnabled: false }));
+    for (const query of ['Refresh quotas before switching', 'Yellow threshold', 'reset plan', '5h quota or less']) {
+      await search.fill(query);
+      assert.ok(await settings.locator('.settings-search-result').count() > 0, 'Collapsed option remains searchable: '+query);
+    }
+    await search.fill('Consecutive failures');
+    await settings.getByRole('button', { name: /Consecutive failures/ }).click();
+    const autoSwitch = settings.getByRole('button', { name: 'Automatic Account Switching', exact: true });
+    assert.equal(await autoSwitch.getAttribute('aria-pressed'), 'false', 'Searching never enables a feature');
+    assert.equal(await autoSwitch.evaluate(element => document.activeElement === element), true, 'Collapsed result focuses its parent switch');
+    await page.evaluate(() => window.__setSettings({ autoSwitchEnabled: true, quotaWarningEnabled: true }));
     await select('automation');
     const failures = settings.getByRole('slider', { name: 'Consecutive failures', exact: true });
     const retry = settings.getByRole('slider', { name: 'Capacity retry delay', exact: true });
@@ -97,10 +158,18 @@ try {
     await failures.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, host+'-capacity-'+width+'x'+height+'.png') });
     await page.evaluate(() => window.__setSettings({ modelCapacityAutoSwitchEnabled: false }));
-    await failures.waitFor({ state: 'detached' });
-    assert.equal(await retry.count(), 0, 'The main capacity toggle hides both sliders');
+    await failures.waitFor({ state: 'hidden' });
+    assert.equal(await retry.isVisible(), false, 'The main capacity toggle hides both sliders');
     await page.evaluate(() => window.__setSettings({ modelCapacityAutoSwitchEnabled: true }));
     await failures.waitFor();
+    await select('automation');
+    await settings.locator('.settings-modal-body').evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await select('general');
+    assert.equal(await settings.locator('.settings-modal-body').evaluate(element => element.scrollTop), 0, 'Changing tabs resets content scroll');
+    await page.evaluate(() => window.__setPeerConnected(false));
+    assert.equal(await settings.getByRole('button', { name: 'Reset zoom', exact: true }).isEnabled(), true, 'Local zoom works while disconnected');
+    assert.equal(await settings.locator('[data-setting=shared-password] .settings-action-btn').isEnabled(), false, 'Host mutations stay disabled offline');
+    await page.evaluate(() => window.__setPeerConnected(true));
     await select('users');
     await settings.getByRole('button', { name: 'Add user', exact: true }).click();
     await settings.getByRole('region', { name: 'Add Team user', exact: true }).waitFor();
@@ -134,6 +203,10 @@ try {
     await page.evaluate(() => window.__setSettings({ webDashboardEnabled: false }));
     await settings.locator('#settings-panel-general').waitFor();
     assert.equal(await picker.locator('option[value=users]').count(), 0);
+    await search.fill('postgresql');
+    await settings.getByRole('button', { name: /Database provider/ }).first().click();
+    const webModule = settings.locator('[data-setting=webDashboardEnabled] .settings-inline-toggle');
+    assert.equal(await webModule.evaluate(element => element === document.activeElement), true, 'Disabled Team result focuses Web Dashboard before Team');
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ host, width, height, sections, gates: true, errorsPreserved: true, runtimeErrors: errors.length }));
     await context.close();

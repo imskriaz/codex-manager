@@ -2,6 +2,12 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("dashboard accessibility and interaction flow", () => {
+  it("shows the master username once in Settings before the password button", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const modal = readFileSync("webview-src/dashboard/browserActionModal.tsx", "utf8");
+    expect(modal).not.toContain("MasterUsernameField");
+    expect(settings.indexOf("<MasterUsernameField")).toBeLessThan(settings.indexOf("{passwordCopy.configure}"));
+  });
   it("does not render implementation comments as dashboard text", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).not.toContain("// Workspace routes use the single portal recovery banner.");
@@ -162,7 +168,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(tools).toContain("Codex storage check");
     expect(tools).toContain("MAINTENANCE_TOOLS.map");
     expect(tools).toContain('class="settings-inline-confirm"');
-    expect(tools).not.toContain('ModalShell');
+    expect(tools).toContain('closeLabel="Close item details"');
     expect(tools).toContain('class="maintenance-inline-result"');
     expect(tools).toContain('goals: "Goal manager"');
     expect(queue).toContain("Queue priority for");

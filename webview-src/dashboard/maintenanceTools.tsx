@@ -5,6 +5,8 @@ import type { DashboardActionName, DashboardActionPayload, DashboardHostMessage 
 import type { SendAction } from "./hookTypes";
 import { getActionTimeoutMs } from './host';
 import { renderRefreshIcon as RefreshIcon, renderRemoveIcon as TrashIcon } from './icons';
+import { ModalShell } from './primitives';
+import { SettingsRecordDetails } from './settingsRecordList';
 
 const dialogTitles: Record<string, string> = { startup: "Codex UI startup", archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Find missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
 const sessionTools: MaintenanceTool[] = ["archives"];
@@ -20,6 +22,8 @@ const maintenanceLabels: Record<string, string> = {
 };
 
 export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId?: string; targetName: string; parentOpen: boolean; connected?: boolean }) {
+  const [itemDetails, setItemDetails] = useState<{ title: string; detail?: string }>();
+  useEffect(() => { if (!props.parentOpen) setItemDetails(undefined); }, [props.parentOpen, props.targetDeviceId]);
   const [dialog, setDialog] = useState<string>();
   const [preview, setPreview] = useState<MaintenancePreview>();
   const [page, setPage] = useState<MaintenancePage>();
@@ -190,10 +194,10 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
           </div> : null}
         </div>
         <div class="maintenance-items" role="group" aria-label="Tool items" aria-busy={busy}>
-          {sortedItems.length ? sortedItems.map(item => <label class={`maintenance-item${selected.has(item.id) ? " is-selected" : ""}`} key={item.id} title={`${item.title}${item.detail ? `\n${item.detail}` : ""}`}><input type="checkbox" aria-label={`Select ${item.title}`} disabled={props.connected === false || busy || Boolean(confirmation)} checked={selected.has(item.id)} onChange={event => choose(item.id, event.currentTarget.checked)} /><span><strong>{item.title}</strong>{item.detail ? <small>{item.detail}</small> : null}</span></label>) : !busy ? <div class="maintenance-empty" role="status">{query ? "No matching items." : "Nothing to clean up."}</div> : null}
+          {sortedItems.length ? <table class="settings-record-table maintenance-record-table" aria-label="Tool records"><thead><tr><th scope="col">Select</th><th scope="col">Title</th><th scope="col">Details</th></tr></thead><tbody>{sortedItems.map(item => <tr key={item.id} onClick={() => setItemDetails(item)}><td><input type="checkbox" aria-label={`Select ${item.title}`} disabled={props.connected === false || busy || Boolean(confirmation)} checked={selected.has(item.id)} onClick={event => event.stopPropagation()} onChange={event => choose(item.id, event.currentTarget.checked)} /></td><td><button type="button" class="settings-record-open" aria-label={`Details for ${item.title}`} onClick={event => {event.stopPropagation();setItemDetails(item);}}>{item.title}</button></td><td>{item.detail}</td></tr>)}</tbody></table> : !busy ? <div class="maintenance-empty" role="status">{query ? "No matching items." : "Nothing to clean up."}</div> : null}
         </div>
         {page && page.total > 50 ? <div class="maintenance-pagination"><button class="settings-action-btn" type="button" disabled={props.connected === false || busy || page.offset === 0 || Boolean(confirmation)} onClick={() => loadPage(Math.max(0, page.offset - 50))}>Previous</button><span>{page.offset + 1}–{Math.min(page.offset + 50, page.total)} of {page.total.toLocaleString()}</span><button class="settings-action-btn" type="button" disabled={props.connected === false || busy || page.offset + 50 >= page.total || Boolean(confirmation)} onClick={() => loadPage(page.offset + 50)}>Next</button></div> : null}
-      </> : null}
+      <ModalShell open={Boolean(itemDetails) && props.parentOpen} title={itemDetails?.title ?? "Item details"} closeLabel="Close item details" className="settings-record-modal" onClose={() => setItemDetails(undefined)}><SettingsRecordDetails fields={[["Title",itemDetails?.title],["Details",itemDetails?.detail]]}/></ModalShell></> : null}
       {attempted.current && !job ? <button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={refreshStatus}>Check operation status</button> : null}
       {running ? <section class="maintenance-review" aria-label="Maintenance progress" aria-live="polite"><strong>{job.operation === "restore" ? "Restore" : "Cleanup"} in progress</strong>
         <progress max={Math.max(1, job.total)} value={job.processed} aria-label="Maintenance progress" /><p>{job.processed} / {job.total} checked · {job.cleared} {job.operation === "restore" ? "restored" : "cleared"} · {job.skipped} kept · {job.failed} failed</p>

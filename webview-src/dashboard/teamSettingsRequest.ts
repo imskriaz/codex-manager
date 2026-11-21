@@ -41,7 +41,7 @@ export async function request<T>(url: string, method = "GET", body?: unknown): P
         result.error ??
           (response.status === 401
             ? "Your session expired. Sign in again."
-            : "Team settings could not be loaded. Enable Team workspace in Access settings and retry.")
+            : "Team settings could not be loaded. Enable Team workspace in Modules settings and retry.")
       );
     return result;
   } catch (error) {

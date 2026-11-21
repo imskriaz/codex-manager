@@ -3111,7 +3111,7 @@ function App() {
         <div class="settings-note">Recent redacted logs load when opened. Use Refresh to query again.</div>
         {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
         {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
-        <SystemLogConsole records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
+        <SystemLogConsole open={state.settingsOpen} records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
         <div class="settings-actions">
           <button class="settings-action-btn" type="button" disabled={isActionPending("viewLogs")} onClick={refreshLogConsole}>Refresh</button>
           <button class="settings-action-btn" type="button" disabled={isActionPending("downloadLogs")} onClick={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}>Download</button>

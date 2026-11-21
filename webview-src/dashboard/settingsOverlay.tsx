@@ -6,7 +6,7 @@ import type {
   DashboardState
 } from "../../src/domain/dashboard/types";
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import {
   SettingsDiscreteSlider,
@@ -28,7 +28,7 @@ import { SystemStartupSetting } from './systemStartupSetup';
 import { MasterUsernameField } from './masterUsernameField';
 import type { SendAction } from "./hookTypes";
 import { TeamManagementPage, TEAM_SETTINGS_SECTIONS, type TeamSettingsSection } from "./teamManagementPage";
-import { isSettingsSectionEnabled, matchesSettingsSearch, SETTINGS_MODULE_KEYS } from "./settingsNavigation";
+import { isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "./settingsNavigation";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
@@ -51,21 +51,13 @@ const WEEKLY_WARNING_VALUES = WARNING_VALUES;
 const WEEKLY_WARNING_SCALE_VALUES = WARNING_SCALE_VALUES;
 type SettingsTabId = "general" | "automation" | "data" | "modules" | "dashboard" | "sessions" | "connections" | "desktop" | "sync" | "usage" | "system-log" | "tools" | TeamSettingsSection;
 type SettingsSearchItem = { title: string; text: string; tab: SettingsTabId; element?: HTMLElement };
-const SEARCH_FALLBACK_OPTIONS: Array<[SettingsTabId, string, string]> = [
-  ["automation", "Consecutive failures", "model capacity switch errors"],
-  ["automation", "Capacity retry delay", "model capacity seconds"],
-  ["automation", "Auto resume sessions", "resume stopped chats"],
-  ["automation", "Wait for running sessions", "account switch delay"],
-  ["automation", "Reload VS Code", "account switch refresh"],
-  ["sync", "Reserve all accounts", "claim every account PC"],
-  ["sync", "Full account sync", "login credentials other PCs"],
-  ["sync", "Use reserved accounts", "recovery override password"],
-  ["users", "User email, password & permissions", "add edit delete users roles access"],
-  ["workspace", "Workspace root folder", "team files project storage"],
-  ["mcp", "MCP server access", "data permissions tools server"],
-  ["database", "Database provider", "sqlite postgres connection"],
-  ["logs", "Team activity log", "audit requests users"],
-  ["proxy", "API proxy requests", "tokens models request activity"]
+const SEARCH_TEAM_OPTIONS: Array<[SettingsTabId, string, string]> = [
+  ["users", "Add or edit user", "email display name password sign-in enabled suspend role permissions default prompt workspace folder files browser terminal git github environment"],
+  ["workspace", "Workspace root", "team files project storage folder"],
+  ["mcp", "Data connections", "MCP servers access enabled endpoint label id permissions add remove"],
+  ["database", "Database provider", "sqlite postgres postgresql connection URL storage"],
+  ["logs", "Team activity log", "audit requests users actions outcomes filter refresh"],
+  ["proxy", "API proxy requests", "tokens models timing request activity filter refresh"]
 ];
 
 export function canShowTeamSettings(settings: DashboardSettings, office?: DashboardOfficeView, browser = false, targetDeviceId?: string): boolean {
@@ -127,6 +119,7 @@ export function SettingsOverlay(props: {
   const accessibility = useModalAccessibility(props.open, props.onClose);
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
   const [sectionSearch, setSectionSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [teamSection, setTeamSection] = useState<TeamSettingsSection>();
   const patchAndSend = (key: DashboardSettingKey, value: string | number | boolean) => {
     if (shouldPatchDashboardSettingOptimistically(key)) {
@@ -155,40 +148,57 @@ export function SettingsOverlay(props: {
   const searching = Boolean(sectionSearch.trim());
   const [searchItems, setSearchItems] = useState<SettingsSearchItem[]>([]);
   const searchResults = searchItems.filter(item => matchesSettingsSearch(item.text, sectionSearch));
+  const readSearchItems = (): SettingsSearchItem[] => {
+    const items: SettingsSearchItem[] = [];
+    const selector = ".settings-tab-panel .settings-block-title, .settings-tab-panel .step-slider-copy, .settings-tab-panel input[aria-label], .settings-tab-panel select[aria-label], .settings-tab-panel input[type=range], .settings-tab-panel .maintenance-dashboard-card strong, .settings-tab-panel .settings-action-btn, .settings-tab-panel label";
+    accessibility.modalRef.current?.querySelectorAll<HTMLElement>(selector).forEach(element => {
+      const tab = element.closest<HTMLElement>(".settings-tab-panel")?.id.replace("settings-panel-", "") as SettingsTabId;
+      const label = element.cloneNode(true) as HTMLElement;
+      label.querySelectorAll("input, select, textarea, option, small, .settings-count-badge").forEach(child => child.remove());
+      const title = (element.getAttribute("aria-label") ?? label.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (!title || items.some(item => item.tab === tab && item.title === title)) return;
+      const description = element.parentElement?.querySelector(".settings-block-sub")?.textContent ?? "";
+      items.push({ title, tab, text: title + " " + description, element });
+    });
+    for (const [tab, title, keywords] of SEARCH_TEAM_OPTIONS) {
+      if (canManageTeam || !props.targetDeviceId && props.office?.role !== "user") items.push({ tab, title, text: title + " " + keywords });
+    }
+    return items;
+  };
   const openSearchResult = (item: SettingsSearchItem) => {
     const enabled = tabs.some(tab => tab.id === item.tab);
     setSectionSearch("");
     setActiveTab(enabled ? item.tab : "modules");
     requestAnimationFrame(() => {
-      const moduleKey = SETTINGS_MODULE_KEYS[item.tab];
-      const target = enabled ? item.element : accessibility.modalRef.current?.querySelector<HTMLElement>('[data-setting="' + moduleKey + '"]');
+      const modal = accessibility.modalRef.current;
+      const moduleKey = resolveSettingsModuleKey(item.tab, props.settings);
+      let target = enabled ? item.element : modal?.querySelector<HTMLElement>('[data-setting="' + moduleKey + '"] .settings-inline-toggle');
+      if (enabled && (!target?.isConnected || target.closest("[hidden], .is-hidden"))) {
+        const collapsed = target?.closest<HTMLElement>(".settings-toggle-content[hidden]");
+        target = collapsed?.parentElement?.querySelector<HTMLElement>(":scope > .settings-toggle-head .settings-inline-toggle") ?? modal?.querySelector<HTMLElement>('#settings-panel-' + item.tab);
+        // A nested option may require more than one parent switch.
+        while (target?.closest(".settings-toggle-content[hidden]")) {
+          const parent = target.closest<HTMLElement>(".settings-toggle-content[hidden]");
+          target = parent?.parentElement?.querySelector<HTMLElement>(":scope > .settings-toggle-head .settings-inline-toggle");
+        }
+      }
       if (target) {
-        target.tabIndex = -1;
+        if (!target.matches("button, input, select, textarea, a")) target.tabIndex = -1;
         target.focus({ preventScroll: true });
         target.scrollIntoView({ block: "center" });
       }
     });
   };
+  useLayoutEffect(() => {
+    accessibility.modalRef.current?.querySelector(".settings-modal-body")?.scrollTo({ top: 0 });
+  }, [activeTab, searching]);
   useEffect(() => {
-    if (!props.open) return;
-    const items: SettingsSearchItem[] = [];
-    accessibility.modalRef.current?.querySelectorAll<HTMLElement>(".settings-tab-panel .settings-block-title, .settings-tab-panel .step-slider-copy, .settings-tab-panel input[aria-label], .settings-tab-panel select[aria-label], .settings-tab-panel .maintenance-tool-title, .settings-tab-panel .maintenance-dashboard-card strong, .settings-tab-panel .settings-action-btn, .settings-tab-panel label").forEach(element => {
-      const tab = element.closest<HTMLElement>(".settings-tab-panel")?.id.replace("settings-panel-", "") as SettingsTabId;
-      const title = (element.getAttribute("aria-label") ?? element.textContent ?? "").trim();
-      if (!title || items.some(item => item.tab === tab && item.title === title)) return;
-      const description = element.parentElement?.querySelector(".settings-block-sub")?.textContent ?? "";
-      items.push({ title, tab, text: title + " " + description, element });
-    });
-    // Collapsed controls and unloaded Team forms remain discoverable.
-    for (const [tab, title, keywords] of SEARCH_FALLBACK_OPTIONS) {
-      if (!items.some(item => item.title === title && item.tab === tab)) items.push({ tab, title, text: title + " " + keywords });
-    }
-    setSearchItems(items);
+    if (props.open) setSearchItems(readSearchItems());
   }, [props.open, props.settings, props.lang, teamSection]);
   useEffect(() => {
     if (props.open && props.initialSection && tabs.some(tab => tab.id === props.initialSection)) setActiveTab(props.initialSection as SettingsTabId);
-  }, [props.open, props.initialSection, canManageTeam]);
-  useEffect(() => {
+  }, [props.open, props.initialSection]);
+  useLayoutEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) setActiveTab("general");
     if (canManageTeam && TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)) setTeamSection(activeTab as TeamSettingsSection);
   }, [canManageTeam, activeTab, props.settings]);
@@ -238,7 +248,7 @@ export function SettingsOverlay(props: {
         </label>
 
         <aside class="settings-sidebar">
-        <div class="settings-search"><input type="search" aria-label="Search all settings" placeholder="Search" value={sectionSearch} onInput={event => setSectionSearch(event.currentTarget.value)} />{searching ? <button type="button" aria-label="Clear settings search" onClick={() => setSectionSearch("")}>×</button> : null}</div>
+        <div class="settings-search"><input ref={searchRef} type="text" role="searchbox" inputMode="search" autoComplete="off" aria-label="Search all settings" placeholder="Search" value={sectionSearch} onInput={event => { setSearchItems(readSearchItems()); setSectionSearch(event.currentTarget.value); }} />{searching ? <button type="button" aria-label="Clear settings search" onClick={() => { setSectionSearch(""); searchRef.current?.focus(); }}>×</button> : null}</div>
         <div class="settings-tab-list" role="tablist" aria-orientation="vertical" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
           {tabs.map((tab, index) => (
             <button
@@ -287,7 +297,6 @@ export function SettingsOverlay(props: {
         </aside>
         <div class="settings-modal-body">
           {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{tabs.some(tab => tab.id === item.tab) ? "Open" : "Enable module"}</span></button>)}</section> : null}
-          <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
           <div
             class="settings-tab-panel"
             id="settings-panel-general"
@@ -317,7 +326,7 @@ export function SettingsOverlay(props: {
                 <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
               </div>
           </div>
-            <div class="settings-layout">
+            <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}><div class="settings-layout">
               <SettingsThemeBlock
                 lang={props.lang}
                 settings={props.settings}
@@ -335,6 +344,21 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
+<SettingsToggleBlock
+                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
+                sub={
+                  props.copy.crossWindowAccountModeSub ??
+                  "Use a separate account in each VS Code window."
+                }
+                enabled={props.settings.crossWindowAccountModeEnabled === true}
+                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
+              >
+                <div class="settings-note">
+                  {props.settings.crossWindowAccountModeEnabled
+                    ? "Windows choose accounts independently."
+                    : "Windows share the current account."}
+                </div>
+              </SettingsToggleBlock>
 <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{passwordCopy.title}</div>
@@ -344,15 +368,17 @@ export function SettingsOverlay(props: {
                   <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
                 ) : null}
                 <div class="settings-note">{passwordCopy.note}</div>
+                <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.office?.id === "master"} />
                 <div class="settings-actions">
                   <button class="settings-action-btn" type="button" onClick={props.onConfigureSync}>
                     {passwordCopy.configure}
                   </button>
                 </div>
-                <MasterUsernameField sendAction={props.sendAction} authenticatedMaster={props.office?.id === "master"} />
+
               </div>
-            </div>
+            </div></fieldset>
           </div>
+          <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
 <div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={activeTab !== "modules" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
 <SettingsToggleBlock settingKey="cliIntegrationEnabled" title="Enable workspace" sub="Add chats and terminals to this dashboard." enabled={props.settings.cliIntegrationEnabled === true}   onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)} />
 <SettingsToggleBlock settingKey="teamWorkspaceEnabled" title="Enable Team workspace" sub="User accounts, permissions, shared tools, and database settings." enabled={props.settings.teamWorkspaceEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)} />
@@ -390,21 +416,7 @@ export function SettingsOverlay(props: {
                         description={value => `Open and save text files up to ${value} MB.`}
                         onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
                         onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
-                      /></div><SettingsToggleBlock
-                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
-                sub={
-                  props.copy.crossWindowAccountModeSub ??
-                  "Use a separate account in each VS Code window."
-                }
-                enabled={props.settings.crossWindowAccountModeEnabled === true}
-                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
-              >
-                <div class="settings-note">
-                  {props.settings.crossWindowAccountModeEnabled
-                    ? "Windows choose accounts independently."
-                    : "Windows share the current account."}
-                </div>
-              </SettingsToggleBlock></div></div><div class="settings-tab-panel" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab !== "connections" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "connections")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Shared dashboard address</div></div><div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
+                      /></div></div></div><div class="settings-tab-panel" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab !== "connections" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "connections")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Shared dashboard address</div></div><div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
                     <input
                       class="settings-text-input"
                       type="text"
@@ -629,8 +641,8 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
-                  <SettingsToggleBlock title="Switch after model-capacity failures" sub="Switch after repeated capacity errors when no other session is running and another account is available." enabled={props.settings.modelCapacityAutoSwitchEnabled !== false} onToggle={enabled => patchAndSend('modelCapacityAutoSwitchEnabled', enabled)} />
-                  {props.settings.modelCapacityAutoSwitchEnabled !== false ? <div class="settings-capacity-controls">
+                  <SettingsToggleBlock title="Switch after model-capacity failures" sub="Switch after repeated capacity errors when no other session is running and another account is available." enabled={props.settings.modelCapacityAutoSwitchEnabled !== false} onToggle={enabled => patchAndSend('modelCapacityAutoSwitchEnabled', enabled)} >
+                  <div class="settings-capacity-controls" hidden={props.settings.modelCapacityAutoSwitchEnabled === false}>
                     <SettingsDiscreteSlider
                       value={props.settings.modelCapacityFailureCount ?? 3}
                       values={CAPACITY_FAILURE_VALUES}
@@ -651,7 +663,7 @@ export function SettingsOverlay(props: {
                       onPreview={value => props.onPatchSettings({ standaloneCapacityRetryDelaySeconds: value })}
                       onCommit={value => patchAndSend('standaloneCapacityRetryDelaySeconds', value)}
                     />
-                  </div> : null}
+                  </div></SettingsToggleBlock>
                   <div class="settings-integration-grid settings-switch-options">
                     <SettingsToggleBlock
                       title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
@@ -824,7 +836,7 @@ export function SettingsOverlay(props: {
             <SettingsPanelIntro tab={tabs.find(tab => tab.id === "tools")!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
-          {canManageTeam && teamSection ? <div class="settings-tab-panel" id={`settings-panel-${teamSection}`} role="tabpanel" aria-labelledby={`settings-tab-${teamSection}`} hidden={searching || !TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)}><TeamManagementPage key={props.office?.id} office={props.office} section={teamSection} /></div> : null}
+          {canManageTeam && teamSection ? <div class="settings-tab-panel" id={`settings-panel-${teamSection}`} role="tabpanel" aria-labelledby={`settings-tab-${teamSection}`} hidden={searching || !TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)}><TeamManagementPage key={props.office?.id} office={props.office} section={teamSection} open={props.open && activeTab === teamSection} /></div> : null}
         </div>
       </div>
     </div>

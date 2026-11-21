@@ -3,6 +3,8 @@ import type { OfficeUser, OfficeMcpServer, OfficeFeature, OfficeRole } from "../
 import { TeamActivity } from "./teamActivity";
 import type { DashboardOfficeView } from "../../src/domain/dashboard/types";
 import { request } from "./teamSettingsRequest";
+import { SettingsRecordList, SettingsRecordDetails } from "./settingsRecordList";
+import { ModalShell } from "./primitives";
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
@@ -52,7 +54,7 @@ const newUser = (): UserDraft => ({
 });
 
 
-export function TeamManagementPage(props: { office?: DashboardOfficeView; section: TeamSettingsSection }) {
+export function TeamManagementPage(props: { office?: DashboardOfficeView; section: TeamSettingsSection; open?: boolean }) {
   const section = props.section;
   const [userSearch, setUserSearch] = useState("");
   const [users, setUsers] = useState<OfficeUser[]>([]);
@@ -70,6 +72,9 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const [editorError, setEditorError] = useState("");
   const [deleting, setDeleting] = useState<OfficeUser>();
   const [mcpDraft, setMcpDraft] = useState({ id: "", label: "", endpoint: "" });
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [mcpError, setMcpError] = useState("");
+  useEffect(() => { if (props.open === false) setMcpOpen(false); }, [props.open]);
 
   const load = async (): Promise<void> => {
     setLoading(true);
@@ -92,22 +97,24 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
     }
   };
   useEffect(() => {
-    void load();
-  }, []);
+    if (section !== "logs" && section !== "proxy" && !settings) void load();
+  }, [section]);
 
-  const mutate = async (work: () => Promise<void>, success: string, inEditor = false): Promise<void> => {
+  const mutate = async (work: () => Promise<void>, success: string, inEditor: boolean | "mcp" = false): Promise<void> => {
     if (busy.current) return;
     busy.current = true;
     setPending(true);
     setError("");
     setEditorError("");
+    setMcpError("");
     setNotice("");
     try {
       await work();
       setNotice(success);
     } catch (value) {
       const message = value instanceof Error ? value.message : "Your change could not be saved.";
-      if (inEditor) setEditorError(message);
+      if (inEditor === "mcp") setMcpError(message);
+      else if (inEditor) setEditorError(message);
       else setError(message);
     } finally {
       busy.current = false;
@@ -153,12 +160,13 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       true
     );
   };
-  const saveMcp = (next: OfficeMcpServer[]): void => {
+  const saveMcp = (next: OfficeMcpServer[], adding = false): void => {
     void mutate(async () => {
       const result = await request<{ servers: OfficeMcpServer[] }>("/api/office/mcp", "PUT", { servers: next });
       setServers(result.servers);
       setMcpDraft({ id: "", label: "", endpoint: "" });
-    }, "Data connections saved.");
+      if (adding) setMcpOpen(false);
+    }, adding ? "Data connection added." : "Data connections saved.", adding ? "mcp" : false);
   };
   const saveSettings = (fields: Record<string, string>): void => {
     void mutate(async () => {
@@ -191,7 +199,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               >
                 Add user
               </button>
-            ) : null}
+            ) : section === "mcp" ? <button type="button" class="team-button primary" disabled={loading || pending || !settings} onClick={() => { setMcpError(""); setMcpOpen(true); }}>Add connection</button> : null}
           </div>
           {notice ? (
             <div class="team-notice" role="status">
@@ -206,7 +214,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               </button>
             </div>
           ) : null}
-          {section === "logs" || section === "proxy" ? <TeamActivity key={section} view={section} /> : loading ? (
+          {section === "logs" || section === "proxy" ? <TeamActivity key={section} view={section} open={props.open} /> : loading ? (
             <p role="status" class="team-empty">
               Loading Team settings…
             </p>
@@ -224,47 +232,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                   {users.length} {users.length === 1 ? "user" : "users"}
                 </span>
               </div>
-              <div class="team-user-list" role="list" aria-label="Team users">
-                {filteredUsers.map((user) => (
-                  <div class="team-user-row" role="listitem" key={user.id}>
-                    <div class="team-user-identity">
-                      <span class="team-avatar" aria-hidden="true">
-                        {(user.displayName || user.username).slice(0, 2).toUpperCase()}
-                      </span>
-                      <div>
-                        <strong>{user.displayName}</strong>
-                        <small>{user.username}</small>
-                      </div>
-                    </div>
-                    <span class="team-role">{roleLabel(user.role)}</span>
-                    <span class={`team-status ${user.enabled ? "is-enabled" : ""}`}>
-                      {user.enabled ? "Active" : "Disabled"}
-                    </span>
-                    <div class="team-row-actions">
-                      <button
-                        type="button"
-                        class="team-button"
-                        disabled={pending}
-                        onClick={() => edit(user)}
-                        aria-label={`Edit ${user.username}`}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        class="team-button danger"
-                        disabled={pending}
-                        onClick={() => {
-                          setDeleting(user);
-                          setError("");
-                        }}
-                        aria-label={`Delete ${user.username}`}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <SettingsRecordList label="Team users" open={props.open && section === "users"} columns={["Name", "Email", "Role", "Status"]} rows={filteredUsers.map(user => ({id:user.id,label:user.displayName || user.username,cells:[user.displayName || user.username,user.username,roleLabel(user.role),user.enabled ? "Active" : "Disabled"],details:close => <><SettingsRecordDetails fields={[["Name",user.displayName],["Email",user.username],["Role",roleLabel(user.role)],["Status",user.enabled ? "Active" : "Disabled"],["Workspace",user.workspacePath],["Features",user.features.join(", ")],["Data connections",user.mcpServers.join(", ")],["Default prompt",user.defaultPrompt]]}/><div class="team-form-footer"><button class="team-button" type="button" disabled={pending} onClick={() => {close();edit(user);}}>Edit</button><button class="team-button danger" type="button" disabled={pending} onClick={() => {close();setDeleting(user);setError("");}}>Delete</button></div></>}))}/>
                 {!filteredUsers.length ? (
                   <div class="team-empty">
                     <strong>{users.length ? "No matching users" : "No Team users yet"}</strong>
@@ -275,7 +243,6 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     </p>
                   </div>
                 ) : null}
-              </div>
             </>
           ) : section === "workspace" ? (
             <form
@@ -345,40 +312,20 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
             </form>
           ) : (
             <>
-              <div class="team-user-list" role="list" aria-label="Data connections">
-                {servers.map((server) => (
-                  <div class="team-connection-row" role="listitem" key={server.id}>
-                    <div>
-                      <strong>{server.label}</strong>
-                      <small>
-                        {server.id} · {server.endpoint}
-                      </small>
-                    </div>
-                    <span class={`team-status ${server.enabled ? "is-enabled" : ""}`}>
-                      {server.enabled ? "Enabled" : "Disabled"}
-                    </span>
-                    <button
-                      type="button"
-                      class="team-button"
-                      disabled={pending}
-                      onClick={() =>
-                        saveMcp(
-                          servers.map((item) => (item.id === server.id ? { ...item, enabled: !item.enabled } : item))
-                        )
-                      }
-                    >
-                      {server.enabled ? "Disable" : "Enable"} {server.label}
-                    </button>
-                  </div>
-                ))}
+              <SettingsRecordList label="Data connections" open={props.open && section === "mcp"} columns={["Name", "ID", "Endpoint", "Status"]} rows={servers.map(server => ({id:server.id,label:server.label,cells:[server.label,server.id,server.endpoint,server.enabled ? "Enabled" : "Disabled"],details:close => <><SettingsRecordDetails fields={[["Name",server.label],["ID",server.id],["Endpoint",server.endpoint],["Status",server.enabled ? "Enabled" : "Disabled"],["Allowed roles",server.allowedRoles.join(", ")]]}/><div class="team-form-footer"><button type="button" class="team-button" disabled={pending} onClick={() => {close();saveMcp(servers.map(item => item.id === server.id ? {...item,enabled:!item.enabled} : item));}}>{server.enabled ? "Disable" : "Enable"} connection</button></div></>}))}/>
                 {!servers.length ? <p class="team-empty">No data connections configured.</p> : null}
-              </div>
+
+
+            </>
+          )}
+        </section>
+      <ModalShell open={mcpOpen && section === "mcp" && props.open !== false} title="Add data connection" closeLabel="Close add data connection" className="team-connection-modal" closeDisabled={pending} onClose={() => { setMcpOpen(false); setNotice("Adding a data connection cancelled."); }}>
               <form
                 class="team-settings-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (servers.some((server) => server.id === mcpDraft.id.trim())) {
-                    setError("That connection ID is already in use.");
+                    setMcpError("That connection ID is already in use.");
                     return;
                   }
                   saveMcp([
@@ -390,10 +337,10 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                       enabled: true,
                       allowedRoles: ["user", "admin", "unrestricted-admin"]
                     }
-                  ]);
+                  ], true);
                 }}
               >
-                <h3>Add data connection</h3>
+                {mcpError ? <div class="team-notice is-error" role="alert">{mcpError}</div> : null}
                 <div class="team-field-grid">
                   <label>
                     Connection ID
@@ -422,15 +369,13 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     onInput={(event) => setMcpDraft((current) => ({ ...current, endpoint: event.currentTarget.value }))}
                   />
                 </label>
-                <div class="team-form-footer">
+                <div class="team-form-footer"><button type="button" class="team-button" disabled={pending} onClick={() => { setMcpOpen(false); setNotice("Adding a data connection cancelled."); }}>Cancel</button>
                   <button type="submit" class="team-button primary" disabled={pending || !settings}>
-                    Add connection
+                    {pending ? "Adding..." : "Add connection"}
                   </button>
                 </div>
               </form>
-            </>
-          )}
-        </section>
+      </ModalShell>
       {draft && section === "users" ? <section class="team-inline-editor" aria-label={draft.id ? `Edit ${draft.username}` : "Add Team user"}>
         <div class="team-section-head"><h2>{draft.id ? "Edit user" : "Add user"}</h2><button class="team-button" type="button" disabled={pending} onClick={closeEditor}>Back to users</button></div>
         {draft ? (

@@ -165,7 +165,7 @@ export function SettingsToggleBlock(props: {
           </span>
         </button>
       </div>
-      {props.enabled ? props.children : null}
+      {props.children ? <div class="settings-toggle-content" hidden={!props.enabled}>{props.children}</div> : null}
     </div>
   );
 }
