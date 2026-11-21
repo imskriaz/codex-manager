@@ -36,10 +36,13 @@ try {
     const started = Date.now();
     await page.goto(origin + '/workspace', { waitUntil: 'domcontentloaded' });
     await page.locator('.cli-workspace').waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Workspace menu', exact: true }).count(), 0, 'Logo is a heading, not a menu trigger');
+    assert.equal(await page.getByRole('button', { name: 'Workspace menu', exact: true }).count(), 0, 'Logo navigates home without opening a menu');
     assert.equal(await page.locator('.cli-rail-brand button').count(), 0);
+    const home = page.getByRole('button', { name: 'Dashboard home', exact: true });
     const showSidebar = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
     if (await showSidebar.isVisible()) await showSidebar.click();
+    await home.waitFor();
+    assert.equal(await home.getAttribute('aria-haspopup'), null);
     const footer = page.locator('.cli-account-footer:not(.is-standalone)');
     const trigger = footer.getByRole('button', { name: 'Account menu', exact: true });
     await trigger.waitFor();
@@ -65,7 +68,7 @@ try {
     assert.equal(await logout.getAttribute('action'), '/logout');
     const bounds = await menu.boundingBox();
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y >= 0 && bounds.y + bounds.height <= 901, JSON.stringify(bounds));
-    assert.ok(bounds.height < 220, 'Menu stays compact');
+    assert.ok(bounds.height < 48 * await menu.getByRole('menuitem').count() + 20, 'Menu stays compact');
     await menu.getByRole('menuitem', { name: 'Dashboard', exact: true }).focus();
     await page.keyboard.press('End');
     assert.equal(await menu.getByRole('menuitem', { name: 'Sign out', exact: true }).evaluate(element => document.activeElement === element), true);
@@ -107,6 +110,15 @@ try {
     await trigger.click();
     await menu.getByRole('menuitem', { name: 'Dashboard', exact: true }).click();
     await page.locator('#dashboard-main .overview-shell').waitFor();
+    for (const activation of ['click', 'Enter']) {
+      await page.goto(origin + '/workspace', { waitUntil: 'domcontentloaded' });
+      await page.locator('.cli-workspace').waitFor();
+      if (await showSidebar.isVisible()) await showSidebar.click();
+      if (activation === 'click') await home.click();
+      else await home.press(activation);
+      await page.locator('#dashboard-main .overview-shell').waitFor();
+      assert.equal(new URL(page.url()).pathname, '/', `Logo opens Dashboard home directly with ${activation}`);
+    }
     await checkOverview(page.locator('#dashboard-main'), `Dashboard/${width}`);
     await page.screenshot({ path: path.join(output, `dashboard-${width}.png`) });
     assert.deepEqual(writes, [], 'Smoke check sends no writes');

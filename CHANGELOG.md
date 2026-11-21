@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.33
+
+- Make the Codex workspace logo open Dashboard home directly, including keyboard activation, while retaining the compact account menu on the bottom card.
+
 ## 3.0.0-pre.31
 
 - Add a 1 to 30 day slider in Browser notifications settings for dismissed notification and app-install reminders, defaulting to one day. Save the preference per browser, show save failures, and use it for future dismissals.

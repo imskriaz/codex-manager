@@ -252,7 +252,11 @@ describe("sessions sidebar layout", () => {
     expect(brand).toContain("props.logoUri");
     expect(source).toContain("createPortal(sidebarToggle, sidebarToggleTarget)");
     expect(source).not.toContain("if (props.taskBoardActive) setRailCollapsed(true)");
-    expect(brand).toContain("<strong>Codex</strong>");
+    expect(brand).toContain('<strong>Team</strong>');
+    expect(brand).toContain('<strong>Codex</strong>');
+    expect(brand).toContain('aria-label="Dashboard home"');
+    expect(brand).toContain('selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard();');
+    expect(brand).not.toContain('aria-haspopup');
     expect(main).toContain('if (route) requestCliSessionMessages(route.id, route.deviceId, true)');
     const catalogue = main.slice(main.indexOf('const routeId = getCliSessionIdFromPath'), main.indexOf('if (explicitRefresh)', main.indexOf('const routeId = getCliSessionIdFromPath')));
     expect(catalogue).not.toContain('navigateDashboardPath("/workspace"');
