@@ -2825,7 +2825,7 @@ function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: Dash
     <summary title={consolidatedActivityLabel(messages)}>
       <span class="cli-activity-icon"><ToolIcon /></span>
       <span class="cli-activity-heading"><strong>{consolidatedActivityLabel(messages)}</strong>{summary?.files ? <small><b class="is-added">+{summary.additions}</b> <b class="is-removed">−{summary.deletions}</b></small> : null}</span>
-      <span class={`cli-activity-status ${running ? "is-inProgress" : failed ? 'is-failed' : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : failed ? 'Failed' : incomplete ? capitalize(incomplete) : <CheckIcon />}</span>
+      {running || !failed ? <span class={`cli-activity-status ${running ? "is-inProgress" : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : incomplete ? capitalize(incomplete) : <CheckIcon />}</span> : null}
       <ChevronIcon />
     </summary>
     <div class="cli-activity-group-body">{messages.map((message) => message.kind === "file-change" && message.changes?.length && (!message.status || message.status === "completed") ? <FileChangeDetails key={message.id} changes={message.changes} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <ActivityMessage key={message.id} message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div>

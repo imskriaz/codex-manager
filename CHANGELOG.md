@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.71
+
+- Hide the Failed badge on activity group summaries in both workspaces while preserving individual failure details inside expanded groups.
+
 ## 3.0.0-pre.70
 
 - Simplify Scheduled into a compact task management list without templates or creation buttons.

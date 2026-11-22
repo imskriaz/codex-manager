@@ -64,7 +64,10 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  assert.equal(await page.locator('.cli-activity.is-reasoning').evaluate(node=>node.open),true,'A live update preserves manual expansion');
  for(const kind of ['reasoning','command','tool-call','collaboration','web-search','image','review','compaction'])assert.ok(await page.locator('.cli-activity.is-'+kind).count(),kind+' is rendered');
  assert.ok(await page.locator('.cli-file-change-list').count());assert.ok(await page.locator('.cli-error-notice').count());
- assert.ok(await page.locator('.cli-activity-group-details > summary .is-failed').count(),'A failed command cannot produce a success group badge');
+ const failedGroup=page.locator('.cli-activity-group-details').filter({has:page.locator('.cli-activity.is-command.is-failed')});
+ assert.ok(await failedGroup.count(),'The failed command remains in its activity group');
+ assert.equal(await failedGroup.locator(':scope > summary .cli-activity-status').count(),0,'A failed group has no summary status badge');
+ assert.equal(await failedGroup.locator('.cli-activity.is-command > summary .cli-activity-status.is-failed').textContent(),'Failed','Individual command failures are preserved inside groups');
  await page.locator('.cli-question-message').getByRole('button',{name:'Answer',exact:true}).click();
  await page.getByRole('radio',{name:'Document',exact:true}).check();await page.getByRole('button',{name:'Send answer',exact:true}).scrollIntoViewIfNeeded();
  const historicalAnswer=await page.getByRole('button',{name:'Send answer',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});assert.ok(historicalAnswer,'Historical answer action is reachable above the composer');
