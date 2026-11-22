@@ -1,6 +1,18 @@
 import { expect,it } from 'vitest';
-import { userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary } from '../webview-src/dashboard/userWorkspacePresentation';
+import { currentUserWorkspacePlan,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary } from '../webview-src/dashboard/userWorkspacePresentation';
 import { userWorkspacePathText } from '../src/domain/teamWorkspacePresentation';
+import { messageSessionPlan, sessionPlanMessage } from '../src/domain/sessionPlan';
+it('keeps the working turn plan pinned while a later follow-up is queued, and never reuses it for a new turn',()=>{
+ const plan={...sessionPlanMessage('plan',{steps:[{step:'Write',status:'inProgress'},{step:'Check',status:'pending'}]}),turnId:'working'};
+ const messages=[{id:'user',role:'user' as const,text:'First',turnId:'working'},plan,{id:'later',role:'user' as const,text:'Later',turnId:'queued'}];
+ expect(currentUserWorkspacePlan(messages,'working',true)).toBe(plan);expect(currentUserWorkspacePlan(messages,'queued',true)).toBeUndefined();expect(currentUserWorkspacePlan(messages,undefined,false)).toBeUndefined();
+ expect(currentUserWorkspacePlan(messages.slice(0,-1),undefined,false)?.status).toBe('unknown');
+});
+it('masks question choices and structured plan paths without corrupting JSON or changing user content',()=>{
+ const safe=userSessionActivity({id:'q',role:'assistant',text:'Choose',questions:[{title:'Read C:/private/alex/file.txt?',options:['C:/private/alex/file.txt','Other']} ]},['C:/private/alex']);expect(JSON.stringify(safe)).not.toContain('C:/');
+ const plan=userSessionActivity(sessionPlanMessage('plan',{steps:[{step:'Read "C:\\private\\alex\\file.txt"',status:'inProgress'}]}),['C:\\private\\alex']);expect(messageSessionPlan(plan)?.steps[0]?.step).not.toContain('C:');expect(messageSessionPlan(plan)?.steps).toHaveLength(1);
+ const user={id:'user',role:'user' as const,text:'C:/private/alex/file.txt'};expect(userSessionActivity(user,['C:/private/alex'])).toBe(user);
+});
 
 it('uses project labels without displaying physical workspace folders',()=>{
  const projects=[{id:'personal',path:'C:/team/alex',label:'My workspace'},{id:'planning',path:'C:/team/alex/plan',label:'Planning'}];

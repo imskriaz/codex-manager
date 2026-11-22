@@ -4,7 +4,7 @@ import { messageSessionPlan, sessionPlanMessage } from '../../src/domain/session
 import { SessionPlanChecklist } from './sessionPlan';
 import { ProjectPicker } from './projectPicker';
 import { SystemPicker, SystemStatusRows } from './systemPicker';
-import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary } from './userWorkspacePresentation';
+import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary, currentUserWorkspacePlan } from './userWorkspacePresentation';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { useWorkspaceSurface } from './workspaceSurface';
@@ -929,6 +929,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const fromEnd = [...props.messages].reverse().findIndex(message => message.role === 'user' && (!message.kind || message.kind === 'message'));
     const prompt = fromEnd < 0 ? 0 : props.messages.length - 1 - fromEnd;
     let message = props.messages.slice(prompt).reverse().find(message => messageSessionPlan(message));
+    if(props.officeUser)message=currentUserWorkspacePlan(props.messages,props.liveState?.turnId,currentTurnRunning);
     if (props.liveState?.plan?.steps.length && isCliLiveStateCurrent(props.selectedSession, props.liveState)) {
       message = { ...sessionPlanMessage(message?.id ?? `plan-${props.liveState.turnId ?? props.liveState.streamId}`, props.liveState.plan), status: currentTurnRunning ? 'inProgress' : 'unknown' };
     }
@@ -1703,7 +1704,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                ) : <>
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
                  {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist key={`${props.selectedSession.id}:${composerPlan.message.id}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
-                 {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning}</p> : null}<Composer simple={!!props.officeUser}
+                 {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning} <button type="button" aria-label="Retry models" disabled={props.connected === false} onClick={() => { reportLocalFeedback({level:"info",message:"Checking available models..."}); props.onRefresh(); }}>Try again</button></p> : null}<Composer simple={!!props.officeUser}
                   onFeedback={props.onActionFeedback}
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
                   deviceId={props.selectedSession.deviceId}
@@ -1758,7 +1759,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             <>
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>{props.officeUser ? "What would you like to do?" : <>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</>}</h2><p>{props.officeUser ? "Ask a question, explore an idea, or describe something you want to create." : "Describe the task and Codex will work directly in this project."}</p></div></section>
 
-              {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning}</p> : null}{legacyDraftWarning}
+              {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning} <button type="button" aria-label="Retry models" disabled={props.connected === false} onClick={() => { reportLocalFeedback({level:"info",message:"Checking available models..."}); props.onRefresh(); }}>Try again</button></p> : null}{legacyDraftWarning}
               <Composer simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
             </>
           ) : <WorkspaceEmpty simple={!!props.officeUser} logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}

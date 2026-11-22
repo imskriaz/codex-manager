@@ -22,6 +22,7 @@ window.__setAvailability=availability=>{state.office.availability=availability;w
 const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]},{id:'quality',label:'Quality',reasoningEfforts:[]}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
 window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
+window.__setModelWarning=warning=>{config.modelDiscoveryWarning=warning;window.__setModelDefault(config.defaultModel);};
 const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
 window.__privateActions=[];
 window.__updateOfficePlan=(completed=0,status='inProgress')=>{session={...session,status:status==='unknown'?'idle':'running',queueEnabled:false,queueRetryAt:undefined,queueError:undefined};messages=messages.filter(message=>message.id!=='task-plan');messages.push({id:'task-plan',kind:'plan',text:'Task plan',status,arguments:JSON.stringify({steps:['Read requirements','Make changes','Check results'].map((step,index)=>({step,status:index<completed?'completed':index===completed?'inProgress':'pending'}))})});persist();dispatch({type:'dashboard:action-result',requestId:'auto-plan',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:status==='unknown'?'completed':'running',updatedAt:Date.now(),messages}});};
@@ -53,7 +54,7 @@ const browser=await chromium.launch({channel:'msedge',headless:true});
 try{for(const width of [1440,390]){
  const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
- page.on('console',message=>{if(message.type()==='error')errors.push('Console: '+message.text());});
+ page.on('console',message=>{if(message.type()==='error'&&!message.text().includes('status of 409'))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.locator('.cli-workspace').waitFor();
@@ -63,11 +64,17 @@ try{for(const width of [1440,390]){
  await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true});
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').waitFor({ state: 'detached' });
- let instructions='';await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT')instructions=route.request().postDataJSON().instructions;await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
+ let instructions='',failSave=true;await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT'){if(failSave){failSave=false;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Instructions changed in another window. Review before saving.'})});return;}instructions=route.request().postDataJSON().instructions;}await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,pending:true,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
  await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
  await page.locator('.cli-composer textarea').waitFor();
  await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
  assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').filter({hasText:'Automatic'}).count(),0);
+ await page.evaluate(()=>window.__setModelWarning('Models could not be loaded. Your selected model is kept.'));
+ const beforeRetry=await page.evaluate(()=>window.__privateActions.filter(message=>message.action==='listCodexCliSessions').length);
+ await page.getByRole('button',{name:'Retry models',exact:true}).click();
+ await page.waitForFunction(before=>window.__privateActions.filter(message=>message.action==='listCodexCliSessions').length>before,beforeRetry);
+ assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).inputValue(),'fast');
+ await page.evaluate(()=>window.__setModelWarning(''));
  await assertPlainUserInterface(page);
  await page.evaluate(()=>window.__setModelDefault(''));
  await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='');
@@ -161,7 +168,12 @@ try{for(const width of [1440,390]){
  if(width===390){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('region',{name:'Your usage',exact:true}).waitFor();
+ await page.getByText('A response is running. Usage will update when it finishes.',{exact:true}).waitFor();
  await page.getByLabel('How should your assistant respond?',{exact:true}).fill('Be clear and ask when requirements are unclear.');
+ await page.getByRole('button',{name:'Save instructions',exact:true}).click();
+ await page.getByRole('alert').filter({hasText:'Instructions changed in another window'}).waitFor();
+ assert.equal(await page.getByLabel('How should your assistant respond?',{exact:true}).inputValue(),'Be clear and ask when requirements are unclear.');
+ assert.equal(instructions,'');
  await page.getByRole('button',{name:'Save instructions',exact:true}).click();
  await page.getByText('Workspace instructions saved. They apply to your next message.',{exact:true}).waitFor();
  assert.equal(instructions,'Be clear and ask when requirements are unclear.');

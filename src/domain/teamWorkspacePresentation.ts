@@ -1,4 +1,5 @@
 import type { DashboardCliSessionMessage } from './dashboard/types';
+import { messageSessionPlan } from './sessionPlan';
 
 /** Keep project-relative locations; hide host and system directory prefixes. */
 export function userWorkspacePathText(text: string, folders: string[]): string {
@@ -32,7 +33,9 @@ export function userSessionActivity(message: DashboardCliSessionMessage, folders
     try { const args=JSON.parse(message.arguments??'{}') as {path?:unknown;file_path?:unknown};const path=args.path??args.file_path;if(typeof path==='string')file=path; } catch { /* Keep the recorded label when arguments are incomplete. */ }
     title='Read File'+(file?' · '+mask(file):'');
   }
-  return {...message,cwd:undefined,debug:undefined,text:mask(message.text)!,command:mask(message.command),arguments:mask(message.arguments),output:mask(message.output),result:mask(message.result),title,subtitle:mask(message.subtitle),changes:message.changes?.map(change=>({...change,path:mask(change.path)!,diff:mask(change.diff)}))};
+  const plan=messageSessionPlan(message);
+  const argumentsText=plan?JSON.stringify({...plan,explanation:mask(plan.explanation),steps:plan.steps.map(step=>({...step,step:mask(step.step)!}))}):mask(message.arguments);
+  return {...message,cwd:undefined,debug:undefined,text:mask(message.text)!,command:mask(message.command),arguments:argumentsText,output:mask(message.output),result:mask(message.result),title,subtitle:mask(message.subtitle),questions:message.questions?.map(question=>({...question,title:mask(question.title)!,options:question.options?.map(option=>mask(option)!)})),changes:message.changes?.map(change=>({...change,path:mask(change.path)!,diff:mask(change.diff)}))};
 }
 
 /** User-facing operational feedback must not reveal host or provider diagnostics. */

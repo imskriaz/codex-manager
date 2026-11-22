@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.63
+
+- Harden User Workspace turn updates, bounded live history, timeout and recovery handling. Stop dependent queued work visibly when an earlier result is uncertain.
+- Preserve file-conflict failures, mask host paths in plans, questions and replies, reject oversized chat attachments, and prevent stale settings responses. Keep active plans visible while follow-ups wait and present questions without duplicate replies.
+
+
 ## 3.0.0-pre.62
 
 - Restore ESLint project coverage for session plans and scale dashboard plan markers with browser text settings.

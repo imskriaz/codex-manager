@@ -9,16 +9,68 @@ import { sessionPlanMessage, messageSessionPlan } from '../src/domain/sessionPla
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import type { OfficeUser } from "../src/services/officeUsers";
 import { removeTestDirectory } from "./testFilesystem";
+import { acceptCliLiveState } from '../webview-src/dashboard/cliSessionLiveState';
+import { isCodexSessionLiveState } from '../src/domain/codexSessionLive';
+import type { DashboardCodexSessionLiveState } from '../src/domain/dashboard/types';
 
 let root:string,storage:SqliteStateStore;
 const services:OfficeSessionService[]=[];
 const user:OfficeUser={id:"alex",username:"alex",displayName:"Alex",role:"user",enabled:true,features:["generalChat","files"],workspacePath:"C:/team/alex",mcpServers:[],defaultPrompt:"Help with office work.",createdAt:0};
 beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:"configured-model"});});
-afterEach(async()=>{vi.restoreAllMocks();services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
+afterEach(async()=>{vi.useRealTimers();vi.restoreAllMocks();services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
 function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
 }
 const start=(requestId="request-1",text="Hello")=>({type:"dashboard:action" as const,action:"startCodexCliSession" as const,requestId,payload:{text}});
+it('delivers every follow-up live turn even with identical timestamps and across service instances',async()=>{
+ const {service,changed}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'second',payload:{sessionId:first.cliSession!.id,text:'Second'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ let previous:DashboardCodexSessionLiveState|undefined;
+ const snapshots=changed.mock.calls.flatMap(call=>call[1]).filter(message=>message.type==='dashboard:codex-session-live').map(message=>(message as any).state as DashboardCodexSessionLiveState);
+ for(const state of snapshots){expect(isCodexSessionLiveState(state)).toBe(true);expect(acceptCliLiveState(previous,state)).toBe(true);previous=state;expect(state.messages.every(message=>message.turnId===state.turnId)).toBe(true);}
+ expect(new Set(snapshots.map(state=>state.streamId)).size).toBe(2);
+ service.stop();const next=setup();await next.service.handle(user,{type:'dashboard:action',action:'renameCodexCliSession',requestId:'rename',payload:{sessionId:first.cliSession!.id,text:'Renamed'}});
+ const state=(next.changed.mock.calls.flatMap(call=>call[1]).find(message=>message.type==='dashboard:codex-session-live') as any).state;expect(acceptCliLiveState(previous,state)).toBe(true);
+});
+it('bounds large live snapshots while retaining complete saved history',async()=>{
+ const generate=vi.fn(async()=> 'A'.repeat(20_000)),{service,changed}=setup(generate);const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ const snapshots=changed.mock.calls.flatMap(call=>call[1]).filter(message=>message.type==='dashboard:codex-session-live').map(message=>(message as any).state);
+ expect(snapshots.every(state=>isCodexSessionLiveState(state))).toBe(true);expect(snapshots.at(-1).truncated).toBe(true);
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.at(-1)?.text.length).toBe(20_000);
+});
+it('stops queued work visibly after an uncertain response and rejects new turns without charging them',async()=>{
+ let reject!:(error:Error)=>void;const generate=vi.fn(()=>new Promise<string>((_resolve,no)=>{reject=no;}));const {service}=setup(generate);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+ await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'queued',payload:{sessionId:first.cliSession!.id,text:'Later'}});
+ reject(new Error('Unknown result'));await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.some(message=>message.text.includes('message was not run'))).toBe(true);
+ await expect(service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'blocked',payload:{sessionId:first.cliSession!.id,text:'Continue'}})).rejects.toThrow('start a new chat');expect(generate).toHaveBeenCalledTimes(1);
+});
+it('releases a timed-out generation and rejects late reports or success',async()=>{
+ vi.useFakeTimers();
+ let finish!:(text:string)=>void,report!: (activity:any)=>void;const generate=vi.fn((_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,send:(activity:any)=>void)=>{report=send;return new Promise<string>(resolve=>{finish=resolve;});});
+ const {service,changed}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+ await vi.advanceTimersByTimeAsync(90_001);expect((service as any).running.size).toBe(0);report({id:'late',role:'assistant',text:'Late activity'});finish('Late success');await Promise.resolve();
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.map(message=>message.text).join()).not.toMatch(/Late/);expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==='dashboard:notice'&&message.message==='Your response is ready.')).toBe(false);
+});
+it('rejects oversized attachments rather than silently sending an unavailable file placeholder',async()=>{
+ const {service,generate}=setup();const attachment={id:'file',name:'notes.txt',kind:'text',mimeType:'text/plain',data:'x'.repeat(33_000),size:33_000};
+ await expect(service.handle(user,{...start(),payload:{text:'Read it',attachments:[attachment] as any}})).rejects.toThrow('too large for chat');expect(service.list(user.id)).toEqual([]);expect(generate).not.toHaveBeenCalled();
+});
+it('deletes a conversation without publishing stale transcript content',async()=>{
+ const {service,changed}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));changed.mockClear();
+ await service.handle(user,{type:'dashboard:action',action:'deleteCodexCliSession',requestId:'delete',payload:{sessionId:first.cliSession!.id,confirmed:true}});expect(service.list(user.id)).toEqual([]);expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==='dashboard:codex-session-live')).toBe(false);
+});
+it('bounds optional model discovery and keeps the configured model available',async()=>{
+ vi.useFakeTimers();const {service,generate}=setup();(service as any).options.models=()=>new Promise(()=>{});
+ const pending=service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'slow-models'});await vi.advanceTimersByTimeAsync(3001);
+ const result=await pending;expect(result.cliComposerConfig?.defaultModel).toBe('configured-model');expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain('selected model is kept');expect(generate).not.toHaveBeenCalled();
+});
+it('repairs queues already blocked by an uncertain result from an older host',async()=>{
+ const {service}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.stop();
+ const saved=storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id)!;saved.turns[0].state='uncertain';saved.turns.push({...saved.turns[0],id:crypto.randomUUID(),requestId:'old-queued',state:'queued',assistant:undefined});storage.set(`office-sessions:${user.id}`,saved.id,saved);
+ const next=setup();next.service.start();await vi.waitFor(()=>expect(next.service.list(user.id)[0]?.status).toBe('idle'));expect(next.generate).not.toHaveBeenCalled();
+ const read=await next.service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:saved.id}});expect(read.cliSessionMessages?.some(message=>message.text.includes('message was not run'))).toBe(true);
+});
 it('persists a single updated plan and questions through reload and includes them when the user continues',async()=>{
  const generate=vi.fn(async(_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,report:(message:any)=>void)=>{
    report(sessionPlanMessage('plan',{steps:[{step:'Read requirements',status:'inProgress'},{step:'Write draft',status:'pending'}]}));
@@ -28,6 +80,7 @@ it('persists a single updated plan and questions through reload and includes the
  const {service}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.stop();
  const next=setup();const read=await next.service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-plan',payload:{sessionId:first.cliSession!.id}});
  const plans=read.cliSessionMessages!.filter(message=>message.kind==='plan');expect(plans).toHaveLength(1);expect(plans[0].status).toBe('unknown');expect(messageSessionPlan(plans[0])?.steps.map(step=>step.status)).toEqual(['completed','inProgress']);
+ expect(read.cliSessionMessages?.at(-1)?.questions).toHaveLength(1);
  await next.service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'answer',payload:{sessionId:first.cliSession!.id,text:'Document'}});await vi.waitFor(()=>expect(next.generate).toHaveBeenCalledTimes(1));
  expect(next.generate.mock.calls[0]?.[2]).toEqual(expect.arrayContaining([{role:'assistant',content:'[x] Read requirements\n[ ] Write draft'},{role:'assistant',content:expect.stringContaining('Which format?')} ]));
 });
@@ -74,7 +127,7 @@ it("does not announce a completed response after the user cancels the turn",asyn
  let finish!:(value:string)=>void;const generate=vi.fn<ConstructorParameters<typeof OfficeSessionService>[0]["generate"]>((_user,_model,_messages,_signal,_project,report)=>{report({id:'active-call',kind:'tool-call',text:'Reading the document',status:'inProgress'});return new Promise<string>(resolve=>{finish=resolve;});});
  const {service,changed}=setup(generate as any);const first=await service.handle(user,start());
  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
- await service.handle(user,{type:"dashboard:action",action:"cancelCodexCliSessionTurn",requestId:"cancel",payload:{sessionId:first.cliSession!.id}});
+ const stopped=await service.handle(user,{type:"dashboard:action",action:"cancelCodexCliSessionTurn",requestId:"cancel",payload:{sessionId:first.cliSession!.id}});expect(stopped.notice?.message).toContain('already being saved');
  finish("Late response");await vi.waitFor(()=>expect((service as any).running.size).toBe(0));
  expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==="dashboard:notice"&&message.message==="Your response is ready.")).toBe(false);
  const read=await service.handle(user,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:first.cliSession!.id}});
