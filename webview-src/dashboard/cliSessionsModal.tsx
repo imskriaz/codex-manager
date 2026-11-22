@@ -1978,6 +1978,9 @@ export function ConversationHeader(props: {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(props.session.title);
   useEffect(() => setName(props.session.title), [props.session.id, props.session.title]);
+  useEffect(() => { if (props.privateWorkspace) setRenaming(false); }, [props.session.id]);
+  const cancelRename = () => { setName(props.session.title); setRenaming(false); props.onRenameCancelled?.(); };
+  const renameForm = <form class="user-editor-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized && !props.busy && !props.sending) { props.onRename?.(normalized); setRenaming(false); } }}><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><div class="user-page-actions"><button type="button" onClick={cancelRename}>Cancel</button><button type="submit" disabled={!name.trim() || props.busy || props.sending}>Save</button></div></form>;
   const statusLabel = props.archived ? "Archived" : props.session.status === "unknown" ? "Status unavailable" : props.session.status === "running" ? "Running" : "Ready";
   return <header class="cli-conversation-header">
     {!props.readOnly ? <span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /> : null}<div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1>{(!props.privateWorkspace || props.archived || props.session.status !== "idle") && (!props.readOnly || props.session.status !== 'unknown') ? <span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span> : null}</div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.privateWorkspace ? props.projectLabel : props.session.projectPath}><EmptyFolderIcon /><strong>{props.privateWorkspace ? props.projectLabel || "My workspace" : projectDisplayName(props.session.projectPath)}</strong>{!props.privateWorkspace ? <span>{props.session.projectPath}</span> : null}</div> : null}</div>
@@ -2006,7 +2009,7 @@ export function ConversationHeader(props: {
         </div> : null}
       </div>
     </> : null}</div>
-    {renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized && !props.busy && !props.sending) { props.onRename?.(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={() => { setName(props.session.title); setRenaming(false); props.onRenameCancelled?.(); }}>Cancel</button><button type="submit" disabled={!name.trim() || props.busy || props.sending}>Save</button></form> : null}
+    {props.privateWorkspace ? <ModalShell open={renaming} title="Rename chat" closeLabel="Close chat name editor" className="office-user-settings user-editor-modal" onClose={cancelRename}>{renameForm}</ModalShell> : renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized && !props.busy && !props.sending) { props.onRename?.(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={cancelRename}>Cancel</button><button type="submit" disabled={!name.trim() || props.busy || props.sending}>Save</button></form> : null}
   </header>;
 }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0-pre.74
+
+- Add private saved memory to User Workspace with on/off controls and compact add, edit, remove, and clear actions.
+- Let the assistant remember or forget details when requested and use saved context across chats; keep disabled memory out of model context and protect concurrent edits.
+- Simplify subscriber settings into General, Personalization, Account, and Usage, with searchable saved memories and real allowance indicators.
+- Match the subscriber Browser toolbar, controls, and empty states to the workspace theme on desktop and mobile.
+- Open subscriber add, edit, and confirmation actions in separate dialogs, including memories, instructions, account security, chat names, and file recovery.
+
 ## 3.0.0-pre.73
 
 - Keep User Workspace compact with clearer text, consistent labels, stronger secondary-text contrast, and balanced touch controls.

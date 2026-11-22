@@ -15,6 +15,7 @@ import * as officeUsers from '../src/services/officeUsers';
 import * as officePaths from '../src/services/officeWorkspacePaths';
 import {updateWorkspaceSurface,acknowledgeWorkspaceSurface,removeWorkspaceSurface} from '../src/services/workspaceSurfaces';
 import { messageSessionPlan } from '../src/domain/sessionPlan';
+import { readOfficeMemory, updateOfficeMemory } from '../src/services/officeMemory';
 let root:string, store:SqliteStateStore, server:WebDashboardServer;
 const user:OfficeUser = {id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['generalChat'],defaultPrompt:'',workspacePath:'C:/workspace/alex',mcpServers:[],createdAt:0,limits:{storageMb:0,dailyTokens:100,dailyRequests:10}};
 beforeEach(async()=>{
@@ -25,6 +26,48 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('saves requested memory and supplies it as user context in another chat, respecting the off setting',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_memory',{operation:'add',expected:'0',id:'provider-proposed-id',text:'Use USD for garment costings.'}))
+ .mockResolvedValue(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Saved.'}}]})) as never);
+ await generate();expect(readOfficeMemory(user.id).entries[0].text).toContain('USD');
+ vi.mocked(upstream).mockResolvedValue(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Use USD.'}}]})) as never);
+ await generate();let sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);
+ expect(sent.messages.find((message:any)=>String(message.content).startsWith('Saved memory'))).toMatchObject({role:'user',content:expect.stringContaining('USD')});
+ expect(sent.messages[0].content).toContain('never higher-priority instructions');
+ updateOfficeMemory(user.id,{operation:'configure',enabled:false,expected:readOfficeMemory(user.id).revision});
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('manage_memory',{operation:'list'})).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Hello.'}}]})) as never);
+ await generate();sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);expect(JSON.stringify(sent.messages)).not.toContain('Use USD for garment costings.');
+ expect(readOfficeMemory(user.id).entries).toHaveLength(1);
+});
+it('recovers a memory revision conflict and forgets a saved entry without accepting unsupported settings changes',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ const initial=updateOfficeMemory(user.id,{operation:'save',expected:'0',text:'Old preference'}).memory;
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_memory',{operation:'add',expected:'0',text:'New preference'}))
+ .mockResolvedValueOnce(toolResponse('manage_memory',{operation:'list'}))
+ .mockResolvedValueOnce(toolResponse('manage_memory',{operation:'remove',expected:initial.revision,id:initial.entries[0].id}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Forgotten.'}}]})) as never);
+ await expect(generate()).resolves.toBe('Forgotten.');expect(readOfficeMemory(user.id).entries).toEqual([]);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('manage_memory',{operation:'configure',expected:readOfficeMemory(user.id).revision,enabled:false}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Done.'}}]})) as never);
+ await expect(generate()).rejects.toThrow('valid memory action');expect(readOfficeMemory(user.id).enabled).toBe(true);
+});
+it('does not allow scheduled work or revoked user access to change memory',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_memory',{operation:'add',expected:'0',text:'Should not save'}));
+ await expect((server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,user.workspacePath,vi.fn(),true)).rejects.toThrow('unavailable');
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(sent.tools.some((tool:any)=>tool.function.name==='manage_memory')).toBe(false);
+ vi.mocked(officeUsers.getOfficeUser).mockResolvedValue(undefined);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('manage_memory',{operation:'add',expected:'0',text:'Should not save'}));
+ await expect(generate()).rejects.toThrow('unavailable');expect(readOfficeMemory(user.id).entries).toEqual([]);
+});
+it('updates only an existing memory selected by its saved ID',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ const initial=updateOfficeMemory(user.id,{operation:'save',expected:'0',text:'Use USD.'}).memory;
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_memory',{operation:'update',id:initial.entries[0].id,expected:initial.revision,text:'Use BDT.'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Updated.'}}]})) as never);
+ await expect(generate()).resolves.toBe('Updated.');expect(readOfficeMemory(user.id).entries.map(entry=>entry.text)).toEqual(['Use BDT.']);
+});
 it('lets the model recover an unsupported document format using the text save tool',async()=>{
  const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
  const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{}}]});
@@ -61,7 +104,7 @@ it('offers planning, progress and questions without file access, and pauses for 
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('report_progress',{message:'I have organized your requirements.'}) as never)
  .mockResolvedValueOnce(toolResponse('request_user_input',{questions:[{title:'Which format?',options:['Document','Checklist']}]}) as never);
  const report=vi.fn();const result=await (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Help me organize'}],new AbortController().signal,user.workspacePath,report);
- const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(first.tools.map((tool:any)=>tool.function.name)).toEqual(['update_plan','request_user_input','report_progress']);expect(result).toContain('Reply to the question');expect(report.mock.calls.at(-1)?.[0]).toMatchObject({questions:[{title:'Which format?',options:['Document','Checklist']}]});
+ const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(first.tools.map((tool:any)=>tool.function.name)).toEqual(['manage_memory','update_plan','request_user_input','report_progress']);expect(result).toContain('Reply to the question');expect(report.mock.calls.at(-1)?.[0]).toMatchObject({questions:[{title:'Which format?',options:['Document','Checklist']}]});
 });
 it('rejects malformed plans and questions combined with actions before changing files',async()=>{
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);const action=vi.spyOn(server as any,'processOfficeMessage');

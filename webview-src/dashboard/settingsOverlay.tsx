@@ -1,4 +1,5 @@
 import {UserWorkspaceAccount} from './userWorkspaceAccount';
+import {UserWorkspaceMemory} from './userWorkspaceMemory';
 import { UserWorkspaceInstructions } from "./userWorkspaceInstructions";
 import type {
   DashboardCopy,
@@ -207,13 +208,25 @@ export function SettingsOverlay(props: {
   const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
   useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
+  const [userTab, setUserTab] = useState('general');
+  useEffect(() => { if (props.open) setUserTab('general'); }, [props.open, props.office?.id]);
 
   if (props.office?.role === "user") {
     return createPortal(<div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
-        <div class="settings-modal-head"><div><div class="settings-modal-kicker">User Workspace</div><div class="settings-modal-title" id="office-user-settings-title">User settings</div></div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
-        <div class="settings-modal-body"><UserWorkspaceAccount open={props.open} owner={props.office.id} /><UserWorkspaceInstructions open={props.open} owner={props.office.id} />{props.open?<BrowserNotifications workspace/>:null}
-<div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Working with your assistant</div><div class="settings-block-sub">Ask questions, explore ideas, or create something together.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Ask your assistant to create or update a file, and it will get to work. You can ask follow-up questions or stop a response at any time." : "Start a conversation to explore ideas and get help with your work."}</div></div></div>
+        <div class="settings-modal-head"><div class="settings-modal-title" id="office-user-settings-title">Settings</div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
+        <div class="user-settings-layout">
+          <nav class="user-settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections" onKeyDown={event => {
+            if (['ArrowUp','ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) { const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (index >= 0) { event.preventDefault(); const next = buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]; next?.focus(); next?.click(); } }
+            else handleTabKeyDown(event);
+          }}>{['General','Personalization','Account','Usage'].map(label => { const id = label.toLowerCase(); return <button type="button" role="tab" id={`user-settings-tab-${id}`} aria-selected={userTab === id} aria-controls="user-settings-panel" tabIndex={userTab === id ? 0 : -1} onClick={() => setUserTab(id)}>{label}</button>; })}</nav>
+          <div class="settings-modal-body" id="user-settings-panel" role="tabpanel" aria-labelledby={`user-settings-tab-${userTab}`} tabIndex={0}>
+            <div hidden={userTab !== 'general'}><section class="settings-block user-appearance"><label class="settings-block-title" for="user-theme">Appearance</label><select id="user-theme" value={props.settings.dashboardTheme} onChange={event => { const value = event.currentTarget.value as DashboardSettings['dashboardTheme']; props.onPatchSettings({dashboardTheme:value});props.onSendSetting('dashboardTheme',value); }}><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></section>{props.open ? <BrowserNotifications workspace /> : null}</div>
+            <div hidden={userTab !== 'account'}><UserWorkspaceAccount open={props.open} owner={props.office.id} /></div>
+            <UserWorkspaceInstructions open={props.open} owner={props.office.id} view={userTab} />
+            <div hidden={userTab !== 'personalization'}><UserWorkspaceMemory open={props.open} owner={props.office.id} /></div>
+          </div>
+        </div>
       </div>
     </div>, document.body);
   }
