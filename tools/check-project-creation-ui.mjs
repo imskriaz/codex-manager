@@ -72,6 +72,25 @@ export async function checkProjectCreationUi(page, { origin, width, output }) {
   assert.ok(await folders.evaluate(dialog => dialog.contains(document.activeElement)), 'Keyboard focus stays in the folder picker');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
   await page.screenshot({ path: path.join(output, `project-folder-picker-${width}.png`) });
+  await folders.getByRole('button', { name: 'New folder', exact: true }).click();
+  const folderName = folders.getByRole('textbox', { name: 'Folder name', exact: true });
+  await folderName.fill('Cancelled folder');
+  await folders.getByRole('button', { name: 'Cancel new folder', exact: true }).click();
+  await folders.getByRole('status').filter({ hasText: 'Folder creation cancelled.' }).waitFor();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'createWorkspaceFolder').length), 0);
+  await folders.getByRole('button', { name: 'New folder', exact: true }).click();
+  await folderName.fill('Existing');
+  await folders.getByRole('button', { name: 'Create folder', exact: true }).click();
+  await folders.getByRole('alert').filter({ hasText: 'already exists' }).waitFor();
+  assert.equal(await folderName.inputValue(), 'Existing', 'Failure preserves the draft');
+  await folderName.fill('New folder');
+  assert.ok(await folders.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth + 2));
+  await page.screenshot({ path: path.join(output, `project-new-folder-form-${width}.png`) });
+  await folders.getByRole('button', { name: 'Create folder', exact: true }).click();
+  await folders.getByRole('status').filter({ hasText: 'Folder created: D:/New folder' }).waitFor();
+  assert.equal(await folders.locator('.folder-picker-selection code').innerText(), 'D:/New folder');
+  assert.ok(await folders.getByRole('button', { name: 'Select folder', exact: true }).isEnabled());
+  await page.screenshot({ path: path.join(output, `project-new-folder-created-${width}.png`) });
   await page.keyboard.press('Escape');
   await folders.waitFor({ state: 'detached' });
   assert.ok(await modal.isVisible(), 'Escape closes only the folder picker');
@@ -82,8 +101,6 @@ export async function checkProjectCreationUi(page, { origin, width, output }) {
   await folders.getByRole('button', { name: 'Open Projects', exact: true }).click();
   await folders.locator('.folder-picker-selection code').filter({ hasText: 'D:/Projects' }).waitFor();
   await folders.getByRole('button', { name: 'Up one level', exact: true }).click();
-  await folders.getByRole('button', { name: 'Open Projects', exact: true }).waitFor();
-  await folders.getByRole('button', { name: 'Refresh folders', exact: true }).click();
   await folders.getByRole('button', { name: 'Open Projects', exact: true }).waitFor();
   const folderPath = folders.getByRole('textbox', { name: 'Folder path', exact: true });
   await folderPath.fill('D:/Projects');
@@ -124,5 +141,5 @@ export async function checkProjectCreationUi(page, { origin, width, output }) {
   await taskPicker.click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
   await modal.waitFor();
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
-  console.log(JSON.stringify({ width, durationMs: Date.now() - started, checks: 'Empty project and zero-session picker, separate folder modal, focus, Escape preserves draft, Home/Up/refresh/path navigation, selection, cancellation, no real writes' }));
+  console.log(JSON.stringify({ width, durationMs: Date.now() - started, checks: 'Empty project and zero-session picker, separate folder modal, focus, Escape preserves draft, Home/Up/path navigation, folder creation/collision/cancellation, selection, no real writes' }));
 }

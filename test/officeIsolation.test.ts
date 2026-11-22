@@ -81,6 +81,9 @@ it("blocks hidden panels, unknown terminal handles and project symlink destinati
  await expect(scope("workspaceTerminal",{terminalId:"other-user-terminal"})).rejects.toThrow();
  const outside=path.join(root,"outside-project");await fs.mkdir(outside);await fs.symlink(outside,path.join(user.workspacePath,"Escape"),"junction");
  await expect(scope("createWorkspaceProject",{parentFolder:user.workspacePath,projectName:"Escape"})).rejects.toThrow();
+ await expect(scope("createWorkspaceFolder",{parentFolder:outside,folderName:"New folder"})).rejects.toThrow("Workspace access denied");
+ await expect(scope("createWorkspaceFolder",{parentFolder:path.join(user.workspacePath,"Escape"),folderName:"New folder"})).rejects.toThrow("Workspace access denied");
+ expect((await scope("createWorkspaceFolder",{parentFolder:user.workspacePath,folderName:"New folder"})).payload.parentFolder).toBe(await fs.realpath(user.workspacePath));
 });
 it("does not broadcast master notices, native sessions or account activity to a Team socket",async()=>{
  const internal=server as any;

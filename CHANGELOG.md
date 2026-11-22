@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.79
+
+- Add New folder to the project folder picker with confirmed selection, collision errors, and bounded creation feedback on the selected system.
+
 ## 3.0.0-pre.77
 
 - Move Scheduled and Library into subscriber Settings and simplify the chat sidebar with a compact account menu at the bottom.

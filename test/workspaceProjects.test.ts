@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from '../src/services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceFolder, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from '../src/services/workspaceProjects';
 import { removeTestDirectory } from './testFilesystem';
 
 let root: string, store: SqliteStateStore;
@@ -150,4 +150,30 @@ it('bounds large folder listings and tells users when the list is partial', asyn
   await Promise.all(Array.from({ length: 201 }, (_, i) => fs.mkdir(path.join(root, `folder-${i}`))));
   const listing = await browseWorkspaceFolders(root);
   expect(listing.folders).toHaveLength(200); expect(listing.warning).toContain('200');
+});
+
+it('creates a child folder without registering a project and rejects collisions', async () => {
+  const folder = await createWorkspaceFolder('New folder', root);
+  expect(folder).toBe(path.join(await fs.realpath(root), 'New folder'));
+  expect((await fs.stat(folder)).isDirectory()).toBe(true);
+  expect(readWorkspaceProjects()).toEqual([]);
+  await fs.writeFile(path.join(folder, 'keep.txt'), 'kept');
+  await expect(createWorkspaceFolder('New folder', root)).rejects.toThrow('already exists');
+  expect(await fs.readFile(path.join(folder, 'keep.txt'), 'utf8')).toBe('kept');
+  await fs.writeFile(path.join(root, 'file'), 'kept');
+  await expect(createWorkspaceFolder('file', root)).rejects.toThrow('already exists');
+});
+it.each(['', '.', '..', '../escape', 'a/b', 'a\\b', 'NUL', 'bad:name', 'trailing.', null, 12])('rejects an invalid folder name: %s', async name => {
+  await expect(createWorkspaceFolder(name, root)).rejects.toThrow('folder name');
+});
+it.each(['', 'relative', null, 12])('rejects an invalid folder parent: %s', async parent => {
+  await expect(createWorkspaceFolder('new', parent)).rejects.toThrow('absolute parent');
+});
+it('preserves creation errors and bounds an unresponsive filesystem without replay', async () => {
+  vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(new Error('EACCES: permission denied'));
+  await expect(createWorkspaceFolder('new', root)).rejects.toThrow('EACCES');
+  vi.useFakeTimers();
+  vi.spyOn(fs, 'realpath').mockImplementationOnce(() => new Promise(() => {}));
+  const result = expect(createWorkspaceFolder('new', root)).rejects.toThrow('not replayed');
+  await vi.advanceTimersByTimeAsync(5000); await result;
 });

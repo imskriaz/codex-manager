@@ -144,3 +144,55 @@ it('reports transport failure without leaving the picker busy', () => {
   expect(props.onFeedback).toHaveBeenCalledWith({ level: 'error', message: 'Connection lost' });
   expect(input('Folder path').props.disabled).toBeFalsy(); expect(button('Select folder').props.disabled).toBe(true);
 });
+
+const openNewFolder = () => {
+  button('Browse folders\u2026').props.onClick(); reply('create-id', listing());
+  button('New folder').props.onClick();
+  (input('Folder name').props.onInput ?? input('Folder name').props.oninput)({ currentTarget: { value: 'New folder' } });
+};
+const submitFolder = () => nodes(modal('Select project folder')).filter(node => node.type === 'form')[1]!.props.onSubmit({ preventDefault() {} });
+it('creates a folder once on the selected system and selects it only after confirmation', () => {
+  openNewFolder(); submitFolder(); submitFolder();
+  expect(fixture.send).toHaveBeenCalledTimes(2);
+  expect(fixture.send).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'createWorkspaceFolder', payload: { parentFolder: 'D:\\Selected', folderName: 'New folder', targetDeviceId: 'selected-pc', automatic: true } }));
+  expect(modal('Select project folder').props.closeDisabled).toBe(true);
+  modal('Select project folder').props.onClose(); expect(modal('Select project folder')).toBeDefined();
+  expect(button('Select folder').props.disabled).toBe(true);
+  reply('request-2', { workspaceFolder: 'D:\\Selected\\New folder' });
+  expect(text(modal('Select project folder'))).toContain('Folder created:');
+  expect(button('Select folder').props.disabled).toBe(false);
+  button('Select folder').props.onClick();
+  expect(input('Project folder').props.value).toBe('D:\\Selected\\New folder');
+  expect(props.onCreated).not.toHaveBeenCalled(); expect(props.onClose).not.toHaveBeenCalled();
+});
+it('retains the folder name and renders host failures in the picker for retry', () => {
+  openNewFolder(); submitFolder(); reply('request-2', undefined, 'failed', 'Permission denied');
+  expect(nodes(modal('Select project folder')).find(node => node.props.role === 'alert')?.props.children).toBe('Permission denied');
+  expect(input('Folder name').props.value).toBe('New folder');
+  expect(button('Create folder').props.disabled).toBeFalsy();
+  submitFolder(); expect(fixture.send).toHaveBeenCalledTimes(3);
+});
+it('times out without replay, ignores late creation and permits explicit navigation recovery', () => {
+  openNewFolder(); submitFolder(); vi.advanceTimersByTime(12000);
+  expect(text(modal('Select project folder'))).toContain('not replayed');
+  reply('request-2', { workspaceFolder: 'D:\\Late' });
+  expect(input('Folder path').props.value).toBe('D:\\Selected');
+  expect(fixture.send).toHaveBeenCalledTimes(2);
+  button('Cancel new folder').props.onClick();
+  expect(text(modal('Select project folder'))).toContain('Folder creation cancelled.');
+  expect(button('Select folder').props.disabled).toBe(false);
+});
+it('shows transport failure and cancellation in the folder picker without losing input', () => {
+  openNewFolder(); fixture.send.mockImplementationOnce(() => { throw new Error('Connection lost'); }); submitFolder();
+  expect(text(modal('Select project folder'))).toContain('Connection lost');
+  expect(modal('Select project folder').props.closeDisabled).toBe(false);
+  submitFolder(); reply('request-3', undefined, 'cancelled');
+  expect(text(modal('Select project folder'))).toContain('Folder creation cancelled.');
+  expect(input('Folder name').props.value).toBe('New folder');
+});
+it('prevents folder creation in an unvisited path or while disconnected', () => {
+  openNewFolder(); (input('Folder path').props.onInput ?? input('Folder path').props.oninput)({ currentTarget: { value: 'D:\\Other' } });
+  submitFolder(); expect(fixture.send).toHaveBeenCalledOnce();
+  (input('Folder path').props.onInput ?? input('Folder path').props.oninput)({ currentTarget: { value: 'D:\\Selected' } });
+  render({ disabled: true }); submitFolder(); expect(fixture.send).toHaveBeenCalledOnce();
+});

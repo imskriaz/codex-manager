@@ -5,7 +5,7 @@ import { resolveMasterOfficeUsername } from '../../services/officeUsers';
 import { localMasterActor, recordOfficeAudit, recordSessionInitiator, withOfficeActor, withSessionInitiator, type OfficeActor } from '../../services/officeAudit';
 import { readNativeCodexSessionRunning } from "../../services/codexNativeSessionStatus";
 import { chatAttachmentPreviews, prepareChatInput } from '../../domain/chatAttachments';
-import { browseWorkspaceFolders, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
+import { browseWorkspaceFolders, createWorkspaceFolder, createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, removeWorkspaceProject } from '../../services/workspaceProjects';
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
@@ -1181,6 +1181,8 @@ async function runDashboardAction(
       return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
     case 'browseWorkspaceFolders':
       return { workspaceFolders: await browseWorkspaceFolders(payload?.parentFolder) };
+    case 'createWorkspaceFolder':
+      return { workspaceFolder: await createWorkspaceFolder(payload?.folderName, payload?.parentFolder) };
     case "createWorkspaceProject": {
       const workspaceProject = await createWorkspaceProject(payload?.projectName, payload?.parentFolder);
       return { workspaceProject, notice: { level: 'info' as const, message: `Project ready: ${workspaceProject.label}.` } };

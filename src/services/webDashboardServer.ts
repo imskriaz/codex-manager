@@ -2059,7 +2059,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const root=await fs.realpath(user.workspacePath);
     const within=(value:string)=>{const relative=pathLib.relative(root,value);return !relative.startsWith("..")&&!pathLib.isAbsolute(relative);};
     if(payload.sessionId){const project=this.teamSessions().project(user.id,payload.sessionId);if(!payload.projectPath)payload.projectPath=project;}
-    const candidate=(message.action==="browseWorkspaceFolders"?payload.parentFolder:undefined)||payload.projectPath||root;
+    const candidate=(["browseWorkspaceFolders","createWorkspaceFolder"].includes(message.action)?payload.parentFolder:undefined)||payload.projectPath||root;
     if(!within(pathLib.resolve(candidate)))throw new Error("Workspace access denied.");
     const canonical=await fs.realpath(candidate);
     if(!within(canonical))throw new Error("Workspace access denied.");
@@ -2088,7 +2088,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       if(!within(resolved))throw new Error("Workspace access denied.");
     }
-    if(message.action==="browseWorkspaceFolders")payload.parentFolder=canonical;
+    if(["browseWorkspaceFolders","createWorkspaceFolder"].includes(message.action))payload.parentFolder=canonical;
     if(message.action==="workspacePanel"){
       payload.panelLocalOnly=true;
       if(payload.panelRequest?.tab && !/^(env|files|browser)(:|$)/.test(payload.panelRequest.tab))throw new Error("This panel is unavailable.");
@@ -2354,6 +2354,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (["listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"].includes(message.action)) return user.features.includes("generalChat") || user.features.includes("tasks");
     if (["listWorkspaceFiles","readWorkspaceFile","saveWorkspaceFile","deleteWorkspaceFile"].includes(message.action)) return user.features.includes("files");
     if (message.action === "workspaceBrowser") return user.features.includes("browser");
+    if (message.action === "createWorkspaceFolder") return user.features.includes("files");
     if (["getWorkspaceEnvironment","createWorkspaceProject","browseWorkspaceFolders","renameWorkspaceProject","removeWorkspaceProject","workspacePanel"].includes(message.action)) return user.features.some(feature => ["files","tasks","env","browser"].includes(feature));
     return false;
   }

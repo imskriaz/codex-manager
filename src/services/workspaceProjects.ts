@@ -20,7 +20,7 @@ export function workspaceProjectLabels(projects: DashboardCliProject[]): Dashboa
     .filter(project => !hidden.has(projectStorageKey(project.path)));
 }
 
-function validateProjectName(name: unknown): string {
+function validateProjectName(name: unknown, kind = 'project'): string {
   if (
     typeof name !== "string" ||
     name !== name.trim() ||
@@ -32,7 +32,7 @@ function validateProjectName(name: unknown): string {
     /^\.{1,2}$/.test(name) ||
     /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(name)
   )
-    throw new Error("Enter a project name of up to 120 characters without path separators or reserved filename characters.");
+    throw new Error(`Enter a ${kind} name of up to 120 characters without path separators or reserved filename characters.`);
   return name;
 }
 
@@ -65,6 +65,24 @@ export async function browseWorkspaceFolders(folder?: unknown) {
     }))).filter((value): value is string => !!value) : ['/'];
     return { path: current, parent: path.dirname(current), folders, roots, ...(truncated ? { warning: 'Showing the first 200 folders. Enter a path to open another folder.' } : {}) };
   })(), 5000, 'Folder browsing timed out. Check the drive or reconnect before retrying.');
+}
+
+/** Create one child without registering a project or adopting an existing path. */
+export async function createWorkspaceFolder(name: unknown, folder: unknown): Promise<string> {
+  const label = validateProjectName(name, 'folder');
+  if (typeof folder !== 'string' || folder.length > 4096 || folder.includes('\0') || !path.isAbsolute(normalizeNativePath(folder.trim())))
+    throw new Error('Choose an absolute parent folder path on the selected system.');
+  return waitWithin((async () => {
+    const parent = await fs.realpath(normalizeNativePath(folder.trim()));
+    if (!(await fs.stat(parent)).isDirectory()) throw new Error('The parent path must be an existing folder.');
+    const destination = path.join(parent, label);
+    try { await fs.mkdir(destination); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('A file or folder already exists with that name. Choose another name.');
+      throw error;
+    }
+    return destination;
+  })(), 5000, `Folder creation was not confirmed. Check ${folder} before retrying; the request was not replayed.`);
 }
 
 export function readWorkspaceProjects(namespace = NAMESPACE): DashboardCliProject[] {

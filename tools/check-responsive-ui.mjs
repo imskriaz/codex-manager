@@ -310,6 +310,10 @@ const mockHost = `(() => {
           if(window.__docsFixture)payload.usageGraph.history=state.accounts.flatMap((account,index)=>Array.from({length:20},(_,point)=>({accountId:account.id,at:query.from+(query.to-query.from)*point/19,hourly:Math.max(0,98-index*8-Math.floor(point/3)*(index%3+1)*1.2-(point%3===2?0.4:0)),weekly:Math.max(0,92-index*8-point*.2)})));
         }
         else if(message.action === 'browseWorkspaceFolders') payload={workspaceFolders:{path:message.payload?.parentFolder || 'D:/',parent:'D:/',roots:['D:/'],folders:message.payload?.parentFolder==='D:/Projects'?[]:[{name:'Projects',path:'D:/Projects'}]}};
+        else if(message.action === 'createWorkspaceFolder') {
+          if(message.payload?.folderName === 'Existing') { dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'failed',error:'A file or folder already exists with that name. Choose another name.'}})); return; }
+          payload={workspaceFolder:message.payload.parentFolder.replace(/\\/+$/,'')+'/'+message.payload.folderName};
+        }
         else if(message.action === 'getCodexSkills') { if(window.__failSkills) error='Skill discovery is offline. Retry when connected.'; else payload={cliSkills:[{name:'review-code',description:'Review code changes and check regressions'},{name:'ui-design',description:'Improve the interface'}]}; }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }

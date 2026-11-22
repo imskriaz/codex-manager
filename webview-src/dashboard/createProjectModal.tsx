@@ -23,19 +23,33 @@ export function CreateProjectModal(props: {
   const [pending, setPending] = useState(false), [browserOpen, setBrowserOpen] = useState(false);
   const [browsing, setBrowsing] = useState(false), [location, setLocation] = useState('');
   const [listing, setListing] = useState<DashboardActionResultPayload['workspaceFolders']>();
+  const [newFolder, setNewFolder] = useState<string>();
+  const [creatingFolder, setCreatingFolder] = useState(false), [folderNotice, setFolderNotice] = useState<DashboardNotice>();
+  const folderRequest = useRef<{ id: string; timer: ReturnType<typeof setTimeout>; parent: string; roots: string[] }>();
   const request = useRef<{ id: string; timer: ReturnType<typeof setTimeout> }>();
   const browseRequest = useRef<{ id: string; timer: ReturnType<typeof setTimeout> }>();
   const current = useRef(props);
   current.current = props;
   const closeBrowser = () => {
+    if (folderRequest.current) return;
     if (browseRequest.current) clearTimeout(browseRequest.current.timer);
     browseRequest.current = undefined;
-    setBrowsing(false); setBrowserOpen(false);
+    setBrowsing(false); setBrowserOpen(false); setNewFolder(undefined); setFolderNotice(undefined);
   };
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
       const message = event.data;
       if (message?.type !== 'dashboard:action-result') return;
+      if (folderRequest.current && message.requestId === folderRequest.current.id) {
+        const { parent, roots } = folderRequest.current;
+        clearTimeout(folderRequest.current.timer); folderRequest.current = undefined; setCreatingFolder(false);
+        if (message.status === 'completed' && message.payload?.workspaceFolder) {
+          const path = message.payload.workspaceFolder;
+          setListing({ path, parent, roots, folders: [] }); setLocation(path); setNewFolder(undefined);
+          setFolderNotice({ level: 'info', message: `Folder created: ${path}` });
+        } else setFolderNotice({ level: message.status === 'cancelled' ? 'warning' : 'error', message: message.error || (message.status === 'cancelled' ? 'Folder creation cancelled.' : 'Folder creation was not confirmed. Check the parent folder before retrying.') });
+        return;
+      }
       if (browseRequest.current && message.requestId === browseRequest.current.id) {
         clearTimeout(browseRequest.current.timer); browseRequest.current = undefined; setBrowsing(false);
         if (message.status === 'completed' && message.payload?.workspaceFolders) {
@@ -57,6 +71,10 @@ export function CreateProjectModal(props: {
       window.removeEventListener('message', receive);
       if (browseRequest.current) clearTimeout(browseRequest.current.timer);
       browseRequest.current = undefined;
+      if (folderRequest.current) {
+        clearTimeout(folderRequest.current.timer); folderRequest.current = undefined;
+        current.current.onFeedback({ level: 'warning', message: 'The selected workspace changed before folder creation was confirmed. Check the original system before retrying.' });
+      }
       if (request.current) {
         clearTimeout(request.current.timer); request.current = undefined;
         current.current.onFeedback({ level: 'warning', message: 'The selected workspace changed before the project was confirmed. Check the original system’s project list before retrying.' });
@@ -64,7 +82,8 @@ export function CreateProjectModal(props: {
     };
   }, [props.deviceId]);
   const browse = (parentFolder?: string) => {
-    if (browseRequest.current || pending || props.disabled) return;
+    if (browseRequest.current || folderRequest.current || pending || props.disabled) return;
+    setNewFolder(undefined);
     setBrowsing(true); setLocation(parentFolder ?? '');
     const id = createActionRequestId(true);
     const timer = setTimeout(() => {
@@ -79,7 +98,23 @@ export function CreateProjectModal(props: {
       props.onFeedback({ level: 'error', message: failure instanceof Error ? failure.message : 'Folder browsing could not be sent.' });
     }
   };
-  const blocked = browsing || props.disabled;
+  const blocked = browsing || creatingFolder || props.disabled;
+  const createFolder = () => {
+    if (blocked || folderRequest.current || !listing || location.trim() !== listing.path || !newFolder?.trim()) return;
+    const id = createActionRequestId(true);
+    setCreatingFolder(true); setFolderNotice(undefined);
+    const timer = setTimeout(() => {
+      if (folderRequest.current?.id !== id) return;
+      folderRequest.current = undefined; setCreatingFolder(false);
+      setFolderNotice({ level: 'warning', message: 'Folder creation timed out. Check the parent folder before retrying; this request was not replayed.' });
+    }, 12_000);
+    folderRequest.current = { id, timer, parent: listing.path, roots: listing.roots };
+    try { postMessageToHost({ type: 'dashboard:action', requestId: id, action: 'createWorkspaceFolder', payload: { parentFolder: listing.path, folderName: newFolder.trim(), targetDeviceId: props.deviceId, automatic: true } }); }
+    catch (failure) {
+      clearTimeout(timer); folderRequest.current = undefined; setCreatingFolder(false);
+      setFolderNotice({ level: 'error', message: failure instanceof Error ? failure.message : 'Folder creation could not be sent.' });
+    }
+  };
   return <>
     <ModalShell open title="Add Project" closeLabel="Close add project" className="create-project-modal dashboard-modal-compact" closeDisabled={pending || browserOpen} closeOnBackdrop={false} onClose={() => { props.onClose(); }}>
       <form class="workspace-dialog-fields create-project-form" onSubmit={event => {
@@ -101,20 +136,26 @@ export function CreateProjectModal(props: {
         <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={() => { props.onClose(); }}>Cancel</button><button type="submit" class="primary" disabled={pending || props.disabled || (props.simple ? !projectName.trim() : !folder.trim())}>{pending ? 'Adding…' : 'Add project'}</button></footer>
       </form>
     </ModalShell>
-    {browserOpen ? <ModalShell open title="Select project folder" closeLabel="Close folder picker" className="project-folder-picker dashboard-modal-compact" closeOnBackdrop={false} onClose={closeBrowser}>
-      <p class="folder-picker-description">Choose an existing folder on the selected system.</p>
+    {browserOpen ? <ModalShell open title="Select project folder" closeLabel="Close folder picker" className="project-folder-picker dashboard-modal-compact" closeDisabled={creatingFolder} closeOnBackdrop={false} onClose={closeBrowser}>
+      <p class="folder-picker-description">Choose or create a folder on the selected system.</p>
       <div class="folder-picker-toolbar">
         <button type="button" class="folder-picker-icon-button" aria-label="Up one level" title="Up one level" disabled={blocked || !listing || listing.path === listing.parent} onClick={() => browse(listing!.parent)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>
         <form class="folder-picker-path" onSubmit={event => { event.preventDefault(); if (!blocked && location.trim()) browse(location.trim()); }}><FolderIcon /><input autoFocus aria-label="Folder path" value={location} disabled={blocked} maxLength={4096} spellcheck={false} autoComplete="off" placeholder="Enter a folder path" onInput={event => setLocation(event.currentTarget.value)} /><button type="submit" aria-label="Go to folder" title="Go to folder" disabled={blocked || !location.trim()}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 5 7 7-7 7" /></svg></button></form>
       </div>
+      <button type="button" class="folder-picker-new-button" disabled={blocked || !listing || location.trim() !== listing.path || newFolder !== undefined} onClick={() => { setNewFolder(''); setFolderNotice(undefined); }}>New folder</button>
+      {newFolder !== undefined ? <form class="folder-picker-new-form" onSubmit={event => { event.preventDefault(); createFolder(); }}>
+        <label>Folder name<input autoFocus aria-label="Folder name" required maxLength={120} value={newFolder} disabled={blocked} autoComplete="off" spellcheck={false} onInput={event => setNewFolder(event.currentTarget.value)} /></label>
+        <div class="folder-picker-actions"><button type="button" disabled={creatingFolder} onClick={() => { setNewFolder(undefined); setFolderNotice({ level: 'info', message: 'Folder creation cancelled.' }); }}>Cancel new folder</button><button type="submit" class="modal-primary-btn" disabled={blocked || !newFolder.trim()}>{creatingFolder ? 'Creating…' : 'Create folder'}</button></div>
+      </form> : null}
+      {folderNotice ? <p class="folder-picker-notice" role={folderNotice.level === 'error' ? 'alert' : 'status'}>{folderNotice.message}</p> : null}
       <div class="folder-picker-layout">
         <aside class="folder-picker-locations"><small>LOCATIONS</small><nav aria-label="Folder locations"><button type="button" disabled={blocked} onClick={() => browse()}><FolderIcon />Home</button>{listing?.roots.map(root => <button type="button" key={root} class={listing.path.toLowerCase().startsWith(root.toLowerCase()) ? 'is-active' : ''} disabled={blocked} onClick={() => browse(root)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 17h2" /></svg><span>{root.replace(/[\\/]+$/, '') || 'File system'}</span></button>)}</nav></aside>
         <section class="folder-picker-content" aria-label="Folders on selected system" aria-busy={browsing}>
           <div class="folder-picker-columns"><span>Name</span><span>Type</span></div>
-          {browsing ? <div class="folder-picker-empty" role="status"><span class="cli-live-spinner" /><span>Loading folders…</span></div> : listing?.folders.length ? <ul class="folder-picker-list">{listing.folders.map(item => <li key={item.path}><button type="button" aria-label={`Open ${item.name}`} title={item.path} disabled={props.disabled} onClick={() => browse(item.path)}><FolderIcon /><strong>{item.name}</strong><small>Folder</small><svg class="folder-picker-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 5 7 7-7 7" /></svg></button></li>)}</ul> : <div class="folder-picker-empty"><FolderIcon /><strong>{listing ? 'No subfolders' : 'Choose a location'}</strong><span>{listing ? 'You can select this folder.' : 'Open a location or enter a folder path above.'}</span></div>}
+          {browsing ? <div class="folder-picker-empty" role="status"><span class="cli-live-spinner" /><span>Loading folders…</span></div> : listing?.folders.length ? <ul class="folder-picker-list">{listing.folders.map(item => <li key={item.path}><button type="button" aria-label={`Open ${item.name}`} title={item.path} disabled={blocked} onClick={() => browse(item.path)}><FolderIcon /><strong>{item.name}</strong><small>Folder</small><svg class="folder-picker-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 5 7 7-7 7" /></svg></button></li>)}</ul> : <div class="folder-picker-empty"><FolderIcon /><strong>{listing ? 'No subfolders' : 'Choose a location'}</strong><span>{listing ? 'You can select this folder.' : 'Open a location or enter a folder path above.'}</span></div>}
         </section>
       </div>
-      <footer class="folder-picker-footer"><div class="folder-picker-selection"><small>SELECTED FOLDER</small><code title={listing?.path}>{listing?.path || 'No folder selected'}</code></div><div class="folder-picker-actions"><button type="button" onClick={closeBrowser}>Cancel</button><button type="button" class="modal-primary-btn" disabled={blocked || !listing || location.trim() !== listing.path} onClick={() => { setFolder(listing!.path); closeBrowser(); }}>Select folder</button></div></footer>
+      <footer class="folder-picker-footer"><div class="folder-picker-selection"><small>SELECTED FOLDER</small><code title={listing?.path}>{listing?.path || 'No folder selected'}</code></div><div class="folder-picker-actions"><button type="button" disabled={creatingFolder} onClick={closeBrowser}>Cancel</button><button type="button" class="modal-primary-btn" disabled={blocked || newFolder !== undefined || !listing || location.trim() !== listing.path} onClick={() => { setFolder(listing!.path); closeBrowser(); }}>Select folder</button></div></footer>
     </ModalShell> : null}
   </>;
 }

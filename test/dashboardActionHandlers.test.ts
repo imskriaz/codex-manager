@@ -15,6 +15,7 @@ import * as sessionEditors from "../src/services/codexSessionResume";
 import * as sessionRecovery from "../src/services/codexSessionRecovery";
 import { readNativeCodexSessionRunning } from '../src/services/codexNativeSessionStatus';
 import * as workspaceTools from "../src/services/workspaceTools";
+import * as workspaceProjects from "../src/services/workspaceProjects";
 import * as autoResume from "../src/services/codexSessionAutoResume";
 import * as apiTokens from '../src/services/dashboardApiToken';
 import { readApiProxyHistory, startApiProxyLog } from '../src/services/aiProxyHistory';
@@ -99,6 +100,16 @@ beforeEach(() => {
 });
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it.each(['browser', 'webview'] as const)('returns folder creation and its original failure to the initiating %s', async hostKind => {
+  const create = vi.spyOn(workspaceProjects, 'createWorkspaceFolder').mockResolvedValue(path.join(operationDirectory, 'New folder'));
+  const ctx = { ...createContext(), hostKind };
+  const request = { type: 'dashboard:action', action: 'createWorkspaceFolder', requestId: 'new-folder', payload: { folderName: 'New folder', parentFolder: operationDirectory, automatic: true } } as const;
+  expect(await executeDashboardActionMessage(ctx, request)).toMatchObject({ status: 'completed', payload: { workspaceFolder: path.join(operationDirectory, 'New folder') } });
+  expect(create).toHaveBeenCalledWith('New folder', operationDirectory);
+  create.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+  expect(await executeDashboardActionMessage(ctx, { ...request, requestId: 'folder-failure' })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('EACCES: permission denied') });
+});
 
 it('reports startup verification success or the original error without waiting for account saves', async () => {
   const ctx = createContext();

@@ -562,6 +562,7 @@ export type DashboardActionName =
   | "workspacePanel"
   | "coordinateCodexSessions"
   | "browseWorkspaceFolders"
+  | "createWorkspaceFolder"
   | "createWorkspaceProject"
   | "renameWorkspaceProject"
   | "removeWorkspaceProject"
@@ -775,6 +776,7 @@ export interface DashboardActionPayload {
   fileDownloadRevision?: string;
   fileDownloadNative?: boolean;
   projectName?: string;
+  folderName?: string;
   destinationProjectPath?: string;
   parentFolder?: string;
   includeBranchDiff?: boolean;
@@ -1202,6 +1204,7 @@ export interface DashboardActionResultPayload {
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
   workspacePanel?: import('../workspaceSurface').WorkspaceSurfaceResult;
   sessionCoordination?: import('../sessionCoordination').SessionCoordinationResult;
+  workspaceFolder?: string;
   workspaceFolders?: { path: string; parent: string; folders: Array<{ name: string; path: string }>; roots: string[]; warning?: string };
   workspaceProject?: DashboardCliProject;
   terminalSnapshot?: WorkspaceTerminalSnapshot;
