@@ -72,7 +72,8 @@ import {
   SortIcon,
   MetricIcon,
   TagIcon,
-  TableViewIcon
+  TableViewIcon,
+  renderRefreshIcon
 } from "./icons";
 import {
   AboutModal,
@@ -2720,7 +2721,7 @@ function App() {
               </div>
               {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
                 <WorkspaceMenu label="More account actions" icon={<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor" /><circle cx="12" cy="12" r="1.8" fill="currentColor" /><circle cx="19" cy="12" r="1.8" fill="currentColor" /></svg>}>
-
+                  <button type="button" role="menuitem" disabled={isActionPending('refreshAll')} onClick={() => sendAction('refreshAll')}>{renderRefreshIcon()} Refresh all quotas</button>
                   <button type="button" role="menuitem" disabled={syncPending} onClick={handleSyncNow}>Sync now</button>
                   <button type="button" role="menuitem" onClick={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}>Manage tags</button>
                   <button type="button" role="menuitem" onClick={modals.openImportModal}>Import accounts</button>
@@ -3726,7 +3727,7 @@ function CliSessionsMenu(props: {
               aria-label={menuLabel}
 
             >
-              <div class="cli-sessions-popover-heading"><span>{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</span></div>
+              <div class="cli-sessions-popover-heading"><span>{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</span><button type="button" class={`cli-icon-button cli-running-refresh ${props.error ? 'has-error' : ''}`} aria-label={props.loading ? 'Refreshing sessions' : props.error ? 'Retry session refresh' : 'Refresh sessions'} title={props.error || (!props.connected ? 'System offline · showing saved sessions' : props.loading ? 'Refreshing sessions' : 'Refresh sessions')} disabled={props.loading || !props.connected} onClick={props.onRetry}>{renderRefreshIcon()}</button></div>
               <div class="cli-sessions-running-list" role="list" aria-busy={props.loading}>
                 {props.sessions.length === 0 ? <p class="cli-sessions-empty" role="status">{props.error ? "Running sessions are unavailable." : !props.connected ? "Reconnect to check running sessions." : props.loading ? "Checking sessions…" : !props.ready ? "Running status unavailable." : "No running sessions."}</p> : null}
                 {props.sessions.map((session) => {

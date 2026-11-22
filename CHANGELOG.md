@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.61
+
+- Restore manual refresh controls on the dashboard, saved accounts and token history while keeping workspace refresh icons removed.
+
 ## 3.0.0-pre.60
 
 - Pin live task checklists above the composer in User Workspace and native Codex sessions, with completed counts, current steps, paused states and saved plan history.

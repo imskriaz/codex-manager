@@ -18,7 +18,7 @@ export { formatTokenCount } from "./helpers";
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, CodexSessionsIcon, EditTagsIcon, renderSyncIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, CodexSessionsIcon, EditTagsIcon, renderRefreshIcon, renderSyncIcon, ResetCreditIcon } from "./icons";
 import { loadUsageGraphPreferences, saveUsageGraphPreferences, type UsageGraphPreferences, type UsageGraphRange } from "./preferences";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -134,6 +134,9 @@ export function OverviewSection(props: {
   const contextAction = account
     ? resolveOverviewContextAction(account, settings.encryptedSyncRegistryOverrideEnabled)
     : "switch";
+  const runRefreshAll = (): void => {
+    props.onRefreshAll();
+  };
   const openLockDialog = (trigger: HTMLElement): void => {
     const rect = trigger.getBoundingClientRect();
     lockTrigger.current = { isConnected: true, getBoundingClientRect: () => rect };
@@ -372,7 +375,16 @@ export function OverviewSection(props: {
                 >
                   {resolveOverviewToolbarLabel("sync", props.lang)}
                 </ActionButton>
-
+                <ActionButton
+                  class="toolbar-btn"
+                  icon={renderRefreshIcon()}
+                  label={props.copy.refreshAll}
+                  pending={props.refreshAllPending}
+                  disabled={props.refreshAllPending || props.disabled || !hasAccounts}
+                  onClick={runRefreshAll}
+                >
+                  {resolveOverviewToolbarLabel("refresh", props.lang)}
+                </ActionButton>
                 <div class="overview-more-wrap" ref={moreRef}>
                   <ActionButton
                     class="toolbar-btn"
@@ -909,13 +921,14 @@ function UsageGraph(props: {
               <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { updatePreferences({ mode: "tokens", windowOffset: 0 }); setSettingsOpen(false); }}>Token usage</button>
               <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved VS Code tokens across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at the configured interval. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
               <div class="usage-graph-cache-head"><span>{graphMode === "tokens" ? "Saved accounts" : "Account usage"}</span>
-                <small>Last checked</small>
+                {graphMode === "tokens" ? <button type="button" disabled={props.tokenHistoryRefresh?.busy || !props.accounts.length} onClick={() => props.tokenHistoryRefresh?.refresh(props.accounts.map(account => account.id))}>{renderRefreshIcon()} Refresh all</button> : <small>Used · last checked</small>}
               </div>
               {graphMode === "tokens" && props.tokenHistoryRefresh?.summary ? <div class="usage-graph-refresh-summary" role="status">{props.tokenHistoryRefresh.summary}</div> : null}
               <div class="usage-graph-cache-list" aria-label={graphMode === "tokens" ? "Saved account history" : "Account quota summary"}>
                 {props.accounts.map(account => {
                   const entry = cacheByAccount.get(account.id);
                   const refresh = props.tokenHistoryRefresh?.statuses[account.id];
+                  const pending = refresh?.state === "pending" || refresh?.state === "queued";
                   const checkedAt = graphMode === "tokens" ? entry?.fetchedAt : account.lastQuotaAt;
                   const age = checkedAt ? formatRelativeTimestamp(checkedAt, props.now, "Unknown", props.lang) : "Not checked";
                   const stateLabel = refresh?.state === "error" ? "Failed" : refresh?.message;
@@ -925,6 +938,7 @@ function UsageGraph(props: {
                     <small class={graphMode === "tokens" && refresh ? `is-${refresh.state}` : ""} role={graphMode === "tokens" && refresh ? "status" : undefined} title={graphMode === "tokens" && refresh ? refresh.message : `${graphMode === "quota" ? "Quota used in selected period. " : ""}Last successful check: ${checkedAt ? formatTimestamp(checkedAt, "Unknown") : "Not collected"}`}>
                       {graphMode === "tokens" ? stateLabel ?? (entry ? `${props.now - entry.fetchedAt >= 3_600_000 ? "Stale · " : ""}${age}` : "Not collected") : `${formatUsageValue(usageByAccount.get(account.id) ?? 0)} · ${age}`}
                     </small>
+                    {graphMode === "tokens" ? <button class="usage-graph-account-refresh" type="button" disabled={pending} aria-busy={pending} aria-label={`Refresh token history for ${accountMap.get(account.id)?.label}`} title="Refresh this account's token history" onClick={() => props.tokenHistoryRefresh?.refresh([account.id])}>{renderRefreshIcon()}</button> : null}
                   </div>;
                 })}
               </div>
@@ -1260,7 +1274,7 @@ export function resolveOverviewToolbarActionCount(
   _hasActiveAccount: boolean,
   _rescueOverrideEnabled: boolean
 ): number {
-  return 3;
+  return 4;
 }
 
 export function resolveOverviewToolbarLabel(
