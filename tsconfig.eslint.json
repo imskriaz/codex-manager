@@ -8,6 +8,7 @@
     "webview-src/**/*.ts",
     "webview-src/**/*.tsx",
     "src/domain/dashboard/**/*.ts",
+    "src/domain/sessionPlan.ts",
     "src/localization/**/*.ts"
   ]
 }

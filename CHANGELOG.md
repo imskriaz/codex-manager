@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.62
+
+- Restore ESLint project coverage for session plans and scale dashboard plan markers with browser text settings.
+
 ## 3.0.0-pre.61
 
 - Restore manual refresh controls on the dashboard, saved accounts and token history while keeping workspace refresh icons removed.

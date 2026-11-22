@@ -19028,7 +19028,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .session-plan > p { margin:10px 0 0; color:var(--text-secondary); overflow-wrap:anywhere; }
 .session-plan > ol { display:grid; gap:8px; margin:12px 0 0; padding:0; list-style:none; }
 .session-plan li { display:flex; align-items:flex-start; gap:8px; line-height:1.5; }
-.session-plan-marker { display:grid; place-items:center; box-sizing:border-box; flex:0 0 16px; height:16px; margin-top:1px; border:1px solid var(--border-default); border-radius:50%; font-size:10px; color:var(--text-muted); }
+.session-plan-marker { display:grid; place-items:center; box-sizing:border-box; flex:0 0 16px; height:16px; margin-top:1px; border:1px solid var(--border-default); border-radius:50%; font-size:calc(10px * var(--dashboard-text-scale, 1)); color:var(--text-muted); }
 .session-plan-step { min-width:0; overflow-wrap:anywhere; }
 .session-plan .is-completed .session-plan-marker { color:var(--success, #16a05a); border-color:currentColor; }
 .session-plan .is-completed .session-plan-step { color:var(--text-muted); text-decoration:line-through; }
