@@ -4,10 +4,10 @@ import { ModalShell } from "./primitives";
 
 export type SettingsRecord = { id: string; label: string; cells: ComponentChildren[]; details: ComponentChildren | ((close: () => void) => ComponentChildren) };
 
-export function SettingsRecordList(props: { label: string; columns: string[]; rows: SettingsRecord[]; open?: boolean; onOpen?: () => void }) {
+export function SettingsRecordList(props: { label: string; columns: string[]; rows: SettingsRecord[]; open?: boolean; onOpen?: () => void; onSelect?: (id: string) => void }) {
   const [selected, setSelected] = useState<SettingsRecord>();
   useEffect(() => { if (props.open === false) setSelected(undefined); }, [props.open]);
-  const open = (row: SettingsRecord) => { setSelected(row); props.onOpen?.(); };
+  const open = (row: SettingsRecord) => { if (props.onSelect) { props.onSelect(row.id); return; } setSelected(row); props.onOpen?.(); };
   return <>
     <div class="settings-record-scroll"><table class="settings-record-table" aria-label={props.label}>
       <thead><tr>{props.columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>

@@ -45,6 +45,8 @@ const compiled = await build({ stdin: { contents: `
 `, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
+async function selectSection(scope,label,name){const picker=scope.getByRole('combobox',{name:label,exact:true});if(await picker.isVisible())await picker.selectOption({label:name});else await scope.getByRole('tab',{includeHidden:true,name,exact:true}).click();}
+
 try {
   const live = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
   await useWorkspaceDashboardAssets(live, origin);
@@ -59,21 +61,21 @@ try {
   await shortcut.waitFor();
   assert.equal(await shortcut.count(), 1);
   assert.equal(await task.evaluate(element=>element.nextElementSibling?.getAttribute('aria-label')), 'API access');
-  await live.getByRole('tab', {name:'List',exact:true}).click();
+  await live.getByRole('tab', {includeHidden:true,name:'List',exact:true}).click();
   await shortcut.click();
   await live.waitForURL(origin + '/api/keys');
   const screen = live.getByRole('region', { name: 'API access', exact: true });
   await screen.waitFor();
   assert.equal(await live.getByRole('dialog').count(), 0);
-  assert.equal(await screen.getByRole('tab', { name: 'API keys', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await screen.getByRole('tab', {includeHidden:true, name: 'API keys', exact: true }).getAttribute('aria-selected'), 'true');
   await live.screenshot({ path: path.join(output, 'api-live-keys.png') });
-  await screen.getByRole('tab', {name:'API Explorer',exact:true}).click();
+  await screen.getByRole('tab', {includeHidden:true,name:'API Explorer',exact:true}).click();
   await live.screenshot({ path: path.join(output, 'api-live-explorer.png') });
-  await screen.getByRole('tab', {name:'Proxy',exact:true}).click();
+  await screen.getByRole('tab', {includeHidden:true,name:'Proxy',exact:true}).click();
   await live.screenshot({ path: path.join(output, 'api-live-proxy.png') });
   await task.click();
   await live.waitForURL(origin + '/tasks');
-  assert.equal(await live.getByRole('tab', {name:'List',exact:true}).getAttribute('aria-selected'), 'true', 'Task view survives API navigation');
+  assert.equal(await live.getByRole('tab', {includeHidden:true,name:'List',exact:true}).getAttribute('aria-selected'), 'true', 'Task view survives API navigation');
   assert.equal(await screen.count(), 0);
   assert.deepEqual(errors, []);
   results.push({ mode: 'live-host-workspace-assets', loadAndNavigateMs: Date.now() - started, status: 'passed' });
@@ -92,12 +94,23 @@ try {
     await page.goto(origin + '/__api-fixture');
     for (const file of ['shared.css', 'quotaSummary.css']) await page.addStyleTag({ content: await readFile('media/webview/' + file, 'utf8') });
     const screen = page.getByRole('region', {name:'API access',exact:true});
+    if(process.argv.includes('--sections-only')){
+      const picker=screen.getByRole('combobox',{name:'API view',exact:true});assert.equal(await picker.isVisible(),width<=760);
+      await selectSection(screen,'API view','API Explorer');await screen.getByRole('button',{name:'Send request once',exact:true}).waitFor();
+      await selectSection(screen,'API view','Proxy');await screen.getByRole('button',{name:'Proxy connection settings',exact:true}).click();
+      const connection=page.getByRole('dialog',{name:'Proxy connection',exact:true});await connection.waitFor();
+      const client=connection.getByRole('combobox',{name:'Proxy client',exact:true});assert.equal(await client.isVisible(),width<=760);
+      await selectSection(connection,'Proxy client','Codex');await connection.getByRole('button',{name:'Copy Codex configuration',exact:true}).waitFor();
+      await selectSection(connection,'Proxy client','Claude');await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).waitFor();
+      await page.screenshot({path:path.join(output,`sections-${theme}-${width}.png`)});assert.deepEqual(errors,[]);
+      results.push({width,theme,mobileDropdown:width<=760,proxyClients:true,errors:0});await context.close();continue;
+    }
     await page.evaluate(()=>{const reference=document.createElement('div');reference.className='cli-workspace';reference.setAttribute('aria-hidden','true');reference.style.cssText='position:fixed;left:-9999px;visibility:hidden!important;pointer-events:none!important';reference.innerHTML='<div class="cli-context-tab-scroll"><span class="is-active"><button role="tab" aria-selected="true">API keys</button></span></div>';document.body.append(reference);});
-    const tabStyle=await screen.getByRole('tab',{name:'API keys',exact:true}).evaluate(element=>{const s=getComputedStyle(element);return [s.fontSize,s.fontWeight];});
+    const tabStyle=await screen.getByRole('tab',{includeHidden:true,name:'API keys',exact:true}).evaluate(element=>{const s=getComputedStyle(element);return [s.fontSize,s.fontWeight];});
     assert.deepEqual(tabStyle,await page.locator('.cli-context-tab-scroll button').evaluate(element=>{const s=getComputedStyle(element);return [s.fontSize,s.fontWeight];}),'API tabs share workspace typography');
-    assert.ok(await screen.getByRole('tab',{name:'API keys',exact:true}).evaluate(element=>parseFloat(getComputedStyle(element).minHeight)>=28),'Tabs preserve their minimum target size');
+    assert.ok(await screen.getByRole('tab',{includeHidden:true,name:'API keys',exact:true}).evaluate(element=>parseFloat(getComputedStyle(element).minHeight)>=28),'Tabs preserve their minimum target size');
     await page.locator('.cli-workspace').evaluate(element=>element.remove());
-    assert.deepEqual(await screen.getByRole('tab').allTextContents(), ['API keys','API Explorer','Proxy']);
+    assert.deepEqual(await screen.getByRole('tab',{includeHidden:true}).allTextContents(), ['API keys','API Explorer','Proxy']);
     assert.equal(await screen.locator('.api-base-address,.api-key-toolbar').count(),0,'No duplicate header rows');
     assert.equal(await screen.locator('.api-pane-heading').getByRole('button',{name:'Create API key',exact:true}).count(),1,'Key actions share the list header');
     assert.equal(await screen.locator('.api-token-table').count(),0,'Empty keys do not show unused table headers');
@@ -138,7 +151,7 @@ try {
     await assertViewport(page,screen);
     await screen.getByRole('button',{name:'Revoke',exact:true}).click();
     await screen.getByRole('status').filter({hasText:'API key revoked'}).waitFor();
-    await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();
+    await selectSection(screen,'API view','API Explorer');
     assert.equal(await screen.getByRole('status').filter({hasText:'API key revoked'}).count(),0,'Key feedback stays with the Keys tab');
     const editor=screen.getByRole('region',{name:'Request editor',exact:true});
     assert.equal(await screen.locator('.api-endpoints').count(),0,'No endpoint strip outside the request editor');
@@ -195,7 +208,7 @@ try {
       await docs.waitFor({state:'detached'});
       await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Endpoint documentation');
     }
-    await screen.getByRole('tab',{name:'Proxy',exact:true}).click();
+    await selectSection(screen,'API view','Proxy');
     assert.equal(await screen.locator('.api-proxy-diagram-pane,.api-proxy-routes').count(),0,'The route panel is removed');
     await page.evaluate(()=>window.localEstimate());
     await screen.getByText('Local estimate',{exact:true}).waitFor();
@@ -216,10 +229,10 @@ try {
     await screen.getByRole('button',{name:'Proxy connection settings',exact:true}).click();
     const connection=page.getByRole('dialog',{name:'Proxy connection',exact:true});
     await connection.waitFor();
-    assert.deepEqual(await connection.getByRole('tab').allTextContents(),['Claude','Codex']);
-    assert.equal(await connection.getByRole('tab',{name:'Claude',exact:true}).getAttribute('aria-selected'),'true');
-    await connection.getByRole('tab',{name:'Codex',exact:true}).click();
-    assert.equal(await connection.getByRole('tab',{name:'Codex',exact:true}).getAttribute('aria-selected'),'true');
+    assert.deepEqual(await connection.getByRole('tab',{includeHidden:true}).allTextContents(),['Claude','Codex']);
+    assert.equal(await connection.getByRole('tab',{includeHidden:true,name:'Claude',exact:true}).getAttribute('aria-selected'),'true');
+    await selectSection(connection,'Proxy client','Codex');
+    assert.equal(await connection.getByRole('tab',{includeHidden:true,name:'Codex',exact:true}).getAttribute('aria-selected'),'true');
     assert.equal(await connection.getByRole('textbox',{name:'Proxy base URL',exact:true}).inputValue(),origin+'/v1');
     await connection.getByRole('button',{name:'Copy proxy base URL',exact:true}).click();
     await connection.getByRole('status').filter({hasText:'Copied.'}).waitFor();
@@ -228,8 +241,8 @@ try {
     const codexConfig=await page.evaluate(()=>window.copiedFixture);
     assert.ok(codexConfig.includes('base_url = "'+origin+'/v1"') && codexConfig.includes('wire_api = "responses"'));
     assert.ok(codexConfig.includes('env_key = "MANAGER_API_KEY"'));
-    await connection.getByRole('tab',{name:'Codex',exact:true}).press('ArrowLeft');
-    assert.equal(await connection.getByRole('tab',{name:'Claude',exact:true}).getAttribute('aria-selected'),'true');
+    if(width<=760)await selectSection(connection,'Proxy client','Claude');else await connection.getByRole('tab',{includeHidden:true,name:'Codex',exact:true}).press('ArrowLeft');
+    assert.equal(await connection.getByRole('tab',{includeHidden:true,name:'Claude',exact:true}).getAttribute('aria-selected'),'true');
     assert.equal(await connection.getByRole('textbox',{name:'Claude host URL',exact:true}).inputValue(),origin);
     assert.equal(await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).isDisabled(),true,'Configuration copy requires a loaded key');
     await page.evaluate(()=>window.onlyScopedKeys());
@@ -249,13 +262,13 @@ try {
     assert.equal(await page.evaluate(()=>window.generated.projects),undefined);
     await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
     assert.equal(JSON.parse(await page.evaluate(()=>window.copiedFixture)).env.ANTHROPIC_AUTH_TOKEN,'cm_fixture_only');
-    await connection.getByRole('tab',{name:'Codex',exact:true}).click();
+    await selectSection(connection,'Proxy client','Codex');
     await connection.getByRole('button',{name:'Copy Codex launch command',exact:true}).click();
     assert.ok((await page.evaluate(()=>window.copiedFixture)).includes('cm_fixture_only'));
     await page.evaluate(()=>window.existingProxyKeys());
     assert.deepEqual(await keyPicker.locator('option').allTextContents(),['Existing proxy','All access']);
     assert.equal(await connection.getByLabel('Proxy API key value',{exact:true}).count(),0,'Keys load through the picker');
-    await connection.getByRole('tab',{name:'Claude',exact:true}).click();
+    await selectSection(connection,'Proxy client','Claude');
     await page.waitForFunction(()=>!document.querySelector('button[aria-label="Copy Claude configuration"]')?.disabled);
     await connection.getByRole('button',{name:'Copy Claude configuration',exact:true}).click();
     const claudeConfig=JSON.parse(await page.evaluate(()=>window.copiedFixture));
@@ -293,7 +306,7 @@ try {
     await screen.getByText('No requests yet',{exact:true}).waitFor();
     await page.evaluate(()=>window.offline());
     assert.equal(await screen.getByRole('button',{name:'Refresh proxy',exact:true}).isDisabled(),true);
-    await screen.getByRole('tab',{name:'API keys',exact:true}).click();
+    await selectSection(screen,'API view','API keys');
     await page.evaluate(()=>window.manyKeys());
     await screen.getByRole('cell',{name:'Fixture key 79',exact:true}).waitFor({state:'attached'});
     assert.ok(await screen.locator('.api-table-scroll').evaluate(element=>element.scrollHeight>element.clientHeight),'Long key lists scroll inside their panel');

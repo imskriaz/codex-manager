@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import { CLAUDE_PROXY_MODELS, CLAUDE_PROXY_MODEL_OVERRIDES, claudeProxyModelName, type ClaudeProxyMapping } from "../../src/domain/dashboard/apiProxy";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { handleTabKeyDown, ModalShell } from "./primitives";
@@ -176,6 +177,7 @@ export function ApiProxyConnection(props: {
     >
       <div class="api-docs-content api-proxy-connection">
         <div class="api-connection-toolbar">
+          <MobileSectionPicker label="Proxy client" value={client} options={[{value:'claude',label:'Claude'},{value:'codex',label:'Codex'}]} onChange={value=>{setClient(value);setNotice('');}}/>
           <div class="api-token-tabs" role="tablist" aria-label="Proxy clients" onKeyDown={handleTabKeyDown}>
             {(["claude", "codex"] as const).map((value) => (
               <span key={value} class={client === value ? "is-active" : undefined}>

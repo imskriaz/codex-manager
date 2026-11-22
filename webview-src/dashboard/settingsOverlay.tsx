@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import {UserWorkspaceLibrary,UserWorkspaceScheduled,type UserWorkspaceNavigation} from './userWorkspacePages';
 import {UserWorkspaceAccount} from './userWorkspaceAccount';
 import {UserWorkspaceMemory} from './userWorkspaceMemory';
@@ -220,6 +221,7 @@ export function SettingsOverlay(props: {
       <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="settings-modal-head"><div class="settings-modal-title" id="office-user-settings-title">Settings</div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
         <div class="user-settings-layout">
+          <MobileSectionPicker label="Settings section" value={userTab} options={['General','Personalization','Account','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label=>({value:label.toLowerCase(),label}))} onChange={setUserTab}/>
           <nav class="user-settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections" onKeyDown={event => {
             if (['ArrowUp','ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) { const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (index >= 0) { event.preventDefault(); const next = buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]; next?.focus(); next?.click(); } }
             else handleTabKeyDown(event);

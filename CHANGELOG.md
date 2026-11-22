@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.80
+
+- Open Team users directly in the editor, add a top Delete action, and organize settings with left-side tabs on desktop and a section dropdown on mobile.
+- Use mobile section dropdowns across subscriber Settings, API, workspace tools, agents, Git/GitHub, tasks and browser inspector panels.
+- Discover the local SmartOffice data connection and allow administrators to assign read-only business queries to selected users.
+
 ## 3.0.0-pre.79
 
 - Add New folder to the project folder picker with confirmed selection, collision errors, and bounded creation feedback on the selected system.

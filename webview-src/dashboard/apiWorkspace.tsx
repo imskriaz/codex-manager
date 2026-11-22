@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import { ProjectPicker } from './projectPicker';
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardCliProject } from "../../src/domain/dashboard/types";
@@ -327,6 +328,7 @@ export function ApiWorkspace(props: {
         <div class="api-topbar">
           <span id="api-sidebar-toggle-slot" class="content-sidebar-slot" />
           <h1 class="sr-only">API</h1>
+          <MobileSectionPicker label="API view" value={tab} options={(['keys','explorer','proxy'] as const).map(value=>({value,label:value==='keys'?'API keys':value==='explorer'?'API Explorer':'Proxy'}))} disabled={testing || props.pending} onChange={value=>{setTab(value);props.onViewChange?.(value);setRequestCopy('');if(value!=='explorer' && props.connected && !props.loading)props.onRefresh();}}/>
           <div class="api-token-tabs" role="tablist" aria-label="API views" onKeyDown={handleTabKeyDown}>
             {(["keys", "explorer", "proxy"] as const).map((item) => (
               <span key={item} class={tab === item ? "is-active" : undefined}>

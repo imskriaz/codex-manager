@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import { WorkspaceMenu } from "./workspaceMenu";
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -291,6 +292,7 @@ export function WorkspaceGit(props: {
           </div>
         </WorkspaceMenu>
       </header>
+      <MobileSectionPicker label="Git view" value={view} options={(['changes','history','branches','stashes','github'] as const).map(value=>({value,label:value==='github'?'GitHub':value[0]!.toUpperCase()+value.slice(1)}))} onChange={value=>{setView(value);setFilter('');if(value==='history'&&!history&&environment?.isGitRepository)void loadHistory();}}/>
       <nav class="workspace-tool-tabs" aria-label="Git views" role="tablist" onKeyDown={handleTabKeyDown}>
         {(["changes", "history", "branches", "stashes", "github"] as const).map((tab) => (
           <button

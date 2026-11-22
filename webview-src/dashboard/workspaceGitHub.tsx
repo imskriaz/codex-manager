@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   DashboardNotice,
@@ -489,6 +490,7 @@ export function WorkspaceGitHub(props: {
         </div>
       ) : null}
       {!setup ? <>
+      <MobileSectionPicker label="GitHub section" value={section} options={(['pulls','issues','actions','releases'] as const).map(value=>({value,label:value==='pulls'?'Pull requests':value[0]!.toUpperCase()+value.slice(1)}))} disabled={busy} onChange={setSection}/>
       <nav class="workspace-tool-tabs" role="tablist" aria-label="GitHub sections" onKeyDown={handleTabKeyDown}>
         {(["pulls", "issues", "actions", "releases"] as const).map((tab) => (
           <button
@@ -655,6 +657,7 @@ export function WorkspaceGitHub(props: {
             <span>{detail.state}</span>
             <span>{detail.author}</span>
           </div>
+          <MobileSectionPicker label="GitHub item section" value={detailTab} options={(['activity',...(section==='pulls'?['files','checks']:section==='actions'?['checks']:[])] as Array<typeof detailTab>).map(value=>({value,label:value==='activity'?'Overview & activity':value==='files'?'Files':'Checks & jobs'}))} onChange={setDetailTab}/>
           <nav class="workspace-tool-tabs" role="tablist" aria-label="GitHub item details" onKeyDown={handleTabKeyDown}>
             {(
               [

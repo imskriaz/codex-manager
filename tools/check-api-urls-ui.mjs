@@ -25,32 +25,33 @@ try {
     });
     }
     const screen=page.getByRole('region',{name:'API access',exact:true});
+    const selectView=async label=>{const picker=screen.getByRole('combobox',{name:'API view',exact:true});if(await picker.isVisible())await picker.selectOption({label});else await screen.getByRole('tab',{includeHidden:true,name:label,exact:true}).click();};
     const started=Date.now();
     for (const [view,label] of [['keys','API keys'],['explorer','API Explorer'],['proxy','Proxy']]) {
       await page.goto(origin+'/api/'+view,{waitUntil:'domcontentloaded'});
       await screen.waitFor();
-      assert.equal(await screen.getByRole('tab',{name:label,exact:true}).getAttribute('aria-selected'),'true','Deep link selects '+view);
+      assert.equal(await screen.getByRole('tab',{includeHidden:true,name:label,exact:true}).getAttribute('aria-selected'),'true','Deep link selects '+view);
       await page.reload({waitUntil:'domcontentloaded'});
       await screen.waitFor();
-      assert.equal(await screen.getByRole('tab',{name:label,exact:true}).getAttribute('aria-selected'),'true','Refresh retains '+view);
+      assert.equal(await screen.getByRole('tab',{includeHidden:true,name:label,exact:true}).getAttribute('aria-selected'),'true','Refresh retains '+view);
     }
-    await screen.getByRole('tab',{name:'API Explorer',exact:true}).click();
+    await selectView('API Explorer');
     await page.waitForURL(origin+'/api/explorer');
-    await screen.getByRole('tab',{name:'API keys',exact:true}).click();
+    await selectView('API keys');
     await page.waitForURL(origin+'/api/keys');
     await page.goBack();
-    assert.equal(await screen.getByRole('tab',{name:'API Explorer',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await screen.getByRole('tab',{includeHidden:true,name:'API Explorer',exact:true}).getAttribute('aria-selected'),'true');
     await page.goBack();
-    assert.equal(await screen.getByRole('tab',{name:'Proxy',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await screen.getByRole('tab',{includeHidden:true,name:'Proxy',exact:true}).getAttribute('aria-selected'),'true');
     await page.goForward();
-    assert.equal(await screen.getByRole('tab',{name:'API Explorer',exact:true}).getAttribute('aria-selected'),'true');
-    await screen.getByRole('tab',{name:'Proxy',exact:true}).click();
+    assert.equal(await screen.getByRole('tab',{includeHidden:true,name:'API Explorer',exact:true}).getAttribute('aria-selected'),'true');
+    await selectView('Proxy');
     await page.waitForURL(origin+'/api/proxy');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
     await page.screenshot({path:path.join(output,'proxy-'+width+'.png')});
     await page.goto(origin+'/api',{waitUntil:'domcontentloaded'});
     await screen.waitFor();
-    assert.equal(await screen.getByRole('tab',{name:'API keys',exact:true}).getAttribute('aria-selected'),'true','Legacy API URL still opens keys');
+    assert.equal(await screen.getByRole('tab',{includeHidden:true,name:'API keys',exact:true}).getAttribute('aria-selected'),'true','Legacy API URL still opens keys');
     assert.deepEqual(errors,[]);
     results.push({width,elapsedMs:Date.now()-started});
     await page.close();

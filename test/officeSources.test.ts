@@ -2,6 +2,7 @@
 import * as http from 'node:http';
 import {once} from 'node:events';
 import * as users from '../src/services/officeUsers';
+import * as smartoffice from '../src/services/smartOfficeMcp';
 import {isPublicOfficeAddress,readOfficeWebPage,listOfficeConnections,readOfficeConnection} from '../src/services/officeSources';
 let server:http.Server,endpoint:string,calls:string[];const user={id:'alex',role:'user',enabled:true,mcpServers:['orders']} as users.OfficeUser;
 beforeEach(async()=>{calls=[];vi.spyOn(users,'getOfficeUser').mockResolvedValue(user);server=http.createServer(async(req,res)=>{
@@ -24,4 +25,33 @@ it('discovers only the assigned source and reads an actual MCP JSON/SSE result w
  const listing=await readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal);expect(JSON.stringify(listing)).toContain('read_orders');expect(JSON.stringify(listing)).not.toMatch(/send_email|127\.0\.0\.1|private-session/);
  expect(await readOfficeConnection(user,'orders','read_orders',{},new AbortController().signal)).toMatchObject({content:[{text:'Order ST100: 2400 pieces'}]});expect(calls.filter(value=>value==='tools/call')).toHaveLength(1);
  await expect(readOfficeConnection(user,'orders','send_email',{},new AbortController().signal)).rejects.toThrow('read-only');await expect(readOfficeConnection(user,'other','read_orders',{},new AbortController().signal)).rejects.toThrow('unavailable');
+});
+it('denies unassigned, disabled and revoked connections before further network calls',async()=>{
+ vi.mocked(users.getOfficeUser).mockResolvedValue({...user,mcpServers:[]});
+ expect(await listOfficeConnections(user)).toEqual([]);
+ await expect(readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal)).rejects.toThrow('unavailable');
+ vi.mocked(users.getOfficeUser).mockResolvedValue({...user,enabled:false});
+ expect(await listOfficeConnections(user)).toEqual([]);
+ await expect(readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal)).rejects.toThrow('unavailable');
+ vi.mocked(users.getOfficeUser).mockResolvedValue(user);
+ vi.mocked(users.listOfficeMcpServers).mockResolvedValue([{id:'orders',label:'Orders',endpoint,enabled:false,allowedRoles:['user']}]);
+ await expect(readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal)).rejects.toThrow('unavailable');
+ expect(calls).toEqual([]);
+ vi.mocked(users.listOfficeMcpServers).mockResolvedValue([{id:'orders',label:'Orders',endpoint,enabled:true,allowedRoles:['user']}]);
+ vi.mocked(users.getOfficeUser).mockResolvedValueOnce(user).mockResolvedValueOnce(user).mockResolvedValue({...user,mcpServers:[]});
+ await expect(readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal)).rejects.toThrow('unavailable');
+ expect(calls).toEqual(['initialize']);
+});
+it('routes only an assigned SmartOffice connection through its local read-only MCP adapter',async()=>{
+ vi.mocked(users.getOfficeUser).mockResolvedValue({...user,mcpServers:['smartoffice']});
+ vi.mocked(users.listOfficeMcpServers).mockResolvedValue([{id:'smartoffice',label:'SmartOffice',endpoint:'http://127.0.0.1:3004/',transport:'smartoffice',enabled:true,allowedRoles:['user']}]);
+ const rpc=vi.spyOn(smartoffice,'smartOfficeMcpRpc').mockImplementation(async method=>method==='tools/list'?{tools:[{name:'smartoffice_query',annotations:{readOnlyHint:true}}]}:method==='tools/call'?{content:[{type:'text',text:'Verified source result'}]}:{});
+ expect(await listOfficeConnections(user)).toEqual([{id:'smartoffice',label:'SmartOffice'}]);
+ const value=await readOfficeConnection(user,'smartoffice','smartoffice_query',{plan:{op:'read',entity:'purchase_orders',limit:1}},new AbortController().signal);
+ expect(value).toMatchObject({content:[{text:'Verified source result'}]});
+ expect(rpc.mock.calls.map(call=>call[0])).toEqual(['initialize','notifications/initialized','tools/list','tools/call']);
+ expect(calls).toEqual([]);
+ vi.mocked(users.getOfficeUser).mockResolvedValue({...user,mcpServers:[]});
+ await expect(readOfficeConnection(user,'smartoffice','smartoffice_query',{},new AbortController().signal)).rejects.toThrow('unavailable');
+ expect(rpc).toHaveBeenCalledTimes(4);
 });

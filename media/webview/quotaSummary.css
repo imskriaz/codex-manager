@@ -18734,7 +18734,6 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .team-connection-row small { overflow-wrap: anywhere; }
 .team-edit-modal { width: min(680px, calc(100vw - 32px)); }
 .team-edit-modal .dashboard-modal-body { padding: 0 24px 20px; }
-.team-edit-tabs { border-bottom: 1px solid var(--border-default); }
 .team-editor-fields { margin: 0; padding: 0; border: 0; min-width: 0; }
 .team-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .team-settings-form .team-check { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-base); cursor: pointer; }
@@ -18749,6 +18748,35 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 @media (max-width: 700px) {
   .team-management-page { padding: 16px 10px; }
   .team-management-head { flex-wrap: wrap; gap: 14px; }
+.team-editor-layout { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; align-items: start; }
+.team-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mobile-section-picker { display: none; }
+.team-user-picker { display: none; }
+.team-user-tabs { display: grid; gap: 4px; position: sticky; top: 0; padding-top: 10px; }
+.team-user-tabs button { text-align: left; padding: 9px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.team-user-tabs button[aria-selected="true"] { background: var(--bg-selected); color: var(--text); }
+.team-editor-fields [role="tabpanel"][hidden] { display: none; }
+@media (max-width: 760px) {
+  .mobile-section-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .mobile-section-picker > label { display: block; flex: 1; min-width: 0; }
+  .mobile-section-picker select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 9px; border: 1px solid var(--border-default); border-radius: 5px; background: var(--bg-base); color: var(--text); font: inherit; }
+  .mobile-section-picker + :is([role="tablist"]:not(.cli-context-tabs-v3), .mobile-desktop-tabs) { display: none !important; }
+  .mobile-section-picker + .workspace-browser-pane-tabs { display: none; }
+  .cli-context-tabbar > .mobile-section-picker { flex: 1; }
+  .cli-context-tabbar:has(> .mobile-section-picker) .cli-context-tab-scroll { display: none; }
+  .cli-context-tabbar:has(> .mobile-section-picker) .cli-context-tabs-v3 { flex: 0 0 auto; }
+  .workspace-browser-inspector-header > .mobile-section-picker { flex: 1; }
+  .workspace-browser-application .workspace-browser-source-navigator,
+  .workspace-browser-application [aria-label="Resize application navigator"],
+  .workspace-browser-application [aria-label="Toggle application navigator"] { display: none; }
+  .workspace-browser-pane-tabs + .workspace-browser-pane-actions { margin-left: auto; }
+  .office-user-settings .user-settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .office-user-settings .user-settings-layout > .mobile-section-picker { padding: 8px 12px; }
+  .team-editor-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .team-user-tabs { display: none; }
+  .team-user-picker { display: grid; gap: 6px; }
+  .team-user-picker select { width: 100%; min-width: 0; min-height: 36px; padding: 8px; border: 1px solid var(--border-default); border-radius: 5px; background: var(--bg-base); color: var(--text); font: inherit; }
+}
   .team-settings-layout { grid-template-columns: 116px minmax(0, 1fr); }
   .team-settings-sidebar { padding: 12px 6px; }
   .team-settings-sidebar > input { margin-bottom: 10px; }
@@ -18955,7 +18983,6 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .settings-master-modal .team-field-grid, .settings-master-modal .team-permission-grid { gap: 8px; }
 .settings-master-modal .team-settings-form .team-check { padding: 8px; gap: 8px; }
 .settings-master-modal .team-form-footer { gap: 6px; margin-top: 12px; padding-top: 10px; }
-.settings-master-modal .team-edit-tabs { gap: 4px; margin-top: 8px; }
 .settings-master-modal .team-activity-list { gap: 6px; margin-top: 8px; }
 .settings-master-modal .team-activity-row { padding: 10px; gap: 10px; }
 /* Match the two-line brand to the action buttons without extra line gaps. */
@@ -18982,8 +19009,6 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 
 .settings-master-modal .log-console-inline { display: grid; gap: 8px; min-width: 0; }
 .settings-master-modal .log-console-inline .system-log-console { max-height: 300px; overflow: auto; }
-.settings-master-modal .team-editor-advanced { margin-top: 12px; }
-.settings-master-modal .team-editor-advanced > summary { cursor: pointer; padding: 8px 0; font-size: calc(12px * var(--dashboard-text-scale, 1)); font-weight: 600; }
 
 .dashboard-content .hero .brand h1 { font-size: calc(15px * var(--dashboard-text-scale, 1)); min-height: 16px; }
 .dashboard-content .hero .brand-version { padding: 0 4px; line-height: 14px; }

@@ -57,6 +57,10 @@ const newUser = (): UserDraft => ({
   features: ["generalChat", "tasks", "files", "browser"],
   mcpServers: []
 });
+const USER_TABS = [
+  {id: 'profile', label: 'Profile'}, {id: 'plan', label: 'Plan & limits'},
+  {id: 'usage', label: 'Usage'}, {id: 'permissions', label: 'Permissions'}, {id: 'data', label: 'Data access'}
+] as const;
 
 
 export function TeamManagementPage(props: { office?: DashboardOfficeView; section: TeamSettingsSection; open?: boolean }) {
@@ -93,6 +97,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
   const [draft, setDraft] = useState<UserDraft>();
+  const [userTab, setUserTab] = useState<typeof USER_TABS[number]['id']>('profile');
   const [editorError, setEditorError] = useState("");
   const [deleting, setDeleting] = useState<OfficeUser>();
   const [mcpDraft, setMcpDraft] = useState({ id: "", label: "", endpoint: "" });
@@ -146,6 +151,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
     }
   };
   const edit = (user?: OfficeUser): void => {
+    setUserTab('profile');
+    setNotice('');
     setDraft(
       user ? { ...user, features: [...user.features], mcpServers: [...user.mcpServers], password: "" } : newUser()
     );
@@ -208,7 +215,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
 
   return (
     <div class="team-management-page team-settings-embedded">
-        <section class="team-settings-content" aria-label={currentSection.title} hidden={Boolean(draft && section === "users")}>
+        <section class="team-settings-content" aria-label={currentSection.title} hidden={Boolean((draft || deleting) && section === "users")}>
           <div class="team-section-head">
             <div>
               <h2>{currentSection.title}</h2>
@@ -256,7 +263,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                   {users.length} {users.length === 1 ? "user" : "users"}
                 </span>
               </div>
-              <SettingsRecordList label="Team users" open={props.open && section === "users"} columns={["Name", "Email", "Role", "Status"]} rows={filteredUsers.map(user => ({id:user.id,label:user.displayName || user.username,cells:[user.displayName || user.username,user.username,roleLabel(user.role),user.enabled ? "Active" : "Disabled"],details:close => <><SettingsRecordDetails fields={[["Name",user.displayName],["Email",user.username],["Role",roleLabel(user.role)],["Status",user.enabled ? "Active" : "Disabled"],["Workspace",user.workspacePath],["Features",user.features.join(", ")],["Data connections",user.mcpServers.join(", ")],["Default prompt",user.defaultPrompt]]}/><div class="team-form-footer"><button class="team-button" type="button" disabled={pending} onClick={() => {close();edit(user);}}>Edit</button><button class="team-button danger" type="button" disabled={pending} onClick={() => {close();setDeleting(user);setError("");}}>Delete</button></div></>}))}/>
+              <SettingsRecordList label="Team users" open={props.open && section === "users"} onSelect={id => { if (!pending) edit(users.find(user => user.id === id)); }} columns={["Name", "Email", "Role", "Status"]} rows={filteredUsers.map(user => ({id:user.id,label:`Edit ${user.displayName || user.username}`,cells:[user.displayName || user.username,user.username,roleLabel(user.role),user.enabled ? "Active" : "Disabled"],details:null}))}/>
                 {!filteredUsers.length ? (
                   <div class="team-empty">
                     <strong>{users.length ? "No matching users" : "No Team users yet"}</strong>
@@ -420,8 +427,9 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                 </div>
               </form>
       </ModalShell>
-      {draft && section === "users" ? <section class="team-inline-editor" aria-label={draft.id ? `Edit ${draft.username}` : "Add Team user"}>
-        <div class="team-section-head"><h2>{draft.id ? "Edit user" : "Add user"}</h2><button class="team-button" type="button" disabled={pending} onClick={closeEditor}>Back to users</button></div>
+      {draft && !deleting && section === "users" ? <section class="team-inline-editor" aria-label={draft.id ? `Edit ${draft.username}` : "Add Team user"}>
+        <div class="team-section-head"><h2>{draft.id ? "Edit user" : "Add user"}</h2><div class="team-editor-actions">{draft.id ? <button class="team-button danger" type="button" disabled={pending} onClick={() => { setDeleting(users.find(user => user.id === draft.id)); setError(""); setNotice(""); }}>Delete user</button> : null}<button class="team-button" type="button" disabled={pending} onClick={closeEditor}>Back to users</button></div></div>
+        {notice ? <div class="team-notice" role="status">{notice}</div> : null}
         {draft ? (
           <>
             {editorError ? (
@@ -430,14 +438,33 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               </div>
             ) : null}
             <form
+              onInvalidCapture={event => {
+                event.preventDefault();
+                const input = event.target as HTMLInputElement;
+                const tab = USER_TABS.find(item => input.closest(`#team-editor-panel-${item.id}`));
+                if (tab) setUserTab(tab.id);
+                setEditorError(input.validationMessage || 'Review the highlighted field before saving.');
+                requestAnimationFrame(() => input.focus());
+              }}
               onSubmit={(event) => {
                 event.preventDefault();
                 saveUser();
               }}
             >
+              <div class="team-editor-layout">
+              <label class="team-user-picker">User settings<select aria-label="User settings section" value={userTab} disabled={pending} onChange={event => setUserTab(event.currentTarget.value as typeof userTab)}>{USER_TABS.filter(tab => draft.id || tab.id !== 'usage').map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}</select></label>
+              <nav class="team-user-tabs" role="tablist" aria-label="User settings" aria-orientation="vertical" onKeyDown={event => {
+                if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
+                const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')];
+                const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                if (index < 0) return;
+                event.preventDefault();
+                const next = buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length];
+                next?.focus(); next?.click();
+              }}>{USER_TABS.filter(tab => draft.id || tab.id !== 'usage').map(tab => <button key={tab.id} type="button" role="tab" id={`team-user-tab-${tab.id}`} aria-controls={`team-editor-panel-${tab.id}`} aria-selected={userTab === tab.id} tabIndex={userTab === tab.id ? 0 : -1} disabled={pending} onClick={() => setUserTab(tab.id)}>{tab.label}</button>)}</nav>
               <fieldset class="team-editor-fields" disabled={pending}>
                 <div
-                  id="team-editor-panel-profile"
+                  id="team-editor-panel-profile" role="tabpanel" aria-labelledby="team-user-tab-profile" hidden={userTab !== "profile"}
                   aria-label="Profile"
                   class="team-settings-form"
                 >
@@ -501,14 +528,15 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     <small>Applied automatically to this user's conversations.</small>
                   </label>
                 </div>
-                <fieldset class="team-settings-form"><legend>Plan access</legend><label>Plan name<input maxLength={80} value={draft.plan?.name??'Workspace'} onInput={event=>setDraft({...draft,plan:{status:'active',models:[],...draft.plan,name:event.currentTarget.value}})}/></label><label>Status<select value={draft.plan?.status??'active'} onChange={event=>setDraft({...draft,plan:{name:'Workspace',models:[],...draft.plan,status:event.currentTarget.value as 'active'|'paused'}})}><option value="active">Active</option><option value="paused">Paused</option></select></label><label>Access expires (optional)<input type="datetime-local" value={draft.plan?.expiresAt?new Date(draft.plan.expiresAt-new Date(draft.plan.expiresAt).getTimezoneOffset()*60000).toISOString().slice(0,16):''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',models:[],...draft.plan,expiresAt:event.currentTarget.value?new Date(event.currentTarget.value).getTime():undefined}})}/></label><label>Included models<input placeholder="All available models" value={draft.plan?.models.join(', ')??''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',...draft.plan,models:event.currentTarget.value.split(',').map(model=>model.trim()).filter(Boolean)}})}/></label><small>Enter model IDs separated by commas, or leave empty for all available models. Plans are managed here; payment and recovery email services are not configured.</small></fieldset>
-                {draft.id?<UserUsageReview key={draft.id} id={draft.id}/>:null}<fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
-                <details class="team-editor-advanced"><summary>Permissions & data access</summary><p class="settings-note">User Workspace has no host terminal, Git, or GitHub execution. Browser navigation and execution require an isolated runtime. These restrictions protect the host even when a feature was previously enabled.</p>
+                <div id="team-editor-panel-plan" role="tabpanel" aria-labelledby="team-user-tab-plan" hidden={userTab !== "plan"}><fieldset class="team-settings-form"><legend>Plan access</legend><label>Plan name<input maxLength={80} value={draft.plan?.name??'Workspace'} onInput={event=>setDraft({...draft,plan:{status:'active',models:[],...draft.plan,name:event.currentTarget.value}})}/></label><label>Status<select value={draft.plan?.status??'active'} onChange={event=>setDraft({...draft,plan:{name:'Workspace',models:[],...draft.plan,status:event.currentTarget.value as 'active'|'paused'}})}><option value="active">Active</option><option value="paused">Paused</option></select></label><label>Access expires (optional)<input type="datetime-local" value={draft.plan?.expiresAt?new Date(draft.plan.expiresAt-new Date(draft.plan.expiresAt).getTimezoneOffset()*60000).toISOString().slice(0,16):''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',models:[],...draft.plan,expiresAt:event.currentTarget.value?new Date(event.currentTarget.value).getTime():undefined}})}/></label><label>Included models<input placeholder="All available models" value={draft.plan?.models.join(', ')??''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',...draft.plan,models:event.currentTarget.value.split(',').map(model=>model.trim()).filter(Boolean)}})}/></label><small>Enter model IDs separated by commas, or leave empty for all available models. Plans are managed here; payment and recovery email services are not configured.</small></fieldset>
+                <fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
+                </div>
+                {draft.id ? <div id="team-editor-panel-usage" role="tabpanel" aria-labelledby="team-user-tab-usage" hidden={userTab !== "usage"}>{userTab === 'usage' ? <UserUsageReview key={draft.id} id={draft.id}/> : null}</div> : null}
                 <div
-                  id="team-editor-panel-permissions"
+                  id="team-editor-panel-permissions" role="tabpanel" aria-labelledby="team-user-tab-permissions" hidden={userTab !== "permissions"}
                   aria-label="Permissions"
                   class="team-settings-form"
-                >
+                ><p class="settings-note">User Workspace has no host terminal, Git, or GitHub execution. Browser navigation and execution require an isolated runtime. These restrictions protect the host even when a feature was previously enabled.</p>
                   <label>
                     Role
                     <select
@@ -548,7 +576,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                   </div>
                 </div>
                 <div
-                  id="team-editor-panel-data"
+                  id="team-editor-panel-data" role="tabpanel" aria-labelledby="team-user-tab-data" hidden={userTab !== "data"}
                   aria-label="Data access"
                   class="team-settings-form"
                 >
@@ -569,7 +597,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                       />
                       <span>
                         <strong>{server.label}</strong>
-                        <small>{server.enabled ? "Enabled" : "Disabled globally"}</small>
+                        <small>{!server.enabled ? "Disabled globally" : server.transport === 'smartoffice' ? "Read-only business data" : "Enabled"}</small>
                       </span>
                     </label>
                   ))}
@@ -577,8 +605,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     <p class="team-empty">Add an MCP data connection before assigning user access.</p>
                   ) : null}
                 </div>
-                </details>
               </fieldset>
+              </div>
               <div class="team-form-footer">
                 <button type="button" class="team-button" disabled={pending} onClick={closeEditor}>
                   Cancel
@@ -591,7 +619,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
           </>
         ) : null}
       </section> : null}
-      {deleting && section === "users" ? <section class="settings-inline-confirm" aria-label="Delete Team user?">
+      <ModalShell open={!!deleting && section === "users" && props.open!==false} title="Delete Team user?" closeLabel="Cancel user deletion" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={pending} onClose={()=>{setDeleting(undefined);setNotice("User deletion cancelled.");}}>
         <h3>Delete Team user?</h3>
         <p>
           Remove {deleting?.displayName} ({deleting?.username}) and their sign-in access? Their workspace files will be
@@ -624,13 +652,14 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                   await request(`/api/office/users/${encodeURIComponent(deleting.id)}`, "DELETE");
                   setUsers((current) => current.filter((user) => user.id !== deleting.id));
                   setDeleting(undefined);
+                  setDraft(undefined);
                 }, "User deleted. Workspace files kept.");
             }}
           >
             {pending ? "Deleting…" : "Delete user"}
           </button>
         </div>
-      </section> : null}
+      </ModalShell>
     </div>
   );
 }

@@ -2,12 +2,16 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authenticateOfficeUser, createOfficeUser, defaultOfficeFeatures, officeUserWorkspace, resolveMasterOfficeUsername, type OfficeUser } from "../src/services/officeUsers";
+import { authenticateOfficeUser, createOfficeUser, defaultOfficeFeatures, officeUserWorkspace, resolveMasterOfficeUsername, listOfficeMcpServers, saveOfficeMcpServers, type OfficeUser } from "../src/services/officeUsers";
 import { removeTestDirectory } from "./testFilesystem";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 
 let root: string;
+vi.mock('node:fs/promises',async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {...actual,access:vi.fn(actual.access)};
+});
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "manager-office-login-"));
   vi.stubEnv("CODEX_MANAGER_STORAGE_ROOT", root);
@@ -15,11 +19,37 @@ beforeEach(async () => {
   await configureCrossWindowOperationCoordinator(root);
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await removeTestDirectory(root);
 });
 
 describe("office workspace boundaries", () => {
+  it.skipIf(process.platform !== 'win32')('discovers SmartOffice without granting access and preserves a saved global disable', async () => {
+    const store = await SqliteStateStore.open(path.join(root, 'mcp.sqlite')); configureSqliteStateStore(store);
+    try {
+      vi.mocked(fs.access).mockResolvedValue(undefined);
+      const discovered = await listOfficeMcpServers();
+      expect(discovered).toMatchObject([{id:'smartoffice',transport:'smartoffice',enabled:true,allowedRoles:['user']}]);
+      const user = await createOfficeUser({username:'selective@example.test',password:'team-password',workspacePath:path.join(root,'selective')});
+      expect(user.mcpServers).toEqual([]);
+      await saveOfficeMcpServers(discovered.map(server=>({...server,enabled:false})));
+      expect(await listOfficeMcpServers()).toMatchObject([{id:'smartoffice',transport:'smartoffice',enabled:false}]);
+    } finally { configureSqliteStateStore(undefined); store.close(); }
+  });
+  it('does not discover a missing installation or accept alternate targets for the SmartOffice adapter', async () => {
+    const store = await SqliteStateStore.open(path.join(root, 'mcp.sqlite')); configureSqliteStateStore(store);
+    try {
+      vi.mocked(fs.access).mockRejectedValue(Object.assign(new Error('Missing'),{code:'ENOENT'}));
+      expect(await listOfficeMcpServers()).toEqual([]);
+      await saveOfficeMcpServers([
+        {id:'remote',label:'Wrong target',endpoint:'https://other.example',transport:'smartoffice',enabled:true,allowedRoles:['user']},
+        {id:'path',label:'Wrong route',endpoint:'http://127.0.0.1:3004/admin',transport:'smartoffice',enabled:true,allowedRoles:['user']},
+        {id:'http',label:'Existing MCP',endpoint:'https://data.example/mcp',enabled:true,allowedRoles:['user']}
+      ]);
+      expect(await listOfficeMcpServers()).toEqual([{id:'http',label:'Existing MCP',endpoint:'https://data.example/mcp',enabled:true,allowedRoles:['user']}]);
+    } finally { configureSqliteStateStore(undefined); store.close(); }
+  });
   it("creates project folders below the assigned user root", () => {
     const user: OfficeUser = {
       id: "u1", username: "alex", displayName: "Alex", role: "user", enabled: true,

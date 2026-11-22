@@ -1,3 +1,4 @@
+import {MobileSectionPicker} from './mobileSectionPicker';
 import { useEffect, useRef, useState } from "preact/hooks";
 import { BrowserInspectorContent, BrowserResizeHandle, emptyBrowserConsole, type BrowserConsoleState } from './workspaceBrowserInspector';
 import type { JSX } from "preact";
@@ -661,6 +662,7 @@ export default function WorkspaceBrowser(props: {
       {!props.simple && inspectorOpen ? <BrowserResizeHandle label="Resize browser inspector" value={inspectorSize} onChange={setInspectorSize} axis={dock === 'bottom' ? 'y' : 'x'} reverse={dock !== 'left'} responsive /> : null}
       {!props.simple ? <aside style={{ '--inspector-size': `${inspectorSize}%` }} data-inspector-theme={theme} class={`workspace-browser-inspector ${inspectorOpen ? "is-open" : ""}`} aria-label="Browser inspector" aria-hidden={!inspectorOpen}>
         <header class="workspace-browser-inspector-header">
+          <MobileSectionPicker label="Browser inspector panel" value={inspectorTab} options={(['elements','console','sources','network','application','performance','memory'] as const).map(value=>({value,label:value.charAt(0).toUpperCase()+value.slice(1)}))} onChange={setInspectorTab}/>
           <nav class="workspace-browser-inspector-tabs" role="tablist" aria-label="Browser inspector panels">
             {(["elements", "console", "sources", "network", "application", "performance", "memory"] as const).map((tab) => <button type="button" role="tab" aria-selected={inspectorTab === tab} class={inspectorTab === tab ? "is-active" : ""} onClick={() => setInspectorTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
           </nav>
