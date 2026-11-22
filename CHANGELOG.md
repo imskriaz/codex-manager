@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.85
+
+- Show a single Auto label when both the assistant model and thinking are automatic.
+
 ## 3.0.0-pre.84
 
 - Open conversation website links in the workspace Browser and reuse its selected page.

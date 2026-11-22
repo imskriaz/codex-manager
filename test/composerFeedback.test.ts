@@ -30,6 +30,24 @@ it('keeps the composer stable without status rows or connection placeholders', (
   expect(sending.find(node => node.type === 'button' && node.props.type === 'submit')?.props.disabled).toBe(false);
 });
 
+it('shows one Auto label for automatic composers while preserving resolved thinking values', () => {
+  const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
+    onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
+  for (const autoLocked of [false, true]) {
+    const props = { ...config, simple: true, automaticModels: true, autoLocked, model: 'auto', models: [{ id: 'auto', label: 'Auto', reasoningEfforts: [] }] };
+    const automatic = nodes(Composer(props));
+    expect(automatic.find(node => node.props.class === 'cli-composer-model')?.props.children).toBe('Auto');
+    expect(automatic.some(node => node.props.class === 'cli-composer-effort')).toBe(false);
+    const explicitAuto = nodes(Composer({ ...props, automaticThinking: 'auto' }));
+    expect(explicitAuto.some(node => node.props.class === 'cli-composer-effort')).toBe(false);
+    const profiled = nodes(Composer({ ...props, automaticProfile: 'regular', automaticThinking: 'low' }));
+    expect(profiled.find(node => node.props.class === 'cli-composer-model')?.props.children).toBe('Regular');
+    expect(profiled.find(node => node.props.class === 'cli-composer-effort')?.props.children).toBe('Low');
+    const thinking = nodes(Composer({ ...props, automaticThinking: 'high' }));
+    expect(thinking.find(node => node.props.class === 'cli-composer-effort')?.props.children).toBe('High');
+  }
+});
+
 it('exposes Queue and Steer follow-up modes in Message settings', () => {
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
   expect(source).toContain('aria-label="Follow-up mode"');
