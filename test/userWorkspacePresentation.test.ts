@@ -1,7 +1,19 @@
 import { expect,it } from 'vitest';
-import { currentUserWorkspacePlan,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary,userToolSummary } from '../webview-src/dashboard/userWorkspacePresentation';
+import { currentUserWorkspacePlan,currentUserWorkspaceQuestion,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary,userToolSummary } from '../webview-src/dashboard/userWorkspacePresentation';
 import { userWorkspacePathText } from '../src/domain/teamWorkspacePresentation';
 import { messageSessionPlan, sessionPlanMessage } from '../src/domain/sessionPlan';
+import { sessionQuestionReply } from '../src/domain/sessionQuestions';
+it('prioritizes the latest unanswered question and restores it when an unsent answer is removed',()=>{
+ const question={id:'question',role:'assistant' as const,text:'Choose',questions:[{title:'Which file?'},{title:'Which format?'}]};
+ const reply={id:'answer',role:'user' as const,text:sessionQuestionReply(question,{'0':'Notes','1':'Text'})};
+ expect(currentUserWorkspaceQuestion([question])).toBe(question);
+ expect(currentUserWorkspaceQuestion([{...question,role:'user'}])).toBeUndefined();
+ expect(currentUserWorkspaceQuestion([question],[reply])).toBeUndefined();
+ expect(currentUserWorkspaceQuestion([question],[])).toBe(question);
+ expect(currentUserWorkspaceQuestion([question,reply])).toBeUndefined();
+ expect(currentUserWorkspaceQuestion([question,{...reply,text:'Do something else'}])).toBeUndefined();
+ expect(currentUserWorkspaceQuestion([question],[{...reply,text:sessionQuestionReply(question,{'0':'Notes'})}])).toBe(question);
+});
 it('summarizes file tool envelopes without showing file contents or metadata and preserves failures',()=>{
  const message={id:'save',text:'Update file',title:'Update file',kind:'tool-call' as const,status:'completed' as const,arguments:JSON.stringify({path:'index.html',content:'<html>private content</html>'}),result:JSON.stringify({status:'completed',payload:{workspaceFile:{content:'<html>private content</html>',revision:'internal'},notice:{message:'File created.'}}})};
  expect(userToolSummary(message)).toBe('File created.');expect(message.result).toContain('internal');

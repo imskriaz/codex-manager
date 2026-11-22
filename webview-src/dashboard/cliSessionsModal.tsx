@@ -4,7 +4,7 @@ import { messageSessionPlan, sessionPlanMessage } from '../../src/domain/session
 import { SessionPlanChecklist } from './sessionPlan';
 import { ProjectPicker } from './projectPicker';
 import { SystemPicker, SystemStatusRows } from './systemPicker';
-import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary, currentUserWorkspacePlan, userToolSummary } from './userWorkspacePresentation';
+import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary, currentUserWorkspacePlan, currentUserWorkspaceQuestion, userToolSummary } from './userWorkspacePresentation';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { useWorkspaceSurface } from './workspaceSurface';
@@ -1336,6 +1336,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     },
     feedback: (message, cancel) => reportLocalFeedback({ level: 'warning', message, cancel })
   });
+
+  const queuedQuestionAnswers = messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView);
+  const rawComposerQuestion = props.officeUser && !selectedArchived ? currentUserWorkspaceQuestion(props.messages, queuedQuestionAnswers) : undefined;
+  const composerQuestion = rawComposerQuestion ? userSessionActivity(rawComposerQuestion, composerProjects.map(project => project.path)) : undefined;
+  const composerQuestionText = composerQuestion ? sessionQuestionText(composerQuestion) : '';
   const submit = (): string | undefined => {
     if (props.officeUser && !model) { reportLocalFeedback({level: "warning", message: "Choose a model before sending your message."}); return; }
     if (props.selectedSession) {
@@ -1695,7 +1700,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!pendingNewChat && !props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript hiddenPlanId={composerPlan?.message.id} quotaRecoveryMessageId={quotaError?.id} agentSessions={relatedAgents} onOpenAgent={id => {
+                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript hiddenQuestionId={composerQuestion?.id} hiddenPlanId={composerPlan?.message.id} quotaRecoveryMessageId={quotaError?.id} agentSessions={relatedAgents} onOpenAgent={id => {
                     if (!id) { openContextTab('agents'); return; }
                     if (id === props.selectedSession?.id) { setContextCollapsed(true); return; }
                     const agent = relatedAgents.find(session => session.id === id);
@@ -1724,7 +1729,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the sent prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
                ) : <>
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
-                 {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist key={`${props.selectedSession.id}:${composerPlan.message.id}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
+                 {composerQuestion ? <section class="cli-composer-question" aria-label="Current question" aria-live="polite">{composerQuestionText ? <p class="cli-question-context">{composerQuestionText}</p> : null}<SessionQuestionPrompt assistantName="Assistant" key={`${draftKey}:${composerQuestion.id}`} message={composerQuestion} onReply={text => messageQueue.enqueue({text, attachments: []})} disabled={!messageQueue.ready} scope={draftKey} answered={answeredSessionQuestionIds([...props.messages, ...queuedQuestionAnswers])} autoOpen={!!activeSessionQuestion(props.messages)} /></section> : null}
+                 {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist compact={!!props.officeUser} key={`${props.selectedSession.id}:${composerPlan.message.id}:${composerQuestion?.id ?? ''}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
                  {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning} <button type="button" aria-label="Retry models" disabled={props.connected === false} onClick={() => { reportLocalFeedback({level:"info",message:"Checking available models..."}); props.onRefresh(); }}>Try again</button></p> : null}<Composer simple={!!props.officeUser}
                   onFeedback={props.onActionFeedback}
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
@@ -2486,7 +2492,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   if (message.id === quotaRecoveryMessageId) return null;
   if (message.kind === 'error') return sessionNotice(<span class="is-error" title={message.text}>{sessionFailureMessage(message.text, page) || 'The activity could not be completed.'}</span>, privateWorkspace ? undefined : sessionErrorDiagnostics(message), 'cli-error-notice is-error');
   const plan = messageSessionPlan(message);
-  if (plan) return <SessionPlanChecklist plan={plan} status={message.status} />;
+  if (plan) return <SessionPlanChecklist compact={!!privateWorkspace} plan={plan} status={message.status} />;
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
@@ -2714,13 +2720,14 @@ function DiffPreview({ diff }: { diff: string }) {
 }
 
 function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { turn: CompletedTranscriptTurn; onRetryPrompt?: () => void; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+  const compact = Boolean(useContext(PrivateWorkspaceContext));
   const messages = turn.items.flatMap((item) => "messages" in item ? item.messages : [item]);
   const start = Date.parse(turn.startedAt ?? messages.find((message) => message.timestamp)?.timestamp ?? "");
   const end = Date.parse(turn.answer.timestamp ?? messages.filter((message) => message.timestamp).at(-1)?.timestamp ?? "");
   const duration = Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;
   const turnCopy = [...messages, turn.answer].filter((message) => message.role === "assistant" && (!message.kind || message.kind === "message")).map((message) => message.text).join("\n\n");
   return <div class="cli-completed-turn">
-    {messages.filter(message => messageSessionPlan(message)).map(message => <SessionPlanChecklist key={message.id} plan={messageSessionPlan(message)!} status={message.status === 'completed' ? 'unknown' : message.status} />)}
+    {messages.filter(message => messageSessionPlan(message)).map(message => <SessionPlanChecklist key={message.id} compact={compact} plan={messageSessionPlan(message)!} status={message.status === 'completed' ? 'unknown' : message.status} />)}
     {turn.items.some(item => 'messages' in item || !messageSessionPlan(item)) ? <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span><ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.filter(item => 'messages' in item || !messageSessionPlan(item)).map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details> : null}
     <SessionMessage message={turn.answer} logoUri={logoUri} turnCopyText={turnCopy} onRetryPrompt={onRetryPrompt} onActionFeedback={onActionFeedback} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />
     {onOpenReviews ? <CompletedTurnChanges messages={messages} onOpenReviews={onOpenReviews} /> : null}
@@ -2728,11 +2735,11 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
 }
 
 /** One transcript renderer; public views omit callbacks for private operations. */
-export function SessionTranscript({ hiddenPlanId, quotaRecoveryMessageId, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { hiddenPlanId?: string; quotaRecoveryMessageId?: string; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+export function SessionTranscript({ hiddenQuestionId, hiddenPlanId, quotaRecoveryMessageId, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { hiddenQuestionId?: string; hiddenPlanId?: string; quotaRecoveryMessageId?: string; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const inheritedAgents = useContext(SessionAgentContext);
   const privateFolders=useContext(PrivateWorkspaceContext);
   const images = useMemo(() => collectSessionImages(messages), [messages]);
-  const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(privateFolders ? messages.map(message=>userSessionActivity(message,privateFolders)) : messages,!!privateFolders).filter(item => item.id !== hiddenPlanId), running), [messages, running,privateFolders,hiddenPlanId]);
+  const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(privateFolders ? messages.map(message=>userSessionActivity(message,privateFolders)) : messages,!!privateFolders).filter(item => item.id !== hiddenPlanId && item.id !== hiddenQuestionId), running), [messages, running,privateFolders,hiddenPlanId,hiddenQuestionId]);
   const copies = useMemo(() => getCompletedTurnCopyText(messages, running), [messages, running]);
   const questionMessages = [...messages, ...queuedAnswers];
   const answered = answeredSessionQuestionIds(questionMessages);

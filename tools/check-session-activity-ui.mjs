@@ -34,7 +34,10 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  const host=`(()=>{${user?"document.documentElement.dataset.dashboardUser='fixture';":"delete document.documentElement.dataset.dashboardUser;"}
  const state=${JSON.stringify(state)},session=${JSON.stringify(session)},messages=${JSON.stringify(messages)};
  const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));window.__auditActions=[];
- window.__auditFile=path=>{messages.push({id:crypto.randomUUID(),kind:'file-change',text:'File saved.',status:'completed',changes:[{path,kind:'update'}]});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});};
+ window.__auditPush=message=>{if(message)messages.push(message);dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});};
+ window.__auditFile=path=>window.__auditPush({id:crypto.randomUUID(),kind:'file-change',text:'File saved.',status:'completed',changes:[{path,kind:'update'}]});
+ window.__auditQuestion=()=>window.__auditPush({id:'priority-question',role:'assistant',text:'Choose where to keep the result.',timestamp:new Date().toISOString(),questions:[{title:'Which destination?',options:['Workspace','Download']}]});
+ window.__auditPlan=()=>{const item=messages.findLast(message=>message.kind==='plan');const plan=JSON.parse(item.arguments);plan.steps[1].status='completed';item.arguments=JSON.stringify(plan);window.__auditPush();};
  window.acquireVsCodeApi=()=>({getState(){return{};},setState(){},postMessage(message){window.__auditActions.push(message);setTimeout(()=>{
  if(message.type==='dashboard:ready'||message.type==='dashboard:workspace-presence'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}if(message.type!=='dashboard:action')return;
  let payload={};if(message.action==='listCodexCliSessions')payload={cliSessions:[session],cliComposerConfig:{defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]}],projects:[{id:'personal',label:'My workspace',path:session.projectPath}],terminalSupported:false}};
@@ -45,7 +48,7 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
   payload=message.payload.fileDownloadOffset!==undefined?{workspaceFileDownload:{path,revision:'r1',offset:0,size:content.length,data:btoa(content)}}:{workspaceFile:{path,kind:path.endsWith('.png')?'image':path.endsWith('.docx')?'document':'text',language:'html',content,mimeType:path.endsWith('.png')?'image/png':'text/html',revision:'r1',size:content.length,dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGJcAAAAASUVORK5CYII='}};
  }
  if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:session.projectPath,projectName:'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
- if(['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(message.action))payload={cliSession:session,cliSessions:[session],notice:{level:'info',message:'Answer accepted.'}};
+ if(['sendCodexCliSessionMessage','steerCodexCliSessionTurn'].includes(message.action)){messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});payload={cliSession:session,cliSessions:[session],cliSessionMessages:messages,notice:{level:'info',message:'Answer accepted.'}};}
  dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload});},10);}});})();`;
  // The fixture does not load workers; Playwright's worker blocker throws in sandboxed previews.
  const context=await browser.newContext({viewport:{width,height:width===360?674:960},isMobile:width<760,hasTouch:width<760,deviceScaleFactor:width<760?2:1}),page=await context.newPage();page.setDefaultTimeout(15000);
@@ -88,6 +91,26 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
   await page.evaluate(()=>window.__auditFile('later.html'));
   await page.getByText('Updated files are available in Files. Your unsaved edits are still open.',{exact:true}).waitFor();
   assert.equal(await page.locator('.cm-content[contenteditable="true"]').innerText(),'My unsaved draft');
+  await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+  await page.evaluate(()=>window.__auditPush({id:'active-plan',kind:'plan',text:'Task checklist',status:'inProgress',arguments:JSON.stringify({steps:[{step:'Read requirements',status:'completed'},{step:'Make changes',status:'inProgress'},{step:'Check results',status:'pending'}]})}));
+  const plan=page.locator('.cli-composer-plan .session-plan');
+  if(!await plan.evaluate(node=>node.open))await plan.locator('summary').click();
+  const row=await plan.locator('li').first().boundingBox();assert.ok(row.height<=24,'Plan rows stay compact');
+  assert.equal(await plan.locator('.session-plan-marker > svg').count(),3);
+  await page.evaluate(()=>window.__auditQuestion());
+  const question=page.getByRole('region',{name:'Current question',exact:true});
+  await question.getByRole('radio',{name:'Workspace',exact:true}).check();
+  await question.getByText('Choose where to keep the result.',{exact:true}).waitFor();
+  assert.equal(await plan.evaluate(node=>node.open),false);
+  const layout=await page.evaluate(()=>({question:document.querySelector('.cli-composer-question').getBoundingClientRect().bottom,plan:document.querySelector('.cli-composer-plan').getBoundingClientRect().top,height:document.querySelector('.cli-composer-plan').getBoundingClientRect().height}));
+  assert.ok(layout.question<=layout.plan&&layout.height<=40,JSON.stringify(layout));
+  const button=await question.getByRole('button',{name:'Send answer',exact:true}).boundingBox();assert.ok(button.y+button.height<=layout.question+1,'Answer action stays above the plan');
+  assert.doesNotMatch(await page.locator('.cli-session-messages').innerText(),/Which destination\?/);
+  await page.evaluate(()=>window.__auditPlan());
+  await page.locator('.session-plan-count').filter({hasText:'2 of 3 complete'}).waitFor();
+  assert.equal(await question.getByRole('radio',{name:'Workspace',exact:true}).isChecked(),true);
+  await page.screenshot({path:path.join(output,`user-question-${width}.png`),fullPage:true});
+  await question.getByRole('button',{name:'Send answer',exact:true}).click();await question.waitFor({state:'detached'});
  }
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({user,width,activityFamilies:13,questionAnswer:true,elapsedMs:Math.round(performance.now()-start),errors:0}));await context.close();

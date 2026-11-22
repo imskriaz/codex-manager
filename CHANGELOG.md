@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.65
+
+- Compact User Workspace plans into a collapsed progress row with clear SVG status icons and shorter expanded steps.
+- Keep the current unanswered question above the plan and composer, with bounded scrolling, preserved answers during plan updates, and no duplicate question card in the transcript.
+
 ## 3.0.0-pre.64
 
 - Balance the User Workspace mobile composer and model picker, and replace raw tool envelopes with readable action outcomes.

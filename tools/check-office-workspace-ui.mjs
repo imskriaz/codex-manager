@@ -138,6 +138,7 @@ try{for(const width of [1440,390]){
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.equal(await page.locator('.session-plan').count(),1);
  assert.equal(await page.locator('.session-plan .is-completed').count(),3);
+ if(!await page.locator('.session-plan').evaluate(node=>node.open))await page.locator('.session-plan > summary').click();
  await page.locator('.session-plan > summary').click();
  assert.equal(await page.getByRole('list',{name:'Task steps'}).isVisible(),false);
  await page.locator('.session-plan > summary').click();

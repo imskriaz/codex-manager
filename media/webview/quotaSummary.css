@@ -19047,6 +19047,26 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .session-plan [aria-current=step] .session-plan-marker { color:var(--accent-blue); border-color:currentColor; }
 .session-plan [aria-current=step] .session-plan-step { font-weight:600; }
 .session-plan > summary:focus-visible { outline:2px solid var(--accent-blue); outline-offset:4px; border-radius:3px; }
+/* Compact User Workspace plans yield space to questions and the composer. */
+.session-plan.is-compact { margin:6px 0; padding:4px 8px; border-radius:8px; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.session-plan.is-compact > summary { min-height:26px; gap:6px; }
+.session-plan.is-compact > summary strong { flex:none; }
+.session-plan.is-compact .session-plan-icon, .session-plan.is-compact .session-plan-chevron { flex:none; width:14px; height:14px; }
+.session-plan.is-compact .session-plan-count { flex:none; font-size:calc(10px * var(--dashboard-text-scale, 1)); white-space:nowrap; }
+.session-plan-current { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-muted); font-size:calc(10px * var(--dashboard-text-scale, 1)); }
+.session-plan.is-compact[open] .session-plan-current { display:none; }
+.session-plan.is-compact > ol { gap:2px; margin-top:5px; }
+.session-plan.is-compact li { gap:6px; min-height:20px; line-height:20px; }
+.session-plan.is-compact .session-plan-marker { flex-basis:14px; width:14px; height:14px; margin-top:3px; border:0; border-radius:0; }
+.session-plan.is-compact .session-plan-marker svg { display:block; width:14px; height:14px; }
+.session-plan.is-compact > p { margin:4px 0; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
+.office-user-theme .cli-composer-plan { padding:0 6px; }
+.office-user-theme .cli-composer-plan .session-plan { margin-bottom:4px; }
+.office-user-theme .cli-composer-plan .session-plan > ol { max-height:min(124px,20dvh); }
+.cli-composer-question { flex:0 1 auto; min-height:0; max-height:min(360px,calc(100dvh - 210px)); margin:0 6px 6px; overflow-y:auto; overscroll-behavior:contain; }
+.cli-composer-question > .cli-question-context { margin:0 4px 6px; font-size:calc(12px * var(--dashboard-text-scale, 1)); line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere; }
+.cli-composer-question .cli-question-prompt { margin:0; padding:10px; }
+.cli-composer-question .cli-question-message > p { margin:4px 0; }
 .cli-composer-plan { flex:none; min-width:0; padding:0 20px; }
 .cli-composer-plan .session-plan { max-width:none; margin:0 0 8px; }
 .cli-composer-plan .session-plan > ol { max-height:min(220px, 25dvh); overflow-y:auto; overscroll-behavior:contain; }

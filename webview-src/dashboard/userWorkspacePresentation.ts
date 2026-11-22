@@ -2,7 +2,15 @@ import type { DashboardCliProject, DashboardCliSessionMessage } from '../../src/
 import { messageSessionPlan } from '../../src/domain/sessionPlan';
 import { canonicalWebPath } from './helpers';
 import { userWorkspaceNotice } from '../../src/domain/teamWorkspacePresentation';
+import { answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
 export { userWorkspaceNotice, userSessionActivity } from '../../src/domain/teamWorkspacePresentation';
+
+export function currentUserWorkspaceQuestion(messages: DashboardCliSessionMessage[], queuedAnswers: DashboardCliSessionMessage[] = []): DashboardCliSessionMessage | undefined {
+  const question = messages.at(-1);
+  if (question?.role === 'user') return;
+  const answered = answeredSessionQuestionIds([...messages, ...queuedAnswers]);
+  return question?.questions?.some((_, index) => !answered.has(JSON.stringify(['request_user_input_async', question.id, index]))) ? question : undefined;
+}
 
 /** Tool envelopes and file contents belong in Files, not the conversation. */
 export function userToolSummary(message: DashboardCliSessionMessage): string {
