@@ -11,6 +11,7 @@ const config = vi.hoisted(() => {
 });
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({ getCodexManagerConfiguration: () => config }));
 import { readTeamSettings, saveTeamSettings } from "../src/services/teamSettings";
+import { DEFAULT_USER_WORKSPACE_PROMPT } from '../src/domain/teamWorkspacePresentation';
 
 beforeEach(() => {
   config.values.clear();
@@ -40,7 +41,7 @@ describe("Team storage settings", () => {
     expect(readTeamSettings().workspaceRoot).toBe("C:/existing");
     await saveTeamSettings({ workspaceRoot: "C:/new-users" });
     expect(readTeamSettings()).toEqual({
-      globalPrompt: "",
+      globalPrompt: DEFAULT_USER_WORKSPACE_PROMPT,
       defaultModel: "",
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
@@ -56,6 +57,8 @@ it("validates and saves the shared active request limit",async()=>{
  expect((await saveTeamSettings({maxActiveRequests:4})).maxActiveRequests).toBe(4);
 });
 it("saves and clears the global prompt without exposing database credentials or accepting invalid input",async()=>{
+ expect(readTeamSettings().globalPrompt).toContain('User Workspace');
+ expect(readTeamSettings().globalPrompt).toContain('reports/report.txt?download=1');
  config.values.set("officePostgresUrl","postgresql://secret@host/db");
  expect((await saveTeamSettings({globalPrompt:"Be useful to every user."})).globalPrompt).toBe("Be useful to every user.");
  expect(JSON.stringify(readTeamSettings())).not.toContain("secret");

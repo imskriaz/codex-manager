@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.64
+
+- Balance the User Workspace mobile composer and model picker, and replace raw tool envelopes with readable action outcomes.
+- Open newly saved files in the workspace panel without interrupting unsaved edits. Preview HTML alongside existing image, document and media previews.
+- Add editable default guidance for workspace-only access and clickable deliverables, with explicit download links for every file type.
+
 ## 3.0.0-pre.63
 
 - Harden User Workspace turn updates, bounded live history, timeout and recovery handling. Stop dependent queued work visibly when an earlier result is uncertain.

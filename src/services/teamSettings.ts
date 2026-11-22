@@ -2,12 +2,13 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { DEFAULT_USER_WORKSPACE_PROMPT } from '../domain/teamWorkspacePresentation';
 
 export function readTeamSettings() {
   const config = getCodexManagerConfiguration();
   return {
     maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
-    globalPrompt: config.get<string>("officeGlobalPrompt", ""),
+    globalPrompt: config.get<string>("officeGlobalPrompt", DEFAULT_USER_WORKSPACE_PROMPT),
     defaultModel: config.get<string>("officeDefaultModel", ""),
     workspaceRoot:
       config.get<string>("officeWorkspaceRoot", "").trim() ||

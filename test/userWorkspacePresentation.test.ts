@@ -1,7 +1,17 @@
 import { expect,it } from 'vitest';
-import { currentUserWorkspacePlan,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary } from '../webview-src/dashboard/userWorkspacePresentation';
+import { currentUserWorkspacePlan,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary,userToolSummary } from '../webview-src/dashboard/userWorkspacePresentation';
 import { userWorkspacePathText } from '../src/domain/teamWorkspacePresentation';
 import { messageSessionPlan, sessionPlanMessage } from '../src/domain/sessionPlan';
+it('summarizes file tool envelopes without showing file contents or metadata and preserves failures',()=>{
+ const message={id:'save',text:'Update file',title:'Update file',kind:'tool-call' as const,status:'completed' as const,arguments:JSON.stringify({path:'index.html',content:'<html>private content</html>'}),result:JSON.stringify({status:'completed',payload:{workspaceFile:{content:'<html>private content</html>',revision:'internal'},notice:{message:'File created.'}}})};
+ expect(userToolSummary(message)).toBe('File created.');expect(message.result).toContain('internal');
+ expect(userToolSummary({...message,status:'inProgress'})).toContain('Working');
+ expect(userToolSummary({...message,result:JSON.stringify({status:'failed',error:'The file changed. Read it again before saving.'})})).toBe('The file changed. Read it again before saving.');
+ expect(userToolSummary({...message,status:'failed',result:'not JSON'})).toContain('could not be completed');
+ expect(userToolSummary({...message,status:'unknown'})).toContain('could not be confirmed');
+ expect(userToolSummary({...message,status:'interrupted'})).toContain('stopped');
+ for(const result of ['null','42','[]','{broken','plain contents'])expect(userToolSummary({...message,result})).toBe('Action completed. Open Files to view your work.');
+});
 it('keeps the working turn plan pinned while a later follow-up is queued, and never reuses it for a new turn',()=>{
  const plan={...sessionPlanMessage('plan',{steps:[{step:'Write',status:'inProgress'},{step:'Check',status:'pending'}]}),turnId:'working'};
  const messages=[{id:'user',role:'user' as const,text:'First',turnId:'working'},plan,{id:'later',role:'user' as const,text:'Later',turnId:'queued'}];

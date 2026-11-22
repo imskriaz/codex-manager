@@ -39,6 +39,7 @@ session={id:session?.id||'12345678-1234-1234-1234-123456789abc',title:session?.t
 messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});persist();payload={cliSession:session,cliSessions:[session],cliSessionMessages:messages,notice:{level:'info',message:'Message accepted and queued.'}};
 }else if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:'C:/team/alex',projectName:'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
 else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:[]};
+else if(message.action==='readWorkspaceFile')payload={workspaceFile:{path:message.payload.filePath,content:'Saved file contents.',kind:'text',language:'javascript',mimeType:'text/javascript',revision:'r1',size:20}};
 else if(message.action==='workspaceBrowser')payload={workspaceBrowser:{projectPath:'C:/team/alex',pages:[],feedback:[]}};
 else if(message.action==='getCodexSkills')payload={cliSkills:[]};
 else if(!['refreshView','openExternalUrl'].includes(message.action))throw new Error('Unexpected private-workspace action: '+message.action);
@@ -133,6 +134,7 @@ try{for(const width of [1440,390]){
  await page.reload();await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete'}).waitFor();
  await page.evaluate(()=>window.__completeOffice());
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
+ if(width===390){await page.locator('.cli-file-editor').waitFor({state:'visible'});await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();}
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.equal(await page.locator('.session-plan').count(),1);
  assert.equal(await page.locator('.session-plan .is-completed').count(),3);
@@ -141,7 +143,7 @@ try{for(const width of [1440,390]){
  await page.locator('.session-plan > summary').click();
  assert.equal(await page.locator('.cli-conversation-project').innerText(),'My workspace');
  const transcript=await page.locator('.cli-session-messages').textContent();
- assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/Read the document/);
+ assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/File read\. Open Files to view its contents\./);
  assert.match(transcript,/Ran PowerShell: \$r=1; npm test/);assert.match(transcript,/\"PowerShell\" -NoProfile -Command/);
  assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Added|Created/);assert.match(transcript,/Edited/);
  assert.match(transcript,/Read File · alex\/notes.txt/);

@@ -1,6 +1,8 @@
 import type { DashboardCliSessionMessage } from './dashboard/types';
 import { messageSessionPlan } from './sessionPlan';
 
+export const DEFAULT_USER_WORKSPACE_PROMPT = 'Users access their work only through User Workspace, including its Browser and Files panels. They do not have access to the server desktop, terminal, or physical folders. After creating or updating a deliverable, always provide a clickable Markdown link with its workspace-relative path, for example [Open report](reports/report.txt), plus a download link such as [Download report](reports/report.txt?download=1). URL-encode spaces and special characters in link destinations. For websites, provide a verified reachable URL that opens in the workspace Browser; explain that localhost refers to the workspace server, not the user device. If no website server is available, link to the saved HTML file in Files and offer its download; do not claim a live preview is running. Never invent preview URLs, public URLs, download links, or successful actions. Use supplied tools and confirmed files only. Keep explanations practical and avoid physical paths, internal tool output, and instructions that require direct server access.';
+
 /** Keep project-relative locations; hide host and system directory prefixes. */
 export function userWorkspacePathText(text: string, folders: string[]): string {
   const leaf = (path: string): string => {
