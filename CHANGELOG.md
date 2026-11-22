@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.73
+
+- Keep User Workspace compact with clearer text, consistent labels, stronger secondary-text contrast, and balanced touch controls.
+- Respect text-size preferences in subscriber pages, settings, menus, recovery dialogs, and task summaries without changing the master layout.
+
 ## 3.0.0-pre.72
 
 - Polish compact User Workspace menus, settings, account security, schedule outcomes, and recoverable file actions on mobile and desktop.
