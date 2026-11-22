@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.87
+
+- Open the new-chat composer by default and use one screen for starting conversations.
+
 ## 3.0.0-pre.85
 
 - Show a single Auto label when both the assistant model and thinking are automatic.
