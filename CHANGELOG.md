@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-pre.66
+
+- Anchor the compact User Workspace account row to the bottom of the sidebar.
+- Open saved HTML websites in the right panel Browser with sandboxed inline interactions, refresh, and a verified preview action. Keep file editing available in Files.
+- Create nested deliverable folders safely and include confirmed file open/download links in assistant replies.
+- Default new User Workspace chats to gpt-6-luna while retaining manual model selection and master configuration.
+
 ## 3.0.0-pre.65
 
 - Compact User Workspace plans into a collapsed progress row with clear SVG status icons and shorter expanded steps.

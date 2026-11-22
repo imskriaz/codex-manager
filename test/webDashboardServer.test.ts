@@ -429,6 +429,9 @@ describe("browser PWA routes", () => {
 });
 
 describe("isLocalWebDashboardRequest", () => {
+  it.each(['cross-site','same-site'])("requires authentication for %s browser requests to loopback", fetchSite => {
+    expect(isLocalWebDashboardRequest({headers:{host:'127.0.0.1:39875','sec-fetch-site':fetchSite}})).toBe(false);
+  });
   it("allows direct loopback hosts without password authorization", () => {
     expect(
       isLocalWebDashboardRequest({

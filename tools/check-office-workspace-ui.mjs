@@ -95,6 +95,13 @@ try{for(const width of [1440,390]){
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  if(width===390)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
  await page.locator('.team-user-footer').getByText('Alex Morgan',{exact:true}).first().waitFor();
+ await page.waitForFunction(()=>Math.abs(document.querySelector('.cli-session-rail').getBoundingClientRect().left)<1);
+ const accountLayout=await page.evaluate(()=>{const rail=document.querySelector('.cli-session-rail').getBoundingClientRect(),footer=document.querySelector('.team-user-footer').getBoundingClientRect(),list=document.querySelector('.cli-session-list-region').getBoundingClientRect();return{bottomGap:rail.bottom-footer.bottom,height:footer.height,listBottom:list.bottom,footerTop:footer.top};});
+ assert.ok(accountLayout.bottomGap>=-1&&accountLayout.bottomGap<=9,'Account footer stays at the sidebar bottom');
+ assert.ok(accountLayout.height<=60,'Account footer is compact');
+ assert.ok(accountLayout.listBottom<=accountLayout.footerTop+1,'Session list cannot cover the account footer');
+ await page.screenshot({path:path.join(output,`account-sidebar-${width}.png`),fullPage:true});
+
  assert.equal(await page.getByRole('button',{name:'Dashboard',exact:true}).count(),0);
  assert.equal(await page.getByRole('tab',{name:'General',exact:true}).count(),0);
  assert.equal(await page.getByRole('tab',{name:'Task',exact:true}).count(),0);

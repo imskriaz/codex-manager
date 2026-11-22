@@ -18783,6 +18783,19 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 }
 
 /* Private workspace profile uses the session sidebar tokens. */
+.office-user-theme .cli-workspace .cli-session-rail { grid-template-rows:auto auto minmax(0,1fr) auto; }
+.office-user-theme .team-user-footer { grid-row:4; align-self:end; min-width:0; gap:8px; padding:7px 4px max(7px,env(safe-area-inset-bottom)); color:var(--text-primary); }
+.office-user-theme .team-user-avatar { flex-basis:28px; width:28px; height:28px; font-size:11px; }
+.office-user-theme .team-user-footer-copy { gap:1px; line-height:1.35; }
+.office-user-theme .team-user-footer-copy strong { font-size:calc(11px * var(--dashboard-text-scale,1)); }
+.office-user-theme .team-user-footer-copy small { font-size:calc(10px * var(--dashboard-text-scale,1)); color:var(--text-muted); }
+.office-user-theme .team-user-footer-menu > button { display:grid; place-items:center; width:40px; height:40px; min-height:40px; padding:10px; border:0; border-radius:6px; background:transparent; }
+.office-user-theme .team-user-footer-menu > button:hover { background:var(--bg-hover); }
+.user-website-preview { display:flex; flex-direction:column; height:100%; min-height:0; }
+.user-website-preview > form { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border-default); }
+.user-website-preview > form input { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.user-website-preview iframe { flex:1; width:100%; min-height:0; border:0; background:white; }
+.user-website-preview > p { padding:10px; }
 .team-user-footer{display:flex;align-items:center;gap:10px;padding:14px 12px;border-top:1px solid var(--border-default);color:var(--text)}.team-user-avatar{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;border-radius:50%;background:var(--bg-selected);font-size: calc(12px * var(--dashboard-text-scale, 1));font-weight:600}.team-user-footer-copy{display:grid;gap:3px;min-width:0;flex:1}.team-user-footer-copy strong,.team-user-footer-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-user-footer-copy strong{font-size: calc(12px * var(--dashboard-text-scale, 1))}.team-user-footer-copy small,.team-composer-hint{font-size: calc(11px * var(--dashboard-text-scale, 1));color:var(--muted)}.team-user-footer-menu{position:relative}.team-user-footer-menu .cli-session-menu{bottom:100%;top:auto;right:0}.team-user-footer-menu form{margin:0}.team-user-footer-menu form button{width:100%}.team-request-state{padding:8px 16px;color:var(--muted);font-size: calc(12px * var(--dashboard-text-scale, 1));line-height:1.5}
 .office-user-theme .user-rail-actions { display:flex; align-items:center; gap:2px; margin-left:auto; }
 .office-user-theme .cli-rail-header .cli-icon-button, .office-user-theme .user-rail-actions > .workspace-tool-menu > button { display:grid; place-items:center; width:28px; min-width:28px; height:28px; padding:4px; border:0; border-radius:6px; background:transparent; color:var(--text); }

@@ -23,6 +23,16 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('opens a verified saved website through the Browser preview tool without executing host commands',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const,'browser' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'<h1>Buyer portal</h1>'}}}]});
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('open_preview',{path:'buyer portal.html'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'[Open preview](buyer%20portal.html)'}}]})) as never);
+ const report=vi.fn();const answer=await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Run in browser'}],new AbortController().signal,actor.workspacePath,report);
+ expect(answer).toContain('[Download buyer portal.html](buyer%20portal.html?download=1)');
+ expect(action).toHaveBeenCalledWith(actor,expect.objectContaining({action:'readWorkspaceFile',payload:expect.objectContaining({filePath:'buyer portal.html'})}));
+ expect(report.mock.calls.at(-1)?.[0]).toMatchObject({kind:'tool-call',title:'Open preview',status:'completed'});
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);expect(sent.messages[0].content).toContain('right panel Browser');
+});
 it('publishes a plan before file work, updates the same checklist, and records confirmed file changes',async()=>{
  const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
  const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{}}],reloadAfterResponse:false});
@@ -95,7 +105,7 @@ it('accepts a confirmed retry of the same file action and keeps upstream metadat
  vi.spyOn(server as any,'processOfficeMessage').mockResolvedValueOnce({messages:[{type:'dashboard:action-result',status:'failed',error:'File changed.'}]}).mockResolvedValueOnce({messages:[{type:'dashboard:action-result',status:'completed'}]});
  const response={usage:{total_tokens:1},choices:[{message:{role:'system',internal:'private',tool_calls:[{id:'attempt',type:'function',function:{name:'save_file',arguments:JSON.stringify({path:'notes.txt',content:'new'})}}]}}]};
  vi.mocked(upstream).mockClear().mockResolvedValueOnce(new Response(JSON.stringify(response)) as never).mockResolvedValueOnce(toolResponse('save_file',{path:'notes.txt',content:'new',revision:'latest'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Saved.'}}]})) as never);
- expect(await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Save'}],new AbortController().signal,actor.workspacePath,vi.fn())).toBe('Saved.');
+ expect(await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Save'}],new AbortController().signal,actor.workspacePath,vi.fn())).toBe('Saved.\n\n[Open notes.txt](notes.txt) \u00b7 [Download notes.txt](notes.txt?download=1)');
  const request=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(request.messages.find((message:any)=>message.tool_calls)).toMatchObject({role:'assistant'});expect(request.messages.find((message:any)=>message.tool_calls)).not.toHaveProperty('internal');
 });
 it('rejects malformed tool calls and stops actions after an aborted response',async()=>{

@@ -119,6 +119,35 @@ it("enforces storage allowances for direct and assistant file writes",async()=>{
  expect(result.messages[0].status).toBe("failed");expect(result.messages[0].error).toContain("storage allowance");
  await expect(fs.stat(path.join(user.workspacePath,"new.txt"))).rejects.toThrow();
 });
+it('creates nested merchandising deliverables without creating folders through a junction', async () => {
+ const save=(filePath:string)=>(server as any).processOfficeMessage(user,{type:'dashboard:action',action:'saveWorkspaceFile',requestId:crypto.randomUUID(),payload:{filePath,fileContent:'Style,Quantity\nST-100,2400'}});
+ expect((await save('reports/buyer/costing.csv')).messages[0].status).toBe('completed');
+ expect(await fs.readFile(path.join(user.workspacePath,'reports/buyer/costing.csv'),'utf8')).toContain('ST-100,2400');
+ const outside=path.join(root,'private');await fs.mkdir(outside);await fs.symlink(outside,path.join(user.workspacePath,'escape'),'junction');
+ expect((await save('escape/new-folder/costing.csv')).messages[0].status).toBe('failed');
+ await expect(fs.stat(path.join(outside,'new-folder'))).rejects.toThrow();
+});
+it('serves only authorized HTML previews with an opaque script sandbox', async () => {
+ const internal=server as any;
+ vi.spyOn(internal,'isAuthorized').mockResolvedValue(true);vi.spyOn(internal,'officeUserForRequest').mockResolvedValue({...user,features:['files','browser']});
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true})};
+ const html='<button onclick="this.textContent=\'Done\'">Test</button>';
+ await fs.writeFile(path.join(user.workspacePath,'index.html'),html);
+ const outside=path.join(root,'outside-preview');await fs.mkdir(outside);await fs.symlink(outside,path.join(user.workspacePath,'escape'),'junction');
+ const read=vi.spyOn(internal,'processClientMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{path:'index.html',kind:'text',content:html}}}]});
+ const response={statusCode:200,setHeader:vi.fn(),end:vi.fn()};
+ await internal.handle({method:'GET',url:'/api/workspace/preview?filePath=index.html',headers:{host:'127.0.0.1:39875'},socket:{remoteAddress:'127.0.0.1'}},response);
+ expect(response.statusCode).toBe(200);expect(response.end).toHaveBeenCalledWith(html);
+ expect(response.setHeader).toHaveBeenCalledWith('Content-Security-Policy',expect.stringContaining("sandbox allow-scripts; default-src 'none'"));
+ expect(response.setHeader).toHaveBeenCalledWith('Content-Security-Policy',expect.not.stringContaining('allow-same-origin'));
+ read.mockClear();
+ for (const file of ['../private.html','escape/index.html','notes.txt']) {
+  const denied={statusCode:200,setHeader:vi.fn(),end:vi.fn()};
+  await internal.handle({method:'GET',url:'/api/workspace/preview?filePath='+encodeURIComponent(file),headers:{host:'127.0.0.1:39875'},socket:{remoteAddress:'127.0.0.1'}},denied);
+  expect(denied.statusCode).toBe(403);
+ }
+ expect(read).not.toHaveBeenCalled();
+});
 it.each(["runWorkspaceTerminalCommand","createWorkspaceTerminal","workspaceTerminal","workspaceGit","commitWorkspaceChanges","pushWorkspaceBranch","workspaceGitHub","openExternalUrl","switch","teamSettingsRequest","respondCodexServerRequest"])("blocks a forged %s request before it reaches host actions",async action=>{
  const internal=server as any,native=vi.spyOn(internal,"processClientMessage");
  const enabled={...user,features:["generalChat","tasks","files","browser","env","terminal","git","github"]};

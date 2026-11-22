@@ -42,7 +42,7 @@ describe("Team storage settings", () => {
     await saveTeamSettings({ workspaceRoot: "C:/new-users" });
     expect(readTeamSettings()).toEqual({
       globalPrompt: DEFAULT_USER_WORKSPACE_PROMPT,
-      defaultModel: "",
+      defaultModel: "gpt-6-luna",
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
       databaseProvider: "postgres",

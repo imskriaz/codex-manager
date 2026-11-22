@@ -13,7 +13,14 @@ export async function createOfficeWorkspaceFile(projectPath: string | undefined,
   const target = path.resolve(root, filePath);
   const inside = (candidate: string) => { const relative = path.relative(root, candidate); return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
   if (!inside(target)) throw new Error('Choose a file inside this project.');
-  const parent = await fs.realpath(path.dirname(target));
+  // Create each missing directory only after validating its real parent.
+  let parent = root;
+  for (const segment of path.relative(root, path.dirname(target)).split(path.sep).filter(Boolean)) {
+    const directory = path.join(parent, segment);
+    try { await fs.mkdir(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    parent = await fs.realpath(directory);
+    if (parent !== root && !inside(parent)) throw new Error('Choose a file inside this project.');
+  }
   if (parent !== root && !inside(parent)) throw new Error('Choose a file inside this project.');
   const destination = path.join(parent, path.basename(target));
   const temporary = path.join(parent, `.${randomUUID()}.codex-manager.tmp`);

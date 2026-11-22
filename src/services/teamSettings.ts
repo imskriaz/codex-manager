@@ -9,7 +9,7 @@ export function readTeamSettings() {
   return {
     maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
     globalPrompt: config.get<string>("officeGlobalPrompt", DEFAULT_USER_WORKSPACE_PROMPT),
-    defaultModel: config.get<string>("officeDefaultModel", ""),
+    defaultModel: config.get<string>("officeDefaultModel", "gpt-6-luna"),
     workspaceRoot:
       config.get<string>("officeWorkspaceRoot", "").trim() ||
       path.join(getCodexManagerStorageRoot(), "office-workspaces"),

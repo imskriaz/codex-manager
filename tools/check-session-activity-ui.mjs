@@ -28,7 +28,7 @@ const messages=[
 ];
 const browser=await chromium.launch({channel:'msedge',headless:true});
 try{for(const user of [true,false])for(const width of [1440,390,360]){
- const office={id:'fixture',username:'alex@example.test',displayName:'Alex',role:user?'user':'unrestricted-admin',features:['generalChat','tasks','files','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
+ const office={id:'fixture',username:'alex@example.test',displayName:'Alex',role:user?'user':'unrestricted-admin',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
  const state={...raw,office,accounts:[],connectedPeers:[{id:'local',name:'This PC',local:true,connected:true}],peerAccounts:{},onboardingCompleted:true,settings:{...raw.settings,dashboardTheme:width<760?'dark':'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,systemInfoEnabled:false}};
  const session={id,title:'Activity audit',status:'idle',model:'fast',projectPath:'C:/fixture/alex',updatedAt:new Date().toISOString()};
  const host=`(()=>{${user?"document.documentElement.dataset.dashboardUser='fixture';":"delete document.documentElement.dataset.dashboardUser;"}
@@ -42,6 +42,7 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  if(message.type==='dashboard:ready'||message.type==='dashboard:workspace-presence'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}if(message.type!=='dashboard:action')return;
  let payload={};if(message.action==='listCodexCliSessions')payload={cliSessions:[session],cliComposerConfig:{defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]}],projects:[{id:'personal',label:'My workspace',path:session.projectPath}],terminalSupported:false}};
  if(message.action==='getCodexCliSessionMessages')payload={cliSession:session,cliSessionMessages:messages};
+ if(message.action==='workspaceBrowser')payload={workspaceBrowser:{pages:[],feedback:[]}};
  if(message.action==='listWorkspaceFiles')payload={workspaceFiles:[]};
  if(message.action==='readWorkspaceFile'){
   const path=message.payload.filePath,content='<h1>Workspace preview</h1><p>Saved deliverable</p>';
@@ -54,6 +55,7 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  const context=await browser.newContext({viewport:{width,height:width===360?674:960},isMobile:width<760,hasTouch:width<760,deviceScaleFactor:width<760?2:1}),page=await context.newPage();page.setDefaultTimeout(15000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:host}));
+ await context.route('**/api/workspace/preview?*',route=>route.fulfill({contentType:'text/html',headers:{'X-Frame-Options':'SAMEORIGIN','Content-Security-Policy':"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; frame-ancestors 'self'"},body:`<h1>Workspace preview</h1><button onclick="this.textContent='Clicked'">Test interaction</button>`}));
  const start=performance.now();await page.goto(origin+'/workspace/'+id);await page.getByText('Your progress is saved.',{exact:false}).waitFor();
  await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete · Paused'}).waitFor();
  await page.evaluate(()=>document.querySelectorAll('.cli-session-messages details').forEach(node=>{node.open=true;}));
@@ -75,10 +77,13 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  if(user){
   const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Download page',exact:true}).click()]);assert.equal(download.suggestedFilename(),'index page.html');
   await page.evaluate(()=>window.__auditFile('preview.html'));
-  await page.locator('iframe[title="Preview preview.html"]').waitFor({state:'visible'});
-  assert.equal(await page.locator('iframe[title="Preview preview.html"]').getAttribute('sandbox'),'');
-  await page.frameLocator('iframe[title="Preview preview.html"]').getByRole('heading',{name:'Workspace preview'}).waitFor();
-  const preview=await(await page.locator('iframe[title="Preview preview.html"]').elementHandle()).contentFrame();
+  await page.locator('iframe[title="Website preview.html"]').waitFor({state:'visible'});
+  assert.equal(await page.locator('iframe[title="Website preview.html"]').getAttribute('sandbox'),'allow-scripts');
+  assert.equal(await page.getByRole('tab',{name:'Browser',exact:true}).getAttribute('aria-selected'),'true');
+  try { await page.frameLocator('iframe[title="Website preview.html"]').getByRole('button',{name:'Test interaction'}).click(); } catch(error) { console.log(JSON.stringify({errors,frames:page.frames().map(frame=>frame.url())})); throw error; }
+  await page.frameLocator('iframe[title="Website preview.html"]').getByRole('button',{name:'Clicked'}).waitFor();
+  const preview=await(await page.locator('iframe[title="Website preview.html"]').elementHandle()).contentFrame();
+  assert.equal(await preview.evaluate(()=>{try{return !!parent.document.body;}catch{return false;}}),false,'Website scripts cannot access the dashboard');
   await preview.evaluate(()=>parent.postMessage({type:'dashboard:notice',level:'error',message:'Preview impersonation sentinel'},'*'));
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   assert.equal(await page.getByText('Preview impersonation sentinel',{exact:true}).count(),0);
