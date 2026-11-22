@@ -6,7 +6,7 @@ import { activeSessionQuestion, sessionQuestionReply, SESSION_QUESTION_PROMPT_MS
 export { sessionQuestionReply } from '../../src/domain/sessionQuestions';
 export const pendingSessionQuestion = activeSessionQuestion;
 
-export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoOpen = false, answered, pending = false }: { message: DashboardCliSessionMessage; onReply?: (text: string) => string | undefined; disabled?: boolean; scope?: string; autoOpen?: boolean; answered: Set<string>; pending?: boolean }) {
+export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoOpen = false, answered, pending = false, assistantName = 'Codex' }: { message: DashboardCliSessionMessage; onReply?: (text: string) => string | undefined; disabled?: boolean; scope?: string; autoOpen?: boolean; answered: Set<string>; pending?: boolean; assistantName?: string }) {
   const key = `question:${scope ?? message.turnId ?? ''}:${message.id}`;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false), [expired, setExpired] = useState(() => readDismissedCodexRequests().includes(key));
@@ -35,9 +35,9 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
     void writeBrowserCache(key, next).then(saved => { if (!saved) setOutcome('Browser storage could not save this answer. It is kept in this tab; copy it before closing.'); });
   };
   if (!questions.length || queued) return null;
-  return <section class="cli-question-message" aria-label="Codex question">
+  return <section class="cli-question-message" aria-label={`${assistantName} question`}>
     {!visible ? <>{questions.map(question => <p key={question.index}>{question.title}</p>)}{onReply ? <button type="button" disabled={queued} onClick={() => setOpen(true)} aria-expanded={false}>{queued ? 'Answer queued' : 'Answer'}</button> : null}</> :
-      <form class="codex-request-panel cli-question-prompt" aria-label="Answer Codex question" onSubmit={event => {
+      <form class="codex-request-panel cli-question-prompt" aria-label={`Answer ${assistantName} question`} onSubmit={event => {
         event.preventDefault();
         if (!onReply || disabled || submitting.current || !ready || !questions.every(question => answers[String(question.index)]?.trim())) return;
         submitting.current = true;
@@ -48,7 +48,7 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
         if (id) { setQueued(true); setOpen(false); setExpired(true); setOutcome('Answer queued. Follow its status in the conversation.'); }
         else { submitting.current = false; setOutcome('Your answer could not be queued. It is kept here; review the conversation before retrying.'); }
       }}>
-        <strong>Codex has a question</strong>
+        <strong>{assistantName} has a question</strong>
         {questions.map(question => <fieldset key={question.index} disabled={disabled || !ready}><legend>{question.title}</legend>
           {question.options?.map((option, optionIndex) => <label class="cli-question-option" key={optionIndex}><input type="radio" name={`question-${message.id}-${question.index}`} checked={answers[String(question.index)] === option} onChange={() => update(question.index, option)} /><span>{option}</span></label>)}
           <label class="cli-question-freeform"><span>Your answer</span><textarea aria-label={`Answer: ${question.title}`} rows={2} maxLength={8000} value={answers[String(question.index)] ?? ''} onInput={event => update(question.index, event.currentTarget.value)} placeholder="Choose an option or type an answer…" /></label>

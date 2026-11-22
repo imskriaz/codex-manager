@@ -1062,7 +1062,7 @@ describe("sessions sidebar layout", () => {
     expect(items[2]).toMatchObject({ id: "image-1", kind: "image", images: [{ src: "data:image/png;base64,AA==" }] });
   });
 
-  it("shows running thinking but removes it once completed", () => {
+  it("keeps the latest thinking summary available after completion", () => {
     const running = consolidateSessionMessages([
       { id: "user-1", kind: "message", role: "user", text: "Start." },
       { id: "command-1", kind: "command", status: "completed", text: "npm test" },
@@ -1075,8 +1075,9 @@ describe("sessions sidebar layout", () => {
     ]);
 
     expect(running[2]).toMatchObject({ id: "thinking-1", status: "inProgress" });
-    expect(completed).toHaveLength(2);
+    expect(completed).toHaveLength(3);
     expect(completed[1]).toMatchObject({ messages: [{ id: "command-1" }] });
+    expect(completed[2]).toMatchObject({id:'thinking-1',status:'completed',text:'Checked'});
   });
 
   it("keeps concurrent running tools visible instead of collapsing older calls", () => {

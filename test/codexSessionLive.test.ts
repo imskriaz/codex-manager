@@ -12,6 +12,30 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it('updates one native checklist and keeps it in the transcript after the turn finishes',()=>{
+    const live=reducer();live.started('turn-1');
+    live.accept('turn/plan/updated',params({plan:[{step:'Read',status:'inProgress'},{step:'Write',status:'pending'}]}));
+    live.accept('turn/plan/updated',params({plan:[{step:'Read',status:'completed'},{step:'Write',status:'completed'}]}));
+    live.accept('turn/completed',params({turn:{id:'turn-1',status:'completed'}}));
+    const plans=live.snapshot().messages.filter(message=>message.kind==='plan');
+    expect(plans).toHaveLength(1);expect(plans[0]).toMatchObject({id:'plan-turn-1',turnId:'turn-1',status:'completed'});expect(plans[0].text).toBe('[x] Read\n[x] Write');
+  });
+  it('retains scoped hook, routing, response-check and warning activities with honest outcomes', () => {
+    const live = reducer(); live.started('turn-1');
+    expect(live.accept('hook/started', params({run:{id:'check',name:'Before action'}}))).toBe(true);
+    expect(live.snapshot().messages.find(message=>message.id==='hook-check')?.status).toBe('inProgress');
+    live.accept('hook/completed',params({run:{id:'check',name:'Before action',status:'failed',success:false}}));
+    live.accept('model/rerouted',params({fromModel:'fast',toModel:'quality',reason:'Capacity'}));
+    live.accept('model/safetyBuffering/updated',params({showBufferingUi:true}));
+    live.accept('model/safetyBuffering/updated',params({showBufferingUi:false}));
+    live.accept('warning',params({message:'This action needs attention.'}));
+    live.accept('model/verification',params({verifications:[]}));
+    expect(live.accept('warning',{threadId:'another-session',message:'Private warning'})).toBe(false);
+    expect(live.accept('warning',{message:'Unscoped warning'})).toBe(false);
+    const state=live.snapshot();expect(state.messages.find(message=>message.id==='hook-check')?.status).toBe('failed');
+    expect(state.messages.some(message=>message.text.includes('quality'))).toBe(true);expect(state.messages.find(message=>message.id.startsWith('response-check-'))?.status).toBe('completed');
+    expect(state.messages.some(message=>message.text.includes('needs attention'))).toBe(true);expect(state.messages.some(message=>message.status==='unknown')).toBe(true);expect(JSON.stringify(state)).not.toContain('Private warning');expect(isCodexSessionLiveState(state)).toBe(true);
+  });
   it('keeps real parser output valid without freezing the remaining live messages', () => {
     const live = reducer(); live.started('turn-1');
     live.accept('item/completed', params({ item: { id: 'tool', type: 'mcpToolCall', server: 'local', tool: 'inspect', arguments: { payload: '\\"'.repeat(6000) }, result: { content: [{ type: 'text', text: 'done' }] } } }));

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.60
+
+- Pin live task checklists above the composer in User Workspace and native Codex sessions, with completed counts, current steps, paused states and saved plan history.
+- Add User Workspace planning, progress updates and answerable questions; record confirmed file changes and retain unfinished steps after cancellation, failure and reload.
+- Read native update_plan history and turn/plan/updated notifications. Show hook, model-routing, response-check and standalone tool-output activities; keep completed thinking summaries and accurate failed-activity badges.
+
 ## 3.0.0-pre.58
 
 - Show a short offline notice with the next local availability time and remaining days, hours and minutes, checking blocking 5-hour and weekly/monthly windows across enabled accounts. Share only aggregate availability with User Workspace.

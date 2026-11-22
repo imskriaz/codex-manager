@@ -174,9 +174,30 @@ export class CodexSessionLiveReducer {
       if (!item || item["status"] !== "inProgress") return false;
       item["progress"] = string(params["message"]);
       this.putItem(params["itemId"], item);
+    } else if (method === 'hook/started' || method === 'hook/completed') {
+      const run = record(params['run']);
+      if (!run || params['threadId'] !== this.state.sessionId || typeof run['id'] !== 'string') return false;
+      const failed = run['status'] === 'failed' || run['success'] === false;
+      this.putItem(`hook-${run['id']}`, { id: `hook-${run['id']}`, type: 'dynamicToolCall', tool: 'Hook', progress: string(run['name']) ?? 'Session hook', result: bounded(run, 0), status: method === 'hook/started' ? 'inProgress' : failed ? 'failed' : 'completed' });
+    } else if (method === 'model/rerouted') {
+      if (params['threadId'] !== this.state.sessionId || typeof params['toModel'] !== 'string') return false;
+      const id = `model-route-${this.state.sequence}`;
+      this.putItem(id, { id, type: 'dynamicToolCall', tool: 'Model routing', progress: `Continuing with ${string(params['toModel'], 128)}.`, result: string(params['reason']), status: 'completed' });
+    } else if (method === 'model/safetyBuffering/updated') {
+      if (params['threadId'] !== this.state.sessionId || typeof params['showBufferingUi'] !== 'boolean') return false;
+      const id = `response-check-${this.state.turnId ?? this.state.streamId}`;
+      this.putItem(id, { id, type: 'dynamicToolCall', tool: 'Response check', progress: 'Checking the response.', status: params['showBufferingUi'] ? 'inProgress' : 'completed' });
+    } else if (method === 'model/verification' || method === 'warning') {
+      if (params['threadId'] !== this.state.sessionId) return false;
+      const warning = method === 'warning' ? string(params['message']) : 'Account verification is required to continue.';
+      if (!warning) return false;
+      const id = `session-notice-${this.state.sequence}`;
+      this.putItem(id, { id, type: 'dynamicToolCall', tool: method === 'warning' ? 'Session warning' : 'Account verification', progress: warning, status: 'unknown' });
     } else if (method === "turn/plan/updated") {
       if (!Array.isArray(params["plan"])) return false;
       this.state.plan = { explanation: string(params["explanation"]), steps: params["plan"].slice(0, 100).flatMap((value) => { const step = record(value); return step && typeof step["step"] === "string" && ["pending", "inProgress", "completed"].includes(String(step["status"])) ? [{ step: step["step"].slice(0, 1000), status: step["status"] as "pending" | "inProgress" | "completed" }] : []; }) };
+      const id = `plan-${this.state.turnId ?? this.state.streamId}`.slice(0, 256);
+      if (this.state.plan.steps.length) this.putItem(id, { id, type: 'dynamicToolCall', tool: 'update_plan', arguments: this.state.plan });
     } else if (method === "turn/diff/updated") {
       this.state.diff = string(params["diff"]);
     } else if (method === "thread/tokenUsage/updated") {

@@ -12,6 +12,7 @@ import {configureSqliteStateStore, SqliteStateStore} from '../src/storage/sqlite
 import type {OfficeUser} from '../src/services/officeUsers';
 import {removeTestDirectory} from './testFilesystem';
 import * as officeUsers from '../src/services/officeUsers';
+import { messageSessionPlan } from '../src/domain/sessionPlan';
 let root:string, store:SqliteStateStore, server:WebDashboardServer;
 const user:OfficeUser = {id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['generalChat'],defaultPrompt:'',workspacePath:'C:/workspace/alex',mcpServers:[],createdAt:0,limits:{storageMb:0,dailyTokens:100,dailyRequests:10}};
 beforeEach(async()=>{
@@ -21,6 +22,30 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
+const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('publishes a plan before file work, updates the same checklist, and records confirmed file changes',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{}}],reloadAfterResponse:false});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('update_plan',{plan:[{step:'Write notes',status:'in_progress'},{step:'Check notes',status:'pending'}]}) as never)
+ .mockResolvedValueOnce(toolResponse('save_file',{path:'notes.txt',content:'Done'}) as never)
+ .mockResolvedValueOnce(toolResponse('update_plan',{plan:[{step:'Write notes',status:'completed'},{step:'Check notes',status:'completed'}]}) as never)
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Notes saved.'}}]})) as never);
+ const report=vi.fn();await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Write notes and check them'}],new AbortController().signal,actor.workspacePath,report);
+ const updates=report.mock.calls.map(([message])=>message);expect(updates[0].kind).toBe('plan');expect(updates.filter(message=>message.kind==='plan').map(message=>message.id)).toEqual([updates[0].id,updates[0].id]);
+ expect(messageSessionPlan(updates.at(-1))?.steps.every(step=>step.status==='completed')).toBe(true);expect(updates.find(message=>message.kind==='file-change')).toMatchObject({status:'completed',changes:[{path:'notes.txt',kind:'add'}]});expect(action).toHaveBeenCalledTimes(1);
+});
+it('offers planning, progress and questions without file access, and pauses for an answer',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('report_progress',{message:'I have organized your requirements.'}) as never)
+ .mockResolvedValueOnce(toolResponse('request_user_input',{questions:[{title:'Which format?',options:['Document','Checklist']}]}) as never);
+ const report=vi.fn();const result=await (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Help me organize'}],new AbortController().signal,user.workspacePath,report);
+ const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(first.tools.map((tool:any)=>tool.function.name)).toEqual(['update_plan','request_user_input','report_progress']);expect(result).toContain('Reply to the question');expect(report.mock.calls.at(-1)?.[0]).toMatchObject({questions:[{title:'Which format?',options:['Document','Checklist']}]});
+});
+it('rejects malformed plans and questions combined with actions before changing files',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);const action=vi.spyOn(server as any,'processOfficeMessage');
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('update_plan',{plan:[{step:'x',status:'complete'}]}) as never);await expect(generate()).rejects.toThrow('valid plan');expect(action).not.toHaveBeenCalled();
+ const calls=[{id:'q',type:'function',function:{name:'request_user_input',arguments:JSON.stringify({questions:[{title:'Which?'}]})}},{id:'save',type:'function',function:{name:'save_file',arguments:'{}'}}];
+ vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:calls}}]})) as never);await expect(generate()).rejects.toThrow('separately');expect(action).not.toHaveBeenCalled();
+});
 it('uses the selected model and records confirmed token usage',async()=>{
   vi.mocked(upstream).mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'Hello'}}],usage:{total_tokens:33}})) as never);
   expect(await generate()).toBe('Hello');expect(readOfficeUsage(user.id)).toMatchObject({tokens:33,pending:false});

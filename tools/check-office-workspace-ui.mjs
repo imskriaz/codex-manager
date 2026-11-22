@@ -9,6 +9,7 @@ const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
 const state={lang:raw.lang,copy:raw.copy,logoUri:raw.logoUri,panelTitle:'Workspace',brandSub:'',onboardingCompleted:true,office,accounts:[],connectedPeers:[],peerAccounts:{},indexHealth:{status:'healthy',availableBackups:0},tokenAutomation:{enabled:false},settings:{...Object.fromEntries(Object.entries(raw.settings).map(([key,value])=>[key,typeof value==='boolean'?false:typeof value==='number'?0:typeof value==='string'?'':[]])),dashboardTheme:'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,workspaceTextFileLimitMb:10}};
 const activities=[
+ {id:'task-plan',kind:'plan',title:'Plan',text:'Task complete',arguments:JSON.stringify({steps:[{step:'Read requirements',status:'completed'},{step:'Make changes',status:'completed'},{step:'Check results',status:'completed'}]}),status:'completed'},
  {id:'read-file',kind:'tool-call',title:'Read file',text:'Read the document',arguments:JSON.stringify({path:'C:/team/alex/notes.txt'}),result:'Complete document contents.',status:'completed'},
  {id:'run-checks',kind:'command',text:'Checking changes',command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command \'$r=1; npm test\'',cwd:'C:/team/alex',output:'All 83 checks passed.\nC:\\Windows\\Temp\\checks.log',status:'completed'},
  {id:'files',kind:'file-change',text:'Updated your files',status:'completed',changes:[{path:'C:/team/alex/output/new.cjs',kind:'add',diff:'+ New file'},{path:'C:/team/alex/output/commit.cjs',kind:'update',diff:'- Before\n+ After'}]},
@@ -23,7 +24,8 @@ const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:struc
 window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
 const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
 window.__privateActions=[];
-window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueRetryAt:undefined,queueError:undefined,updatedAt:new Date().toISOString()};messages.push(...${JSON.stringify(activities)},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
+window.__updateOfficePlan=(completed=0,status='inProgress')=>{session={...session,status:status==='unknown'?'idle':'running',queueEnabled:false,queueRetryAt:undefined,queueError:undefined};messages=messages.filter(message=>message.id!=='task-plan');messages.push({id:'task-plan',kind:'plan',text:'Task plan',status,arguments:JSON.stringify({steps:['Read requirements','Make changes','Check results'].map((step,index)=>({step,status:index<completed?'completed':index===completed?'inProgress':'pending'}))})});persist();dispatch({type:'dashboard:action-result',requestId:'auto-plan',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:status==='unknown'?'completed':'running',updatedAt:Date.now(),messages}});};
+window.__completeOffice=()=>{session={...session,status:'idle',queueEnabled:false,queueRetryAt:undefined,queueError:undefined,updatedAt:new Date().toISOString()};messages=messages.filter(message=>message.id!=='task-plan');messages.push(...${JSON.stringify(activities)},{id:crypto.randomUUID(),role:'assistant',text:'Your private workspace response is ready.'});persist();dispatch({type:'dashboard:action-result',requestId:'auto-team-list',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});dispatch({type:'dashboard:notice',level:'info',message:'Your response is ready.'});};
 window.acquireVsCodeApi=()=>({postMessage(message){window.__privateActions.push(message);setTimeout(()=>{
 if(message.type==='dashboard:ready'||message.type==='dashboard:workspace-presence'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}
 if(message.type==='dashboard:setting'){state.settings[message.key]=message.value;dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:notice',level:'info',message:'Setting saved.'});return;}
@@ -107,13 +109,34 @@ try{for(const width of [1440,390]){
  await assertPlainUserInterface(page);
  await page.screenshot({path:path.join(output,`queued-${width}.png`),fullPage:true});
  const first=await page.evaluate(()=>JSON.parse(localStorage.getItem('private-workspace-fixture')).session.id);
+ await page.evaluate(()=>window.__updateOfficePlan());
+ await page.locator('.session-plan-count').filter({hasText:'0 of 3 complete'}).waitFor();
+ assert.equal(await page.locator('.session-plan [aria-current=step]').count(),1);
+ await page.evaluate(()=>window.__updateOfficePlan(1));
+ await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete'}).waitFor();
+ assert.equal(await page.locator('.session-plan .is-completed').count(),1);
+ const placement=await page.evaluate(()=>{const plan=document.querySelector('.cli-composer-plan').getBoundingClientRect(),composer=document.querySelector('.cli-composer').getBoundingClientRect();return {bottom:plan.bottom,top:composer.top};});
+ assert.ok(placement.bottom<=placement.top+2,'Current plan is directly above the composer');
+ assert.equal(await page.locator('.cli-session-messages .session-plan').count(),0);
+ await assertPlainUserInterface(page);
+ await page.screenshot({path:path.join(output,`plan-running-${width}.png`),fullPage:true});
+ await page.evaluate(()=>window.__updateOfficePlan(1,'unknown'));
+ await page.locator('.session-plan-count').filter({hasText:'Paused'}).waitFor();
+ assert.equal(await page.locator('.session-plan [aria-current=step]').count(),0);
+ await page.reload();await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete'}).waitFor();
  await page.evaluate(()=>window.__completeOffice());
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
+ await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
+ assert.equal(await page.locator('.session-plan').count(),1);
+ assert.equal(await page.locator('.session-plan .is-completed').count(),3);
+ await page.locator('.session-plan > summary').click();
+ assert.equal(await page.getByRole('list',{name:'Task steps'}).isVisible(),false);
+ await page.locator('.session-plan > summary').click();
  assert.equal(await page.locator('.cli-conversation-project').innerText(),'My workspace');
  const transcript=await page.locator('.cli-session-messages').textContent();
  assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/Read the document/);
  assert.match(transcript,/Ran PowerShell: \$r=1; npm test/);assert.match(transcript,/\"PowerShell\" -NoProfile -Command/);
- assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Created/);assert.match(transcript,/Edited/);
+ assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Added|Created/);assert.match(transcript,/Edited/);
  assert.match(transcript,/Read File · alex\/notes.txt/);
  assert.doesNotMatch(transcript,/C:[\\/]|Windows[\\/](?:System32|Temp)/);
  await page.locator('.cli-completed-work > summary').click();
@@ -160,7 +183,8 @@ try{for(const width of [1440,390]){
  await page.evaluate(activities=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id:'12345678-1234-1234-1234-123456789abc',title:'Master session',status:'idle',projectPath:'C:/team/alex'},messages:[{id:'user',role:'user',text:'Check files'},...activities,{id:'answer',role:'assistant',text:'Master response ready.'}]})),activities);
  await page.reload();await page.getByRole('button',{name:/^Master session/}).click();await page.getByText('Master response ready.',{exact:true}).waitFor();
  const masterTranscript=await page.locator('.cli-session-messages').textContent();
- assert.match(masterTranscript,/C:\\Windows\\System32\\WindowsPowerShell/);assert.match(masterTranscript,/C:\/team\/alex\/output\/commit.cjs/);assert.match(masterTranscript,/Edited/);
+ await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
+ assert.match(masterTranscript,/C:\\Windows\\System32\\WindowsPowerShell/);assert.match(masterTranscript,/C:\/team\/alex\/output\/commit.cjs/);assert.match(masterTranscript,/Update|Edited/);
  console.log(JSON.stringify({masterDashboardControlsPreserved:true}));await context.close();
 }finally{await browser.close();}
 console.log('Screenshots: '+output);

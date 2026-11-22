@@ -1,4 +1,5 @@
 import { hydrateSessionImages } from './codexSessionImages';
+import { readSessionPlan, sessionPlanMessage } from '../domain/sessionPlan';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
 import { readWorkspaceProjects, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from './workspaceProjects';
 import { syncCodexSessionAccess } from './codexSessionAccessSync';
@@ -2263,7 +2264,7 @@ export function parseCodexAppServerThreadItems(value: unknown): DashboardCliSess
     const timestamp = unixSecondsToIso(turn.startedAt);
     for (const [itemIndex, item] of (turn.items ?? []).entries()) {
       const parsed = parseAppServerThreadItem(item, `${turnIndex}-${itemIndex}`, status, timestamp);
-      if (parsed) output.push({ ...parsed, ...(typeof turn.id === "string" ? { turnId: turn.id } : {}) });
+      if (parsed) output.push({ ...parsed, ...(parsed.kind === 'plan' && parsed.status === 'inProgress' && status !== 'inProgress' ? { status: 'unknown' as const } : {}), ...(typeof turn.id === "string" ? { turnId: turn.id } : {}) });
     }
     if (turn.error?.message && typeof turn.error.message === "string") {
       const turnId = typeof turn.id === "string" || typeof turn.id === "number" ? String(turn.id) : String(turnIndex);
@@ -2433,6 +2434,10 @@ function parseAppServerThreadItem(
             : "Tool";
     const tool = readToolName(item) === "tool" ? "call" : readToolName(item);
     const rawArguments = item["arguments"] ?? item["input"];
+    if (/(?:^|[./])update_plan$/.test(tool)) {
+      const plan = readSessionPlan(rawArguments);
+      if (plan) return { ...sessionPlanMessage(id, plan), timestamp, ...(status === 'failed' || status === 'interrupted' ? { status } : {}) };
+    }
     const error = readHumanError(item["error"]);
     const debug = safeDisplayJson({
       arguments: rawArguments,
@@ -2556,6 +2561,9 @@ function parseAppServerThreadItem(
       status,
       timestamp
     };
+  }
+  if (type === 'functionCallOutput') {
+    return { id, kind: 'tool-call', title: 'Tool result', text: 'Tool response received.', result: readToolResult(item['output']) ?? safeDisplayJson(item['output']), status, timestamp };
   }
   return undefined;
 }
@@ -4250,6 +4258,10 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       const name = readToolName(payload as Record<string, unknown>);
       const rawInput = payload["input"] ?? payload["arguments"];
       const input = typeof rawInput === "string" ? rawInput.trim() : safeDisplayJson(rawInput);
+      if (/(?:^|[./])update_plan$/.test(name)) {
+        const plan = readSessionPlan(rawInput);
+        if (plan) return { ...sessionPlanMessage(callId, plan), timestamp };
+      }
       return {
         id: callId,
         kind: "tool-call",

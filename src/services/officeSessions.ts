@@ -10,6 +10,7 @@ import { readOfficeInstructions } from "./officePreferences";
 import { readWorkspaceProjects } from "./workspaceProjects";
 import * as path from "node:path";
 import { userSessionActivity } from '../domain/teamWorkspacePresentation';
+import { messageSessionPlan } from '../domain/sessionPlan';
 
 type Turn = { id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
 type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; archived?: boolean; updatedAt: string; turns: Turn[] };
@@ -172,7 +173,7 @@ export class OfficeSessionService {
       const user=await this.options.readUser(session.owner);
       controller.signal.throwIfAborted();
       if(!user?.enabled || !user.features.some(value=>value==="generalChat"||value==="tasks"))throw new Error("Workspace access changed.");
-      const history=session.turns.slice(0,session.turns.findIndex(value=>value.id===turn.id)+1).flatMap(value=>value.state==="cancelled"?[]:[{role:"user" as const,content:value.user.text},...(value.assistant?[{role:"assistant" as const,content:value.assistant.text}]:[])]);
+      const history=session.turns.slice(0,session.turns.findIndex(value=>value.id===turn.id)+1).flatMap(value=>value.state==="cancelled"?[]:[{role:"user" as const,content:value.user.text},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant').map(activity=>({role:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:"assistant" as const,content:value.assistant.text}]:[])]);
       const report=(activity:DashboardCliSessionMessage)=>{
         let updated:Session|undefined;
         store().transaction(()=>{
@@ -198,7 +199,7 @@ export class OfficeSessionService {
         updated=this.read(session.owner,session.id);const current=updated.turns.find(value=>value.id===turn.id);
         if(!current || current.state!=="working" || current.lease!==turn.lease)return;
         completed=true;
-        if(content){current.assistant={id:randomUUID(),role:"assistant",text:content,timestamp:new Date().toISOString()};current.state="done";}
+        if(content){current.assistant={id:randomUUID(),role:"assistant",text:content,timestamp:new Date().toISOString()};current.state="done";for(const activity of current.activities??[])if(activity.status==="inProgress")activity.status="unknown";}
         else if(failure instanceof OfficeCapacityError && !controller.signal.aborted){current.state="waiting";current.retryAt=Date.now()+5_000;}
         else if (failure instanceof OfficeQuotaError || failure instanceof OfficeModelSelectionError) {current.state="done"; current.error=failure.message; for (const activity of current.activities ?? []) if (activity.status === "inProgress") activity.status = "unknown";}
         else {current.state="uncertain";for(const activity of current.activities??[])if(activity.status==="inProgress")activity.status="unknown";}

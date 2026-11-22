@@ -1,5 +1,7 @@
 import { officeCapacityMessage } from "../../src/domain/officeCapacity";
 import { quotaAvailability, quotaOfflineMessage } from '../../src/domain/quotaAvailability';
+import { messageSessionPlan, sessionPlanMessage } from '../../src/domain/sessionPlan';
+import { SessionPlanChecklist } from './sessionPlan';
 import { ProjectPicker } from './projectPicker';
 import { SystemPicker, SystemStatusRows } from './systemPicker';
 import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary } from './userWorkspacePresentation';
@@ -923,6 +925,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || isCodexSessionRunning(props.selectedSession));
   const transcriptRunning = isCliTranscriptRunning(props.selectedSession, props.liveState, props.sending);
+  const composerPlan = useMemo(() => {
+    const fromEnd = [...props.messages].reverse().findIndex(message => message.role === 'user' && (!message.kind || message.kind === 'message'));
+    const prompt = fromEnd < 0 ? 0 : props.messages.length - 1 - fromEnd;
+    let message = props.messages.slice(prompt).reverse().find(message => messageSessionPlan(message));
+    if (props.liveState?.plan?.steps.length && isCliLiveStateCurrent(props.selectedSession, props.liveState)) {
+      message = { ...sessionPlanMessage(message?.id ?? `plan-${props.liveState.turnId ?? props.liveState.streamId}`, props.liveState.plan), status: currentTurnRunning ? 'inProgress' : 'unknown' };
+    }
+    if (!message) return;
+    const safe = props.officeUser ? userSessionActivity(message, composerProjects.map(project => project.path)) : message;
+    return { message: safe, plan: messageSessionPlan(safe)! };
+  }, [props.messages, props.liveState, props.selectedSession, props.officeUser, composerProjects, currentTurnRunning]);
   const turnChanges = useMemo(() => activitySummary(props.messages), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const showWorking = transcriptRunning && !hasInProgressActivity;
@@ -1660,7 +1673,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!pendingNewChat && !props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript quotaRecoveryMessageId={quotaError?.id} agentSessions={relatedAgents} onOpenAgent={id => {
+                  <SessionLinkContext.Provider value={sessionLinkActions}><SessionTranscript hiddenPlanId={composerPlan?.message.id} quotaRecoveryMessageId={quotaError?.id} agentSessions={relatedAgents} onOpenAgent={id => {
                     if (!id) { openContextTab('agents'); return; }
                     if (id === props.selectedSession?.id) { setContextCollapsed(true); return; }
                     const agent = relatedAgents.find(session => session.id === id);
@@ -1668,7 +1681,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     openContextTab('agents', id);
                   }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={transcriptRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
                    {renderPendingMessages()}
-                  {props.liveState?.plan?.steps.length ? <LiveTurnDetails state={{ ...props.liveState, tokenUsage: undefined, rateLimits: undefined }} /> : null}
                   {showWorking ? <WorkingMessage /> : null}
                   {quotaWaiting ? sessionNotice(quotaWaiting, quotaError ? sessionErrorDiagnostics(quotaError) : undefined) : null}
                   <div />
@@ -1690,6 +1702,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the sent prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
                ) : <>
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
+                 {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist key={`${props.selectedSession.id}:${composerPlan.message.id}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
                  {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning}</p> : null}<Composer simple={!!props.officeUser}
                   onFeedback={props.onActionFeedback}
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
@@ -2073,7 +2086,7 @@ export function LiveTurnDetails({ state, usage }: { state?: DashboardCodexSessio
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
   if (!state?.plan?.steps.length && !counts.length && !state?.rateLimits) return null;
   return <div class="cli-turn-details">
-    {state?.plan?.steps.length ? <details class="cli-activity is-plan" open><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
+    {state?.plan?.steps.length ? <SessionPlanChecklist plan={state.plan} status={state.status === 'running' || state.status === 'starting' ? 'inProgress' : state.status === 'completed' ? 'unknown' : 'interrupted'} /> : null}
     {counts.length || state?.rateLimits ? <section class="cli-activity cli-turn-usage" aria-label="Session usage"><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label}: ${Number(count).toLocaleString()} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{formatTokenCount(Number(count))}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></section> : null}
   </div>;
 }
@@ -2450,6 +2463,8 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   }
   if (message.id === quotaRecoveryMessageId) return null;
   if (message.kind === 'error') return sessionNotice(<span class="is-error" title={message.text}>{sessionFailureMessage(message.text, page) || 'The activity could not be completed.'}</span>, sessionErrorDiagnostics(message), 'cli-error-notice is-error');
+  const plan = messageSessionPlan(message);
+  if (plan) return <SessionPlanChecklist plan={plan} status={message.status} />;
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
@@ -2572,13 +2587,14 @@ export function consolidateSessionMessages(messages: DashboardCliSessionMessage[
   const result: ConsolidatedSessionItem[] = [];
   let turn: DashboardCliSessionMessage[] = [];
   const flushTurn = (): void => {
-    const latestThinking = turn.length - 1 - [...turn].reverse().findIndex((message) => message.kind === "reasoning" && message.status === "inProgress");
+    const latestThinking = turn.length - 1 - [...turn].reverse().findIndex((message) => message.kind === "reasoning");
     let adjacent: DashboardCliSessionMessage[] = [];
     const flushGroup = (): void => {
       if (adjacent.length) result.push({ id: `activity-group-${adjacent[0]!.id}`, messages: adjacent });
       adjacent = [];
     };
     turn.forEach((message, index) => {
+      if (messageSessionPlan(message) && turn.slice(index + 1).some(later => messageSessionPlan(later))) return;
       if (!preserveThinking && message.kind === "reasoning" && index !== latestThinking) return;
       if (isGroupableTurnActivity(message) && message.status !== "inProgress") {
         adjacent.push(message);
@@ -2682,18 +2698,19 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
   const duration = Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;
   const turnCopy = [...messages, turn.answer].filter((message) => message.role === "assistant" && (!message.kind || message.kind === "message")).map((message) => message.text).join("\n\n");
   return <div class="cli-completed-turn">
-    <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span><ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details>
+    {messages.filter(message => messageSessionPlan(message)).map(message => <SessionPlanChecklist key={message.id} plan={messageSessionPlan(message)!} status={message.status === 'completed' ? 'unknown' : message.status} />)}
+    {turn.items.some(item => 'messages' in item || !messageSessionPlan(item)) ? <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span><ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.filter(item => 'messages' in item || !messageSessionPlan(item)).map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details> : null}
     <SessionMessage message={turn.answer} logoUri={logoUri} turnCopyText={turnCopy} onRetryPrompt={onRetryPrompt} onActionFeedback={onActionFeedback} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />
     {onOpenReviews ? <CompletedTurnChanges messages={messages} onOpenReviews={onOpenReviews} /> : null}
   </div>;
 }
 
 /** One transcript renderer; public views omit callbacks for private operations. */
-export function SessionTranscript({ quotaRecoveryMessageId, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { quotaRecoveryMessageId?: string; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+export function SessionTranscript({ hiddenPlanId, quotaRecoveryMessageId, page = 'Workspace', messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews, onQuestionReply, questionDisabled, questionScope, queuedAnswers = [], onOpenAgent, agentSessions = [] }: { hiddenPlanId?: string; quotaRecoveryMessageId?: string; page?: string; agentSessions?: DashboardCliSessionSummary[]; onOpenAgent?: (id?: string) => void; onQuestionReply?: (text: string) => string | undefined; questionDisabled?: boolean; questionScope?: string; queuedAnswers?: DashboardCliSessionMessage[]; messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const inheritedAgents = useContext(SessionAgentContext);
   const privateFolders=useContext(PrivateWorkspaceContext);
   const images = useMemo(() => collectSessionImages(messages), [messages]);
-  const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(privateFolders ? messages.map(message=>userSessionActivity(message,privateFolders)) : messages,!!privateFolders), running), [messages, running,privateFolders]);
+  const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(privateFolders ? messages.map(message=>userSessionActivity(message,privateFolders)) : messages,!!privateFolders).filter(item => item.id !== hiddenPlanId), running), [messages, running,privateFolders,hiddenPlanId]);
   const copies = useMemo(() => getCompletedTurnCopyText(messages, running), [messages, running]);
   const questionMessages = [...messages, ...queuedAnswers];
   const answered = answeredSessionQuestionIds(questionMessages);
@@ -2701,7 +2718,7 @@ export function SessionTranscript({ quotaRecoveryMessageId, page = 'Workspace', 
   const active = candidate && !queuedAnswers.some(message => Date.parse(message.timestamp ?? '') >= Date.parse(candidate.timestamp!)) ? candidate : undefined;
   const pending = answeredSessionQuestionIds(queuedAnswers);
   const browser = document.documentElement.dataset['dashboardHost'] === 'browser';
-  return <SessionFeedbackContext.Provider value={onActionFeedback}><SessionQuotaRecoveryContext.Provider value={quotaRecoveryMessageId}><SessionPageContext.Provider value={page}><SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider></SessionPageContext.Provider></SessionQuotaRecoveryContext.Provider></SessionFeedbackContext.Provider>;
+  return <SessionFeedbackContext.Provider value={onActionFeedback}><SessionQuotaRecoveryContext.Provider value={quotaRecoveryMessageId}><SessionPageContext.Provider value={page}><SessionAgentContext.Provider value={onOpenAgent ? { open: onOpenAgent, names: Object.fromEntries(agentSessions.map(session => [session.id, session.agentName || session.title])) } : inheritedAgents}><SessionImagesContext.Provider value={images}>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} questionContent={item.questions?.length ? <SessionQuestionPrompt assistantName={privateFolders ? "Assistant" : "Codex"} key={`${questionScope}:${item.id}`} message={item} onReply={onQuestionReply} disabled={questionDisabled} scope={questionScope} answered={answered} pending={item.questions.some((_, index) => pending.has(JSON.stringify(['request_user_input_async', item.id, index])))} autoOpen={browser && active?.id === item.id} /> : undefined}/>)}</SessionImagesContext.Provider></SessionAgentContext.Provider></SessionPageContext.Provider></SessionQuotaRecoveryContext.Provider></SessionFeedbackContext.Provider>;
 }
 
 function CompletedTurnChanges({ messages, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenReviews: (path?: string) => void }) {
@@ -2731,11 +2748,12 @@ function isTurnActivity(message: DashboardCliSessionMessage): boolean {
 function isGroupableTurnActivity(message: DashboardCliSessionMessage): boolean {
   // Image activities stay as their own rich preview card; tool/command/file
   // activity from the same turn is consolidated behind one disclosure.
-  return isTurnActivity(message) && message.kind !== "reasoning" && message.kind !== "image" && (message.kind !== "collaboration" || message.status === "completed") && message.kind !== "compaction";
+  return isTurnActivity(message) && !messageSessionPlan(message) && message.kind !== "reasoning" && message.kind !== "image" && (message.kind !== "collaboration" || message.status === "completed") && message.kind !== "compaction";
 }
 
 function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const running = messages.some((message) => message.status === "inProgress");
+  const failed = messages.some(message => message.status === 'failed');
   const [expanded, setExpanded] = useState(running);
   useLayoutEffect(() => setExpanded(running), [running]);
   const summary = activitySummary(messages);
@@ -2745,7 +2763,7 @@ function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: Dash
     <summary title={consolidatedActivityLabel(messages)}>
       <span class="cli-activity-icon"><ToolIcon /></span>
       <span class="cli-activity-heading"><strong>{consolidatedActivityLabel(messages)}</strong>{summary?.files ? <small><b class="is-added">+{summary.additions}</b> <b class="is-removed">−{summary.deletions}</b></small> : null}</span>
-      <span class={`cli-activity-status ${running ? "is-inProgress" : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : incomplete ? capitalize(incomplete) : <CheckIcon />}</span>
+      <span class={`cli-activity-status ${running ? "is-inProgress" : failed ? 'is-failed' : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : failed ? 'Failed' : incomplete ? capitalize(incomplete) : <CheckIcon />}</span>
       <ChevronIcon />
     </summary>
     <div class="cli-activity-group-body">{messages.map((message) => message.kind === "file-change" && message.changes?.length && (!message.status || message.status === "completed") ? <FileChangeDetails key={message.id} changes={message.changes} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <ActivityMessage key={message.id} message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div>

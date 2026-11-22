@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as teamSettings from "../src/services/teamSettings";
 import { saveOfficeInstructions } from "../src/services/officePreferences";
 import { OfficeCapacityError, OfficeSessionService } from "../src/services/officeSessions";
+import { sessionPlanMessage, messageSessionPlan } from '../src/domain/sessionPlan';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import type { OfficeUser } from "../src/services/officeUsers";
 import { removeTestDirectory } from "./testFilesystem";
@@ -18,6 +19,18 @@ function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
 }
 const start=(requestId="request-1",text="Hello")=>({type:"dashboard:action" as const,action:"startCodexCliSession" as const,requestId,payload:{text}});
+it('persists a single updated plan and questions through reload and includes them when the user continues',async()=>{
+ const generate=vi.fn(async(_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,report:(message:any)=>void)=>{
+   report(sessionPlanMessage('plan',{steps:[{step:'Read requirements',status:'inProgress'},{step:'Write draft',status:'pending'}]}));
+   report(sessionPlanMessage('plan',{steps:[{step:'Read requirements',status:'completed'},{step:'Write draft',status:'inProgress'}]}));
+   report({id:'question',role:'assistant',text:'Which format?',questions:[{title:'Which format?',options:['Document','List']}]});return 'Please choose a format.';
+ });
+ const {service}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.stop();
+ const next=setup();const read=await next.service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-plan',payload:{sessionId:first.cliSession!.id}});
+ const plans=read.cliSessionMessages!.filter(message=>message.kind==='plan');expect(plans).toHaveLength(1);expect(plans[0].status).toBe('unknown');expect(messageSessionPlan(plans[0])?.steps.map(step=>step.status)).toEqual(['completed','inProgress']);
+ await next.service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'answer',payload:{sessionId:first.cliSession!.id,text:'Document'}});await vi.waitFor(()=>expect(next.generate).toHaveBeenCalledTimes(1));
+ expect(next.generate.mock.calls[0]?.[2]).toEqual(expect.arrayContaining([{role:'assistant',content:'[x] Read requirements\n[ ] Write draft'},{role:'assistant',content:expect.stringContaining('Which format?')} ]));
+});
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
