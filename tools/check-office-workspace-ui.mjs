@@ -268,6 +268,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.getByText('A response is running. Usage will update when it finishes.',{exact:true}).waitFor();
  await page.screenshot({path:path.join(output,`settings-usage-${width}.png`),fullPage:true,animations:'disabled'});
  await settingsTabs.getByRole('tab',{name:'Personalization',exact:true}).click();
+ const selectedTab=await settingsTabs.getByRole('tab',{name:'Personalization',exact:true}).evaluate(node=>({border:getComputedStyle(node).borderBottomWidth,radius:parseFloat(getComputedStyle(node).borderRadius),after:getComputedStyle(node,'::after').content}));assert.equal(selectedTab.border,'0px');assert.ok(selectedTab.radius>=6);assert.ok(['none','normal','""'].includes(selectedTab.after),'Settings selection has no underline');
  const instructionDialog=page.getByRole('dialog',{name:'Custom instructions',exact:true});
  assert.equal(await page.locator('.user-workspace-instructions textarea').count(),0,'Instructions use a separate editor');
  await page.getByRole('button',{name:'Edit instructions',exact:true}).click();await instructionDialog.getByLabel('How should your assistant respond?',{exact:true}).fill('Cancelled draft');await instructionDialog.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(instructions,'');

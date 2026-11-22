@@ -18569,7 +18569,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 
 /* Horizontal tools share workspace tabs; vertical settings use the sidebar layout. */
 :is(
-  [role="tablist"]:not([aria-orientation="vertical"]):not(.cli-context-tabs-v3):not(:has(> .workspace-browser-pane-tabs)),
+  [role="tablist"]:not([aria-orientation="vertical"]):where(:not(.user-settings-nav)):not(.cli-context-tabs-v3):not(:has(> .workspace-browser-pane-tabs)),
   .office-user-tabs,
   .cli-workspace .cli-context-tab-scroll,
   .cli-workspace .cli-agent-tabs,
@@ -19140,6 +19140,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .office-user-settings .user-settings-nav > button { width:100%; text-align:left; border:0; background:transparent; border-radius:6px; font-size:calc(13px * var(--dashboard-text-scale,1)); padding:8px 10px; }
 .office-user-settings .user-settings-nav > button:hover { background:var(--bg-hover); }
 .office-user-settings .user-settings-nav > button[aria-selected=true] { background:var(--bg-selected); font-weight:500; }
+.office-user-settings .user-settings-nav > button::after { content:none; }
 .office-user-settings .user-appearance { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .user-appearance select { padding:6px 10px; min-height:32px; border:1px solid var(--border-default); border-radius:7px; color:var(--text-primary); background:var(--bg-base); font:inherit; }
 .office-user-settings .browser-notification-heading { flex-wrap:nowrap; }

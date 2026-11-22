@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.75
+
+- Keep User Workspace settings navigation rounded and remove horizontal-tab underlines without changing workspace tool tabs or master settings.
+
 ## 3.0.0-pre.74
 
 - Add private saved memory to User Workspace with on/off controls and compact add, edit, remove, and clear actions.
