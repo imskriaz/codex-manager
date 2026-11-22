@@ -23,7 +23,7 @@ import {
 } from "./components";
 import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
-import { handleTabKeyDown, useModalAccessibility } from "./primitives";
+import { ModalShell, handleTabKeyDown, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 import { clampWebviewZoom } from "./webviewZoom";
 
@@ -819,7 +819,7 @@ export function SettingsOverlay(props: {
                     {renderRemoveIcon()}
                   </button>
                 </div>
-                {clearQuotaOpen ? <section class="settings-inline-confirm" aria-label="Clear quota graph history?"><strong>Clear quota graph history?</strong><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></section> : null}
+                <ModalShell open={props.open&&clearQuotaOpen} title="Clear quota graph history?" closeLabel="Cancel clearing quota history" className="dashboard-modal-compact dashboard-confirm-modal" onClose={()=>setClearQuotaOpen(false)}><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></ModalShell>
                 <SettingsDiscreteSlider
                   value={props.settings.usageHistoryRetentionDays}
                   values={USAGE_HISTORY_RETENTION_VALUES}

@@ -8,7 +8,7 @@ export function officeProfiles(settings:{regularModel:string;professionalModel:s
   if(!profiles.length){const model=[settings.defaultModel,...allowedModels,...availableModels].find(allowed);if(model)profiles.push({profile:'regular',model});}
   return profiles;
 }
-export const OFFICE_THINKING = ['none','minimal','low','medium','high','xhigh','max'] as const;
+export const OFFICE_THINKING = ['none','minimal','low','medium','high','xhigh','max','ultra'] as const;
 export function officeReasoning(value:unknown):string|undefined {
   return typeof value==='string'&&(OFFICE_THINKING as readonly string[]).includes(value)?value:undefined;
 }

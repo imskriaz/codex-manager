@@ -1,4 +1,5 @@
 import { hydrateSessionImages } from './codexSessionImages';
+import { codexFallbackModels } from '../domain/codexModelFallback';
 import { readSessionPlan, sessionPlanMessage } from '../domain/sessionPlan';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
 import { readWorkspaceProjects, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from './workspaceProjects';
@@ -968,7 +969,15 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
     const identity = createHash('sha256').update(JSON.stringify([auth, configRaw])).digest('hex');
     const live = await readLiveCliModels(codexHome, identity);
     if (live.length) models = live;
-    else modelDiscoveryWarning = models.length ? 'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.' : 'Models could not be discovered. Check Codex sign-in and refresh to retry.';
+    else {
+      const provider=readTomlString(configRaw,'model_provider');
+      if(!provider||provider==='openai') {
+        let hidden:string[]=[];
+        try{const cached=JSON.parse(modelsRaw??'{}') as {models?:Array<{slug?:string;id?:string;visibility?:string;hidden?:boolean}>};hidden=(cached.models??[]).filter(model=>model.hidden===true||model.visibility==='hide'||model.visibility==='hidden').map(model=>model.slug??model.id??'');}catch{/* An unreadable cache still permits the bundled fallback. */}
+        models=codexFallbackModels(models,hidden);
+        modelDiscoveryWarning='Live model discovery is unavailable. Showing the saved catalog and documented fallback models; account access is unverified. Refresh to retry.';
+      } else modelDiscoveryWarning=models.length?'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.':'Models could not be discovered. Check provider sign-in and refresh to retry.';
+    }
   }
   const configuredModel = readTomlString(configRaw, "model");
   const configuredEffort = readTomlString(configRaw, "model_reasoning_effort");

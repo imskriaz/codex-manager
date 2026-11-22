@@ -1,3 +1,5 @@
+import {WorkspacePresentationSetting} from './workspacePresentationSetting';
+import {DEFAULT_OFFICE_PRESENTATION,type OfficePresentation} from '../../src/domain/officePresentation';
 import {UserUsageReview} from './userUsageReview';
 import type { OfficeLimits } from "../../src/services/officeQuota";
 const unlimitedOfficeLimits = {storageMb: 0, dailyTokens: 0, dailyRequests: 0};
@@ -8,10 +10,11 @@ import type { DashboardOfficeView } from "../../src/domain/dashboard/types";
 import { request } from "./teamSettingsRequest";
 import { SettingsRecordList, SettingsRecordDetails } from "./settingsRecordList";
 import { ModalShell } from "./primitives";
+import { DEFAULT_OFFICE_SKILLS, type OfficeSkillId } from '../../src/domain/officeSkills';
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
-type TeamSettings = { modelMode:'manual'|'auto';profilePicker:boolean; routerModel:string;regularModel:string;professionalModel:string;expertModel:string; defaultModel: string; globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
+type TeamSettings = { autoPresentation:boolean; presentation:OfficePresentation; modelMode:'manual'|'auto';profilePicker:boolean; routerModel:string;regularModel:string;professionalModel:string;expertModel:string; defaultModel: string; globalPrompt: string; defaultSkills: OfficeSkillId[]; sessionRetentionDays:number; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
   plan?:import('../../src/services/officeUsers').OfficePlan;
   limits?: OfficeLimits;
@@ -87,6 +90,10 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
     return () => { active = false; };
   }, [props.open, section, modelRetry]);
   const [globalPrompt, setGlobalPrompt] = useState("");
+  const [presentation,setPresentation] = useState<OfficePresentation>(structuredClone(DEFAULT_OFFICE_PRESENTATION));
+  const [autoPresentation,setAutoPresentation] = useState(true);
+  const [defaultSkills,setDefaultSkills] = useState<OfficeSkillId[]>(DEFAULT_OFFICE_SKILLS);
+  const [sessionRetentionDays,setSessionRetentionDays] = useState(30);
   const [maxActiveRequests, setMaxActiveRequests] = useState(2);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [databaseProvider, setDatabaseProvider] = useState<"sqlite" | "postgres">("sqlite");
@@ -117,7 +124,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       setUsers(userData.users);
       setServers(mcpData.servers);
       setProfilePicker(teamSettings.profilePicker!==false);setModelMode(teamSettings.modelMode??'manual');setAutomaticModels({routerModel:teamSettings.routerModel??'gpt-6-luna',regularModel:teamSettings.regularModel??'gpt-6-luna',professionalModel:teamSettings.professionalModel??'gpt-6.1-sol',expertModel:teamSettings.expertModel??'gpt-6.1-terra'});setSettings(teamSettings); setDefaultModel(teamSettings.defaultModel ?? ""); setGlobalPrompt(teamSettings.globalPrompt ?? "");
-      setWorkspaceRoot(teamSettings.workspaceRoot); setMaxActiveRequests(teamSettings.maxActiveRequests ?? 2);
+      setPresentation(teamSettings.presentation??structuredClone(DEFAULT_OFFICE_PRESENTATION)); setAutoPresentation(teamSettings.autoPresentation??true); setWorkspaceRoot(teamSettings.workspaceRoot); setDefaultSkills(teamSettings.defaultSkills ?? DEFAULT_OFFICE_SKILLS); setSessionRetentionDays(teamSettings.sessionRetentionDays ?? 30); setMaxActiveRequests(teamSettings.maxActiveRequests ?? 2);
       setDatabaseProvider(teamSettings.databaseProvider);
     } catch (value) {
       setError(value instanceof Error ? value.message : "Team settings could not be loaded.");
@@ -199,11 +206,11 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       if (adding) setMcpOpen(false);
     }, adding ? "Data connection added." : "Data connections saved.", adding ? "mcp" : false);
   };
-  const saveSettings = (fields: Record<string, string | number | boolean>): void => {
+  const saveSettings = (fields: Record<string, unknown>): void => {
     void mutate(async () => {
       const result = await request<TeamSettings>("/api/office/settings", "PUT", fields);
       setProfilePicker(result.profilePicker!==false);setModelMode(result.modelMode??'manual');setAutomaticModels({routerModel:result.routerModel??'gpt-6-luna',regularModel:result.regularModel??'gpt-6-luna',professionalModel:result.professionalModel??'gpt-6.1-sol',expertModel:result.expertModel??'gpt-6.1-terra'});setSettings(result); setDefaultModel(result.defaultModel ?? ""); setGlobalPrompt(result.globalPrompt ?? "");
-      setWorkspaceRoot(result.workspaceRoot); setMaxActiveRequests(result.maxActiveRequests ?? 2);
+      setPresentation(result.presentation??structuredClone(DEFAULT_OFFICE_PRESENTATION)); setAutoPresentation(result.autoPresentation??true); setWorkspaceRoot(result.workspaceRoot); setDefaultSkills(result.defaultSkills ?? DEFAULT_OFFICE_SKILLS); setSessionRetentionDays(result.sessionRetentionDays ?? 30); setMaxActiveRequests(result.maxActiveRequests ?? 2);
       setDatabaseProvider(result.databaseProvider);
       setPostgresUrl("");
     }, "Team settings saved.");
@@ -280,7 +287,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               class="team-settings-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt, defaultModel, modelMode, profilePicker, ...automaticModels });
+                saveSettings({ autoPresentation, workspaceRoot, maxActiveRequests, globalPrompt, defaultSkills, sessionRetentionDays, defaultModel, modelMode, profilePicker, ...automaticModels });
               }}
             >
               <label>Model selection<select aria-label="User Workspace model selection" value={modelMode} disabled={pending} onChange={event=>setModelMode(event.currentTarget.value as 'manual'|'auto')}><option value="manual">Manual</option><option value="auto">Auto</option></select></label>
@@ -296,6 +303,14 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                 {modelsLoading ? <small role="status">Loading models…</small> : null}
                 {modelWarning ? <span role="status">{modelWarning} <button type="button" disabled={pending} onClick={() => setModelRetry(value => value + 1)}>Try again</button></span> : null}
               </label><label>
+                Deleted session retention
+                <input type="number" min={1} max={365} step={1} value={sessionRetentionDays} disabled={pending} onInput={event=>setSessionRetentionDays(Math.max(1,Math.min(365,Number(event.currentTarget.value))))} />
+                <small>Deleted chats disappear immediately. Keep their conversation and session files for support for this many days, then remove them automatically. Saved projects are kept.</small>
+              </label><WorkspacePresentationSetting value={presentation} disabled={pending} onSaved={value=>{setPresentation(value);setDefaultSkills(current=>current.filter(id=>value.catalog.some(card=>card.id===id)));}}/><label class="team-presentation-setting"><input type="checkbox" checked={autoPresentation} disabled={pending} onChange={event=>setAutoPresentation(event.currentTarget.checked)}/> Automatically open relevant workspace panels<small>The assistant can show permitted project tools when useful. General chat stays focused on the conversation.</small></label><fieldset>
+                <legend>Default workspace skills</legend>
+                <div class="team-skill-grid" role="group" aria-label="Default workspace skills">{presentation.catalog.map(skill=><label class="team-skill-option" key={skill.id}><input type="checkbox" checked={defaultSkills.includes(skill.id)} disabled={pending} onChange={event=>setDefaultSkills(current=>event.currentTarget.checked?[...new Set([...current,skill.id])]:current.filter(id=>id!==skill.id))}/><span><strong>{skill.label}</strong><small>{skill.description}</small></span></label>)}</div>
+                <small>Starting capabilities for corporate work. The assistant adapts emphasis to each request; permissions still apply.</small>
+              </fieldset><label>
                 Global User Workspace Prompt
                 <textarea aria-label="Global User Workspace Prompt" rows={7} maxLength={16000} value={globalPrompt} disabled={pending} placeholder="Define your assistant’s purpose, tone, response style, and how it should help every user." onInput={event => setGlobalPrompt(event.currentTarget.value)} />
                 <small>Applies to every User Workspace from the next message, including existing conversations. Global guidance comes first, followed by per-user defaults and personal instructions. Workspace permissions remain enforced.</small>

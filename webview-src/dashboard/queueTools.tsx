@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { ModalShell } from './primitives';
 import { maintainCliQueues, readCliQueueStatuses, type CliQueueStatus } from './cliMessageQueue';
 
-export function QueueToolsMenuItem() {
+export function QueueToolsMenuItem(props: { icon?: ComponentChildren } = {}) {
   const [view, setView] = useState<'tools' | 'queues'>(), [queues, setQueues] = useState<CliQueueStatus[]>([]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(''), [confirmClear, setConfirmClear] = useState(false);
   const generation = useRef(0), working = useRef(false);
@@ -29,12 +30,12 @@ export function QueueToolsMenuItem() {
   };
   const total = queues.reduce((count, queue) => count + queue.items.length, 0);
   return <>
-    <button type="button" role="menuitem" onClick={() => { setView('tools'); setNotice(''); }}>Tools</button>
+    <button type="button" role="menuitem" onClick={() => { setView('tools'); setNotice(''); }}>{props.icon}Tools</button>
     <ModalShell open={!!view} title={view === 'queues' ? 'Queue status' : 'Tools'} closeLabel="Close tools" className="dashboard-modal-compact queue-tools-modal" closeDisabled={busy} onClose={() => { generation.current++; setView(undefined); setConfirmClear(false); }}>
       {view === 'tools' ? <button type="button" class="queue-tools-entry" onClick={() => setView('queues')}><strong>Queue status</strong><small>Inspect, repair or clear this browser's saved message queues.</small></button> : <div class="queue-tools-content">
         <p role="status">{queues.length} {queues.length === 1 ? 'queue' : 'queues'} · {total} {total === 1 ? 'message' : 'messages'}</p>
         <div class="queue-tools-actions"><button type="button" disabled={busy} onClick={() => { void maintain(false); }}>Fix queues</button><button type="button" disabled={busy || !queues.length} onClick={() => setConfirmClear(true)}>Clear all</button></div>
-        {confirmClear ? <div class="queue-tools-confirm"><p>Remove all waiting and saved messages in this browser? Sends already in progress continue.</p><button type="button" onClick={() => { void maintain(true); }}>Confirm clear all</button><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button></div> : null}
+
         {notice ? <p role="status">{notice}</p> : null}
         <div class="queue-tools-list">{queues.map(queue => <details key={queue.scope}>
           <summary><strong>{queue.items.length} {queue.items.length === 1 ? 'message' : 'messages'}</strong><span>{queue.active ? 'Open' : 'Saved'} · {queue.error || queue.items.some(item => item.state === 'failed' || item.state === 'uncertain') ? 'Needs attention' : queue.items.some(item => item.state === 'sending') ? 'Sending' : queue.ready ? 'Ready' : 'Loading'}</span></summary>
@@ -44,5 +45,6 @@ export function QueueToolsMenuItem() {
         </details>)}</div>
       </div>}
     </ModalShell>
+    <ModalShell open={!!view&&confirmClear} title="Clear all saved queues?" closeLabel="Cancel clearing queues" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={busy} onClose={()=>{setConfirmClear(false);setNotice('Queue clearing cancelled.');}}><p>Remove all waiting and saved messages in this browser? Sends already in progress continue.</p><div class="dialog-actions"><button type="button" disabled={busy} onClick={()=>{setConfirmClear(false);setNotice('Queue clearing cancelled.');}}>Cancel</button><button type="button" disabled={busy} onClick={()=>void maintain(true)}>Confirm clear all</button></div></ModalShell>
   </>;
 }

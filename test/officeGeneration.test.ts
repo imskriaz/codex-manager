@@ -26,6 +26,15 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('loads configured specialist guidance on demand without granting file tools',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ const settings=teamSettings.readTeamSettings();vi.spyOn(teamSettings,'readTeamSettings').mockReturnValue({...settings,presentation:{...settings.presentation,catalog:[{id:'buyer-review',label:'Buyer review',description:'Review buyer requests',starter:'Review this request',prompt:'Check the approved revision and due dates.'}]}});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('use_office_skill',{id:'buyer-review'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Please provide the buyer request.'}}]})) as never);
+ await (server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,'',vi.fn());
+ const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string),second=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);
+ expect(first.tools.find((tool:any)=>tool.function.name==='use_office_skill').function.description).toContain('Buyer review');expect(JSON.stringify(first)).not.toContain('Check the approved revision');expect(second.messages.at(-1).content).toContain('Check the approved revision');expect(first.tools.some((tool:any)=>tool.function.name==='save_file')).toBe(false);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('use_office_skill',{id:'unknown'}) as never);await expect(generate()).rejects.toThrow('available workspace skill');
+});
 it('saves requested memory and supplies it as user context in another chat, respecting the off setting',async()=>{
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
  vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_memory',{operation:'add',expected:'0',id:'provider-proposed-id',text:'Use USD for garment costings.'}))
@@ -104,7 +113,7 @@ it('offers planning, progress and questions without file access, and pauses for 
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('report_progress',{message:'I have organized your requirements.'}) as never)
  .mockResolvedValueOnce(toolResponse('request_user_input',{questions:[{title:'Which format?',options:['Document','Checklist']}]}) as never);
  const report=vi.fn();const result=await (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Help me organize'}],new AbortController().signal,user.workspacePath,report);
- const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(first.tools.map((tool:any)=>tool.function.name)).toEqual(['manage_memory','update_plan','request_user_input','report_progress']);expect(result).toContain('Reply to the question');expect(report.mock.calls.at(-1)?.[0]).toMatchObject({questions:[{title:'Which format?',options:['Document','Checklist']}]});
+ const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);expect(first.tools.map((tool:any)=>tool.function.name)).toEqual(['use_office_skill','suggest_workflows','manage_memory','update_plan','request_user_input','report_progress']);expect(result).toContain('Reply to the question');expect(report.mock.calls.at(-1)?.[0]).toMatchObject({questions:[{title:'Which format?',options:['Document','Checklist']}]});
 });
 it('rejects malformed plans and questions combined with actions before changing files',async()=>{
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);const action=vi.spyOn(server as any,'processOfficeMessage');
@@ -212,7 +221,7 @@ it('creates and manages schedules from AI tools without file access, preserving 
   return new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Your daily buyer follow-up task is saved and paused.'}}]})) as never;
  });
  await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Schedule buyer follow-ups'}],new AbortController().signal,actor.workspacePath,report);
- expect((server as any).teamSchedules().list(actor)).toMatchObject([{title:'Updated buyer follow-ups',model:'fast',projectPath:actor.workspacePath,enabled:false}]);
+ expect((server as any).teamSchedules().list(actor)).toMatchObject([{title:'Updated buyer follow-ups',model:'fast',projectPath:'',enabled:false}]);
  expect((server as any).teamSchedules().list({...actor,id:'another-user'})).toEqual([]);expect(native).not.toHaveBeenCalled();
  const sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);
  expect(sent.tools.some((tool:any)=>tool.function.name==='create_schedule')).toBe(true);
@@ -247,7 +256,7 @@ it('deletes a requested project through AI tools, preserves outside files, and r
   return new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The test project folder was deleted.'}}]})) as never;
  });
  await sessions.options.generate(actor,'fast',[{role:'user',content:'Delete project folder'}],new AbortController().signal,project,vi.fn());
- expect(relocate).toHaveBeenCalledWith(actor.id,project,actor.workspacePath);expect(sessions.project(actor.id,sessionId)).toBe(actor.workspacePath);await expect(fs.stat(project)).rejects.toThrow();expect(await fs.readFile(path.join(actor.workspacePath,'keep.txt'),'utf8')).toBe('Keep');
+ expect(relocate).toHaveBeenCalledWith(actor.id,project,actor.workspacePath);expect(sessions.project(actor.id,sessionId)).toBe("");await expect(fs.stat(project)).rejects.toThrow();expect(await fs.readFile(path.join(actor.workspacePath,'keep.txt'),'utf8')).toBe('Keep');
 });
 
 it('confirms the Browser preview only after the exact subscriber surface acknowledges it',async()=>{
@@ -320,4 +329,19 @@ it('bounds router waits and preserves unknown usage; cancellation and quotas can
  await expect((server as any).selectOfficeModel(actor,[{role:'user',content:'Write a report'}],controller.signal,[])).rejects.toThrow('Cancelled while routing');
  beginOfficeTokens(user,100);const calls=vi.mocked(upstream).mock.calls.length;
  await expect(route('Do work',user)).rejects.toThrow('allowance');expect(upstream).toHaveBeenCalledTimes(calls);
+});
+
+it('keeps chat-only turns free of file and panel tools and respects manual presentation',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Hello'}}]})) as never);
+ await (server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,'',vi.fn());
+ const request=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);expect(request.tools.map((tool:any)=>tool.function.name)).not.toEqual(expect.arrayContaining(['list_files']));expect(request.tools.some((tool:any)=>['list_files','save_file','create_document','create_zip','show_workspace_panel'].includes(tool.function.name))).toBe(false);
+ vi.spyOn(teamSettings,'readTeamSettings').mockReturnValue({...teamSettings.readTeamSettings(),autoPresentation:false});vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Ready'}}]})) as never);
+ await (server as any).teamSessions().options.generate({...user,features:['files','generalChat']},'fast',[],new AbortController().signal,user.workspacePath,vi.fn());const manual=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);expect(manual.tools.some((tool:any)=>tool.function.name==='show_workspace_panel')).toBe(false);
+});
+
+it('saves only configured LLM workflow tags for the requesting user and applies configured identity',async()=>{
+ const actor={...user,workspacePath:path.join(root,'files')};await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('suggest_workflows',{tags:['document-drafting']}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Here is the draft.'}}]})) as never);
+ await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,'',vi.fn());expect(store.get<any[]>('office-recommendations',actor.id)?.[0].id).toBe('document-drafting');expect(store.get('office-recommendations','another-user')).toBeUndefined();
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('suggest_workflows',{tags:['terminal']}) as never);await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,'',vi.fn())).rejects.toThrow('configured');
 });

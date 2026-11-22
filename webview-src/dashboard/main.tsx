@@ -720,8 +720,8 @@ function App() {
     const workspace = isCliSessionsPath(browserPath);
     const screen = state.settingsOpen ? 'Settings' : logConsoleOpen ? 'System log' : apiTokenOpen ? 'API' : aboutOpen ? 'About' : browserPath === '/tasks' ? 'Tasks' : workspace ? 'Workspace' : 'Accounts';
     const item = state.settingsOpen || logConsoleOpen || apiTokenOpen || aboutOpen ? undefined : browserPath === '/tasks' ? taskTitleItem : workspace ? selectedCliSession?.title : undefined;
-    document.title = dashboardPageTitle(workspace ? selectedCliSession?.deviceName ?? selectedPeer?.name : selectedPeer?.name, screen, item, state.privacyMode);
-  }, [isBrowserDashboard, browserPath, selectedPeer?.name, selectedCliSession?.deviceName, selectedCliSession?.title, taskTitleItem, state.privacyMode, state.settingsOpen, logConsoleOpen, apiTokenOpen, aboutOpen]);
+    document.title = snapshot?.office?.role==='user' ? [item,cliComposerConfig?.presentation?.assistantName??snapshot.panelTitle].filter(Boolean).join(' · ') : dashboardPageTitle(workspace ? selectedCliSession?.deviceName ?? selectedPeer?.name : selectedPeer?.name, screen, item, state.privacyMode);
+  }, [snapshot?.office?.role, snapshot?.panelTitle, cliComposerConfig?.presentation?.assistantName, isBrowserDashboard, browserPath, selectedPeer?.name, selectedCliSession?.deviceName, selectedCliSession?.title, taskTitleItem, state.privacyMode, state.settingsOpen, logConsoleOpen, apiTokenOpen, aboutOpen]);
   const browserPresenceTargetDeviceId = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local) ? undefined : selectedPeerId;
   cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
   const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;

@@ -6,6 +6,15 @@ import { parseCodexTokenUsage, validMessage } from '../src/domain/codexSessionLi
 import { parseCodexAppServerThreadItems } from '../src/services/codexSessionResume';
 import { cliContextUsage, resolveCliComposerSettings } from '../webview-src/dashboard/cliSessionComposerState';
 
+it('keeps authenticated visual choices while rejecting external images and malformed preview messages',()=>{
+ const image='/api/workspace/image?filePath=project%2Fpreview.png&mimeType=image%2Fpng';
+ const question={title:'Choose a direction',view:'grid' as const,options:['Minimal','Editorial'],previews:[{option:'Minimal',image,description:'Quiet layout'},{option:'Editorial',image}]};
+ expect(readSessionQuestions([question])).toEqual([question]);expect(validMessage({id:'bad-layout',text:'Choose',questions:[{...question,view:'unsafe'}]})).toBe(false);
+ expect(validMessage({id:'visual',role:'assistant',text:'Choose',questions:[question]})).toBe(true);
+ expect(readSessionQuestions([{...question,previews:[{option:'Minimal',image:'https://external.invalid/tracker.png'}]}])[0]).not.toHaveProperty('previews');
+ expect(validMessage({id:'bad',text:'Choose',questions:[{...question,previews:[{option:'Minimal',image:'data:image/png;base64,AA'}]}]})).toBe(false);
+});
+
 it('shows a question once and coalesces exact answer mirrors even across command activity and turns', () => {
   const question = { id: 'ask', turnId: 'one', role: 'assistant' as const, text: 'Open which view?\n- Details\n- Table', questions: [{ title: 'Open which view?', options: ['Details', 'Table'] }] };
   const reply = { id: 'reply', turnId: 'two', role: 'user' as const, text: sessionQuestionReply(question, { 0: 'Details' }) };

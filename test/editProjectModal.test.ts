@@ -10,7 +10,7 @@ vi.mock('../webview-src/dashboard/host', () => ({ createActionRequestId: () => '
 import { EditProjectModal } from '../webview-src/dashboard/editProjectModal';
 let props: Parameters<typeof EditProjectModal>[0];
 function render() { fixture.cursor = 0; const node = EditProjectModal(props); fixture.effects.splice(0).forEach(effect => effect()); return node; }
-function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
+function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...(value.props.open===false?[]:nodes(value.props.children))]; }
 function text(node: unknown): string { if (Array.isArray(node)) return node.map(text).join(''); if (typeof node === 'string') return node; return node && typeof node === 'object' && 'props' in node ? text((node as VNode<any>).props.children) : ''; }
 const button = (label: string) => nodes(render()).find(node => node.type === 'button' && text(node.props.children).trim() === label)!;
 const reply = (status: string, action = 'renameWorkspaceProject', payload?: unknown, error?: string) => fixture.receive!({ data: { type: 'dashboard:action-result', requestId: 'edit-id', action, status, payload, error } });
@@ -25,7 +25,7 @@ it('sends once, blocks closing while pending, and refreshes after a confirmed re
   button('Save').props.onClick(); button('Saving…').props.onClick();
   expect(fixture.send).toHaveBeenCalledOnce();
   expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'renameWorkspaceProject', payload: { projectPath: props.project.path, projectName: 'Project', targetDeviceId: 'peer', automatic: true } }));
-  expect(render().props.closeDisabled).toBe(true);
+  expect(nodes(render()).find(node=>node.props.title===`Edit ${props.project.label}`)!.props.closeDisabled).toBe(true);
   reply('completed', 'renameWorkspaceProject', { workspaceProject: props.project });
   expect(props.onChanged).toHaveBeenCalledOnce(); expect(props.onClose).toHaveBeenCalledOnce();
 });
@@ -37,7 +37,7 @@ it.each(['failed', 'cancelled', 'incomplete', 'timeout', 'send-error'])('retains
   else if (outcome === 'incomplete') reply('completed');
   else if (outcome === 'failed' || outcome === 'cancelled') reply(outcome, 'renameWorkspaceProject', undefined, 'Storage failed');
   expect(props.onClose).not.toHaveBeenCalled(); expect(props.onChanged).not.toHaveBeenCalled();
-  expect(props.onFeedback).toHaveBeenCalled(); expect(render().props.closeDisabled).toBe(false);
+  expect(props.onFeedback).toHaveBeenCalled(); expect(nodes(render()).find(node=>node.props.title===`Edit ${props.project.label}`)!.props.closeDisabled).toBe(false);
   expect(nodes(render()).some(node => node.props.role === 'alert')).toBe(true);
   if (outcome === 'timeout') { reply('completed', 'renameWorkspaceProject', { workspaceProject: props.project }); expect(props.onClose).not.toHaveBeenCalled(); }
 });
@@ -50,4 +50,12 @@ it('requires confirmation before removing the project entry', () => {
 
 it('allows a reachable host while the browser reports no Internet', () => {
  vi.stubGlobal('navigator', { onLine: false }); button('Save').props.onClick(); expect(fixture.send).toHaveBeenCalledOnce();
+});
+
+it('uses a separate removal dialog, keeps the draft on cancel, and keeps errors with the confirmation',()=>{
+ const input=nodes(render()).find(node=>node.type==='input')!;(input.props.onInput??input.props.oninput)({currentTarget:{value:'Unsaved name'}});
+ button('Remove').props.onClick();let tree=nodes(render());expect(tree.some(node=>node.type==='input')).toBe(false);expect(tree.find(node=>node.props.title==='Remove project?')?.props.open).toBe(true);
+ button('Cancel').props.onClick();expect(nodes(render()).find(node=>node.type==='input')?.props.value).toBe('Unsaved name');expect(fixture.send).not.toHaveBeenCalled();
+ button('Remove').props.onClick();button('Remove project').props.onClick();reply('failed','removeWorkspaceProject',undefined,'Removal failed');
+ expect(nodes(render()).find(node=>node.props.title==='Remove project?')?.props.open).toBe(true);expect(nodes(render()).find(node=>node.props.role==='alert')?.props.children).toBe('Removal failed');expect(props.onClose).not.toHaveBeenCalled();
 });

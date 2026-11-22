@@ -1,3 +1,4 @@
+import { ModalShell } from './primitives';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardNotice } from '../../src/domain/dashboard/types';
 
@@ -21,11 +22,12 @@ export function ShareLinkField(props: { url: string; label: string; disabled?: b
 
 export function ShareAccessReview(props: { description: string; label: string; busy: boolean; disabled?: boolean; onConfirm: () => Promise<boolean | undefined> }) {
   const [review, setReview] = useState(false);
-  const reviewRef = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), wasReview = useRef(false);
-  useLayoutEffect(() => {
-    if (review) reviewRef.current?.querySelector('button')?.focus();
-    else if (wasReview.current) trigger.current?.focus();
-    wasReview.current = review;
-  }, [review]);
-  return <section class="share-access-management"><div><strong>Existing links</strong><p>{props.description}</p></div>{review ? <div ref={reviewRef} class="share-revoke-review" role="group" aria-label="Confirm link revocation"><p>People using these links will lose access. This cannot be undone.</p><div><button type="button" disabled={props.busy} onClick={() => setReview(false)}>Cancel</button><button type="button" class="share-danger-button" disabled={props.busy || props.disabled} onClick={() => void props.onConfirm().then(success => { if (success) setReview(false); })}>{props.busy ? 'Please wait…' : 'Revoke access'}</button></div></div> : <button ref={trigger} type="button" class="share-manage-button" disabled={props.busy || props.disabled} onClick={() => setReview(true)}>{props.label}</button>}</section>;
+  const [pending,setPending]=useState(false),[error,setError]=useState('');
+  const submitting=useRef(false);
+  const cancel=()=>{if(!submitting.current){setReview(false);setError('');}};
+  return <section class="share-access-management"><div><strong>Existing links</strong><p>{props.description}</p></div><button type="button" class="share-manage-button" disabled={props.busy||props.disabled||pending} onClick={()=>{setError('');setReview(true);}}>{props.label}</button>
+    <ModalShell open={review} title="Revoke link access?" closeLabel="Cancel link revocation" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={props.busy||pending} onClose={cancel}>
+      <p>People using these links will lose access. This cannot be undone.</p>{error?<p role="alert">{error}</p>:null}
+      <div class="dialog-actions"><button type="button" disabled={props.busy||pending} onClick={cancel}>Cancel</button><button type="button" class="share-danger-button" disabled={props.busy||props.disabled||pending} onClick={()=>void(async()=>{if(submitting.current)return;submitting.current=true;setPending(true);setError('');try{if(await props.onConfirm())setReview(false);else setError('Access revocation was not confirmed. Review the shared link before retrying.');}catch{setError('Access revocation was not confirmed. Review the shared link before retrying.');}finally{submitting.current=false;setPending(false);}})()}>{props.busy||pending?'Please wait...':'Revoke access'}</button></div>
+    </ModalShell></section>;
 }

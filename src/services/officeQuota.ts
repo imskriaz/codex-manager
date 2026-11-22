@@ -67,15 +67,25 @@ export function reconcileOfficeTokens(owner:string,expected:unknown,additionalTo
     current.set(`office-usage:${owner}`,usage.day,{...usage,tokens:usage.tokens+additionalTokens,reservedTokens:0,unconfirmed:false});});
 }
 
-export async function officeStorageBytes(folder: string): Promise<number> {
+/** Charge user payload bytes, including retained conversations, rather than shared SQLite pages. */
+export function officeStateBytes(owner: string): number {
+  const store = getSqliteStateStore();
+  if (!store) throw new Error('Storage usage is unavailable.');
+  const namespaces = ['office-sessions', 'office-session-requests', 'office-session-revisions', 'office-preferences', 'office-projects', 'office-schedules', 'office-usage'].map(name => `${name}:${owner}`);
+  const row = store.prepare(`SELECT COALESCE(SUM(length(CAST(value AS BLOB))),0) AS bytes FROM state WHERE namespace IN (${namespaces.map(() => '?').join(',')}) OR (namespace IN ('office-memory','office-recommendations') AND key=?) OR (namespace='office-schedules' AND json_extract(value,'$.owner')=?)`).get(...namespaces, owner, owner);
+  return Number(row?.['bytes'] ?? 0);
+}
+export async function officeStorageBytes(folder: string, owner?: string): Promise<number> {
   const deadline = Date.now() + 2000;
-  let count = 0, bytes = 0;
+  let count = 0, bytes = owner ? officeStateBytes(owner) : 0;
   const walk = async (directory: string): Promise<void> => {
     for (const entry of await fs.readdir(directory, {withFileTypes: true})) {
       if (++count > 20_000 || Date.now() > deadline) throw new Error('Storage usage could not be checked in time. Please try again.');
       const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) await walk(file);
-      else if (entry.isFile()) bytes += (await fs.lstat(file)).size;
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) throw new Error('Linked storage cannot be measured safely.');
+      if (stat.isDirectory()) await walk(file);
+      else if (stat.isFile()) bytes += stat.size;
     }
   };
   await walk(folder);
@@ -86,6 +96,6 @@ export async function checkOfficeStorage(user: OfficeUser, project: string, file
   let previous = 0;
   try { const stat = await fs.lstat(path.resolve(project, file)); if (stat.isFile()) previous = stat.size; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const used = await officeStorageBytes(user.workspacePath), next = used - (preserve?0:previous) + Buffer.byteLength(content, 'utf8');
+  const used = await officeStorageBytes(user.workspacePath, user.id), next = used - (preserve?0:previous) + Buffer.byteLength(content, 'utf8');
   if (next > user.limits.storageMb * 1024 * 1024 && next > used) throw new Error('Your storage allowance is full. Remove files or ask for more space before saving.');
 }

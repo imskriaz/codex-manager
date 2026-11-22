@@ -18,7 +18,7 @@ export async function preserveOfficeFile(user:OfficeUser,project:string,file:str
  if(target===root)throw new Error('The workspace root is protected.');
  if(listOfficeFileHistory(user).length>=500)throw new Error('File recovery storage is full. Remove old versions or empty Trash in Library.');
  if(kind==='version'&&(!stat.isFile()||stat.size>50*1048576))throw new Error('This file is too large to version safely.');
- if(kind==='version'&&user.limits?.storageMb&&(await officeStorageBytes(root))+stat.size>user.limits.storageMb*1048576)throw new Error('Storage is full. Clear old versions or Trash before editing.');
+ if(kind==='version'&&user.limits?.storageMb&&(await officeStorageBytes(root,user.id))+stat.size>user.limits.storageMb*1048576)throw new Error('Storage is full. Clear old versions or Trash before editing.');
  const id=randomUUID(),folder=await privateFolder(root,kind),destination=path.join(folder,id);
  const revision=stat.isFile()?hash(await fs.readFile(target)):'';
  const record:OfficeFileRecord={id,path:path.relative(root,target).split(path.sep).join('/'),kind,at:Date.now(),bytes:stat.isFile()?stat.size:0,revision};
@@ -38,7 +38,7 @@ export async function restoreOfficeFile(user:OfficeUser,id:string,expectedRevisi
  }else{
   const current=await fs.readFile(target);if(!expectedRevision||hash(current)!==expectedRevision)throw new Error('This file changed. Refresh before restoring a version.');
   const contents=await fs.readFile(source);if(hash(contents)!==record.revision)throw new Error('This saved version changed.');
-  if(user.limits?.storageMb&&(await officeStorageBytes(root))+contents.length>user.limits.storageMb*1048576)throw new Error('Storage is full. Clear old versions or Trash before restoring.');
+  if(user.limits?.storageMb&&(await officeStorageBytes(root,user.id))+contents.length>user.limits.storageMb*1048576)throw new Error('Storage is full. Clear old versions or Trash before restoring.');
   await preserveOfficeFile(user,root,record.path);const temporary=path.join(path.dirname(target),'.'+randomUUID()+'.codex-manager.tmp');
   try{await fs.writeFile(temporary,contents,{flag:'wx'});if(hash(await fs.readFile(target))!==expectedRevision)throw new Error('This file changed while restoring. Refresh before retrying.');await fs.rename(temporary,target);}finally{await fs.rm(temporary,{force:true});}
  }

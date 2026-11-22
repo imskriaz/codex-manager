@@ -1,3 +1,4 @@
+import {DEFAULT_OFFICE_PRESENTATION} from '../src/domain/officePresentation';
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const config = vi.hoisted(() => {
   const values = new Map<string, unknown>();
@@ -21,7 +22,7 @@ describe("Team storage settings", () => {
   it("keeps saved PostgreSQL credentials out of settings responses", async () => {
     config.values.set("officePostgresUrl", "postgresql://private:secret@db.example/team");
     expect(readTeamSettings().postgresConfigured).toBe(true);
-    expect(JSON.stringify(readTeamSettings())).not.toMatch(/secret|private|db\.example/);
+    expect(JSON.stringify(readTeamSettings())).not.toMatch(/private:secret|db\.example|postgresql:/);
     const saved = await saveTeamSettings({ databaseProvider: "postgres" });
     expect(saved.databaseProvider).toBe("postgres");
     expect(config.values.get("officePostgresUrl")).toContain("secret");
@@ -44,6 +45,10 @@ describe("Team storage settings", () => {
       globalPrompt: DEFAULT_USER_WORKSPACE_PROMPT,
       defaultModel: "gpt-6-luna",
       modelMode:'manual',profilePicker:true,routerModel:'gpt-6-luna',regularModel:'gpt-6-luna',professionalModel:'gpt-6.1-sol',expertModel:'gpt-6.1-terra',
+      defaultSkills:['project-planning','document-drafting','spreadsheet-analysis','meeting-follow-up','research-briefs','operations-tracking'],
+      sessionRetentionDays: 30,
+      autoPresentation:true,
+      presentation:DEFAULT_OFFICE_PRESENTATION,
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
       databaseProvider: "postgres",
@@ -56,6 +61,10 @@ it("validates and saves the shared active request limit",async()=>{
  await expect(saveTeamSettings({maxActiveRequests:2.5})).rejects.toThrow("1 and 20");
  expect(config.update).not.toHaveBeenCalled();
  expect((await saveTeamSettings({maxActiveRequests:4})).maxActiveRequests).toBe(4);
+});
+it("validates session retention for backend cleanup",async()=>{
+ await expect(saveTeamSettings({sessionRetentionDays:0})).rejects.toThrow("1 to 365");
+ expect((await saveTeamSettings({sessionRetentionDays:45})).sessionRetentionDays).toBe(45);
 });
 it("saves and clears the global prompt without exposing database credentials or accepting invalid input",async()=>{
  expect(readTeamSettings().globalPrompt).toContain('User Workspace');
@@ -83,4 +92,12 @@ it('validates the complete automatic profile configuration before saving and pre
  const saved=await saveTeamSettings({modelMode:'auto',profilePicker:false,routerModel:'light',regularModel:'fast',professionalModel:'work',expertModel:'deep'});
  expect(saved).toMatchObject({modelMode:'auto',profilePicker:false,routerModel:'light',expertModel:'deep'});
  await expect(saveTeamSettings({modelMode:'other'})).rejects.toThrow();await expect(saveTeamSettings({profilePicker:'false'})).rejects.toThrow();
+});
+
+it('validates and persists presentation, automatic panels and skill arrays',async()=>{
+ const presentation={...structuredClone(DEFAULT_OFFICE_PRESENTATION),assistantName:'Workmate'};
+ expect(await saveTeamSettings({presentation,autoPresentation:false,defaultSkills:['project-planning']})).toMatchObject({presentation,autoPresentation:false});expect(config.values.get('officeDefaultSkills')).toEqual(['project-planning']);
+ await expect(saveTeamSettings({autoPresentation:'yes'})).rejects.toThrow('presentation');
+ await expect(saveTeamSettings({presentation:{...presentation,assistantName:''}})).rejects.toThrow('assistant name');
+ config.update.mockClear();await expect(saveTeamSettings({presentation:{...presentation,assistantName:'New'},expectedPresentation:DEFAULT_OFFICE_PRESENTATION})).rejects.toThrow('another window');expect(config.update).not.toHaveBeenCalled();
 });

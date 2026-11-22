@@ -162,7 +162,7 @@ it('scopes schedule routes to the signed-in user and rejects foreign projects an
  };
  const input={title:'Buyer report',prompt:'Prepare a costing draft.',model:'gpt-6-luna',nextRunAt:Date.now()+3600000,timeZone:'Asia/Dhaka',frequency:'daily'};
  expect((await call('POST','/api/workspace/schedules',{...input,projectPath:root})).status).toBe(400);
- const saved=await call('POST','/api/workspace/schedules',input);expect(saved.status).toBe(200);expect(saved.body.schedule.projectPath).toBe(user.workspacePath);expect(saved.body.schedule).not.toHaveProperty('owner');
+ const saved=await call('POST','/api/workspace/schedules',input);expect(saved.status).toBe(200);expect(saved.body.schedule.projectPath).toBe("");expect(saved.body.schedule).not.toHaveProperty('owner');
  expect((await call('PUT','/api/workspace/schedules/'+saved.body.schedule.id,{...input,revision:'stale'})).status).toBe(400);
  const other=await createOfficeUser({username:'other@example.test',password:'password-123',workspacePath:path.join(root,'other')});actor.mockResolvedValue(other);
  expect((await call('GET','/api/workspace/schedules')).body.schedules).toEqual([]);
@@ -223,4 +223,12 @@ it("does not honor forged features, owner, role or allowances in personal prefer
  const current=await (await import("../src/services/officeUsers")).getOfficeUser(user.id);
  expect(current?.role).toBe("user");expect(current?.features).not.toContain("terminal");
  expect(internal.officeActionAllowed(current,{type:"dashboard:action",action:"teamSettingsRequest"})).toBe(false);
+});
+
+it('keeps a new chat projectless and denies project tools and root exports for that session',async()=>{
+ const id=crypto.randomUUID();store.set(`office-sessions:${user.id}`,id,{id,owner:user.id,title:'Hello',projectPath:'',updatedAt:new Date().toISOString(),turns:[]});
+ const scope=(action:string,payload:unknown)=>(server as any).scopePrivateOfficeAction(user,{type:'dashboard:action',action,requestId:'scope',payload});
+ expect((await scope('startCodexCliSession',{})).payload.projectPath).toBe('');expect((await scope('startCodexCliSession',{projectPath:user.workspacePath})).payload.projectPath).toBe('');
+ for(const action of ['listWorkspaceFiles','readWorkspaceFile','workspaceBrowser','workspacePanel'])await expect(scope(action,{sessionId:id,projectPath:user.workspacePath})).rejects.toThrow('Choose a saved project');
+ await expect(scope('readWorkspaceFile',{projectPath:user.workspacePath,filePath:'.workspace-sessions/'+id+'/upload.txt'})).rejects.toThrow('private');
 });

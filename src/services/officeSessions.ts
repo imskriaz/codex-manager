@@ -1,5 +1,5 @@
 import {checkOfficeEntitlement,OfficeEntitlementError} from "./officeUsers";
-import { claimOfficeRequest, OfficeQuotaError, recoverOfficeTokens } from "./officeQuota";
+import { claimOfficeRequest, OfficeQuotaError, recoverOfficeTokens, officeStorageBytes, officeStateBytes } from "./officeQuota";
 import { officeCapacityMessage } from "../domain/officeCapacity";
 import { readTeamSettings } from "./teamSettings";
 import { createHash, randomUUID } from "node:crypto";
@@ -15,9 +15,14 @@ import { messageSessionPlan } from '../domain/sessionPlan';
 import { MAX_CODEX_LIVE_ITEMS, MAX_CODEX_LIVE_STATE_BYTES, validMessage } from '../domain/codexSessionLive';
 import { waitWithin } from '../utils/concurrency';
 import {OFFICE_PROFILES,officeProfiles,officeProfileLabel,officeReasoning, type OfficeModelChoice} from '../domain/officeModels';
+import { officeSkillPrompt } from '../domain/officeSkills';
+import {publicOfficePresentation} from '../domain/officePresentation';
+import {readOfficeRecommendations} from './officeRecommendations';
+import { cleanupOfficeDeletedSessions } from './officeWorkspaceCleanup';
+import {runCrossWindowExclusive} from '../utils/crossWindowOperations';
 
 type Turn = { selection?:"auto"|OfficeModelChoice["profile"]; automatic?:boolean; routed?:boolean; profile?:OfficeModelChoice["profile"]; reasoningEffort?:string; order?:number; imagePaths?:Array<{path:string;mimeType:string}>; attachmentContext?:Array<{name:string;text:string}>; reviewed?:boolean; scheduled?: boolean; id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
-type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; selection?:"auto"|OfficeModelChoice["profile"]; reasoningEffort?:string; profile?:OfficeModelChoice["profile"]; archived?: boolean; updatedAt: string; turns: Turn[] };
+type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; selection?:"auto"|OfficeModelChoice["profile"]; reasoningEffort?:string; profile?:OfficeModelChoice["profile"]; archived?: boolean; deletedAt?:number; updatedAt: string; turns: Turn[] };
 type Action = Extract<import("../domain/dashboard/types").DashboardClientMessage, { type: "dashboard:action" }>;
 export class OfficeCapacityError extends Error {}
 export class OfficeModelSelectionError extends Error {}
@@ -31,7 +36,7 @@ const namespace = (owner: string) => `office-sessions:${owner}`;
 function store() { const value = getSqliteStateStore(); if (!value) throw new Error("Conversation storage is unavailable. Please try again shortly."); return value; }
 function summary(session: Session): DashboardCliSessionSummary {
   const pending = session.turns.find(turn => ["queued", "working", "waiting"].includes(turn.state));
-  return { id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, modelProfile:session.profile, modelSelection:session.selection, reasoningEffort:session.reasoningEffort, updatedAt: session.updatedAt, archived: session.archived,
+  return { recommendedSkills:readOfficeRecommendations(session.owner,readTeamSettings().presentation), id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, modelProfile:session.profile, modelSelection:session.selection, reasoningEffort:session.reasoningEffort, updatedAt: session.updatedAt, archived: false,
     status: pending ? "running" : "idle", canStop: !!pending, autoResumeEnabled: false,
     queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : undefined };
 }
@@ -53,9 +58,11 @@ export class OfficeSessionService {
   private timer?: NodeJS.Timeout;
   private running = new Map<string, AbortController>();
   private stopped = false;
+  private nextCleanup = 0;
+  private cleanupRunning = false;
   constructor(private readonly options: {
     images?:(user:OfficeUser,images:Array<{path:string;mimeType:string}>)=>Promise<string[]>;
-    attachments?: (user:OfficeUser, files:import('../domain/chatAttachments').ChatAttachment[])=>Promise<Array<{path:string;name:string;text:string;image?:string;mimeType?:string}>>;
+    attachments?: (user:OfficeUser, files:import('../domain/chatAttachments').ChatAttachment[], sessionId:string)=>Promise<Array<{path:string;name:string;text:string;image?:string;mimeType?:string}>>;
     models?: (user: OfficeUser) => Promise<import("../domain/dashboard/types").DashboardCliModelOption[]>;
     selectModel?: (user:OfficeUser,messages:OfficeChatMessage[],signal:AbortSignal,catalogue:import("../domain/dashboard/types").DashboardCliModelOption[],previous?:OfficeModelChoice,requested?:OfficeModelChoice)=>Promise<OfficeModelChoice>;
     readUser: (id: string) => Promise<OfficeUser | undefined>;
@@ -64,25 +71,46 @@ export class OfficeSessionService {
   }) {}
   start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.(); void this.pump(); }
   stop(): void { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; for (const controller of this.running.values()) controller.abort(); }
+  private pruneExpired(): void {
+    if (this.cleanupRunning || Date.now() < this.nextCleanup) return;
+    this.nextCleanup = Date.now() + 60_000;
+    this.cleanupRunning = true;
+    const owners = store().keys('office-session-owners');
+    void (async () => {
+      for (const owner of owners) {
+        if (this.stopped) break;
+        const user = await this.options.readUser(owner);
+        if (user) await cleanupOfficeDeletedSessions(user, readTeamSettings().sessionRetentionDays);
+      }
+    })().catch(error => console.warn('[codexManager] Deleted conversation cleanup deferred', error)).finally(() => { this.cleanupRunning = false; });
+  }
+  private active(owner: string): Session[] {
+    return store().keys(namespace(owner)).flatMap(id => {
+      const session = store().get<Session>(namespace(owner), id);
+      return session?.owner === owner && session.deletedAt === undefined ? [session] : [];
+    });
+  }
   list(owner: string): DashboardCliSessionSummary[] {
-    const queued=store().keys('office-session-owners').flatMap(id=>store().keys(namespace(id)).flatMap(key=>store().get<Session>(namespace(id),key)?.turns.filter(turn=>['queued','waiting'].includes(turn.state))??[])).sort((a,b)=>turnOrder(a)-turnOrder(b));
-    return store().keys(namespace(owner)).map(id=>store().get<Session>(namespace(owner),id)).filter((session):session is Session=>!!session&&session.owner===owner).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(session=>{
+    const queued=store().keys('office-session-owners').flatMap(id=>this.active(id).flatMap(session=>session.turns.filter(turn=>['queued','waiting'].includes(turn.state)))).sort((a,b)=>turnOrder(a)-turnOrder(b));
+    return this.active(owner).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(session=>{
       const value=summary(session),turn=session.turns.find(turn=>['queued','waiting','working'].includes(turn.state));
       const position=turn&&turn.state!=='working'?queued.findIndex(candidate=>candidate.id===turn.id)+1:0;
       return {...value,...(position?{queuePosition:position}:{})};
     });
   }
-  relocateProject(owner:string,removed:string,root:string):void {
+  relocateProject(owner:string,removed:string,_root:string):void {
     for(const item of this.list(owner)){
       if(!item.projectPath)continue;
       const relative=path.relative(removed,item.projectPath);
       if(relative.startsWith('..')||path.isAbsolute(relative))continue;
-      const session=this.read(owner,item.id);session.projectPath=root;this.save(session);this.publish(session);
+      const session=this.read(owner,item.id);session.projectPath="";this.save(session);this.publish(session);
     }
   }
   project(owner: string, id: string): string { return this.read(owner,id).projectPath; }
   result(owner:string,id:string):{status:NonNullable<import('../domain/officeSchedule').UserSchedule['runStatus']>;error?:string}{
-    const turn=this.read(owner,id).turns.at(-1);
+    const session=store().get<Session>(namespace(owner),id);
+    if(!session||session.owner!==owner||session.deletedAt!==undefined)return{status:'cancelled',error:'Conversation removed.'};
+    const turn=session.turns.at(-1);
     if(!turn)return {status:'failed',error:'This conversation has no saved response.'};
     if(turn.state==='queued'||turn.state==='waiting')return {status:'queued'};
     if(turn.state==='working')return {status:'working'};
@@ -93,7 +121,7 @@ export class OfficeSessionService {
   private read(owner: string, id: string): Session {
     if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id)) throw new Error("This conversation is unavailable.");
     const session = store().get<Session>(namespace(owner), id);
-    if (!session || session.owner !== owner) throw new Error("This conversation is unavailable.");
+    if (!session || session.owner !== owner || session.deletedAt !== undefined) throw new Error("This conversation is unavailable.");
     return session;
   }
   private save(session: Session): void { session.updatedAt = new Date().toISOString(); store().set(namespace(session.owner),session.id,session); }
@@ -137,7 +165,7 @@ export class OfficeSessionService {
       if (!models.length) {
         const known = new Map((this.modelCatalogues.get(user.id) ?? []).filter(item => allowed(item.id)).map(item => [item.id, item]));
         for (const id of [...(user.plan?.models ?? []), configured, ...sessions.map(session => session.model)]) {
-          if (id && allowed(id) && !known.has(id)) known.set(id, {id, label: id.replace(/^gpt-/i, ''), reasoningEfforts: []});
+          if (id && allowed(id) && !known.has(id)) known.set(id, {id, label: id, reasoningEfforts: []});
         }
         models = [...known.values()];
       }
@@ -146,7 +174,9 @@ export class OfficeSessionService {
       if(settings.modelMode==='auto'){
         models=[{id:'auto',label:'Auto',reasoningEfforts:[],defaultReasoningEffort:undefined},...officeProfiles(settings,user.plan?.models,(this.modelCatalogues.get(user.id)??[]).map(model=>model.id)).map(choice=>({id:choice.profile,label:officeProfileLabel(choice.profile),reasoningEfforts:models.find(model=>model.id===choice.model)?.reasoningEfforts??['low','medium','high'],defaultReasoningEffort:({regular:'low',professional:'medium',expert:'high'} as const)[choice.profile]}))];
       }
-      return { cliSessions: sessions, cliComposerConfig: { models, modelMode:settings.modelMode,profilePicker:settings.profilePicker, defaultModel: settings.modelMode==='auto'?'auto':configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
+      const profileChoices=officeProfiles(settings,user.plan?.models,(this.modelCatalogues.get(user.id)??[]).map(item=>item.id));
+      models=models.map(item=>({...item,label:settings.presentation.profileLabels[item.id as 'auto'|'regular'|'professional'|'expert']??settings.presentation.profileLabels[profileChoices.find(choice=>choice.model===item.id)?.profile??'regular']}));
+      return { cliSessions: sessions, cliComposerConfig: { workspaceSkills:settings.defaultSkills, presentation:publicOfficePresentation(settings.presentation), recommendedSkills:readOfficeRecommendations(user.id,settings.presentation), models, modelMode:settings.modelMode,profilePicker:settings.profilePicker, defaultModel: settings.modelMode==='auto'?'auto':configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
     if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {
@@ -159,9 +189,17 @@ export class OfficeSessionService {
       const prior=store().get<string>(`office-session-requests:${user.id}`,action.requestId);
       if(attachments.filter(file=>file.kind==='image').reduce((sum,file)=>sum+file.size,0)>8*1048576)throw new Error('Keep images under 8 MB in total.');
       if(needsChatAttachmentFiles(attachments)&&!this.options.attachments)throw new Error('File uploads are temporarily unavailable. Please try again shortly.');
-      const uploaded=prior?[]:this.options.attachments&&attachments.length?await this.options.attachments(user,attachments):[];
+      const newSessionId = prior ?? (action.action === 'startCodexCliSession' ? randomUUID() : this.read(user.id,p.sessionId!).id);
+      const retainUnacceptedUploads=()=>{
+        if(action.action!=='startCodexCliSession'||!attachments.length||store().get(namespace(user.id),newSessionId))return;
+        store().transaction(()=>{store().set(namespace(user.id),newSessionId,{id:newSessionId,owner:user.id,title:'Unaccepted upload',projectPath:'',updatedAt:new Date().toISOString(),deletedAt:Date.now(),turns:[]});store().set('office-session-owners',user.id,true);});
+      };
+      let uploaded:Awaited<ReturnType<NonNullable<typeof this.options.attachments>>>;
+      try{uploaded=prior?[]:this.options.attachments&&attachments.length?await this.options.attachments(user,attachments,newSessionId):[];}catch(error){retainUnacceptedUploads();throw error;}
       const fingerprint = createHash("sha256").update(JSON.stringify([text,attachments,p.model,p.reasoningEffort,p.projectPath])).digest("hex");
       let session!: Session;
+      try{await runCrossWindowExclusive(`office-storage:${user.id}`,'Accept workspace message',async()=>{
+      const stateBudget = user.limits?.storageMb ? user.limits.storageMb * 1048576 - await officeStorageBytes(user.workspacePath) : undefined;
       store().transaction(() => {
         const prior = store().get<string>(`office-session-requests:${user.id}`,action.requestId);
         if (prior) {
@@ -169,8 +207,8 @@ export class OfficeSessionService {
           if (!session.turns.some(turn => turn.requestId === action.requestId && turn.fingerprint === fingerprint)) throw new Error("This request changed. Refresh the conversation before retrying.");
           return;
         }
-        session = action.action === "startCodexCliSession" ? { id: randomUUID(),owner: user.id,title: text.slice(0,80) || "New conversation",projectPath: p.projectPath || user.workspacePath,model: p.model,updatedAt: new Date().toISOString(),turns: [] } : this.read(user.id,p.sessionId!);
-        if (session.archived) throw new Error("Restore this conversation before sending a message.");
+        session = action.action === "startCodexCliSession" ? { id: newSessionId,owner: user.id,title: text.slice(0,80) || "New conversation",projectPath: typeof p.projectPath==='string' ? p.projectPath : "",model: p.model,updatedAt: new Date().toISOString(),turns: [] } : this.read(user.id,p.sessionId!);
+        session.archived=false;
         const interrupted=session.turns.filter(turn=>turn.state==='uncertain'&&!turn.reviewed);
         for(const previous of interrupted)previous.reviewed=true;
         const settings=readTeamSettings(),automatic=settings.modelMode==='auto';
@@ -194,8 +232,15 @@ export class OfficeSessionService {
         session.turns.push({order,...(imagePaths.length&&this.options.images?{imagePaths}:{}),...(uploaded.length?{attachmentContext:uploaded.map(file=>({name:file.name,text:(file.text||'Image attached for visual review.')+'\nSaved file: '+file.path}))}:{}), ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,reasoningEffort,automatic,selection,state:'queued',user:{id,role:'user',text,textAttachments:chatAttachmentPreviews(attachments),images:imagePaths.length&&this.options.images?uploaded.filter(file=>file.image).map(file=>({src:'/api/workspace/image?filePath='+encodeURIComponent(file.path)+'&mimeType='+encodeURIComponent(file.mimeType!),alt:file.name})):attachments.filter(file=>file.kind==='image').map(file=>({src:file.data,alt:file.name})),timestamp:new Date().toISOString()}});
 
         session.model = model;session.selection=selection;session.reasoningEffort=reasoningEffort;if(!automatic)session.profile=undefined;
+        if (stateBudget !== undefined) {
+          const previous = store().get<Session>(namespace(user.id),session.id);
+          const next = officeStateBytes(user.id) - Buffer.byteLength(JSON.stringify(previous) ?? '') + Buffer.byteLength(JSON.stringify(session)) + 512;
+          if (next > stateBudget) throw new OfficeQuotaError('Your storage allowance is full. Remove files or ask for more space before sending.');
+        }
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
+      },{waitMs:2000});}catch(error){retainUnacceptedUploads();throw error;}
+      if(session.id!==newSessionId)retainUnacceptedUploads();
       this.publish(session); this.start();
       session = this.read(user.id, session.id);
       return { cliSession: summary(session), cliSessionMessages: messages(session), cliSessions: this.list(user.id), notice: { level:"info", message:"Message accepted and queued." } };
@@ -211,29 +256,29 @@ export class OfficeSessionService {
         if (typeof p.text !== "string" || !p.text.trim() || p.text.length > 120) throw new Error("Enter a conversation name of up to 120 characters.");
         session.title=p.text.trim();
       } else if (action.action === "archiveCodexCliSession" || action.action === "unarchiveCodexCliSession") {
-        if (session.turns.some(turn => ["queued","waiting","working"].includes(turn.state))) throw new Error("Stop queued work before archiving this conversation.");
-        session.archived=action.action === "archiveCodexCliSession";
+        throw new Error("Archiving is unavailable in User Workspace. Delete a conversation to remove it from your list.");
       } else if (action.action === "deleteCodexCliSession") {
         if (!p.confirmed) throw new Error("Confirm deletion first.");
         if (session.turns.some(turn => ["queued","waiting","working"].includes(turn.state))) throw new Error("Stop queued work before deleting this conversation.");
-        store().set(namespace(user.id),session.id,undefined); return;
+        session.deletedAt=Date.now(); this.save(session); return;
       } else throw new Error("This action is unavailable for this conversation.");
       this.save(session);
     });
-    if(action.action==='deleteCodexCliSession')this.options.changed(user.id,[{type:'dashboard:action-result',requestId:`auto-team-${session.id}`,action:'listCodexCliSessions',status:'completed',payload:{cliSessions:this.list(user.id)}}]);
+    if(action.action==='deleteCodexCliSession'){this.options.changed(user.id,[{type:'dashboard:action-result',requestId:`auto-team-${session.id}`,action:'listCodexCliSessions',status:'completed',payload:{cliSessions:this.list(user.id)}}]);}
     else this.publish(session);
     return { cliSessions:this.list(user.id), ...(action.action === "deleteCodexCliSession" ? {} : {cliSession:summary(session),cliSessionMessages:messages(session)}), notice:{level:"info",message:action.action === "cancelCodexCliSessionTurn" || action.action === "setCodexSessionQueue" ? hadWorking?'Stop requested. A file already being saved may still finish. Check Files before retrying.':"Queued work stopped." : "Conversation updated."} };
   }
   pump(): void {
     if (this.stopped) return;
     try {
-      const oldest = (owner: string) => Math.min(...store().keys(namespace(owner)).flatMap(id => this.read(owner, id).turns.filter(turn => turn.state === "queued" || turn.state === "waiting").map(turn => turnOrder(turn))));
+      this.pruneExpired();
+      const oldest = (owner: string) => Math.min(...this.active(owner).flatMap(session => session.turns.filter(turn => turn.state === "queued" || turn.state === "waiting").map(turn => turnOrder(turn))));
       for (const owner of store().keys("office-session-owners").sort((a,b) => oldest(a) - oldest(b))) {
         if (this.stopped) break;
         let claimed: {session:Session;turn:Turn} | undefined;
         store().transaction(() => {
           recoverOfficeTokens(owner);
-          const sessions=store().keys(namespace(owner)).map(id=>this.read(owner,id)).sort((a,b)=>{
+          const sessions=this.active(owner).sort((a,b)=>{
             const queued=(value:Session)=>value.turns.find(turn=>turn.state==='queued'||turn.state==='waiting')?turnOrder(value.turns.find(turn=>turn.state==='queued'||turn.state==='waiting')!):Number.MAX_SAFE_INTEGER;
             return queued(a)-queued(b);
           });
@@ -244,7 +289,7 @@ export class OfficeSessionService {
             if(changed){this.save(session);this.publish(session,UNCERTAIN);}
           }
           recoverOfficeTokens(owner,!sessions.some(session=>session.turns.some(turn=>turn.state==='working')));
-          const active = store().keys("office-session-owners").flatMap(id => store().keys(namespace(id)).map(key => this.read(id, key))).reduce((count, value) => count + value.turns.filter(turn => turn.state === "working" && (turn.leaseUntil ?? 0) > Date.now()).length, 0);
+          const active = store().keys("office-session-owners").flatMap(id => this.active(id)).reduce((count, value) => count + value.turns.filter(turn => turn.state === "working" && (turn.leaseUntil ?? 0) > Date.now()).length, 0);
           if (active >= readTeamSettings().maxActiveRequests || sessions.some(session=>session.turns.some(turn=>turn.state==="working"))) {
             for (const session of sessions) {
               let changed = false;
@@ -297,7 +342,7 @@ export class OfficeSessionService {
       };
       this.publish(session);
       const instructions = readOfficeInstructions(user.id);
-      const globalPrompt = readTeamSettings().globalPrompt;
+      const teamSettings = readTeamSettings(), globalPrompt = teamSettings.globalPrompt, skillsPrompt = officeSkillPrompt(teamSettings.defaultSkills,teamSettings.presentation.catalog);
       if(relevant.length>recent.length)history.unshift({role:'assistant',content:'Earlier conversation context (excerpt; consult saved workspace files for exact contents): '+relevant.slice(0,-24).map(value=>[value.user.text,value.assistant?.text].filter(Boolean).join('\n')).join('\n').slice(-8000)});
       let historyBytes=0;for(let index=history.length-1;index>=0;index--){historyBytes+=JSON.stringify(history[index]!.content).length;if(historyBytes>140000&&index<history.length-1){history.splice(0,index+1);break;}}
       if(turn.automatic&&!turn.routed){
@@ -307,7 +352,7 @@ export class OfficeSessionService {
         store().transaction(()=>{const saved=this.read(session.owner,session.id),current=saved.turns.find(value=>value.id===turn.id);if(!current||current.state!=='working'||current.lease!==turn.lease)throw new Error('Conversation changed.');current.model=selected.model;current.reasoningEffort=selected.reasoningEffort;current.profile=selected.profile;current.routed=true;saved.model=selected.model;saved.reasoningEffort=selected.reasoningEffort;saved.profile=selected.profile;this.save(saved);});
         Object.assign(turn,{model:selected.model,reasoningEffort:selected.reasoningEffort,routed:true});Object.assign(session,{model:selected.model,reasoningEffort:selected.reasoningEffort,profile:selected.profile});this.publish(session);
       }
-      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"user" as const,content:'Response preferences (apply within workspace policy): '+instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled,session.id,turn.reasoningEffort),600_000,UNCERTAIN,controller.signal);
+      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(teamSettings.presentation.identityPrompt?[{role:"system" as const,content:teamSettings.presentation.identityPrompt}]:[]),...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(skillsPrompt?[{role:"system" as const,content:skillsPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"user" as const,content:'Response preferences (apply within workspace policy): '+instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled,session.id,turn.reasoningEffort),600_000,UNCERTAIN,controller.signal);
       controller.signal.throwIfAborted();
       if(!content?.trim())throw new Error("Empty response.");
       content=userSessionActivity({id:turn.id,role:'assistant',text:content},[user.workspacePath,session.projectPath]).text;
@@ -326,7 +371,7 @@ export class OfficeSessionService {
         stopBlockedMessages(updated);
         this.save(updated);
       });
-      if(completed)this.publish(updated,content?updated.turns.find(value=>value.id===turn.id)?.activities?.at(-1)?.questions?.length?'Your assistant has a question.':"Your response is ready.":failure instanceof OfficeEntitlementError || failure instanceof OfficeQuotaError || failure instanceof OfficeModelSelectionError || failure instanceof OfficeActionError?failure.message:failure instanceof OfficeCapacityError?officeCapacityMessage(updated.turns.find(value=>value.id===turn.id)?.retryAt ?? Date.now()+5000):UNCERTAIN);
+      if(completed){this.publish(updated,content?updated.turns.find(value=>value.id===turn.id)?.activities?.at(-1)?.questions?.length?'Your assistant has a question.':"Your response is ready.":failure instanceof OfficeEntitlementError || failure instanceof OfficeQuotaError || failure instanceof OfficeModelSelectionError || failure instanceof OfficeActionError?failure.message:failure instanceof OfficeCapacityError?officeCapacityMessage(updated.turns.find(value=>value.id===turn.id)?.retryAt ?? Date.now()+5000):UNCERTAIN);}
     }catch(error){console.warn("[codexManager] Team response could not be saved",error);}
     finally{this.running.delete(turn.id);if(!this.stopped)void this.pump();}
   }

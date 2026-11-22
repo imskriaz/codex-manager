@@ -78,14 +78,19 @@ export function EditProjectModal(props: {
     }
   };
 
-  return <ModalShell open title={`Edit ${props.project.label}`} closeLabel="Close project editor" className="edit-project-modal dashboard-modal-compact" closeDisabled={pending} closeOnBackdrop={false} onClose={cancel}>
+  return <><ModalShell open={!confirmDelete} title={`Edit ${props.project.label}`} closeLabel="Close project editor" className="edit-project-modal dashboard-modal-compact" closeDisabled={pending} closeOnBackdrop={false} onClose={cancel}>
     <div class="workspace-dialog-fields">
       <p class="workspace-dialog-description">Update the project label or remove this saved project from the list. The folder and conversations stay on the system.</p>
       {notice ? <p role="alert" class="edit-project-notice">{notice.message}</p> : null}
       <label>Project name<input autoFocus value={name} maxLength={120} disabled={pending || props.disabled} onInput={event => setName(event.currentTarget.value)} /></label>
       {!props.simple ? <div class="create-project-destination"><small>PROJECT FOLDER</small><code title={props.project.path}>{props.project.path}</code></div> : null}
-      {confirmDelete ? <div class="edit-project-confirm" role="alert"><strong>Remove this project?</strong><span>Only the saved project entry is removed. Files and conversations are kept.</span><div class="dialog-actions"><button type="button" disabled={pending} onClick={() => setConfirmDelete(false)}>Cancel</button><button type="button" class="is-danger" disabled={pending || props.disabled} onClick={() => submit("removeWorkspaceProject", { confirmed: true })}>Remove project</button></div></div> : null}
-      <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => setConfirmDelete(true)}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></footer>
+
+      <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => {setNotice(undefined);setConfirmDelete(true);}}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></footer>
     </div>
-  </ModalShell>;
+  </ModalShell>
+  <ModalShell open={confirmDelete} title="Remove project?" closeLabel="Cancel project removal" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={pending} closeOnBackdrop={false} onClose={()=>{setConfirmDelete(false);setNotice({level:'info',message:'Project removal cancelled.'});}}>
+    <p>Remove {props.project.label} from the project list? Files and conversations are kept.</p>
+    {notice?<p role="alert">{notice.message}</p>:null}
+    <div class="dialog-actions"><button type="button" disabled={pending} onClick={()=>{setConfirmDelete(false);setNotice({level:'info',message:'Project removal cancelled.'});}}>Cancel</button><button type="button" class="is-danger" disabled={pending||props.disabled} onClick={()=>submit('removeWorkspaceProject',{confirmed:true})}>{pending?'Removing...':'Remove project'}</button></div>
+  </ModalShell></>;
 }

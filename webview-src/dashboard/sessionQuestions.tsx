@@ -12,6 +12,7 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false), [expired, setExpired] = useState(() => readDismissedCodexRequests().includes(key));
   const [outcome, setOutcome] = useState(''), [ready, setReady] = useState(!onReply), [queued, setQueued] = useState(false);
+  const [enlarged,setEnlarged]=useState<{image:string;option:string}>(),[failed,setFailed]=useState<string[]>([]);
   const edited = useRef(false), submitting = useRef(false);
   const questions = message.questions?.map((question, index) => ({ ...question, index })).filter(question => !answered.has(JSON.stringify(['request_user_input_async', message.id, question.index]))) ?? [];
   const visible = !!onReply && !queued && (open || autoOpen && !expired);
@@ -51,12 +52,16 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
         else { submitting.current = false; setOutcome('Your answer could not be queued. It is kept here; review the conversation before retrying.'); }
       }}>
         <div class="cli-question-scroll">{questions.map(question => <fieldset key={question.index} disabled={disabled || !ready}><legend>{question.title}</legend>
-          {question.options?.map((option, optionIndex) => <label class="cli-question-option" key={optionIndex}><input type="radio" name={`question-${message.id}-${question.index}`} checked={answers[String(question.index)] === option} onChange={() => update(question.index, option)} /><span>{option}</span></label>)}
+          <div class={question.view==='grid'||question.previews?.length&&question.view!=='list'?'cli-visual-options':undefined}>{question.options?.map((option,optionIndex)=>{
+            const preview=question.previews?.find(item=>item.option===option);
+            return <div class={preview||question.view==='grid'?'cli-visual-option':undefined} key={optionIndex}>{preview?<><button type="button" class="cli-visual-preview" aria-label={`Enlarge ${option}`} disabled={failed.includes(preview.image)} onClick={()=>setEnlarged(preview)}>{failed.includes(preview.image)?<span>Preview unavailable</span>:<img src={preview.image} alt={option} loading="lazy" onError={()=>{setFailed(current=>[...current,preview.image]);setOutcome('A preview could not be loaded. You can review its description or choose another option.');}}/>}</button>{preview.description?<p>{preview.description}</p>:null}</>:null}<label class="cli-question-option"><input type="radio" name={`question-${message.id}-${question.index}`} checked={answers[String(question.index)]===option} onChange={()=>update(question.index,option)}/><span>{option}</span></label></div>;
+          })}</div>
           <label class="cli-question-freeform"><span>Your answer</span><textarea aria-label={`Answer: ${question.title}`} rows={2} maxLength={8000} value={answers[String(question.index)] ?? ''} onInput={event => update(question.index, event.currentTarget.value)} placeholder="Choose an option or type an answer…" /></label>
         </fieldset>)}</div>
         {outcome ? <p role="status">{outcome}</p> : null}
         <div class="dialog-actions"><button type="button" onClick={close}>Cancel</button><button type="submit" disabled={disabled || !ready || !questions.every(question => answers[String(question.index)]?.trim())}>Send answer</button></div>
       </form></ModalShell>}
+    <ModalShell open={!!enlarged} title={enlarged?.option??'Preview'} closeLabel="Close visual preview" className="visual-review-modal" onClose={()=>setEnlarged(undefined)}>{enlarged?<img class="visual-review-image" src={enlarged.image} alt={enlarged.option}/>:null}</ModalShell>
     {!visible && outcome ? <p role="status">{outcome}</p> : null}
   </section>;
 }

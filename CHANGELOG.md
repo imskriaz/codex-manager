@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0-pre.88
+
+- Add configurable generic workspace identity, mode labels, on-demand corporate, Office, RMG, textile and research guidance, and per-user contextual suggestions with no default cards.
+- Add PPTX creation and text previews, visual review thumbnails with separate enlargement, browser dictation, generated-file cards and verified ZIP bundles.
+- Keep projectless chats away from file tools, remove subscriber archive controls and focus user Environment on permitted project information.
+- Use separate destructive confirmations and retain deleted conversations and owned session uploads for the configured support period; count all storage toward quota.
+- Add current documented Codex fallback models, including GPT-6.2 Sol and Astra, without overriding live discovery or custom providers.
+
 ## 3.0.0-pre.87
 
 - Open the new-chat composer by default and use one screen for starting conversations.

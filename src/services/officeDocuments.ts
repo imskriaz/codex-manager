@@ -6,9 +6,10 @@ import * as fs from 'node:fs/promises';
 import fontkit from '@pdf-lib/fontkit';
 import {Workbook} from 'exceljs';
 import {Document,Packer,Paragraph,HeadingLevel} from 'docx';
+import PptxGenJS from 'pptxgenjs';
 
 export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'='text'):Promise<string>{
- const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX or PDF document.');
+ const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
  if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
  if(data.length<8)throw new Error('The document is empty or incomplete.');
  if(extension==='pdf'&&!data.subarray(0,8).toString().startsWith('%PDF-')||extension!=='pdf'&&data.readUInt32LE(0)!==0x04034b50)throw new Error('The document contents do not match its format.');
@@ -32,6 +33,22 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
    for(const values of value['rows'] as unknown[]){if(!Array.isArray(values)||values.length>50)throw new Error('Use up to fifty columns.');const row=values.map((cell:unknown)=>{if(++cells>50000)throw new Error('Keep the workbook under 50,000 cells.');if(typeof cell==='number'&&Number.isFinite(cell)||typeof cell==='string'&&cell.length<=8000)return cell;if(cell===null)return null;if(cell&&typeof cell==='object'&&'formula' in cell&&typeof cell.formula==='string'&&cell.formula.length<=1000&&!/[\[\]|]|https?:|WEBSERVICE|HYPERLINK|DDE|RTD|CALL|EXEC|IMAGE\s*\(|IMPORT(?:XML|DATA|HTML|RANGE|FEED)\s*\(/i.test(cell.formula))return {formula:cell.formula.replace(/^=/,'')};throw new Error('Use text, numbers, or a local worksheet formula.');});sheet.addRow(row as never);}
    sheet.getRow(1).font={bold:true};sheet.views=[{state:'frozen',ySplit:1}];sheet.columns.forEach(column=>{column.width=22;});
   }return Buffer.from(await book.xlsx.writeBuffer());
+ }
+ if(extension==='.pptx'){
+  if(!Array.isArray(input['slides'])||!input['slides'].length||input['slides'].length>60)throw new Error('Add one to sixty presentation slides.');
+  const deck=new PptxGenJS();deck.layout='LAYOUT_WIDE';deck.author='';deck.subject='';deck.title=typeof input['title']==='string'?input['title'].slice(0,160):'';
+  const theme=input['theme'] as Record<string,unknown>|undefined;
+  const color=(key:string,fallback:string)=>{const value=theme?.[key]??fallback;if(typeof value!=='string'||!/^[a-f0-9]{6}$/i.test(value))throw new Error('Use six-digit hexadecimal presentation colours.');return value;};
+  const background=color('background','FFFFFF'),foreground=color('foreground','172033'),accent=color('accent','2563EB');
+  for(const [index,raw] of input['slides'].entries()){
+   if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Provide slide titles and bullet text.');const value=raw as Record<string,unknown>;
+   if(typeof value['title']!=='string'||!value['title'].trim()||value['title'].length>140||!Array.isArray(value['bullets'])||value['bullets'].length>8||value['bullets'].some(item=>typeof item!=='string'||item.length>260)||value['notes']!==undefined&&(typeof value['notes']!=='string'||value['notes'].length>4000))throw new Error('Use slide titles under 140 characters, up to eight short bullets and optional speaker notes.');
+   const slide=deck.addSlide();slide.background={color:background};slide.addShape(deck.ShapeType.rect,{x:0,y:0,w:0.12,h:7.5,line:{color:accent},fill:{color:accent}});
+   slide.addText(value['title'],{x:0.65,y:0.55,w:12,h:1.1,fontFace:'Aptos Display',fontSize:30,bold:true,color:foreground,margin:0,isTextBox:true});
+   const bullets=value['bullets'] as string[];bullets.forEach((bullet,position)=>slide.addText(bullet,{x:0.9,y:1.9+position*0.57,w:11.4,h:0.48,fontFace:'Aptos',fontSize:19,color:foreground,margin:0,bullet:{indent:16},isTextBox:true}));
+   slide.addText(String(index+1),{x:12,y:7,w:0.65,h:0.2,fontFace:'Aptos',fontSize:10,color:foreground,align:'right',margin:0,isTextBox:true});if(value['notes'])slide.addNotes(value['notes'] as string);
+  }
+  return Buffer.from(await deck.write({outputType:'nodebuffer'}) as Buffer);
  }
  if(typeof text!=='string'||!text.trim())throw new Error('Provide document text.');
  if(extension==='.docx'){const paragraphs=text.split(/\r?\n/).map(line=>new Paragraph({text:line.replace(/^#+\s*/,''),...(line.startsWith('# ')?{heading:HeadingLevel.HEADING_1}:{})}));return Packer.toBuffer(new Document({sections:[{children:paragraphs}]}));}
@@ -57,5 +74,5 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
 
   return Buffer.from(await document.save());
  }
- throw new Error('Create an XLSX, DOCX or PDF document.');
+ throw new Error('Create an XLSX, DOCX, PPTX or PDF document.');
 }

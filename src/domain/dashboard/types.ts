@@ -821,6 +821,7 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  recommendedSkills?:string[];
   modelProfile?: import('../officeModels').OfficeProfile;
   modelSelection?: 'auto' | import('../officeModels').OfficeProfile;
   startedBy?: import("../../services/officeAudit").OfficeActor;
@@ -918,7 +919,7 @@ export interface DashboardCliSessionMessage {
     alt?: string;
   }>;
   textAttachments?: Array<{ name: string; text: string }>;
-  questions?: Array<{ title: string; options?: string[] }>;
+  questions?: Array<{ title: string; options?: string[]; view?:'grid'|'list'; previews?: Array<{option:string;image:string;description?:string}> }>;
   timestamp?: string;
 }
 
@@ -954,6 +955,9 @@ export interface DashboardCliModelOption {
 }
 
 export interface DashboardCliComposerConfig {
+  workspaceSkills?:string[];
+  presentation?:import('../officePresentation').PublicOfficePresentation;
+  recommendedSkills?:string[];
   modelMode?: 'manual' | 'auto';
   profilePicker?:boolean;
   modelDiscoveryWarning?: string;

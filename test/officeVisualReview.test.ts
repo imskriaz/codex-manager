@@ -1,0 +1,22 @@
+import {afterEach,beforeEach,expect,it} from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import {officeQuestionPreviews} from '../src/services/officeVisualReview';
+import type {OfficeUser} from '../src/services/officeUsers';
+import type {DashboardCliSessionMessage} from '../src/domain/dashboard/types';
+import {removeTestDirectory} from './testFilesystem';
+let root:string,project:string,user:OfficeUser;
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64');
+beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'office-visual-'));project=path.join(root,'project');await fs.mkdir(project);await fs.writeFile(path.join(project,'one.png'),png);await fs.writeFile(path.join(project,'two.png'),png);user={id:'alex',username:'alex@example.test',displayName:'Alex',role:'user',enabled:true,workspacePath:root,features:['files','generalChat'],defaultPrompt:'',mcpServers:[],createdAt:0};});
+afterEach(async()=>{await removeTestDirectory(root);});
+const questions=():NonNullable<DashboardCliSessionMessage['questions']>=>[{title:'Choose',options:['Minimal','Editorial']}];
+const previews=()=>[{title:'Choose',previews:[{option:'Minimal',imagePath:'one.png'},{option:'Editorial',imagePath:'two.png',description:'More detail'}]}];
+it('verifies actual project images before publishing authenticated thumbnails',async()=>{const value=questions();await officeQuestionPreviews(user,project,previews(),value);expect(value[0].previews).toHaveLength(2);expect(value[0].previews?.[0].image).toMatch(/^\/api\/workspace\/image\?filePath=project/);expect(value[0].previews?.[1].description).toBe('More detail');});
+it('rejects the user root, traversal, wrong labels and unavailable file permissions',async()=>{
+ await expect(officeQuestionPreviews(user,root,previews(),questions())).rejects.toThrow('saved project');
+ await expect(officeQuestionPreviews({...user,features:['generalChat']},project,previews(),questions())).rejects.toThrow('project');
+ const raw=previews();raw[0].previews[0].imagePath='../private.png';await expect(officeQuestionPreviews(user,project,raw,questions())).rejects.toThrow();
+ raw[0].previews[0]={option:'Unknown',imagePath:'one.png'};await expect(officeQuestionPreviews(user,project,raw,questions())).rejects.toThrow('distinct');
+ await fs.writeFile(path.join(project,'one.png'),'not an image');await expect(officeQuestionPreviews(user,project,previews(),questions())).rejects.toThrow();
+});

@@ -161,13 +161,14 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(feedback).toContain("done.`");
   });
 
-  it("keeps maintenance confirmations and results in place", () => {
+  it("opens maintenance confirmations separately and keeps results in place", () => {
     const tools = readFileSync("webview-src/dashboard/maintenanceTools.tsx", "utf8");
     const queue = readFileSync("webview-src/dashboard/sessionQueueControl.tsx", "utf8");
     expect(tools).toContain("Archive manager");
     expect(tools).toContain("Codex storage check");
     expect(tools).toContain("MAINTENANCE_TOOLS.map");
-    expect(tools).toContain('class="settings-inline-confirm"');
+    expect(tools).not.toContain('class="settings-inline-confirm"');
+    expect(tools).toContain('closeLabel="Cancel maintenance action"');
     expect(tools).toContain('closeLabel="Close item details"');
     expect(tools).toContain('class="maintenance-inline-result"');
     expect(tools).toContain('goals: "Goal manager"');

@@ -1,12 +1,22 @@
 import type { DashboardCliSessionMessage } from './dashboard/types';
 
+type QuestionPreview=NonNullable<NonNullable<DashboardCliSessionMessage['questions']>[number]['previews']>[number];
+export function validQuestionPreview(value:unknown):value is QuestionPreview {
+  if(!value||typeof value!=='object'||Array.isArray(value))return false;
+  const preview=value as Record<string,unknown>;
+  if(Object.keys(preview).some(key=>!['option','image','description'].includes(key))||typeof preview['option']!=='string'||!preview['option'].trim()||preview['option'].length>8000||typeof preview['image']!=='string'||preview['image'].length>8192||!preview['image'].startsWith('/api/workspace/image?')||preview['description']!==undefined&&(typeof preview['description']!=='string'||preview['description'].length>1000))return false;
+  try{const url=new URL(preview['image'],'https://workspace.invalid');return url.pathname==='/api/workspace/image'&&!!url.searchParams.get('filePath')&&['image/png','image/jpeg','image/webp'].includes(url.searchParams.get('mimeType')??'');}catch{return false;}
+}
 export function readSessionQuestions(value: unknown): NonNullable<DashboardCliSessionMessage['questions']> {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 10).flatMap(value => {
     if (!value || typeof value !== 'object') return [];
-    const question = value as { title?: unknown; question?: unknown; options?: unknown };
+    const question = value as { title?: unknown; question?: unknown; options?: unknown;previews?:unknown;view?:unknown };
     const title = question.title ?? question.question;
-    return typeof title === 'string' && title.trim() ? [{ title: title.slice(0, 8000), ...(Array.isArray(question.options) ? { options: (question.options as unknown[]).flatMap(option => typeof option === 'string' ? [option.slice(0, 8000)] : option && typeof option === 'object' && 'label' in option && typeof option.label === 'string' ? [option.label.slice(0, 8000)] : []).slice(0, 20) } : {}) }] : [];
+    if(typeof title!=='string'||!title.trim())return [];
+    const options=Array.isArray(question.options)?question.options.flatMap((option:unknown)=>typeof option==='string'?[option.slice(0,8000)]:option&&typeof option==='object'&&'label' in option&&typeof option.label==='string'?[option.label.slice(0,8000)]:[]).slice(0,20):undefined;
+    const previews=Array.isArray(question.previews)?question.previews.filter(validQuestionPreview).filter(item=>options?.includes(item.option)).slice(0,10):[];
+    return [{title:title.slice(0,8000),...(options?{options}:{}),...(previews.length?{previews}: {}),...(question.view==='grid'||question.view==='list'?{view:question.view}:{})}];
   });
 }
 

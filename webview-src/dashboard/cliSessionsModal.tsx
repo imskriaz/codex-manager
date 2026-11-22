@@ -1,5 +1,9 @@
+import {CorporateHome} from './corporateHome';
+import {VoiceDictation} from './voiceDictation';
+import {generatedWorkspaceFiles} from './generatedFiles';
+import {DEFAULT_OFFICE_PRESENTATION,type PublicOfficePresentation} from '../../src/domain/officePresentation';
 import {MobileSectionPicker} from './mobileSectionPicker';
-import {OFFICE_PROFILES,officeProfileLabel} from '../../src/domain/officeModels';
+import {OFFICE_PROFILES} from '../../src/domain/officeModels';
 import { officeCapacityMessage } from "../../src/domain/officeCapacity";
 import { quotaAvailability, quotaOfflineMessage } from '../../src/domain/quotaAvailability';
 import { messageSessionPlan, sessionPlanMessage } from '../../src/domain/sessionPlan';
@@ -420,7 +424,7 @@ function SessionRowMenu(props: {
       {!props.simple && showsCodexSessionAutoResume(session) ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onAutoResume(!props.autoResume); }}><AutoResumeIcon enabled={Boolean(props.autoResume)} goal={!!session.goal} /> {props.autoResume ? "Pause Auto Resume" : "Enable Auto Resume"}</button> : null}
       {!props.simple ?       <button type="button" role="menuitem" title={props.running ? "Wait for the active turn to finish." : undefined} disabled={props.disabled || props.running === true || session.archived === true || session.subAgent === true} onClick={() => { close(); props.onQueue(!session.queueEnabled, session.queueEnabled ? undefined : 3); }}>{session.queueEnabled ? "Remove from queue" : "Queue session"}</button> : null}
       <span aria-hidden="true" />
-      {session.archived ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onRestore(); }}><RestoreIcon /> Restore</button> : <button type="button" role="menuitem" title={destructiveBlocked ? "Stop the active turn before archiving." : undefined} disabled={props.disabled || destructiveBlocked} onClick={() => { close(); props.onArchive(); }}><ArchiveIcon /> Archive</button>}
+      {!props.simple ? (session.archived ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onRestore(); }}><RestoreIcon /> Restore</button> : <button type="button" role="menuitem" title={destructiveBlocked ? "Stop the active turn before archiving." : undefined} disabled={props.disabled || destructiveBlocked} onClick={() => { close(); props.onArchive(); }}><ArchiveIcon /> Archive</button>) : null}
       <button type="button" role="menuitem" class="is-danger" title={destructiveBlocked ? "Stop the active turn before deleting this session." : undefined} disabled={props.disabled || destructiveBlocked} onClick={() => { close(); props.onDelete(); }}><TrashIcon /> Delete</button>
     </div>;
   return <>
@@ -434,10 +438,12 @@ function SessionRowMenu(props: {
 }
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
-  const userWorkspaceProject = (): WorkspaceProjectState => {
+  const presentation=props.composerConfig?.presentation??DEFAULT_OFFICE_PRESENTATION;
+  const recommendedSkills=presentation.contextualCards?[...new Set([...(props.sessions.flatMap(session=>session.recommendedSkills??[])),...(props.composerConfig?.recommendedSkills??[])])].slice(0,6):[];
+  const userWorkspaceProject = (projectContext = true): WorkspaceProjectState => {
     if(!props.officeUser)return emptyWorkspaceProject();
-    const tabs:WorkspaceTab[]=(['env','files','browser'] as const).filter(tab=>props.officeFeatures?.includes(tab));
-    return {tabs,active:tabs[0]??'files'};
+    const tabs:WorkspaceTab[]=projectContext ? (['env','files','browser'] as const).filter(tab=>props.officeFeatures?.includes(tab)) : [];
+    return {tabs,active:tabs[0]??'accounts'};
   };
   const [sessionSeen, setSessionSeen] = useState(readSessionSeen);
   useEffect(() => {
@@ -520,7 +526,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const submittedDrafts = useRef(new Map<string, ComposerDraft & { projectPath?: string; key: string; clearedDraft: ComposerDraft; failedDraft?: ComposerDraft; session?: CliSubmissionResult["session"]; seenIds: Set<string>; turnId?: string }>());
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
-  const [newChatProject, setNewChatProject] = useState<string>();
+  const [newChatProject, setNewChatProject] = useState<string | undefined>(props.officeUser ? "" : undefined);
   const selectedDevice = props.selectedSession?.deviceId ?? props.selectedPeerId ?? props.peers?.find(peer => peer.local)?.id;
   const workspaceDownloadRequest = useWorkspaceRequest(props.selectedSession?.projectPath ?? newChatProject ?? projectPath, selectedDevice === 'local' ? undefined : selectedDevice, props.connected !== false, props.selectedSession?.id);
   const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath, props.browser && window.self !== window.top);
@@ -764,7 +770,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     // A session deep link should open in its matching state tab, but returning
     // to the workspace list (including after archive/delete) must restore the
     // default Active view instead of leaving the rail on Archive.
-    setSection(props.selectedSession?.archived ? "archived" : "active");
+    setSection(props.officeUser ? "active" : props.selectedSession?.archived ? "archived" : "active");
     setDeleteTarget(undefined);
   }, [props.selectedSession?.id, props.selectedSession?.archived]);
 
@@ -899,12 +905,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setProjectPath(undefined);
   }, [composerSystemKey]);
   const activeSessions = filterCliSessionsBySection(orderedSessions, "active");
-  const archivedSessions = filterCliSessionsBySection(orderedSessions, "archived");
+  const archivedSessions = props.officeUser ? [] : filterCliSessionsBySection(orderedSessions, "archived");
   const [sessionLimits, setSessionLimits] = useState<Record<string,number>>({});
   useEffect(() => setSessionLimits({}), [selectedSystem, search, section, layout.sessionView]);
   const growSessions = (key: string) => setSessionLimits(current => ({...current,[key]:(current[key] ?? 50)+50}));
   const visibleSessions = useMemo(() => {
-    const source = section === "active" ? activeSessions : archivedSessions;
+    const source = props.officeUser ? activeSessions : section === "active" ? activeSessions : archivedSessions;
     const query = search.trim().toLocaleLowerCase();
     return query
       ? source.filter((session) => `${session.title} ${session.id} ${session.projectPath ?? ""}`.toLocaleLowerCase().includes(query))
@@ -967,6 +973,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const userRoot=composerProjects[0]?.path;
   const toolProjectPath = props.officeUser && userView==='library' ? userRoot : selectedProjectPath;
+  const hasUserProjectContext = !props.officeUser || userView==='library' || Boolean(toolProjectPath && userRoot && canonicalWebPath(toolProjectPath)!==canonicalWebPath(userRoot));
+  const contextDefaults = (): WorkspaceProjectState => userWorkspaceProject(hasUserProjectContext);
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
   const contextProjectPath = props.selectedSession || newChatProject !== undefined || props.officeUser && userView==='library' ? toolProjectPath : undefined;
   // Discovery replaces the local placeholder ID without changing this workspace.
@@ -974,7 +982,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const contextProjectKey = JSON.stringify([legacyContextProjectKey, props.selectedSession?.id ?? null]);
   const workspacePeer = props.peers?.find(peer => peer.id === (props.selectedSession?.deviceId ?? props.selectedPeerId)) ?? props.peers?.find(peer => peer.local);
   const workspaceSystemName = getSensitiveDisplayValue(props.selectedSession?.deviceName ?? workspacePeer?.name ?? (props.selectedSession?.remote ? 'Remote PC' : 'This PC'), props.privacyMode, 'name');
-  const contextProjectState = contextTabsByProject[contextProjectKey] ?? userWorkspaceProject();
+  const contextProjectState = contextTabsByProject[contextProjectKey] ?? contextDefaults();
   const [restoredFileDraftKeys, setRestoredFileDraftKeys] = useState<string[]>([]);
   useEffect(() => {
     if (!props.browser || restoredFileDraftKeys.includes(contextProjectKey)) return;
@@ -982,7 +990,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     void readBrowserCache<Record<string, WorkspaceFileDraft>>(`workspace-drafts:${contextProjectKey}`, Infinity).then(saved => saved ?? readBrowserCache<Record<string, WorkspaceFileDraft>>(`workspace-drafts:${legacyContextProjectKey}`, Infinity)).then(saved => {
       if (disposed) return;
       const valid = saved && typeof saved === 'object' && !Array.isArray(saved) ? Object.fromEntries(Object.entries(saved).filter(([path, value]) => !touchedFileDrafts.current.has(JSON.stringify([contextProjectKey, path])) && value && typeof value.text === 'string' && typeof value.revision === 'string')) : {};
-      setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()), fileDrafts: { ...valid, ...current[contextProjectKey]?.fileDrafts } } }));
+      setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()), fileDrafts: { ...valid, ...current[contextProjectKey]?.fileDrafts } } }));
       setRestoredFileDraftKeys(keys => [...keys, contextProjectKey]);
     });
     return () => { disposed = true; };
@@ -1001,6 +1009,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const contextTabAllowed = (tab: WorkspaceTab): boolean => {
     if (!officeFeatures) return true;
     const kind = workspaceTabKind(tab);
+    if (props.officeUser && !hasUserProjectContext) return false;
     if (kind === "env") return officeFeatures.has("env");
     if (kind === "terminal") return officeFeatures.has("terminal");
     if (kind === "git" || kind === "reviews") return officeFeatures.has("git");
@@ -1013,7 +1022,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const activeContextTab = contextTabAllowed(contextProjectState.active)
     ? contextProjectState.active
     : contextTabs[0] ?? (officeFeatures?.has("files") ? "files" : officeFeatures?.has("browser") ? "browser" : "accounts");
-  const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && ((!props.selectedSession && !(props.officeUser && userView==='library')) || props.dashboardMode === true));
+  const toolsCollapsed = contextCollapsed || (props.officeUser && !hasUserProjectContext) || (activeContextTab !== 'accounts' && ((!props.selectedSession && !(props.officeUser && userView==='library')) || props.dashboardMode === true));
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
@@ -1025,7 +1034,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
   const browserPages = contextProjectState.browserPages ?? [];
   const terminalDraft = contextProjectState.draft ?? '';
-  const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()), draft } }));
+  const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()), draft } }));
   useEffect(() => { setContextAddOpen(false); }, [contextProjectKey]);
   useLayoutEffect(() => {
     if (toolsCollapsed) return;
@@ -1043,20 +1052,20 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [toolsCollapsed, contextAddOpen, props.selectedSession?.id]);
   const setContextTabs = (next: WorkspaceTab[] | ((current: WorkspaceTab[]) => WorkspaceTab[])): void => {
     setContextTabsByProject(current => {
-      const entry = current[contextProjectKey] ?? userWorkspaceProject();
+      const entry = current[contextProjectKey] ?? contextDefaults();
       const tabs = typeof next === "function" ? next(entry.tabs) : next;
       return { ...current, [contextProjectKey]: { ...entry, tabs } };
     });
   };
   const setActiveContextTab = (next: WorkspaceTab | ((current: WorkspaceTab) => WorkspaceTab)): void => {
     setContextTabsByProject(current => {
-      const entry = current[contextProjectKey] ?? userWorkspaceProject();
+      const entry = current[contextProjectKey] ?? contextDefaults();
       return { ...current, [contextProjectKey]: { ...entry, active: typeof next === "function" ? next(entry.active) : next } };
     });
   };
-  const setCommitDraft = (commitDraft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()), commitDraft } }));
+  const setCommitDraft = (commitDraft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()), commitDraft } }));
   const editFileDraft = (path: string, text: string): void => { touchedFileDrafts.current.add(JSON.stringify([contextProjectKey, path])); setContextTabsByProject(current => {
-    const entry = current[contextProjectKey] ?? userWorkspaceProject(), previous = entry.fileDrafts?.[path], file = props.workspaceFilesByPath[path];
+    const entry = current[contextProjectKey] ?? contextDefaults(), previous = entry.fileDrafts?.[path], file = props.workspaceFilesByPath[path];
     return { ...current, [contextProjectKey]: { ...entry, fileDrafts: { ...entry.fileDrafts, [path]: { text, revision: previous && previous.text !== file?.content ? previous.revision : file?.revision ?? '' } } } };
   }); };
   const runGitAction = (kind: 'commit' | 'push'): void => {
@@ -1064,7 +1073,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const text = contextProjectState.commitDraft?.trim();
     const requestId = kind === 'commit' ? text ? props.onCommitWorkspace(text, toolProjectPath) : undefined : props.onPushWorkspace(toolProjectPath);
     if (requestId) submittedGitDrafts.current.set(requestId, { key: contextProjectKey, kind, text });
-    setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()),
+    setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()),
       gitPending: requestId ? { requestId, kind } : undefined,
       gitNotice: requestId ? undefined : { level: 'error', message: 'Git action was not sent. Your draft was kept.' } } }));
   };
@@ -1075,8 +1084,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (mobileLayout) setRailCollapsed(true);
     if (props.selectedSession) props.onPeerChange?.(props.selectedSession.deviceId ?? localPeerId ?? "local");
     if (!props.officeUser || props.selectedSession) props.onBackToList();
-    const preferred = nextProject ?? (props.officeUser ? props.officeUser.workspacePath || projects[0]?.path : props.selectedSession?.projectPath ?? newChatProject ?? projectPath);
-    const selected = composerProjects.find((project) => preferred && canonicalWebPath(project.path) === canonicalWebPath(preferred))?.path ?? preferred ?? projects[0]?.path ?? "";
+    const preferred = nextProject ?? (props.officeUser ? undefined : props.selectedSession?.projectPath ?? newChatProject ?? projectPath);
+    const selected = composerProjects.find((project) => preferred && canonicalWebPath(project.path) === canonicalWebPath(preferred))?.path ?? preferred ?? (props.officeUser ? "" : projects[0]?.path ?? "");
     setNewChatProject(selected);
     setProjectPath(selected);
   };
@@ -1084,7 +1093,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if(!pendingSchedulePrompt||userView!=='chats'||newChatProject===undefined||!draftReadyKeys.has(draftKey))return;
     setDraft(current=>current?`${current}\n\n${pendingSchedulePrompt}`:pendingSchedulePrompt);
     setPendingSchedulePrompt(undefined);
-    setComposerFeedback({level:'info',message:'Schedule request added. Review your instructions and model, then send.'});
+    setComposerFeedback(undefined);
   },[pendingSchedulePrompt,userView,newChatProject,draftReadyKeys,draftKey]);
   const pcGroups = useMemo(() => {
     const localPeer = props.peers?.find((peer) => peer.local);
@@ -1151,7 +1160,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (tab === "reviews") setBranchReview(false);
     if (tab === 'browser' && browserUrl) {
       setContextTabsByProject(current => {
-        const entry = current[contextProjectKey] ?? userWorkspaceProject();
+        const entry = current[contextProjectKey] ?? contextDefaults();
         const selected = workspaceTabKind(entry.active) === 'browser' ? entry.active : entry.tabs.find(item => workspaceTabKind(item) === 'browser') ?? 'browser';
         return { ...current, [contextProjectKey]: { ...entry, tabs: entry.tabs.includes(selected) ? entry.tabs : [...entry.tabs, selected], active: selected, browserUrl, browserPreviewPath: undefined, browserDownloadUrl: undefined, browserOpenNonce: undefined, browserActionNonce: (entry.browserActionNonce ?? 0) + 1 } };
       });
@@ -1161,7 +1170,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
     if (tab === "browser" && !filePath && !browserUrl && !browserDownloadUrl) {
       setContextTabsByProject(current => {
-        const entry = current[contextProjectKey] ?? userWorkspaceProject();
+        const entry = current[contextProjectKey] ?? contextDefaults();
         const browserTab = entry.tabs.find(item => workspaceTabKind(item) === "browser");
         const tabs: WorkspaceTab[] = browserTab ? entry.tabs : [...entry.tabs, "browser"];
         return { ...current, [contextProjectKey]: { ...entry, tabs, active: browserTab ?? "browser", browserOpenNonce: (entry.browserOpenNonce ?? 0) + 1 } };
@@ -1178,7 +1187,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     });
     if (tab === "browser" && (browserUrl || browserDownloadUrl)) setContextTabsByProject(current => ({
       ...current,
-      [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()), browserUrl, browserDownloadUrl, browserActionNonce: (current[contextProjectKey]?.browserActionNonce ?? 0) + 1 }
+      [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()), browserUrl, browserDownloadUrl, browserActionNonce: (current[contextProjectKey]?.browserActionNonce ?? 0) + 1 }
     }));
     selectContextTab(tabId);
     setContextCollapsed(false);
@@ -1188,7 +1197,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const relative = workspaceRelativePath(filePath, toolProjectPath);
     if (props.officeUser && officeFeatures?.has('browser') && /\.html?$/i.test(relative)) {
       setContextTabsByProject(current => {
-        const entry = current[contextProjectKey] ?? userWorkspaceProject();
+        const entry = current[contextProjectKey] ?? contextDefaults();
         return {...current, [contextProjectKey]: {...entry, tabs: entry.tabs.includes('browser') ? entry.tabs : [...entry.tabs, 'browser'], active:'browser', browserPreviewPath:relative, browserActionNonce:(entry.browserActionNonce ?? 0) + 1}};
       });
       setContextCollapsed(false);
@@ -1227,7 +1236,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   const updateBrowserPages = (pages: BrowserWorkspacePage[]): void => {
     setContextTabsByProject(current => {
-      const entry = current[contextProjectKey] ?? userWorkspaceProject();
+      const entry = current[contextProjectKey] ?? contextDefaults();
       const hadBrowser = entry.tabs.some(tab => workspaceTabKind(tab) === "browser");
       const pageTabs = pages.map(page => `browser:${page.id}` as const);
       const retained = entry.tabs.flatMap(tab => tab === 'browser' && pageTabs.length ? [pageTabs[0]!] : workspaceTabKind(tab) !== 'browser' || tab === 'browser' || pageTabs.includes(tab as typeof pageTabs[number]) ? [tab] : []);
@@ -1238,7 +1247,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const selectBrowserPage = (pageId: string): void => {
     setContextTabsByProject(current => {
-      const entry = current[contextProjectKey] ?? userWorkspaceProject();
+      const entry = current[contextProjectKey] ?? contextDefaults();
       const active = `browser:${pageId}` as const;
       return { ...current, [contextProjectKey]: { ...entry, tabs: [...new Set([...entry.tabs.filter(tab => tab !== 'browser'), active])], active } };
     });
@@ -1328,6 +1337,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }).catch(error => reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : "File download failed." }));
   };
   const sessionLinkActions = {
+    privateWorkspace:!!props.officeUser,
     openInternal: openSessionUrl,
     download: downloadSessionUrl,
     downloadFile: downloadWorkspacePath,
@@ -1625,7 +1635,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
             {props.officeFeatures ? null : <button type="button" class="cli-rail-brand" aria-label="Dashboard home" title="Dashboard home" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>}
             {props.browser && !props.officeUser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
-            {props.officeUser ? <div class="user-rail-actions"><button type="button" class="cli-icon-button" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><button type="button" class="cli-icon-button" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title="Conversation view" onClick={() => setLayout(current => ({...current, sessionView: current.sessionView === "projects" ? "compact" : "projects"}))}><SessionListIcon /></button><button type="button" class="cli-icon-button" aria-pressed={section==='archived'} aria-label={section==='active'?'Show archived conversations':'Show active conversations'} title={section==='active'?'Archived conversations':'Active conversations'} onClick={()=>{setUserView('chats');setSection(current=>current==='active'?'archived':'active');}}><ArchiveIcon /></button></div> : null}
+            {props.officeUser ? <div class="user-rail-actions"><button type="button" class="cli-icon-button" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><button type="button" class="cli-icon-button" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title="Conversation view" onClick={() => setLayout(current => ({...current, sessionView: current.sessionView === "projects" ? "compact" : "projects"}))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div> : null}
             {!props.officeUser?<IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton>:null}
           </div>
             {!props.officeUser ? <nav class="cli-primary-nav" aria-label="Workspace navigation">
@@ -1747,6 +1757,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onRestore={() => props.onUnarchive(props.selectedSession!)}
                 onDelete={() => setDeleteTarget(props.selectedSession)}
                 onRenameCancelled={() => reportLocalFeedback({ level: "info", message: "Rename cancelled." })}
+                toolsAvailable={!props.officeUser || hasUserProjectContext && contextTabs.length>0}
                 terminalCollapsed={toolsCollapsed}
                 onToggleTerminal={() => { setContextCollapsed(current => !current); setContextAddOpen(false); }}
               /> : <header class="cli-conversation-header"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /><strong>{visiblePendingMessages[0]?.message.text.slice(0, 80) || 'New session'}</strong></header>}
@@ -1762,7 +1773,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     const agent = relatedAgents.find(session => session.id === id);
                     if (!agent) { props.onActionFeedback({ level: 'warning', message: 'This agent is not in the saved session list. Refresh sessions and try again.' }); return; }
                     openContextTab('agents', id);
-                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={transcriptRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={openDeliverable} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
+                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={transcriptRunning} logoUri={props.officeUser?undefined:props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={openDeliverable} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
                    {renderPendingMessages()}
                   {showWorking ? <WorkingMessage /> : null}
                   {quotaWaiting ? sessionNotice(quotaWaiting, quotaError ? sessionErrorDiagnostics(quotaError) : undefined) : null}
@@ -1787,7 +1798,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
                  {composerQuestion ? <section class="cli-composer-question" aria-label="Current question" aria-live="polite">{composerQuestionText ? <p class="cli-question-context">{composerQuestionText}</p> : null}<SessionQuestionPrompt assistantName={props.officeUser ? "Assistant" : "Codex"} key={`${draftKey}:${composerQuestion.id}`} message={composerQuestion} onReply={text => messageQueue.enqueue({text, attachments: []})} disabled={!messageQueue.ready} scope={draftKey} answered={answeredSessionQuestionIds([...props.messages, ...queuedQuestionAnswers])} autoOpen={!!activeSessionQuestion(props.messages)} /></section> : null}
                  {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist compact={!!props.officeUser} key={`${props.selectedSession.id}:${composerPlan.message.id}:${composerQuestion?.id ?? ''}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
-                 <Composer automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false} automaticProfile={props.selectedSession?.modelProfile} automaticThinking={props.selectedSession?.reasoningEffort} simple={!!props.officeUser}
+                 <Composer dictationScope={draftKey} presentation={presentation} automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false} automaticProfile={props.selectedSession?.modelProfile} automaticThinking={props.selectedSession?.reasoningEffort} simple={!!props.officeUser}
                   onFeedback={props.onActionFeedback}
                   attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))}
                   deviceId={props.selectedSession.deviceId}
@@ -1840,10 +1851,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             </>
           ) : (
             <>
-              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>{props.officeUser ? "What would you like to do?" : <>What should we build in {composerProjects.find((project) => project.path === (newChatProject ?? projectPath))?.label ?? "your workspace"}?</>}</h2><p>{props.officeUser ? "Ask a question, explore an idea, or describe something you want to create." : "Describe the task and Codex will work directly in this project."}</p></div></section>
+              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.officeUser?<AssistantMark/>:props.logoUri?<img src={props.logoUri} alt="" aria-hidden="true"/>:<CodexSessionIcon/>}</span><h2>{props.officeUser?presentation.welcomeTitle:<>What should we build in {composerProjects.find(project=>project.path===(newChatProject ?? projectPath))?.label??'your workspace'}?</>}</h2>{!props.officeUser||presentation.welcomeSubtitle?<p>{props.officeUser?presentation.welcomeSubtitle:'Describe the task and Codex will work directly in this project.'}</p>:null}{props.officeUser?<CorporateHome cards={presentation.catalog} skills={recommendedSkills} onChoose={text=>{setDraft(text);requestAnimationFrame(()=>document.querySelector<HTMLTextAreaElement>('.cli-composer textarea')?.focus());}}/>:null}</div></section>
 
               {legacyDraftWarning}
-              <Composer automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false}  simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject ?? projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
+              <Composer dictationScope={draftKey} presentation={presentation} automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false}  simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject ?? projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
             </>
           )}
         </main>
@@ -1856,6 +1867,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
         <WorkspaceContextPanel
+          presentation={presentation}
           officeFeatures={props.officeFeatures}
           liveState={props.liveState}
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
@@ -1871,19 +1883,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           browserDownloadUrl={contextProjectState.browserDownloadUrl}
           browserActionNonce={contextProjectState.browserActionNonce}
           onBrowserUrlHandled={nonce => setContextTabsByProject(current => {
-            const entry = current[contextProjectKey] ?? userWorkspaceProject();
+            const entry = current[contextProjectKey] ?? contextDefaults();
             return entry.browserActionNonce === nonce ? { ...current, [contextProjectKey]: { ...entry, browserUrl: undefined, browserPreviewPath: undefined } } : current;
           })}
           browserOpenNonce={contextProjectState.browserOpenNonce}
           onBrowserOpenHandled={nonce => setContextTabsByProject(current => {
-            const entry = current[contextProjectKey] ?? userWorkspaceProject();
+            const entry = current[contextProjectKey] ?? contextDefaults();
             return entry.browserOpenNonce === nonce ? { ...current, [contextProjectKey]: { ...entry, browserOpenNonce: undefined } } : current;
           })}
           browserPages={browserPages}
           browserSessionActive={Boolean(props.selectedSession && !props.dashboardMode && !props.taskBoardActive && (!props.officeUser || userView === 'chats'))}
           browserClosePageId={contextProjectState.browserClosePageId}
           onBrowserCloseHandled={() => setContextTabsByProject(current => {
-            const entry = current[contextProjectKey] ?? userWorkspaceProject();
+            const entry = current[contextProjectKey] ?? contextDefaults();
             return { ...current, [contextProjectKey]: { ...entry, browserClosePageId: undefined } };
           })}
           onBrowserPagesChange={updateBrowserPages}
@@ -1897,7 +1909,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           workspaceGitPending={contextProjectState.workspaceGitPending}
           workspaceGitNotice={contextProjectState.workspaceGitNotice}
           onWorkspaceGitPending={(pending, message, committedDraft) => setContextTabsByProject(current => {
-            const entry = current[contextProjectKey] ?? userWorkspaceProject();
+            const entry = current[contextProjectKey] ?? contextDefaults();
             return { ...current, [contextProjectKey]: { ...entry, workspaceGitPending: pending, workspaceGitNotice: message, commitDraft: committedDraft !== undefined && entry.commitDraft === committedDraft ? '' : entry.commitDraft } };
           })}
           commitDraft={contextProjectState.commitDraft ?? ''}
@@ -1962,7 +1974,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               return;
             }
             if (tab.startsWith('browser:')) {
-              setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? userWorkspaceProject()), browserClosePageId: workspaceTabPath(tab) } }));
+              setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? contextDefaults()), browserClosePageId: workspaceTabPath(tab) } }));
               return;
             }
             const next = contextTabs.filter((item) => item !== tab); setContextTabs(next); if (activeContextTab === tab) setActiveContextTab('env');
@@ -1991,7 +2003,7 @@ export function ConversationHeader(props: {
   onBack?: () => void; onRefresh: () => void;
   onRename?: (name: string) => void; onFork?: () => void; onCopyLink?: () => void; onShare?: () => void;
   onArchive?: () => void; onRestore?: () => void; onDelete?: () => void; onRenameCancelled?: () => void; onOpenInCodex?: () => void;
-  terminalCollapsed?: boolean; onToggleTerminal?: () => void;
+  toolsAvailable?:boolean; terminalCollapsed?: boolean; onToggleTerminal?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -2015,7 +2027,7 @@ export function ConversationHeader(props: {
     <div class="cli-conversation-actions">
       {props.workWindow}
       {!props.readOnly && props.archived ? <button type="button" class="cli-secondary-button" disabled={props.busy} onClick={props.onRestore}><RestoreIcon /> Restore</button> : null}
-      {!props.readOnly ? <><button type="button" class="cli-icon-button cli-inspector-toggle" aria-label={props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"} title="Workspace tools" aria-expanded={!props.terminalCollapsed} onClick={() => props.onToggleTerminal?.()}><PanelIcon /></button>
+      {!props.readOnly ? <>{props.toolsAvailable!==false?<button type="button" class="cli-icon-button cli-inspector-toggle" aria-label={props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"} title={props.privateWorkspace ? "Workspace context" : "Workspace tools"} aria-expanded={!props.terminalCollapsed} onClick={() => props.onToggleTerminal?.()}><PanelIcon /></button>:null}
       <div class="cli-session-menu-wrap" ref={menuRef}>
         <button type="button" class="cli-icon-button" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreIcon /></button>
         {menuOpen ? <div class="cli-session-menu" role="menu">
@@ -2027,7 +2039,7 @@ export function ConversationHeader(props: {
             {props.onOpenInCodex && !props.privateWorkspace ? <button type="button" role="menuitem" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onOpenInCodex?.(); }}><CodexSessionIcon /> Open in Codex</button> : null}
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); setRenaming(true); }}><PencilIcon /> Rename</button>
             {!props.privateWorkspace ?             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onFork?.(); }}><ForkIcon /> Fork session</button> : null}
-            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onArchive?.(); }}><ArchiveIcon /> Archive</button>
+            {!props.privateWorkspace ? <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onArchive?.(); }}><ArchiveIcon /> Archive</button> : null}
             <span />
             {!props.privateWorkspace ? <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onShare?.(); }}><ShareIcon /> Share</button> : null}
             <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); props.onCopyLink?.(); }}><LinkIcon /> Copy link</button>
@@ -2057,6 +2069,8 @@ export function ComposerSessionSettings(props: {
 }
 
 export function Composer(props: {
+  presentation?:PublicOfficePresentation;
+  dictationScope?:string;
   automaticModels?:boolean;autoLocked?:boolean;automaticProfile?:import('../../src/domain/officeModels').OfficeProfile;automaticThinking?:string;
   simple?: boolean;
   attachments: ChatAttachment[]; attachmentReading: boolean; onAttach: (files: File[]) => void; onRemoveAttachment: (id: string) => void;
@@ -2130,6 +2144,10 @@ export function Composer(props: {
     : reasoningChoices[0];
   const accessLabel = props.permissionProfile && !props.permissionProfile.startsWith(":") ? `Codex profile: ${props.permissionProfile}` : props.sandboxMode === "danger-full-access" ? "Full access" : props.sandboxMode === "read-only" ? "Read only" : props.sandboxMode === "workspace-write" ? "Workspace write" : "Codex permissions";
   const accessSummary = props.permissionProfile && !props.permissionProfile.startsWith(":") ? props.permissionProfile : props.sandboxMode === "danger-full-access" ? "Full" : props.sandboxMode === "read-only" ? "Read" : props.sandboxMode === "workspace-write" ? "Write" : "Codex";
+  const presentation=props.presentation??DEFAULT_OFFICE_PRESENTATION;
+  const publicModelLabel=Object.values(presentation.profileLabels).includes(selectedModel?.label??'')?selectedModel!.label:presentation.assistantName;
+  const displayedModel=props.simple?(props.automaticModels&&props.model==='auto'&&props.automaticProfile?presentation.profileLabels[props.automaticProfile]:presentation.profileLabels[props.model as keyof typeof presentation.profileLabels]??publicModelLabel):(codexModelLabel(selectedModel?.label)??'Default');
+  const displayedThinking=props.simple?(props.automaticModels&&props.model==='auto'?presentation.thinkingLabels[props.automaticThinking??'auto']:presentation.thinkingLabels[selectedReasoning??'medium']):undefined;
   const reasoningLabel = selectedReasoning === "xhigh" ? "XHigh" : capitalize(selectedReasoning ?? "medium");
   const showThinking = !(props.autoLocked || props.automaticModels && props.model === 'auto') || !!props.automaticProfile || !!props.automaticThinking && capitalize(props.automaticThinking) !== 'Auto';
   const hasMessage = Boolean(props.draft.trim() || props.attachments.length);
@@ -2142,17 +2160,17 @@ export function Composer(props: {
      {props.attachments.length ? <div class="cli-attachment-list">{props.attachments.map((file) => <span key={file.id}>{file.kind === "image" ? <button type="button" class="cli-attachment-preview" aria-label={`Preview ${file.name}`} title={`Preview ${file.name}`} onClick={() => setAttachmentPreview({ src: file.data, alt: file.name })}><img src={file.data} alt="" /></button> : <FileIcon />}{file.kind !== "image" ? <span title={file.name}>{file.name}</span> : null}<button type="button" disabled={props.attachmentReading} aria-label={`Remove ${file.name}`} onClick={() => props.onRemoveAttachment(file.id)}><CloseIcon /></button></span>)}</div> : null}
     <div class="cli-composer-resizer" role="separator" aria-label="Resize message composer" aria-orientation="horizontal" aria-valuemin={120} aria-valuenow={Math.round(props.composerHeight)} tabIndex={0} onPointerDown={props.onResize} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") event.preventDefault(); props.onResizeKeyDown(event); }}><span /></div>
     {commands.panel}
-    <textarea aria-autocomplete="list" aria-activedescendant={commands.active ? commands.selectedId : undefined} aria-controls={commands.active ? commands.id : undefined} ref={textarea} name="codex-message" value={props.draft} rows={1} maxLength={64_000} placeholder={props.simple ? "Message…" : "Message Codex…"} aria-label={props.simple ? "Message" : "Message Codex"} onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (commands.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
+    <textarea aria-autocomplete="list" aria-activedescendant={commands.active ? commands.selectedId : undefined} aria-controls={commands.active ? commands.id : undefined} ref={textarea} name="codex-message" value={props.draft} rows={1} maxLength={64_000} placeholder={props.simple ? presentation.composerPlaceholder : "Message Codex…"} aria-label={props.simple ? "Message" : "Message Codex"} onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (commands.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
     {props.draft.length > 60_000 ? <small class="cli-composer-limit" role="status">{64_000 - props.draft.length} characters left</small> : null}
     <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach files or documents (up to 32 files, 50 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" aria-hidden="true" /> : <AttachmentIcon />}</button>
-    </div><div class="cli-composer-submit">
-      {props.autoLocked?<span class="cli-composer-options-toggle user-auto-model" role="status" aria-label="Automatic assistant"><span class="cli-composer-model">{props.automaticProfile?officeProfileLabel(props.automaticProfile):'Auto'}</span>{showThinking ? <small class="cli-composer-effort">{props.automaticThinking?capitalize(props.automaticThinking):'Auto'}</small> : null}</span>:<div class="cli-composer-options-wrap" ref={optionsRef}>
-        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[props.feedback?.level !== "info" ? props.feedback?.message : undefined, codexModelLabel(selectedModel?.label) ?? "Default model", reasoningLabel, !props.simple?accessLabel:undefined].filter(Boolean).join(" · ")} onClick={() => setOptionsOpen((open) => !open)}>{!props.simple?<ContextMeter usage={props.tokenUsage} inButton />:null}<span class="cli-composer-model">{props.automaticModels&&props.model==='auto'&&props.automaticProfile?officeProfileLabel(props.automaticProfile):codexModelLabel(selectedModel?.label)??(props.simple?'Choose model':'Default')}</span>{showThinking ? <small class="cli-composer-effort">{props.automaticModels&&props.model==='auto'?(props.automaticThinking?capitalize(props.automaticThinking):'Auto'):reasoningLabel}</small> : null}{!props.simple?<span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span>:null}{props.feedback && props.feedback.level !== "info" ? <span class="cli-composer-warning" aria-label={props.feedback.message}><WarningIcon /></span> : <ChevronIcon />}</button>
+    {(!props.simple||presentation.dictationEnabled)?<VoiceDictation scope={props.dictationScope} key={props.projectPath??'general'} disabled={props.submitDisabled} language={props.simple?presentation.dictationLanguage:undefined} onText={value=>{const next=props.draft+(props.draft.trim()?'\n':'')+value;if(next.length>64000){props.onFeedback({level:'warning',message:'The dictated text exceeds the message limit. Shorten the draft before adding it.'});return false;}props.onDraft(next);textarea.current?.focus();return true;}}/>:null}</div><div class="cli-composer-submit">
+      {props.autoLocked?<span class="cli-composer-options-toggle user-auto-model" role="status" aria-label="Automatic assistant"><span class="cli-composer-model">{props.automaticProfile?presentation.profileLabels[props.automaticProfile]:presentation.profileLabels.auto}</span>{showThinking ? <small class="cli-composer-effort">{presentation.thinkingLabels[props.automaticThinking??'auto']}</small> : null}</span>:<div class="cli-composer-options-wrap" ref={optionsRef}>
+        <button ref={optionsToggleRef} type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} aria-controls={optionsOpen ? optionsId : undefined} title={[props.feedback?.level !== "info" ? props.feedback?.message : undefined, displayedModel, displayedThinking??reasoningLabel, !props.simple?accessLabel:undefined].filter(Boolean).join(" · ")} onClick={() => setOptionsOpen((open) => !open)}>{!props.simple?<ContextMeter usage={props.tokenUsage} inButton />:null}<span class="cli-composer-model">{displayedModel}</span>{showThinking ? <small class="cli-composer-effort">{displayedThinking??reasoningLabel}</small> : null}{!props.simple?<span class={"cli-composer-permission " + (props.sandboxMode === "danger-full-access" ? "is-full-access" : "")} title={accessLabel}><ShieldIcon />{accessSummary}</span>:null}{props.feedback && props.feedback.level !== "info" ? <span class="cli-composer-warning" aria-label={props.feedback.message}><WarningIcon /></span> : <ChevronIcon />}</button>
         {optionsOpen ? <div ref={optionsPanelRef} id={optionsId} class="cli-composer-options is-compact" popover="manual" role="group" aria-label="Message settings">
-          <header><strong>Message settings</strong><button type="button" aria-label="Close message settings" onClick={closeOptions}><CloseIcon /></button></header>
+          <header><strong>{props.simple ? "Assistant settings" : "Message settings"}</strong><button type="button" aria-label="Close message settings" onClick={closeOptions}><CloseIcon /></button></header>
           <div class="cli-options-grid">
-            <label><span>Model</span><select name="model" value={props.simple?props.model??"":selectedModel?.id??""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{props.simple&&!props.model?<option value="" disabled>Choose a model</option>:null}{modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
-            <label><span>{props.simple?'Thinking':'Reasoning'}</span><select name="reasoning-effort" value={props.automaticModels&&props.model==='auto'?'auto':selectedReasoning??''} aria-label={props.simple?'Thinking':'Reasoning'} disabled={props.automaticModels&&props.model==='auto'} onChange={event=>props.onReasoning(event.currentTarget.value)}>{props.automaticModels&&props.model==='auto'?<option value="auto">Auto</option>:reasoningChoices.map(effort=><option value={effort} key={effort}>{effort==='xhigh'?'Extra high':capitalize(effort)}</option>)}</select></label>
+            <label><span>Model</span><select name="model" value={props.simple?props.model??"":selectedModel?.id??""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{props.simple&&!props.model?<option value="" disabled>Choose a model</option>:null}{props.simple ? modelChoices.map(option => <option key={option.id} value={option.id}>{presentation.profileLabels[option.id as keyof typeof presentation.profileLabels]??(Object.values(presentation.profileLabels).includes(option.label)?option.label:presentation.assistantName)}</option>) : modelChoices.map((option) => <option value={option.id} key={option.id}>{codexModelLabel(option.label)}</option>)}</select></label>
+            <label><span>{props.simple?'Thinking':'Reasoning'}</span><select name="reasoning-effort" value={props.automaticModels&&props.model==='auto'?'auto':selectedReasoning??''} aria-label={props.simple?'Thinking':'Reasoning'} disabled={props.automaticModels&&props.model==='auto'} onChange={event=>props.onReasoning(event.currentTarget.value)}>{props.automaticModels&&props.model==='auto'?<option value="auto">{presentation.thinkingLabels['auto']}</option>:reasoningChoices.map(effort=><option value={effort} key={effort}>{props.simple?presentation.thinkingLabels[effort]??effort:effort==='xhigh'?'Extra high':capitalize(effort)}</option>)}</select></label>
             {!props.simple?<>
         <label><span>Access</span><select name="sandbox-mode" value={props.permissionProfile && !props.permissionProfile.startsWith(":") ? "" : props.sandboxMode ?? ""} aria-label="Access mode" disabled={props.accessDisabled || props.fullAccessOnly} onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}>{!props.sandboxMode || props.permissionProfile && !props.permissionProfile.startsWith(":") ? <option value="" disabled>{accessLabel}</option> : null}<option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
           <label class="cli-approval-control"><span>Auto approve</span><span><input type="checkbox" aria-label="Auto approve" checked={props.autoApprove === true} disabled={props.accessDisabled || !props.onAutoApprove} onChange={event => props.onAutoApprove?.(event.currentTarget.checked)} />{props.autoApprove ? 'On' : 'Off'}</span></label>
@@ -2229,7 +2247,7 @@ const SessionQuotaRecoveryContext = createContext<string | undefined>(undefined)
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
-const SessionLinkContext = createContext<{ openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
+const SessionLinkContext = createContext<{ privateWorkspace?:boolean; openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
 
 function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
   const seen = new Set<string>();
@@ -2428,6 +2446,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
   const [copyNotice, setCopyNotice] = useState('');
   const markdownRoot = useRef<HTMLDivElement>(null);
   const links = useContext(SessionLinkContext);
+  const generatedFiles = links.privateWorkspace ? generatedWorkspaceFiles(text) : [];
   const gallery = () => Array.from(markdownRoot.current?.querySelectorAll('img') ?? []).map(image => ({ src: image.getAttribute('src') || image.src, alt: image.alt }));
   const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
     const file = (event.target as Element).closest<HTMLAnchorElement>('a[data-workspace-file]');
@@ -2477,7 +2496,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
       button.disabled = false;
     }
   };
-  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} /><span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
+  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{generatedFiles.length?<section class="generated-files-card" aria-label="Generated files"><header>Generated files <span>{generatedFiles.length}</span></header><div>{generatedFiles.map(file=><button type="button" key={file.path} onClick={()=>links.downloadFile(file.path)}><FileIcon /><span>{file.name}</span><DownloadIcon /></button>)}</div></section>:null}<span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
 }
 
 function isWorkspaceDownloadPath(path: string): boolean {
@@ -2618,7 +2637,8 @@ function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: No
   </details>; })}</div>;
 }
 
-function WorkspaceEnvironmentView(props: {
+export function WorkspaceEnvironmentView(props: {
+  presentation?:PublicOfficePresentation;
   officeFeatures?: string[];
   hideTerminal?: boolean;
   standalone?: boolean;
@@ -2633,21 +2653,22 @@ function WorkspaceEnvironmentView(props: {
   editedFiles: number; dirtyFiles: number;
   onRefresh: () => void; onOpen: (tab: WorkspaceToolTab, path?: string) => void;
 }) {
+  const presentation=props.presentation??DEFAULT_OFFICE_PRESENTATION;
   const environment = props.environment;
   const runningAgents = props.agents.filter(agent => agent.status === 'running').length;
   const unknownAgents = props.agents.filter(agent => agent.status === 'unknown').length;
   const projectTerminals = props.terminals.filter(terminal => terminal.cwd && props.projectPath && canonicalWebPath(terminal.cwd) === canonicalWebPath(props.projectPath));
   const detail = (label: string, value?: string | number) => <div><dt>{label}</dt><dd title={String(value ?? '')}>{value ?? 'Unavailable'}</dd></div>;
   const surface = props.standalone && !props.targetDeviceId ? 'codex-manager' : props.session?.sessionSurface;
-  if (props.officeFeatures) return <section class="cli-inspector-view cli-environment-view user-environment" aria-label="Environment"><div class="cli-inspector-body">
-    <dl>
-      {detail('Project', environment?.projectName || 'My workspace')}
-      {detail('Connection', props.connected ? 'Connected' : 'Offline')}
-      {props.session ? <>{detail('Conversation', props.session.title)}{detail('Activity', props.session.queueEnabled ? 'Queued' : props.session.status === 'running' ? 'Working' : 'Available')}{props.session.model ? detail('Model', props.session.modelProfile?officeProfileLabel(props.session.modelProfile):props.session.model.replace(/^gpt-/i, '')) : null}{props.session.reasoningEffort?detail('Thinking',capitalize(props.session.reasoningEffort)):null}{props.session.queuePosition ? detail('Queue position', props.session.queuePosition) : null}{props.session.updatedAt ? detail('Updated', new Date(props.session.updatedAt).toLocaleString()) : null}</> : null}
-      {props.editedFiles ? detail('Changed files', props.editedFiles) : null}
-      {props.dirtyFiles ? detail('Unsaved files', props.dirtyFiles) : null}
-    </dl>
-    <div class="cli-inspector-shortcuts">{props.officeFeatures.includes('files') ? <button type="button" onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span></button> : null}{props.officeFeatures.includes('browser') ? <button type="button" onClick={() => props.onOpen('browser')}><BrowserIcon /><span>Browser</span></button> : null}</div>
+  const usage=props.liveState?.tokenUsage??props.session?.tokenUsage,context=cliContextUsage(usage);
+  const contextSummary=context?<section class="environment-context" aria-label="Context usage"><header><span>Context</span><strong>{context.percent}% used</strong></header><progress aria-label="Context used" max={context.limit} value={context.used}/><small>{formatTokenCount(context.used)} / {formatTokenCount(context.limit)} tokens</small></section>:null;
+  if (props.officeFeatures) return <section class="cli-inspector-view cli-environment-view user-environment compact-environment" aria-label="Environment"><div class="cli-inspector-body">
+    <header class="environment-identity"><EmptyFolderIcon/><strong>{environment?.projectName||'My workspace'}</strong><span>{props.connected?'Connected':'Offline'}</span></header>
+    {props.editedFiles||props.dirtyFiles?<section class="environment-changes" aria-label="Workspace changes"><header>Changes</header><button type="button" disabled={!props.officeFeatures.includes('files')} onClick={()=>props.onOpen('files')}><FileIcon/><span>{props.editedFiles} changed {props.editedFiles===1?'file':'files'}{props.dirtyFiles?` ? ${props.dirtyFiles} unsaved`:''}</span><ChevronIcon/></button></section>:null}
+    {contextSummary}
+    <nav class="environment-tools" aria-label="Workspace tools">{props.officeFeatures.includes('files')?<button type="button" onClick={()=>props.onOpen('files')}><FileIcon/><span>Files</span><ChevronIcon/></button>:null}{props.officeFeatures.includes('browser')?<button type="button" onClick={()=>props.onOpen('browser')}><BrowserIcon/><span>Browser</span><ChevronIcon/></button>:null}{props.officeFeatures.includes('git')?<button type="button" onClick={()=>props.onOpen('git')}><WorkspaceToolIcon kind="branch"/><span>Git</span><ChevronIcon/></button>:null}</nav>
+    {props.session?<details class="cli-environment-section"><summary><h3>Conversation</h3><ChevronIcon/></summary><dl>{detail('Title',props.session.title)}{detail('Activity',props.session.queueEnabled?'Queued':props.session.status==='running'?'Working':'Available')}{props.session.model?detail('Model',props.session.modelProfile?presentation.profileLabels[props.session.modelProfile]:presentation.assistantName):null}{props.session.reasoningEffort?detail('Thinking',presentation.thinkingLabels[props.session.reasoningEffort]??presentation.thinkingLabels['auto']):null}{props.session.queuePosition?detail('Queue position',props.session.queuePosition):null}{props.session.updatedAt?detail('Updated',new Date(props.session.updatedAt).toLocaleString()):null}</dl></details>:null}
+    {usage?<details class="cli-environment-section"><summary><h3>Session usage</h3><ChevronIcon/></summary><LiveTurnDetails usage={usage}/></details>:null}
   </div></section>;
   return <section class="cli-inspector-view cli-environment-view" aria-label="Environment" aria-busy={props.loading}>
     <div class="cli-inspector-body">
@@ -2908,6 +2929,7 @@ export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]
 }
 
 function WorkspaceContextPanel(props: {
+  presentation?:PublicOfficePresentation;
   officeFeatures?: string[];
   onDashboardTarget?: (target: HTMLElement | null) => void;
   renderAccounts?: () => preact.ComponentChildren;
@@ -3062,7 +3084,7 @@ function WorkspaceContextPanel(props: {
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {!props.collapsed && props.activeTab === 'accounts' ? <section class="workspace-dashboard" aria-label="Dashboard" ref={props.onDashboardTarget} /> : null}
     <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}>{props.browserSessionActive ? <WorkspaceBrowser privateWorkspace={!!props.officeFeatures} key={props.scopeKey} sessionId={props.session?.id} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === 'browser' ? activePath ?? '' : undefined} closePageId={props.browserClosePageId} initialUrl={props.officeFeatures ? props.browserPreviewPath || props.browserUrl : props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} onUrlHandled={props.onBrowserUrlHandled} openPageNonce={props.browserOpenNonce} onOpenPageHandled={props.onBrowserOpenHandled} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /> : null}</div>
-    {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView officeFeatures={props.officeFeatures} hideTerminal={props.hideTerminal} standalone={props.standalone} targetDeviceId={props.targetDeviceId} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} systemInfoEnabled={props.systemInfoEnabled} systemStatus={props.systemStatus} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
+    {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView presentation={props.presentation} officeFeatures={props.officeFeatures} hideTerminal={props.hideTerminal} standalone={props.standalone} targetDeviceId={props.targetDeviceId} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} systemInfoEnabled={props.systemInfoEnabled} systemStatus={props.systemStatus} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} standalone={props.standalone && !props.targetDeviceId} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
     </div>
@@ -3625,6 +3647,8 @@ function activityLabel(message: DashboardCliSessionMessage): string {
 }
 function EmptySessions(props: { simple?:boolean; search: boolean; section: CliSessionSection }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? props.simple ? "Try another conversation title." : "Try another title or session ID." : props.section === "active" ? props.simple ? "Start a chat to see it here." : "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }
 function ConversationEmpty({ archived, logoUri }: { archived: boolean; logoUri?: string }) { return <div class="cli-conversation-empty">{logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<h2>No messages yet</h2><p>{archived ? "This archived transcript has no readable messages." : "Send a message below to continue this session."}</p></div>; }
+function AssistantMark(){return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>;}
+
 function SessionRailSkeleton() { return <div class="cli-skeleton-list" aria-label="Loading sessions"><i /><i /><i /><i /></div>; }
 function MessageSkeleton() { return <div class="cli-message-skeleton" aria-label="Loading messages"><i /><i /><i /></div>; }
 function IconButton(props: { label: string; title?: string; disabled?: boolean; danger?: boolean; className?: string; pressed?: boolean; onClick: () => void; children: preact.ComponentChildren }) { return <button type="button" class={`cli-icon-button ${props.className ?? ""} ${props.danger ? "is-danger" : ""}`} disabled={props.disabled} aria-label={props.label} aria-pressed={props.pressed} title={props.title ?? props.label} onClick={props.onClick}>{props.children}</button>; }
@@ -3748,3 +3772,5 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
     </details>)}
   </div>;
 }
+
+function DownloadIcon() { return <Icon><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }

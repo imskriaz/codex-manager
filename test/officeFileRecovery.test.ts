@@ -1,4 +1,4 @@
-﻿import {afterEach,beforeEach,expect,it} from 'vitest';
+import {afterEach,beforeEach,expect,it} from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -35,9 +35,9 @@ it('imports large text idempotently, and rejects changing an existing upload, pr
  for(const file of ['../escape.txt','.workspace-trash/secret.txt','.workspace-history/secret.txt'])await expect(writeOfficeBinary(user,user.workspacePath,file,Buffer.from('no'))).rejects.toThrow();
  await expect(writeOfficeBinary({...user,limits:{storageMb:1,dailyTokens:0,dailyRequests:0}},user.workspacePath,'large.txt',Buffer.alloc(1048576))).rejects.toThrow('storage');
 });
-it('creates real XLSX, DOCX and PDF documents and reads them in bounded workers',async()=>{
- for(const extension of ['xlsx','docx','pdf']){
- const data=await createOfficeDocument({path:'costing.'+extension,text:'# Buyer follow-up\nLab dip approval needed',sheets:[{name:'Costing',rows:[['Style','Quantity','Unit cost','Order value'],['ST100',2400,2.75,{formula:'B2*C2'}]]}]});
+it('creates real XLSX, DOCX, PPTX and PDF documents and reads them in bounded workers',async()=>{
+ for(const extension of ['xlsx','docx','pptx','pdf']){
+ const data=await createOfficeDocument({path:'costing.'+extension,text:'# Buyer follow-up\nLab dip approval needed',slides:[{title:'Buyer follow-up',bullets:['Lab dip approval needed'],notes:'Confirm with buyer.'}],sheets:[{name:'Costing',rows:[['Style','Quantity','Unit cost','Order value'],['ST100',2400,2.75,{formula:'B2*C2'}]]}]});
  expect(data.length).toBeGreaterThan(500);let text:string;try{text=await extractOfficeDocument('costing.'+extension,data);}catch(error){throw new Error(extension+': '+String(error));}expect(text).toMatch(extension==='xlsx'?/ST100/:/Lab dip/);
  if(extension==='xlsx')expect(text).toMatch(/B2\*C2/);
  }
@@ -47,9 +47,17 @@ it('rejects invalid document headers, external spreadsheet formulas and unsuppor
  await expect(extractOfficeDocument('fake.pdf',Buffer.from('not a PDF'))).rejects.toThrow('format');
  await expect(createOfficeDocument({path:'attack.xlsx',sheets:[{name:'Sheet',rows:[[{formula:'WEBSERVICE("https://invalid.test")'}]]}]})).rejects.toThrow('local');
  await expect(createOfficeDocument({path:'bad.exe',text:'No'})).rejects.toThrow('XLSX');
+ await expect(createOfficeDocument({path:'bad.pptx',slides:[{title:'Oversized',bullets:['x'.repeat(261)]}]})).rejects.toThrow('short bullets');
+ await expect(createOfficeDocument({path:'bad.pptx',slides:[{title:'Test',bullets:[]}],theme:{accent:'url(external)'}})).rejects.toThrow('hexadecimal');
 });
 
 it('renders spreadsheet tables and PDF pages as sandboxable document previews, including Bengali text',async()=>{
  const pdf=await createOfficeDocument({path:'buyer.pdf',text:'Buyer follow-up: নমুনা অনুমোদন প্রয়োজন'});expect(await extractOfficeDocument('buyer.pdf',pdf,'html')).toMatch(/data:image\/png;base64,/);
  const xlsx=await createOfficeDocument({path:'buyer.xlsx',sheets:[{name:'Buyer',rows:[['<script>unsafe</script>',2400]]}]});const html=await extractOfficeDocument('buyer.xlsx',xlsx,'html');expect(html).toContain('<table>');expect(html).toContain('&lt;script&gt;');expect(html).not.toContain('<script>');
+ const pptx=await createOfficeDocument({path:'buyer.pptx',slides:[{title:'<script>Buyer</script>',bullets:['Approval pending']}]});const outline=await extractOfficeDocument('buyer.pptx',pptx,'html');expect(outline).toContain('Text content only');expect(outline).toContain('&lt;script&gt;Buyer');expect(outline).not.toContain('<script>');
 },30000);
+
+it('keeps each conversation upload in its own folder and charges its bytes',async()=>{
+ const id=crypto.randomUUID(),file={id:'upload',name:'brief.txt',kind:'text' as const,mimeType:'text/plain',size:5,data:'brief'};
+ const first=await importOfficeAttachment(user,file,true,id),second=await importOfficeAttachment(user,file,true,crypto.randomUUID());expect(first.path).toContain('.workspace-sessions/'+id+'/');expect(first.path).not.toBe(second.path);expect(await fs.readFile(path.join(user.workspacePath,first.path),'utf8')).toBe('brief');
+});

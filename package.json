@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.87",
+  "version": "3.0.0-pre.88",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -94,7 +94,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -443,6 +443,42 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Allow User Workspace users to choose Auto, Regular, Professional or Expert. Turn off to lock Auto."
+        },
+        "codexManager.officeDefaultSkills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "project-planning",
+            "document-drafting",
+            "spreadsheet-analysis",
+            "meeting-follow-up",
+            "research-briefs",
+            "operations-tracking"
+          ],
+          "scope": "machine",
+          "markdownDescription": "Corporate skills enabled by default for User Workspace conversations."
+        },
+        "codexManager.officeAutoPresentation": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Allow the assistant to show relevant permitted project panels in User Workspace."
+        },
+        "codexManager.officeSessionRetentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 365,
+          "scope": "machine",
+          "markdownDescription": "Number of days to retain deleted User Workspace conversations and session files for support before permanent cleanup."
+        },
+        "codexManager.officePresentation": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "markdownDescription": "User Workspace assistant identity, welcome text, mode labels and contextual card catalog. Edit from Master workspace settings."
         }
       }
     },
@@ -552,7 +588,9 @@
     "regenerator-runtime": "0.14.1",
     "undici": "6.29.1",
     "web-push": "^3.6.7",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "jszip": "3.10.1",
+    "pptxgenjs": "4.0.1"
   },
   "overrides": {
     "qs": "^6.16.1",
@@ -564,6 +602,9 @@
     "minimatch": "^11.0.1",
     "exceljs": {
       "uuid": "11.1.1"
+    },
+    "pptxgenjs": {
+      "image-size": "^2.1.0"
     }
   },
   "devDependencies": {

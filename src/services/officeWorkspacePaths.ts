@@ -62,7 +62,7 @@ export async function manageOfficeWorkspacePaths(user:OfficeUser,project:string,
       const destination=await resolve(root,cwd,args['destination'],true);
       if(destination===root||destination===target)throw new Error('Choose a different destination file.');
       if(operation==='copy_file'){
-        if(user.limits?.storageMb&&(await officeStorageBytes(root))+before.entries[0]!.bytes>user.limits.storageMb*1048576)throw new Error('Your storage allowance is full. Remove files before copying.');
+        if(user.limits?.storageMb&&(await officeStorageBytes(root,user.id))+before.entries[0]!.bytes>user.limits.storageMb*1048576)throw new Error('Your storage allowance is full. Remove files before copying.');
         await fs.copyFile(target,destination,constants.COPYFILE_EXCL);
       }else{
         await fs.link(target,destination);

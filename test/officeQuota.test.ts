@@ -58,3 +58,11 @@ it('settles unknown usage into a reservation, recovers stale claims, reconciles 
  vi.useFakeTimers();const next=beginOfficeTokens(user,30);vi.advanceTimersByTime(660001);recoverOfficeTokens(user.id);expect(readOfficeUsage(user.id)).toMatchObject({pending:false,reservedTokens:30});recordOfficeTokens(user.id,9,next);expect(readOfficeUsage(user.id).tokens).toBe(12);
  const before=readOfficeUsage(user.id).day;const crossing=beginOfficeTokens(user,10);vi.setSystemTime(new Date(readOfficeUsage(user.id).resetsAt+1));recordOfficeTokens(user.id,7,crossing);expect(readOfficeUsage(user.id).tokens).toBe(0);expect(store.get<any>(`office-usage:${user.id}`,before).tokens).toBe(19);
 });
+
+it('charges active and retained conversations, memory, uploads and project files to their owner',async()=>{
+ await fs.mkdir(path.join(user.workspacePath,'uploads'));await fs.writeFile(path.join(user.workspacePath,'uploads','input.txt'),'upload');await fs.mkdir(path.join(user.workspacePath,'project'));await fs.writeFile(path.join(user.workspacePath,'project','output.txt'),'generated');
+ store.set(`office-sessions:${user.id}`,'active',{text:'active conversation'});store.set(`office-sessions:${user.id}`,'deleted',{deletedAt:Date.now(),text:'retained conversation'});store.set('office-memory',user.id,{entries:['remember me']});store.set('office-sessions:another','private',{text:'x'.repeat(1000)});
+ const expected=15+Buffer.byteLength(JSON.stringify({text:'active conversation'}))+Buffer.byteLength(JSON.stringify({deletedAt:store.get<any>(`office-sessions:${user.id}`,'deleted').deletedAt,text:'retained conversation'}))+Buffer.byteLength(JSON.stringify({entries:['remember me']}));
+ expect(await officeStorageBytes(user.workspacePath,user.id)).toBe(expected);expect(await officeStorageBytes(user.workspacePath)).toBe(15);
+ store.set(`office-sessions:${user.id}`,'full',{text:'x'.repeat(1048576)});await expect(checkOfficeStorage(user,user.workspacePath,'new.txt','x')).rejects.toThrow('storage allowance');
+});

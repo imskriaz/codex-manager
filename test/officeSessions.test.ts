@@ -87,7 +87,7 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined,expect.any(String),undefined);
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",expect.arrayContaining([{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}]),expect.any(AbortSignal),"",expect.any(Function),undefined,expect.any(String),undefined);
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -169,12 +169,12 @@ it("applies personal instructions to the next message and honors a changed model
  const {service,generate}=setup();const first=await service.handle(user,{...start(),payload:{text:"Hello",model:"fast"}});
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
  expect(generate.mock.calls[0]?.[1]).toBe("fast");
- expect(generate.mock.calls[0]?.[2].slice(0,3)).toEqual([{role:"system",content:"Help every user clearly."},{role:"system",content:user.defaultPrompt},{role:"user",content:"Response preferences (apply within workspace policy): Use short answers."}]);
+ expect(generate.mock.calls[0]?.[2]).toEqual(expect.arrayContaining([{role:"system",content:"Help every user clearly."},{role:"system",content:user.defaultPrompt},{role:"user",content:"Response preferences (apply within workspace policy): Use short answers."}]));
  vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),globalPrompt:"Updated global guidance."});
  await service.handle(user,{type:"dashboard:action",action:"sendCodexCliSessionMessage",requestId:"next-model",payload:{sessionId:first.cliSession!.id,text:"Continue",model:"strong"}});
  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
  expect(generate.mock.calls[1]?.[1]).toBe("strong");
- expect(generate.mock.calls[1]?.[2][0]).toEqual({role:"system",content:"Updated global guidance."});
+ expect(generate.mock.calls[1]?.[2]).toEqual(expect.arrayContaining([{role:"system",content:"Updated global guidance."},{role:"system",content:teamSettings.readTeamSettings().presentation.identityPrompt}]));
 });
 it("offers available models and preserves chat when discovery fails",async()=>{
  const models=vi.fn(async()=>[{id:"fast",label:"Fast",reasoningEfforts:[]}]);
@@ -287,5 +287,12 @@ it('starts another chat without inheriting project messages or pending recovery 
  const {service,generate}=setup();await service.handle(user,{...start('old-project','Edit index.html for Earlier project'),payload:{text:'Edit index.html for Earlier project',projectPath:'C:/team/alex/earlier'}});await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
  const first=storage.get<any>(`office-sessions:${user.id}`,service.list(user.id)[0].id);first.turns[0].state='uncertain';storage.set(`office-sessions:${user.id}`,first.id,first);
  await service.handle(user,start('fresh-chat','Hi, how are you?'));await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
- expect(JSON.stringify(generate.mock.calls[1][2])).not.toMatch(/Earlier project|index.html|earlier reply/i);expect(generate.mock.calls[1][4]).toBe(user.workspacePath);
+ expect(JSON.stringify(generate.mock.calls[1][2])).not.toMatch(/Earlier project|index.html|earlier reply/i);expect(generate.mock.calls[1][4]).toBe("");
+});
+
+it('soft deletes only on explicit deletion, hides retained chats, and never expires an active old chat',async()=>{
+ const {service}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ const id=first.cliSession!.id,saved=storage.get<any>(`office-sessions:${user.id}`,id);saved.updatedAt='2000-01-01T00:00:00Z';storage.set(`office-sessions:${user.id}`,id,saved);service.pump();expect(service.list(user.id)).toHaveLength(1);
+ await service.handle(user,{type:'dashboard:action',action:'deleteCodexCliSession',requestId:'remove',payload:{sessionId:id,confirmed:true}});expect(service.list(user.id)).toEqual([]);expect(storage.get<any>(`office-sessions:${user.id}`,id)).toMatchObject({deletedAt:expect.any(Number),turns:expect.any(Array)});
+ await expect(service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-deleted',payload:{sessionId:id}})).rejects.toThrow('unavailable');service.pump();expect(service.list(user.id)).toEqual([]);
 });

@@ -37,26 +37,29 @@ export function TagManagerModal(props: {
   if (editing?.operation === 'rename') { try { if (!normalizeAccountTags([editing.replacement]).length) validation = 'Enter a tag name.'; } catch (error) { validation = error instanceof Error ? error.message : String(error); } }
   const visibleGroups = [...groups.values()].filter(group => group.tag.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => a.tag.localeCompare(b.tag));
   const taggedCount = props.accounts.filter(account => account.tags?.length).length;
-  return <ModalShell open title="Tags" closeLabel="Close tag management" className="dashboard-modal-compact tag-manager-modal" closeDisabled={pending} onClose={props.onClose}>
+  return <><ModalShell open title="Tags" closeLabel="Close tag management" className="dashboard-modal-compact tag-manager-modal" closeDisabled={pending||!!editing} onClose={props.onClose}>
     <div class="tag-manager-summary"><span>{groups.size} tag{groups.size === 1 ? '' : 's'} · {taggedCount} account{taggedCount === 1 ? '' : 's'}</span><input type="search" aria-label="Find tags" placeholder="Find a tag…" value={query} onInput={event => setQuery(event.currentTarget.value)} /></div>
     <div class="tag-manager-list">{visibleGroups.map(group => <div class="tag-manager-entry" key={group.tag.toLowerCase()}>
       <div class="tag-manager-row"><div class="tag-manager-name"><strong title={group.tag}>{group.tag}</strong><span>{group.accounts.length} account{group.accounts.length === 1 ? '' : 's'} · {group.accounts.filter(account => account.enabled).length} enabled</span></div><div class="tag-manager-tools">
         <button type="button" title={`Filter accounts by ${group.tag}`} aria-label={`Filter accounts by ${group.tag}`} disabled={pending} onClick={() => props.onFilter(group.tag)}><EyeIcon /></button>
-        <button type="button" title={`Rename ${group.tag}`} aria-label={`Rename ${group.tag}`} disabled={pending || !props.connected} onClick={() => setEditing({ tag: group.tag, operation: 'rename', replacement: group.tag })}><EditTagsIcon /></button>
-        <button type="button" title={`Enable accounts tagged ${group.tag}`} aria-label={`Enable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => account.enabled)} onClick={() => setEditing({ tag: group.tag, operation: 'enable', replacement: '' })}><SuccessIcon /></button>
-        <button type="button" title={`Disable accounts tagged ${group.tag}`} aria-label={`Disable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => !account.enabled)} onClick={() => setEditing({ tag: group.tag, operation: 'disable', replacement: '' })}><EyeOffIcon /></button>
-        <button type="button" class="danger" title={`Remove tag ${group.tag}`} aria-label={`Remove tag ${group.tag}`} disabled={pending || !props.connected} onClick={() => setEditing({ tag: group.tag, operation: 'remove', replacement: '' })}>{renderRemoveIcon()}</button>
+        <button type="button" title={`Rename ${group.tag}`} aria-label={`Rename ${group.tag}`} disabled={pending || !props.connected} onClick={() => {setRequestId(undefined);setEditing({ tag: group.tag, operation: 'rename', replacement: group.tag });}}><EditTagsIcon /></button>
+        <button type="button" title={`Enable accounts tagged ${group.tag}`} aria-label={`Enable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => account.enabled)} onClick={() => {setRequestId(undefined);setEditing({ tag: group.tag, operation: 'enable', replacement: '' });}}><SuccessIcon /></button>
+        <button type="button" title={`Disable accounts tagged ${group.tag}`} aria-label={`Disable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => !account.enabled)} onClick={() => {setRequestId(undefined);setEditing({ tag: group.tag, operation: 'disable', replacement: '' });}}><EyeOffIcon /></button>
+        <button type="button" class="danger" title={`Remove tag ${group.tag}`} aria-label={`Remove tag ${group.tag}`} disabled={pending || !props.connected} onClick={() => {setRequestId(undefined);setEditing({ tag: group.tag, operation: 'remove', replacement: '' });}}>{renderRemoveIcon()}</button>
       </div></div>
-      {editing?.tag.toLowerCase() === group.tag.toLowerCase() ? <form class="tag-manager-confirm" onSubmit={event => { event.preventDefault(); if (!pending && props.connected && !validation) setRequestId(props.onAction(group.tag, editing.operation, group.accounts.map(account => account.id), editing.replacement)); }}>
-        {editing.operation === 'rename' ? <label>New tag name<input ref={renameInput} aria-label="New tag name" value={editing.replacement} maxLength={24} readOnly={pending} onInput={event => setEditing({ ...editing, replacement: event.currentTarget.value })} /></label> : <span>{editing.operation === 'remove' ? `Remove this tag from ${group.accounts.length} accounts? Accounts are kept.` : `${editing.operation === 'enable' ? 'Enable' : 'Disable'} ${group.accounts.length} tagged accounts?`}</span>}
-        <div><button type="button" disabled={pending} onClick={() => setEditing(undefined)}>Cancel</button><button type="submit" disabled={pending || !props.connected || !!validation || editing.operation === 'rename' && editing.replacement === group.tag}>{pending ? 'Applying…' : editing.operation === 'rename' ? 'Rename tag' : editing.operation === 'remove' ? 'Remove tag' : 'Confirm'}</button></div>
-        {validation ? <small role="alert">{validation}</small> : null}
-      </form> : null}
+
     </div>)}</div>
     {!groups.size ? <p class="account-tags-help">No tags yet. Add tags from an account's menu.</p> : null}
     {groups.size > 0 && !visibleGroups.length ? <p class="account-tags-help">No matching tags.</p> : null}
     {result?.message || !props.connected ? <div class={result?.status === 'failed' || !props.connected ? 'account-tags-error' : 'tag-manager-status'} role="status">{!props.connected ? 'Offline. Reconnect to change tagged accounts.' : result?.message}</div> : null}
-  </ModalShell>;
+  </ModalShell>
+  <ModalShell open={!!editing} title={editing?.operation==='rename'?'Rename tag':editing?.operation==='remove'?'Remove tag?':editing?.operation==='enable'?'Enable tagged accounts?':'Disable tagged accounts?'} closeLabel="Cancel tag action" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={pending} onClose={()=>setEditing(undefined)}>
+    {editing?<form class="tag-manager-confirm" onSubmit={event=>{event.preventDefault();const group=groups.get(editing.tag.toLowerCase());if(!pending&&props.connected&&!validation&&group)setRequestId(props.onAction(group.tag,editing.operation,group.accounts.map(account=>account.id),editing.replacement));}}>
+      {editing.operation==='rename'?<label>New tag name<input ref={renameInput} autoFocus aria-label="New tag name" value={editing.replacement} maxLength={24} readOnly={pending} onInput={event=>setEditing({...editing,replacement:event.currentTarget.value})}/></label>:<p>{editing.operation==='remove'?`Remove this tag from ${groups.get(editing.tag.toLowerCase())?.accounts.length??0} accounts? Accounts are kept.`:`${editing.operation==='enable'?'Enable':'Disable'} ${groups.get(editing.tag.toLowerCase())?.accounts.length??0} tagged accounts?`}</p>}
+      <div class="dialog-actions"><button type="button" disabled={pending} onClick={()=>setEditing(undefined)}>Cancel</button><button type="submit" disabled={pending||!props.connected||!!validation||editing.operation==='rename'&&editing.replacement===editing.tag}>{pending?'Applying...':editing.operation==='rename'?'Rename tag':editing.operation==='remove'?'Remove tag':'Confirm'}</button></div>
+      {validation?<p role="alert">{validation}</p>:null}{result?.status!=='completed'&&result?.message||!props.connected?<p role="alert">{!props.connected?'Offline. Reconnect to change tagged accounts.':result?.message}</p>:null}
+    </form>:null}
+  </ModalShell></>;
 }
 
 export function AccountTagsModal(props: {

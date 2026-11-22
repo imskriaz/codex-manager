@@ -14,10 +14,17 @@ async function work(input:{data:Uint8Array;extension:string;format?:'text'|'html
   if(input.format==='html')return '<h1>Workbook</h1><p>Formulas without saved results display as formulas. Open in a spreadsheet app to recalculate.</p>'+html.join('');
  }
  else if(extension==='pdf'){const {PDFParse}=await import('pdf-parse');const parser=new PDFParse({data});try{if(input.format==='html'){const result=await parser.getScreenshot({first:3,desiredWidth:900,imageDataUrl:true,imageBuffer:false});const html='<p>Showing '+result.pages.length+' of '+result.total+' pages. Download the PDF for the complete document.</p>'+result.pages.map(page=>'<p>Page '+page.pageNumber+'</p><img style="display:block;width:100%;height:auto" alt="Page '+page.pageNumber+'" src="'+page.dataUrl+'"/>').join('');if(html.length>6000000)throw new Error('Preview too large');return html;}const result=await parser.getText({first:40});text=result.text;}finally{await parser.destroy();}}
+ else if(extension==='pptx'){
+  const {default:JSZip}=await import('jszip'),zip=await JSZip.loadAsync(data);const files=Object.keys(zip.files).filter(name=>/^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a,b)=>Number(a.match(/slide(\d+)\.xml$/)![1])-Number(b.match(/slide(\d+)\.xml$/)![1]));
+  if(!files.length||files.length>200||Object.keys(zip.files).length>5000)throw new Error('Presentation is too complex.');
+  const decode=(value:string)=>value.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[a-f0-9]+);/gi,entity=>{const named:Record<string,string>={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&apos;':"'"};if(named[entity])return named[entity]!;const code=entity[2]?.toLowerCase()==='x'?parseInt(entity.slice(3,-1),16):parseInt(entity.slice(2,-1),10);return Number.isInteger(code)&&code>0&&code<=0x10ffff?String.fromCodePoint(code):'';});
+  for(const [index,name] of files.entries()){const xml=await zip.file(name)!.async('string');if(xml.length>2000000)throw new Error('Slide is too large.');text+='\nSlide '+(index+1)+'\n'+[...xml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map(match=>decode(match[1]!)).join('\n')+'\n';if(text.length>120000)break;}
+  if(input.format==='html')return '<h1>Presentation outline</h1><p>Text content only. Download the PPTX to review the original slide layout and media.</p><pre style="white-space:pre-wrap;font:inherit">'+text.slice(0,120000).replace(/[&<>]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[char]!)+'</pre>';
+ }
  else throw new Error('This document format is not supported.');
  if(!text.trim())throw new Error('No readable text was found. For a scanned document, attach clear page images for review.');
  return text.length>120000?text.slice(0,120000)+'\n[Document excerpt. Open the original for all content.]':text;
 }
 process.once('message',(input:{data:Uint8Array;extension:string;format?:'text'|'html'})=>{
- void work(input).then(text=>process.send?.({text},()=>process.disconnect()),(error:unknown)=>process.send?.({error:error instanceof Error&&error.message.startsWith('No readable text was found.')?error.message:'This document could not be read. Try an unencrypted XLSX, DOCX or text-based PDF.'},()=>process.disconnect()));
+ void work(input).then(text=>process.send?.({text},()=>process.disconnect()),(error:unknown)=>process.send?.({error:error instanceof Error&&error.message.startsWith('No readable text was found.')?error.message:'This document could not be read. Try an unencrypted XLSX, DOCX, PPTX or text-based PDF.'},()=>process.disconnect()));
 });

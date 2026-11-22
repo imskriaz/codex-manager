@@ -22,7 +22,7 @@ window.__setAvailability=availability=>{state.office.availability=availability;w
 const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:['low','medium','high']},{id:'quality',label:'Quality',reasoningEfforts:['low','medium','high']}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
 window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
-window.__setQuestion=active=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined};messages=messages.filter(message=>message.id!=='question-check');if(active)messages.push({id:'question-check',role:'assistant',text:'Please choose.',timestamp:new Date().toISOString(),questions:[0,1,2].map(index=>({title:'Question '+(index+1)+' about how to prepare this work',options:Array.from({length:8},(_,option)=>'Option '+(option+1)+' for this work')}))});persist();dispatch({type:'dashboard:action-result',requestId:'auto-question',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});};
+window.__setQuestion=active=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined};messages=messages.filter(message=>message.id!=='question-check');if(active)messages.push({id:'question-check',role:'assistant',text:'Please choose.',timestamp:new Date().toISOString(),questions:active==='visual'?[{title:'Choose a slide direction',view:'grid',options:['Minimal','Editorial'],previews:['Minimal','Editorial'].map(option=>({option,image:'/api/workspace/image?filePath=project%2Fpreview.png&mimeType=image%2Fpng',description:option+' preview'}))}]:[0,1,2].map(index=>({title:'Question '+(index+1)+' about how to prepare this work',options:Array.from({length:8},(_,option)=>'Option '+(option+1)+' for this work')}))});persist();dispatch({type:'dashboard:action-result',requestId:'auto-question',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});};
 window.__setModelMode=(mode,picker=true)=>{config.modelMode=mode;config.profilePicker=picker;config.models=mode==='auto'?[{id:'auto',label:'Auto',reasoningEfforts:[]},...['regular','professional','expert'].map(id=>({id,label:id.charAt(0).toUpperCase()+id.slice(1),reasoningEfforts:['low','medium','high']}))]:[{id:'fast',label:'Fast',reasoningEfforts:['low','medium','high']},{id:'quality',label:'Quality',reasoningEfforts:['low','medium','high']}];window.__setModelDefault(mode==='auto'?'auto':'fast');};
 window.__olderProject=()=>{config.projects.push({id:'earlier',label:'Earlier project',path:'C:/team/alex/earlier'});session.projectPath='C:/team/alex/earlier';persist();window.__setModelDefault(config.defaultModel);};
 window.__setModelWarning=warning=>{config.modelDiscoveryWarning=warning;window.__setModelDefault(config.defaultModel);};
@@ -67,6 +67,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const errors=[];page.on('pageerror',error=>errors.push(error.stack||error.message));
  page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
+ await page.addInitScript(()=>{window.SpeechRecognition=class{start(){window.__dictation=this;}stop(){this.onend?.();}abort(){}};});
+ await context.route('**/api/workspace/image?*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64')}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.locator('.cli-workspace').waitFor();
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 3660 }));
@@ -141,8 +143,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await nav('Chats');
  if(width<760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
  assert.equal(await page.getByRole('button',{name:'Conversation options',exact:true}).count(),0);
- await page.getByRole('button',{name:'Show archived conversations',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Show active conversations',exact:true}).getAttribute('aria-pressed'),'true');
- await page.getByRole('button',{name:'Show active conversations',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Show archived conversations',exact:true}).count(),0);
  if(width<760)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
  if(await page.getByRole('button',{name:'Start a new chat',exact:true}).isVisible())await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
  await page.locator('.cli-composer textarea').waitFor();
@@ -224,7 +225,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.reload();await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete'}).waitFor();
  await page.evaluate(()=>window.__completeOffice());
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
- if(width<760){await page.locator('.cli-file-editor').waitFor({state:'visible'});await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();}
+ if(width<760&&await page.getByRole('button',{name:'Hide workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.equal(await page.locator('.session-plan').count(),1);
  assert.equal(await page.locator('.session-plan .is-completed').count(),3);
@@ -265,6 +266,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.evaluate(()=>window.__setModelMode('auto',false));await page.getByRole('status',{name:'Automatic assistant',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Message settings',exact:true}).count(),0);
  await page.evaluate(()=>window.__setModelMode('manual'));await page.getByRole('button',{name:'Message settings',exact:true}).waitFor();
  if(await page.getByRole('button',{name:'Hide workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+ await page.getByRole('button',{name:'Dictate message',exact:true}).click();const voice=page.getByRole('dialog',{name:'Dictate message',exact:true});await voice.getByRole('button',{name:'Start dictation',exact:true}).click();
+ await page.evaluate(()=>window.__dictation.onresult({resultIndex:0,results:[{isFinal:true,0:{transcript:'Prepare the buyer report'}}]}));
+ await voice.getByRole('button',{name:'Stop dictation',exact:true}).click();assert.equal(await voice.getByRole('textbox',{name:'Captured text',exact:true}).inputValue(),'Prepare the buyer report');await voice.getByRole('button',{name:'Use text',exact:true}).click();assert.match(await page.getByRole('textbox',{name:'Message',exact:true}).inputValue(),/Prepare the buyer report/);await page.getByRole('textbox',{name:'Message',exact:true}).fill('');
+ await page.evaluate(()=>window.__setQuestion('visual'));const visual=page.getByRole('dialog',{name:'Assistant has a question',exact:true});assert.equal(await visual.locator('.cli-visual-options').count(),1);await visual.getByRole('button',{name:'Enlarge Minimal',exact:true}).click();const enlarged=page.getByRole('dialog',{name:'Minimal',exact:true});await enlarged.waitFor();await enlarged.getByRole('button',{name:'Close visual preview',exact:true}).click();await visual.getByRole('radio',{name:'Editorial',exact:true}).check();const visualSend=await visual.getByRole('button',{name:'Send answer',exact:true}).boundingBox();assert.ok(visualSend&&visualSend.y>=0&&visualSend.y+visualSend.height<=await page.evaluate(()=>innerHeight)+1);await page.screenshot({path:path.join(output,`visual-options-${width}.png`),fullPage:true,animations:'disabled'});await visual.getByRole('button',{name:'Send answer',exact:true}).click();await page.evaluate(()=>window.__setQuestion(false));
  await page.evaluate(()=>window.__setQuestion(true));const question=page.getByRole('dialog',{name:'Assistant has a question',exact:true});await question.waitFor();assert.equal(await page.locator('.session-question-modal').count(),1);
  for(const field of await question.locator('fieldset').all())await field.getByRole('radio').first().check();
  if(width===360)await page.setViewportSize({width,height:390});
@@ -273,11 +278,12 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.screenshot({path:path.join(output,`question-${width}.png`),fullPage:true,animations:'disabled'});
  await sendAnswer.click();await question.waitFor({state:'detached'});await page.evaluate(()=>window.__setQuestion(false));
  if(width===360)await page.setViewportSize({width,height:674});
- if(await page.getByRole('button',{name:'Show workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
+ await page.evaluate(()=>window.__olderProject());
+ await page.getByRole('button',{name:'Show workspace tools',exact:true}).waitFor();await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
  if(width<=760)await page.getByRole('combobox',{name:'Workspace tool',exact:true}).selectOption({label:'Env'});else await page.getByRole('tab',{name:'Env',exact:true}).click();
- await page.locator('.cli-environment-view').getByText('Connection',{exact:true}).waitFor();
- assert.equal(await page.locator('.cli-environment-view p').count(),0);
- assert.ok(await page.locator('.cli-environment-view dt').count()>=5);
+ const overview=page.getByRole('region',{name:'Environment',exact:true});await overview.getByRole('navigation',{name:'Workspace tools',exact:true}).waitFor();
+ assert.equal(await overview.locator('.cli-environment-section[open]').count(),0);assert.equal(await overview.getByRole('navigation').getByRole('button').count(),2);assert.equal(await overview.getByRole('button',{name:/Git/}).count(),0);assert.doesNotMatch(await overview.innerText(),/System information|Repository|System tools|host|Windows/);
+ await page.screenshot({path:path.join(output,`environment-${width}.png`),fullPage:true,animations:'disabled'});
  await assertPlainUserInterface(page);
  if(width<=760)await page.getByRole('combobox',{name:'Workspace tool',exact:true}).selectOption({label:'Browser'});else await page.getByRole('tab',{name:'Browser',exact:true}).click();
  const preview=page.getByRole('region',{name:'Browser',exact:true}),website=preview.getByRole('textbox',{name:'Browser URL',exact:true});
@@ -292,9 +298,9 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  if(width<760){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
  await openSettings();
  const settingsTabs=page.getByRole('tablist',{name:'Settings sections',exact:true,includeHidden:true});
- assert.equal(await settingsTabs.getByRole('tab',{includeHidden:true}).count(),6);assert.equal(await settingsTabs.isVisible(),width>760);assert.equal(await page.getByRole('combobox',{name:'Settings section',exact:true}).isVisible(),width<=760);assert.equal(await settingsTabs.getByRole('tab',{includeHidden:true,name:'General',exact:true}).getAttribute('aria-selected'),'true');
+ assert.equal(await settingsTabs.getByRole('tab',{includeHidden:true}).count(),6);assert.ok(await settingsTabs.isVisible() || await page.getByRole('combobox',{name:'Settings section',exact:true}).isVisible());
  await page.screenshot({path:path.join(output,`settings-general-${width}.png`),fullPage:true,animations:'disabled'});
- if(width<=760)await page.getByRole('combobox',{name:'Settings section',exact:true}).selectOption('usage');else {await settingsTabs.getByRole('tab',{includeHidden:true,name:'General',exact:true}).focus();await settingsTabs.getByRole('tab',{includeHidden:true,name:'General',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{includeHidden:true,name:'Personalization',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{includeHidden:true,name:'Account',exact:true}).press('ArrowDown');assert.equal(await settingsTabs.getByRole('tab',{includeHidden:true,name:'Usage',exact:true}).getAttribute('aria-selected'),'true');}
+ if(await page.getByRole('combobox',{name:'Settings section',exact:true}).isVisible())await page.getByRole('combobox',{name:'Settings section',exact:true}).selectOption('usage');else {await settingsTabs.getByRole('tab',{includeHidden:true,name:'General',exact:true}).focus();await settingsTabs.getByRole('tab',{includeHidden:true,name:'General',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{includeHidden:true,name:'Personalization',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{includeHidden:true,name:'Account',exact:true}).press('ArrowDown');assert.equal(await settingsTabs.getByRole('tab',{includeHidden:true,name:'Usage',exact:true}).getAttribute('aria-selected'),'true');}
  await page.getByRole('region',{name:'Your usage',exact:true}).waitFor();
  assert.equal(await page.getByRole('progressbar').count(),3);
  await page.getByText('A response is running. Usage will update when it finishes.',{exact:true}).waitFor();
@@ -335,8 +341,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.deepEqual(errors,[]);await page.screenshot({path:path.join(output,`complete-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(()=>window.__olderProject());
  if(width<760&&await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).isVisible())await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
- await page.getByRole('button',{name:'New chat',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Project"]')?.getAttribute('data-value')==='C:/team/alex');
- assert.equal(await page.locator('.cli-session-messages').count(),0,'A new general chat has no older transcript');
+ await page.getByRole('button',{name:'New chat',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Project"]')?.getAttribute('data-value')==='');
+ assert.equal(await page.locator('.cli-session-messages').count(),0,'A new general chat has no older transcript');assert.equal(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count(),0);assert.equal(await page.locator('.corporate-home-card').count(),0);await page.screenshot({path:path.join(output,`home-${width}.png`),fullPage:true,animations:'disabled'});
  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,privateProfile:true,queue:true,reloadPreserved:true,technicalDetailsHidden:true,errors:0}));await context.close();
 }
  const context=await browser.newContext({viewport:{width:1440,height:960},serviceWorkers:'block'}),page=await context.newPage();

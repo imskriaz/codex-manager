@@ -1,3 +1,4 @@
+import { ModalShell } from './primitives';
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
@@ -18,7 +19,7 @@ export function MasterUsernameField(props: { sendAction: SendAction; authenticat
 
   const run = (action: "getMasterUsername" | "rotateMasterUsername") => {
     if (request.current) return;
-    setPending(true); setConfirmRotation(false);
+    setPending(true); if(action==="getMasterUsername")setConfirmRotation(false);
     setStatus(action === "getMasterUsername" ? "Loading username…" : "Rotating username…");
     const id = send.current(action, undefined, { targetDeviceId: "local", ...(action === "rotateMasterUsername" ? { masterUsername: username, confirmed: true } : {}) });
     const timer = window.setTimeout(() => {
@@ -33,13 +34,13 @@ export function MasterUsernameField(props: { sendAction: SendAction; authenticat
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
       const result = event.data, current = request.current;
       if (result?.type === "dashboard:action-result" && result.action === "rotateMasterUsername" && result.status === "completed" && result.payload?.masterUsername) {
-        setUsername(result.payload.masterUsername); setNeedsReload(false);
+        setUsername(result.payload.masterUsername); setNeedsReload(false);setConfirmRotation(false);
         setStatus("Username rotated. Use this username at your next sign-in.");
       }
       if (result?.type !== "dashboard:action-result" || !current || result.requestId !== current.id) return;
       window.clearTimeout(current.timer); request.current = undefined; setPending(false);
       if (result.status === "completed" && result.payload?.masterUsername) {
-        setUsername(result.payload.masterUsername); setNeedsReload(false);
+        setUsername(result.payload.masterUsername); setNeedsReload(false);setConfirmRotation(false);
         setStatus(current.action === "rotateMasterUsername" ? "Username rotated. Use this username at your next sign-in." : "");
       } else {
         setNeedsReload(true);
@@ -74,10 +75,10 @@ export function MasterUsernameField(props: { sendAction: SendAction; authenticat
       <div class="master-username-input">
         <input id={id} ref={input} class="modal-input" readOnly value={username} autoComplete="off" spellcheck={false} placeholder={pending ? "Loading…" : "Username unavailable"} />
         <button type="button" title="Copy master username" aria-label="Copy master username" disabled={!username || pending || needsReload} onClick={() => void copy()}><CopyIcon /></button>
-        {local || needsReload ? <button type="button" title={needsReload ? "Reload master username" : "Rotate master username"} aria-label={needsReload ? "Reload master username" : "Rotate master username"} disabled={pending} onClick={() => needsReload ? run("getMasterUsername") : setConfirmRotation(true)}><ToolIcon kind="key" /></button> : null}
+        {local || needsReload ? <button type="button" title={needsReload ? "Reload master username" : "Rotate master username"} aria-label={needsReload ? "Reload master username" : "Rotate master username"} disabled={pending} onClick={() => {if(needsReload)run("getMasterUsername");else{setStatus("");setConfirmRotation(true);}}}><ToolIcon kind="key" /></button> : null}
       </div>
     <small>Generated once. Required with your password for master sign-in.</small>
-    {confirmRotation ? <div class="master-username-confirm"><span>Replace this username? The current username will stop working for new sign-ins.</span><div><button type="button" onClick={() => { setConfirmRotation(false); setStatus("Username rotation cancelled."); }}>Cancel</button><button type="button" onClick={() => run("rotateMasterUsername")}>Rotate</button></div></div> : null}
+    <ModalShell open={confirmRotation} title="Replace master username?" closeLabel="Cancel username rotation" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={pending} onClose={()=>{setConfirmRotation(false);setStatus('Username rotation cancelled.');}}><p>The current username will stop working for new sign-ins.</p><p role="status">{status}</p><div class="dialog-actions"><button type="button" disabled={pending} onClick={()=>{setConfirmRotation(false);setStatus('Username rotation cancelled.');}}>Cancel</button><button type="button" disabled={pending||needsReload} onClick={()=>run('rotateMasterUsername')}>{pending?'Rotating...':'Rotate'}</button></div></ModalShell>
     <div class="master-username-status" role="status" aria-live="polite">{status}</div>
   </div>;
 }

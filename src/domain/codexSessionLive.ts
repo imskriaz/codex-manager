@@ -1,3 +1,4 @@
+import {validQuestionPreview} from './sessionQuestions';
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "./dashboard/types";
 import { isCodexCapacityInterruption } from "./codexSessionState";
 import { coalesceSessionQuestionMessages } from './sessionQuestions';
@@ -86,7 +87,7 @@ export function validMessage(value: unknown, maxText = MAX_TEXT): boolean {
     else if (key === 'questions') {
       if (!Array.isArray(value) || value.length > 10 || value.some(value => {
         const question = record(value);
-        return !question || typeof question['title'] !== 'string' || !question['title'].trim() || question['title'].length > 8000 || Object.keys(question).some(key => !['title', 'options'].includes(key)) || (question['options'] !== undefined && (!Array.isArray(question['options']) || question['options'].length > 20 || question['options'].some(option => typeof option !== 'string' || option.length > 8000)));
+        return !question || typeof question['title'] !== 'string' || !question['title'].trim() || question['title'].length > 8000 || Object.keys(question).some(key => !['title', 'options', 'previews', 'view'].includes(key)) || (question['options'] !== undefined && (!Array.isArray(question['options']) || question['options'].length > 20 || question['options'].some(option => typeof option !== 'string' || option.length > 8000))) || question['view']!==undefined&&(question['view']!=='grid'&&question['view']!=='list') || question['previews']!==undefined&&(!Array.isArray(question['previews'])||question['previews'].length>10||question['previews'].some(preview=>!validQuestionPreview(preview)));
       })) return false;
     }
     else if (key === 'textAttachments') {

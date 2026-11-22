@@ -1183,6 +1183,6 @@ it.each(['offline', 'duplicate-cursor'])('keeps cached models with a warning whe
   const request = vi.fn(async () => { if (scenario === 'offline') throw new Error('Disconnected'); return { data: [{ id: 'partial' }], nextCursor: 'same' }; });
   mocks.open.mockResolvedValue({ request, close: vi.fn() });
   const config = await readCodexCliComposerConfig(root);
-  expect(config.models.map(model => model.id)).toEqual(['saved-model']); expect(config.modelDiscoveryWarning).toContain('saved catalog');
+  expect(config.models.map(model => model.id)).toEqual(expect.arrayContaining(['saved-model','gpt-6.2-sol','gpt-6.2-astra'])); expect(config.modelDiscoveryWarning).toContain('saved catalog');
   if (scenario === 'duplicate-cursor') expect(request).toHaveBeenCalledTimes(2);
 });
