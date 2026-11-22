@@ -43,7 +43,7 @@ it('stops old queued work after an uncertain response and accepts an explicit co
  await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'queued',payload:{sessionId:first.cliSession!.id,text:'Later'}});
  reject(new Error('Unknown result'));await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.some(message=>message.text.includes('message was not run'))).toBe(true);
- generate.mockResolvedValueOnce('Recovered after checking saved work.');await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'continue',payload:{sessionId:first.cliSession!.id,text:'Continue'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));expect(generate).toHaveBeenCalledTimes(2);expect(JSON.stringify(generate.mock.calls[1])).toContain('Inspect saved files');
+ generate.mockResolvedValueOnce('Recovered after checking saved work.');await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'continue',payload:{sessionId:first.cliSession!.id,text:'Continue'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));expect(generate).toHaveBeenCalledTimes(2);expect(JSON.stringify(generate.mock.calls[1])).toContain('Inspect saved work only if it is relevant');
 });
 it('releases a timed-out generation and rejects late reports or success',async()=>{
  vi.useFakeTimers();
@@ -87,7 +87,7 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined,expect.any(String));
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined,expect.any(String),undefined);
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -257,4 +257,35 @@ it('keeps late model discovery for subsequent refreshes after the bounded initia
  expect((await first).cliComposerConfig?.models.map(item=>item.id)).toEqual(['configured-model']);
  const second=service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'refresh'});finish([{id:'late',label:'Late',reasoningEfforts:[]}]);await vi.advanceTimersByTimeAsync(0);
  expect((await second).cliComposerConfig?.models[0].id).toBe('late');expect(discover).toHaveBeenCalledTimes(1);
+});
+
+it('routes Auto once per accepted turn, persists the chosen profile and thinking level, and ignores a forged backend model',async()=>{
+ vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),modelMode:'auto',profilePicker:true,regularModel:'fast',professionalModel:'work',expertModel:'deep'});
+ const {service,generate}=setup();const select=vi.fn(async()=>({model:'work',profile:'professional',reasoningEffort:'high'}));(service as any).options.selectModel=select;
+ const started=await service.handle(user,{...start(),payload:{text:'Prepare a merchandising report',model:'forged-backend',reasoningEffort:'max'}});
+ await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
+ expect(select).toHaveBeenCalledOnce();expect(generate.mock.calls[0][1]).toBe('work');expect(generate.mock.calls[0][8]).toBe('high');
+ expect(service.list(user.id)[0]).toMatchObject({model:'work',modelProfile:'professional',modelSelection:'auto',reasoningEffort:'high'});
+ const config=await service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'models'});expect(config.cliComposerConfig?.models.map(model=>model.label)).toEqual(['Auto','Regular','Professional','Expert']);
+ expect(config.cliComposerConfig?.defaultModel).toBe('auto');expect(started.cliSession?.modelSelection).toBe('auto');
+});
+it('passes a pinned profile and supported thinking level without accepting a plan-excluded profile',async()=>{
+ vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),modelMode:'auto',profilePicker:true,regularModel:'fast',professionalModel:'work',expertModel:'deep'});
+ const {service}=setup();const select=vi.fn(async()=>({model:'deep',profile:'expert',reasoningEffort:'high'}));(service as any).options.selectModel=select;
+ await service.handle(user,{...start(),payload:{text:'Audit',model:'expert',reasoningEffort:'high'}});await vi.waitFor(()=>expect(select).toHaveBeenCalledOnce());expect(select.mock.calls[0][5]).toMatchObject({profile:'expert',reasoningEffort:'high'});
+ const limited={...user,id:'limited',plan:{name:'Small',status:'active' as const,models:['fast']}};await expect(service.handle(limited,{...start(),requestId:'denied',payload:{text:'Audit',model:'expert'}})).rejects.toThrow('included in your plan');
+});
+it('stores and sends manual thinking levels and keeps general greetings independent of uncertain file recovery',async()=>{
+ const {service,generate}=setup();const first=await service.handle(user,{...start(),payload:{text:'hi',model:'fast',reasoningEffort:'high'}});await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
+ expect(generate.mock.calls[0][8]).toBe('high');expect(service.list(user.id)[0].reasoningEffort).toBe('high');
+ const stored=storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id);stored.turns[0].state='uncertain';stored.turns[0].assistant=undefined;storage.set(`office-sessions:${user.id}`,stored.id,stored);
+ await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'hello-again',payload:{sessionId:stored.id,text:'How are you'}});await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
+ expect(JSON.stringify(generate.mock.calls[1][2])).toContain('greetings and general chat do not need file checks');
+});
+
+it('starts another chat without inheriting project messages or pending recovery instructions',async()=>{
+ const {service,generate}=setup();await service.handle(user,{...start('old-project','Edit index.html for Earlier project'),payload:{text:'Edit index.html for Earlier project',projectPath:'C:/team/alex/earlier'}});await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
+ const first=storage.get<any>(`office-sessions:${user.id}`,service.list(user.id)[0].id);first.turns[0].state='uncertain';storage.set(`office-sessions:${user.id}`,first.id,first);
+ await service.handle(user,start('fresh-chat','Hi, how are you?'));await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
+ expect(JSON.stringify(generate.mock.calls[1][2])).not.toMatch(/Earlier project|index.html|earlier reply/i);expect(generate.mock.calls[1][4]).toBe(user.workspacePath);
 });

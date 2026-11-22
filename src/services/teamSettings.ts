@@ -10,6 +10,12 @@ export function readTeamSettings() {
     maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
     globalPrompt: config.get<string>("officeGlobalPrompt", DEFAULT_USER_WORKSPACE_PROMPT),
     defaultModel: config.get<string>("officeDefaultModel", "gpt-6-luna"),
+    modelMode: config.get<string>('officeModelMode', 'manual') === 'auto' ? 'auto' as const : 'manual' as const,
+    profilePicker:config.get<boolean>('officeProfilePicker',true),
+    routerModel: config.get<string>('officeRouterModel', 'gpt-6-luna'),
+    regularModel: config.get<string>('officeRegularModel', 'gpt-6-luna'),
+    professionalModel: config.get<string>('officeProfessionalModel', 'gpt-6.1-sol'),
+    expertModel: config.get<string>('officeExpertModel', 'gpt-6.1-terra'),
     workspaceRoot:
       config.get<string>("officeWorkspaceRoot", "").trim() ||
       path.join(getCodexManagerStorageRoot(), "office-workspaces"),
@@ -20,7 +26,17 @@ export function readTeamSettings() {
 
 export async function saveTeamSettings(input: Record<string, unknown>): Promise<ReturnType<typeof readTeamSettings>> {
   const config = getCodexManagerConfiguration();
-  const updates: Array<[string, string | number]> = [];
+  const updates: Array<[string, string | number | boolean]> = [];
+  if(input['profilePicker']!==undefined){if(typeof input['profilePicker']!=='boolean')throw new Error('Choose a valid profile selection setting.');updates.push(['officeProfilePicker',input['profilePicker']]);}
+  if (input['modelMode'] !== undefined) {
+    if (input['modelMode']!=='manual'&&input['modelMode']!=='auto') throw new Error('Choose manual or automatic model selection.');
+    updates.push(['officeModelMode',input['modelMode'] as string]);
+  }
+  for (const key of ['routerModel','regularModel','professionalModel','expertModel'] as const) {
+    if (input[key] === undefined) continue;
+    if (typeof input[key] !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(input[key])) throw new Error('Choose valid models for automatic selection.');
+    updates.push(['office'+key[0]!.toUpperCase()+key.slice(1),input[key]]);
+  }
   if (input["defaultModel"] !== undefined) {
     if (typeof input["defaultModel"] !== "string" || input["defaultModel"] !== '' && !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(input["defaultModel"])) throw new Error("Choose a valid default User Workspace model.");
     updates.push(["officeDefaultModel", input["defaultModel"]]);

@@ -43,6 +43,7 @@ describe("Team storage settings", () => {
     expect(readTeamSettings()).toEqual({
       globalPrompt: DEFAULT_USER_WORKSPACE_PROMPT,
       defaultModel: "gpt-6-luna",
+      modelMode:'manual',profilePicker:true,routerModel:'gpt-6-luna',regularModel:'gpt-6-luna',professionalModel:'gpt-6.1-sol',expertModel:'gpt-6.1-terra',
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",
       databaseProvider: "postgres",
@@ -74,4 +75,12 @@ it("saves and clears the default model and validates the entire form before writ
  config.update.mockClear();
  for(const defaultModel of [42,"bad model","x".repeat(129)])await expect(saveTeamSettings({globalPrompt:"changed",defaultModel})).rejects.toThrow("valid default");
  expect(config.update).not.toHaveBeenCalled();
+});
+
+it('validates the complete automatic profile configuration before saving and preserves manual mode',async()=>{
+ expect(readTeamSettings().modelMode).toBe('manual');
+ await expect(saveTeamSettings({modelMode:'auto',expertModel:'invalid model'})).rejects.toThrow();expect(config.update).not.toHaveBeenCalled();
+ const saved=await saveTeamSettings({modelMode:'auto',profilePicker:false,routerModel:'light',regularModel:'fast',professionalModel:'work',expertModel:'deep'});
+ expect(saved).toMatchObject({modelMode:'auto',profilePicker:false,routerModel:'light',expertModel:'deep'});
+ await expect(saveTeamSettings({modelMode:'other'})).rejects.toThrow();await expect(saveTeamSettings({profilePicker:'false'})).rejects.toThrow();
 });

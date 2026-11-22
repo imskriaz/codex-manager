@@ -819,6 +819,8 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  modelProfile?: import('../officeModels').OfficeProfile;
+  modelSelection?: 'auto' | import('../officeModels').OfficeProfile;
   startedBy?: import("../../services/officeAudit").OfficeActor;
   lastRunBy?: import("../../services/officeAudit").OfficeActor;
   access?: import("../codexSessionAccess").CodexSessionAccess;
@@ -950,6 +952,8 @@ export interface DashboardCliModelOption {
 }
 
 export interface DashboardCliComposerConfig {
+  modelMode?: 'manual' | 'auto';
+  profilePicker?:boolean;
   modelDiscoveryWarning?: string;
   standalone?: boolean;
   terminalSupported?: boolean;

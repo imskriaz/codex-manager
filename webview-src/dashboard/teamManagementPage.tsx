@@ -11,7 +11,7 @@ import { ModalShell } from "./primitives";
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
-type TeamSettings = { defaultModel: string; globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
+type TeamSettings = { modelMode:'manual'|'auto';profilePicker:boolean; routerModel:string;regularModel:string;professionalModel:string;expertModel:string; defaultModel: string; globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
   plan?:import('../../src/services/officeUsers').OfficePlan;
   limits?: OfficeLimits;
@@ -66,6 +66,9 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   const [servers, setServers] = useState<OfficeMcpServer[]>([]);
   const [settings, setSettings] = useState<TeamSettings>();
   const [defaultModel, setDefaultModel] = useState("");
+  const [profilePicker,setProfilePicker]=useState(true);
+  const [modelMode,setModelMode]=useState<'manual'|'auto'>('manual');
+  const [automaticModels,setAutomaticModels]=useState({routerModel:'gpt-6-luna',regularModel:'gpt-6-luna',professionalModel:'gpt-6.1-sol',expertModel:'gpt-6.1-terra'});
   const [modelOptions, setModelOptions] = useState<Array<{id: string; label: string}>>([]);
   const [modelsLoading, setModelsLoading] = useState(false), [modelWarning, setModelWarning] = useState("");
   const [modelRetry, setModelRetry] = useState(0);
@@ -108,7 +111,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       ]);
       setUsers(userData.users);
       setServers(mcpData.servers);
-      setSettings(teamSettings); setDefaultModel(teamSettings.defaultModel ?? ""); setGlobalPrompt(teamSettings.globalPrompt ?? "");
+      setProfilePicker(teamSettings.profilePicker!==false);setModelMode(teamSettings.modelMode??'manual');setAutomaticModels({routerModel:teamSettings.routerModel??'gpt-6-luna',regularModel:teamSettings.regularModel??'gpt-6-luna',professionalModel:teamSettings.professionalModel??'gpt-6.1-sol',expertModel:teamSettings.expertModel??'gpt-6.1-terra'});setSettings(teamSettings); setDefaultModel(teamSettings.defaultModel ?? ""); setGlobalPrompt(teamSettings.globalPrompt ?? "");
       setWorkspaceRoot(teamSettings.workspaceRoot); setMaxActiveRequests(teamSettings.maxActiveRequests ?? 2);
       setDatabaseProvider(teamSettings.databaseProvider);
     } catch (value) {
@@ -189,10 +192,10 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
       if (adding) setMcpOpen(false);
     }, adding ? "Data connection added." : "Data connections saved.", adding ? "mcp" : false);
   };
-  const saveSettings = (fields: Record<string, string | number>): void => {
+  const saveSettings = (fields: Record<string, string | number | boolean>): void => {
     void mutate(async () => {
       const result = await request<TeamSettings>("/api/office/settings", "PUT", fields);
-      setSettings(result); setDefaultModel(result.defaultModel ?? ""); setGlobalPrompt(result.globalPrompt ?? "");
+      setProfilePicker(result.profilePicker!==false);setModelMode(result.modelMode??'manual');setAutomaticModels({routerModel:result.routerModel??'gpt-6-luna',regularModel:result.regularModel??'gpt-6-luna',professionalModel:result.professionalModel??'gpt-6.1-sol',expertModel:result.expertModel??'gpt-6.1-terra'});setSettings(result); setDefaultModel(result.defaultModel ?? ""); setGlobalPrompt(result.globalPrompt ?? "");
       setWorkspaceRoot(result.workspaceRoot); setMaxActiveRequests(result.maxActiveRequests ?? 2);
       setDatabaseProvider(result.databaseProvider);
       setPostgresUrl("");
@@ -270,17 +273,19 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               class="team-settings-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt, defaultModel });
+                saveSettings({ workspaceRoot, maxActiveRequests, globalPrompt, defaultModel, modelMode, profilePicker, ...automaticModels });
               }}
             >
+              <label>Model selection<select aria-label="User Workspace model selection" value={modelMode} disabled={pending} onChange={event=>setModelMode(event.currentTarget.value as 'manual'|'auto')}><option value="manual">Manual</option><option value="auto">Auto</option></select></label>
+              {modelMode==='auto'?<div class="team-auto-models"><label><span>Allow profile selection</span><input type="checkbox" aria-label="Allow users to select assistant profile" checked={profilePicker} disabled={pending} onChange={event=>setProfilePicker(event.currentTarget.checked)}/><small>Auto, Regular, Professional, Expert. Turn off to lock Auto.</small></label>{(['routerModel','regularModel','professionalModel','expertModel'] as const).map(key=><label key={key}>{({routerModel:'Lightweight router',regularModel:'Regular',professionalModel:'Professional',expertModel:'Expert'})[key]}<select aria-label={key==='routerModel'?'Automatic routing model':`${key.replace('Model','')} profile model`} value={automaticModels[key]} disabled={pending||modelsLoading} onChange={event=>setAutomaticModels(current=>({...current,[key]:event.currentTarget.value}))}>{!modelOptions.some(model=>model.id===automaticModels[key])?<option value={automaticModels[key]}>{automaticModels[key]}</option>:null}{modelOptions.map(model=><option key={model.id} value={model.id}>{model.label}</option>)}</select></label>)}<small>Regular handles everyday work, Professional handles multi-step tasks, and Expert handles complex analysis. Plan permissions always apply.</small></div>:null}
               <label>
-                Default User Workspace model
+                {modelMode==='auto'?'Fallback model':'Default User Workspace model'}
                 <select aria-label="Default User Workspace model" value={defaultModel} disabled={pending || modelsLoading} onChange={event => setDefaultModel(event.currentTarget.value)}>
                   <option value="">Require users to choose</option>
                   {defaultModel && !modelOptions.some(model => model.id === defaultModel) ? <option value={defaultModel}>{defaultModel}</option> : null}
                   {modelOptions.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
                 </select>
-                <small>Preselected for new chats. Users can pick another model before sending. Existing conversations keep their selected model.</small>
+                <small>{modelMode==='auto'?'Used when automatic routing cannot select a permitted profile.':'Preselected for new chats. Users can change the model and thinking level.'}</small>
                 {modelsLoading ? <small role="status">Loading models…</small> : null}
                 {modelWarning ? <span role="status">{modelWarning} <button type="button" disabled={pending} onClick={() => setModelRetry(value => value + 1)}>Try again</button></span> : null}
               </label><label>

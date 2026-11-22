@@ -19,9 +19,12 @@ document.documentElement.dataset.dashboardUser='fixture-alex';
 const state=${JSON.stringify(state)},key='private-workspace-fixture';
 const saved=JSON.parse(localStorage.getItem(key)||'null');let session=saved?.session,messages=saved?.messages||[];
 window.__setAvailability=availability=>{state.office.availability=availability;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));};
-const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]},{id:'quality',label:'Quality',reasoningEfforts:[]}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
+const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:['low','medium','high']},{id:'quality',label:'Quality',reasoningEfforts:['low','medium','high']}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
 window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
+window.__setQuestion=active=>{session={...session,status:'idle',queueEnabled:false,queueError:undefined};messages=messages.filter(message=>message.id!=='question-check');if(active)messages.push({id:'question-check',role:'assistant',text:'Please choose.',timestamp:new Date().toISOString(),questions:[0,1,2].map(index=>({title:'Question '+(index+1)+' about how to prepare this work',options:Array.from({length:8},(_,option)=>'Option '+(option+1)+' for this work')}))});persist();dispatch({type:'dashboard:action-result',requestId:'auto-question',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:[session]}});dispatch({type:'dashboard:codex-session-live',state:{sessionId:session.id,streamId:session.id,sequence:Date.now(),status:'completed',updatedAt:Date.now(),messages}});};
+window.__setModelMode=(mode,picker=true)=>{config.modelMode=mode;config.profilePicker=picker;config.models=mode==='auto'?[{id:'auto',label:'Auto',reasoningEfforts:[]},...['regular','professional','expert'].map(id=>({id,label:id.charAt(0).toUpperCase()+id.slice(1),reasoningEfforts:['low','medium','high']}))]:[{id:'fast',label:'Fast',reasoningEfforts:['low','medium','high']},{id:'quality',label:'Quality',reasoningEfforts:['low','medium','high']}];window.__setModelDefault(mode==='auto'?'auto':'fast');};
+window.__olderProject=()=>{config.projects.push({id:'earlier',label:'Earlier project',path:'C:/team/alex/earlier'});session.projectPath='C:/team/alex/earlier';persist();window.__setModelDefault(config.defaultModel);};
 window.__setModelWarning=warning=>{config.modelDiscoveryWarning=warning;window.__setModelDefault(config.defaultModel);};
 const persist=()=>localStorage.setItem(key,JSON.stringify({session,messages}));
 window.__privateActions=[];
@@ -104,7 +107,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
   }
   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  });
- const nav=async(name)=>{const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.locator('.user-workspace-nav').getByRole('button',{name,exact:true}).click();};
+ const openSettings=async()=>{if(await page.locator('.overlay.open .office-user-settings').count())return;const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.getByRole('button',{name:'Account menu',exact:true}).click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();};
+ const nav=async(name)=>{if(name==='Chats'){if(await page.locator('.overlay.open .office-user-settings').count())await page.locator('.overlay.open .office-user-settings .settings-close').click();return;}await openSettings();await page.getByRole('tab',{name,exact:true}).click();};
  await nav('Scheduled');await page.getByRole('heading',{name:'Scheduled',exact:true}).waitFor();
  assert.equal(await page.locator('.user-scheduled form').count(),0);
  assert.equal(await page.locator('.user-schedule-examples').count(),0);
@@ -128,10 +132,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const [libraryDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Download costing.csv',exact:true}).click()]);assert.equal(libraryDownload.suggestedFilename(),'costing.csv');
  await page.getByRole('region',{name:'File storage',exact:true}).getByText('1.0 KB',{exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Grid view',exact:true}).count(),0);
- const fileLayout=await page.locator('.user-library-files li').first().evaluate(node=>{const r=node.getBoundingClientRect(),actions=node.querySelector('.user-page-actions').getBoundingClientRect(),file=node.querySelector('button').getBoundingClientRect();return {height:r.height,aligned:actions.left>=file.right,center:Math.abs((actions.top+actions.bottom-file.top-file.bottom)/2)};});assert.ok(fileLayout.height<=70&&fileLayout.aligned&&fileLayout.center<=1,JSON.stringify(fileLayout));
+ const fileLayout=await page.locator('.user-library-files li').first().evaluate(node=>{const r=node.getBoundingClientRect(),actions=node.querySelector('.user-page-actions').getBoundingClientRect(),file=node.querySelector('button').getBoundingClientRect();return {height:r.height,aligned:actions.left>=file.right,center:Math.abs((actions.top+actions.bottom-file.top-file.bottom)/2),parts:[node,...node.querySelectorAll('button,strong,small')].map(element=>({tag:element.tagName,height:element.getBoundingClientRect().height,padding:getComputedStyle(element).padding,line:getComputedStyle(element).lineHeight,font:getComputedStyle(element).fontSize,gap:getComputedStyle(element).gap}))};});assert.ok(fileLayout.height<=70&&fileLayout.aligned&&fileLayout.center<=1,JSON.stringify(fileLayout));
  await page.getByRole('button',{name:'Actions for costing.csv',exact:true}).click();await page.getByRole('menuitem',{name:'Move to Trash',exact:true}).click();await page.getByRole('dialog',{name:'Move file to Trash',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
  await page.screenshot({path:path.join(output,`library-${width}.png`),fullPage:true,animations:'disabled'});
- await page.locator('.user-library-files li > button').first().click();await page.getByRole('tab',{name:'costing.csv',exact:true}).waitFor();await page.getByRole('complementary',{name:'Workspace tools',exact:true}).getByRole('button',{name:'Close workspace tools',exact:true}).click();
+ await page.locator('.user-library-files li > button').first().click();await page.getByRole('tab',{name:'costing.csv',exact:true}).waitFor();await page.getByRole('complementary',{name:'Workspace tools',exact:true}).getByRole('button',{name:'Close workspace tools',exact:true}).click();await nav('Library');
  await page.getByRole('button',{name:'Actions for costing.csv',exact:true}).click();await page.getByRole('menuitem',{name:'Move to Trash',exact:true}).click();await page.getByRole('dialog',{name:'Move file to Trash',exact:true}).getByRole('button',{name:'Move to Trash',exact:true}).click();await page.getByRole('status').filter({hasText:'File moved to Trash.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Download costing.csv',exact:true}).count(),0);
  savedCopies=[{id:'copy-1',kind:'trash',path:'buyer-po.csv',at:Date.now(),bytes:24}];await page.getByRole('button',{name:'File recovery',exact:true}).click();const recoveryDialog=page.getByRole('dialog',{name:'File recovery',exact:true}),recoveryConfirm=page.getByRole('dialog',{name:'Remove saved copy',exact:true});await recoveryDialog.getByRole('button',{name:'Remove saved copy of buyer-po.csv',exact:true}).click();await recoveryConfirm.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Remove saved copy of buyer-po.csv');assert.equal(savedCopies.length,1);await recoveryDialog.getByRole('button',{name:'Remove saved copy of buyer-po.csv',exact:true}).click();await page.screenshot({path:path.join(output,`recovery-confirm-${width}.png`),fullPage:true,animations:'disabled'});await recoveryConfirm.getByRole('button',{name:'Remove permanently',exact:true}).click();await recoveryConfirm.waitFor({state:'hidden'});await recoveryDialog.getByRole('status').filter({hasText:'Saved copy removed.'}).waitFor();assert.equal(savedCopies.length,0);await recoveryDialog.getByRole('button',{name:'Close file recovery',exact:true}).click();
  await nav('Chats');
@@ -144,7 +148,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.locator('.cli-composer textarea').waitFor();
  if(width<760){const compact=await page.locator('.cli-composer').evaluate(element=>({height:element.getBoundingClientRect().height,control:getComputedStyle(element).getPropertyValue('--cli-control-size')}));assert.equal(compact.control.trim(),'30px');assert.ok(compact.height<=88,'User composer matches the compact master height');}
 
- await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
+ await page.getByRole('button',{name:'Message settings',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.cli-composer-options select[name=model]')?.value==='fast');
  assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').filter({hasText:'Automatic'}).count(),0);
  await page.evaluate(()=>window.__setModelWarning('Models could not be loaded. Your selected model is kept.'));
  assert.equal(await page.locator('.user-model-warning').count(),0);
@@ -152,16 +157,17 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.evaluate(()=>window.__setModelWarning(''));
  await assertPlainUserInterface(page);
  await page.evaluate(()=>window.__setModelDefault(''));
- await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='');
+ await page.waitForFunction(()=>document.querySelector('.cli-composer-options select[name=model]')?.value==='');
  await page.locator('.cli-composer textarea').fill('Keep this draft until I choose a model');
  assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).isDisabled(),true);
  await page.locator('.cli-composer textarea').press('Control+Enter');
  assert.equal(await page.evaluate(()=>window.__privateActions.filter(item=>item.action==='startCodexCliSession').length),0);
  await page.evaluate(()=>window.__setModelDefault('fast'));
- await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
+ await page.waitForFunction(()=>document.querySelector('.cli-composer-options select[name=model]')?.value==='fast');
  await page.locator('.cli-composer textarea').fill('/model');
  assert.equal(await page.getByRole('listbox',{name:'Commands and skills'}).count(),0);
  await page.locator('.cli-composer textarea').fill('');
+ await page.getByRole('button',{name:'Close message settings',exact:true}).click();
  await page.getByRole('combobox',{name:'Project',exact:true}).click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
  await page.getByRole('textbox',{name:'Project name',exact:true}).waitFor();
  assert.equal(await page.getByRole('textbox',{name:'Project folder',exact:true}).count(),0);
@@ -170,8 +176,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  if(width<760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
  await page.locator('.team-user-footer').getByText('Alex Morgan',{exact:true}).first().waitFor();
  if(width<760)await page.waitForFunction(()=>Math.abs(document.querySelector('.cli-session-rail').getBoundingClientRect().left)<1);
- const accountLayout=await page.evaluate(()=>{const rail=document.querySelector('.cli-session-rail').getBoundingClientRect(),footer=document.querySelector('.team-user-footer').getBoundingClientRect(),list=document.querySelector('.cli-session-list-region').getBoundingClientRect();return{bottomGap:rail.bottom-footer.bottom,height:footer.height,listBottom:list.bottom,footerTop:footer.top};});
+ const accountLayout=await page.evaluate(()=>{const rail=document.querySelector('.cli-session-rail').getBoundingClientRect(),footer=document.querySelector('.team-user-footer').getBoundingClientRect(),list=document.querySelector('.cli-session-list-region').getBoundingClientRect();return{bottomGap:rail.bottom-footer.bottom,viewportGap:innerHeight-footer.bottom,height:footer.height,listBottom:list.bottom,footerTop:footer.top};});
  assert.ok(accountLayout.bottomGap>=-1&&accountLayout.bottomGap<=9,'Account footer stays at the sidebar bottom');
+ if(width<760)assert.ok(accountLayout.viewportGap>=-1&&accountLayout.viewportGap<=9,JSON.stringify(accountLayout));
+ assert.equal(await page.locator('.user-workspace-nav').count(),0);
  assert.ok(accountLayout.height<=60,'Account footer is compact');
  assert.ok(accountLayout.listBottom<=accountLayout.footerTop+1,'Session list cannot cover the account footer');
  await page.screenshot({path:path.join(output,`account-sidebar-${width}.png`),fullPage:true,animations:'disabled'});
@@ -181,7 +189,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.getByRole('tab',{name:'Task',exact:true}).count(),0);
  assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),0);
  if(width<760)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
- await page.getByRole('combobox',{name:'Model',exact:true}).selectOption('quality');
+ if(!await page.getByRole('combobox',{name:'Model',exact:true}).isVisible())await page.getByRole('button',{name:'Message settings',exact:true}).click();
+ await page.getByRole('combobox',{name:'Model',exact:true}).selectOption('quality');await page.getByRole('combobox',{name:'Thinking',exact:true}).selectOption('high');await page.getByRole('button',{name:'Close message settings',exact:true}).click();
  await page.locator('.cli-composer textarea').fill('Plan my private workspace');
  assert.equal(await page.locator('.cli-workspace').count(),1);
  await page.getByRole('button',{name:'Send message',exact:true}).click();
@@ -247,6 +256,24 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.locator('.team-composer-hint').count(),0);
  await page.getByRole('button',{name:'Session actions',exact:true}).click();await page.getByRole('menuitem',{name:'Rename',exact:true}).click();const renameDialog=page.getByRole('dialog',{name:'Rename chat',exact:true});await renameDialog.getByRole('textbox',{name:'Session name',exact:true}).fill('Cancelled rename');await renameDialog.getByRole('button',{name:'Cancel',exact:true}).click();await renameDialog.waitFor({state:'hidden'});assert.equal(await page.locator('.cli-conversation-header .cli-rename-form').count(),0);
  if(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count())await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
+ if(width<760&&await page.getByRole('button',{name:'Hide workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+ await page.evaluate(()=>window.__setModelMode('auto'));
+ await page.getByRole('button',{name:'Message settings',exact:true}).click();
+ assert.deepEqual(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').allTextContents(),['Auto','Regular','Professional','Expert']);
+ assert.equal(await page.getByRole('combobox',{name:'Thinking',exact:true}).isDisabled(),true);
+ await page.getByRole('combobox',{name:'Model',exact:true}).selectOption('expert');await page.getByRole('combobox',{name:'Thinking',exact:true}).selectOption('high');await page.getByRole('button',{name:'Close message settings',exact:true}).click();
+ await page.evaluate(()=>window.__setModelMode('auto',false));await page.getByRole('status',{name:'Automatic assistant',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Message settings',exact:true}).count(),0);
+ await page.evaluate(()=>window.__setModelMode('manual'));await page.getByRole('button',{name:'Message settings',exact:true}).waitFor();
+ if(await page.getByRole('button',{name:'Hide workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+ await page.evaluate(()=>window.__setQuestion(true));const question=page.getByRole('dialog',{name:'Assistant has a question',exact:true});await question.waitFor();assert.equal(await page.locator('.session-question-modal').count(),1);
+ for(const field of await question.locator('fieldset').all())await field.getByRole('radio').first().check();
+ if(width===360)await page.setViewportSize({width,height:390});
+ const sendAnswer=question.getByRole('button',{name:'Send answer',exact:true});await sendAnswer.waitFor();
+ const bounds=await sendAnswer.boundingBox();assert.ok(bounds&&bounds.y>=0&&bounds.y+bounds.height<=await page.evaluate(()=>innerHeight)+1,JSON.stringify(bounds));
+ await page.screenshot({path:path.join(output,`question-${width}.png`),fullPage:true,animations:'disabled'});
+ await sendAnswer.click();await question.waitFor({state:'detached'});await page.evaluate(()=>window.__setQuestion(false));
+ if(width===360)await page.setViewportSize({width,height:674});
+ if(await page.getByRole('button',{name:'Show workspace tools',exact:true}).isVisible())await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
  await page.getByRole('tab',{name:'Env',exact:true}).click();
  await page.locator('.cli-environment-view').getByText('Connection',{exact:true}).waitFor();
  assert.equal(await page.locator('.cli-environment-view p').count(),0);
@@ -263,11 +290,11 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await website.fill('https://example.com');await website.press('Enter');await page.waitForFunction(()=>window.__privateActions.some(message=>message.payload?.browserRequest?.url==='https://example.com'));
  await page.evaluate(()=>document.documentElement.dataset.theme='light');
  if(width<760){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
- await page.getByRole('button',{name:'Settings',exact:true}).click();
+ await openSettings();
  const settingsTabs=page.getByRole('tablist',{name:'Settings sections',exact:true});
- assert.equal(await settingsTabs.getByRole('tab').count(),4);assert.equal(await settingsTabs.getByRole('tab',{name:'General',exact:true}).getAttribute('aria-selected'),'true');
+ assert.equal(await settingsTabs.getByRole('tab').count(),6);assert.equal(await settingsTabs.getByRole('tab',{name:'General',exact:true}).getAttribute('aria-selected'),'true');
  await page.screenshot({path:path.join(output,`settings-general-${width}.png`),fullPage:true,animations:'disabled'});
- await settingsTabs.getByRole('tab',{name:'General',exact:true}).focus();await settingsTabs.getByRole('tab',{name:'General',exact:true}).press('End');assert.equal(await settingsTabs.getByRole('tab',{name:'Usage',exact:true}).getAttribute('aria-selected'),'true');
+ await settingsTabs.getByRole('tab',{name:'General',exact:true}).focus();await settingsTabs.getByRole('tab',{name:'General',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{name:'Personalization',exact:true}).press('ArrowDown');await settingsTabs.getByRole('tab',{name:'Account',exact:true}).press('ArrowDown');assert.equal(await settingsTabs.getByRole('tab',{name:'Usage',exact:true}).getAttribute('aria-selected'),'true');
  await page.getByRole('region',{name:'Your usage',exact:true}).waitFor();
  assert.equal(await page.getByRole('progressbar').count(),3);
  await page.getByText('A response is running. Usage will update when it finishes.',{exact:true}).waitFor();
@@ -306,6 +333,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.locator('.cli-account-footer').count(),0);
  assert.equal(await page.locator('.cli-conversation-header').innerText().then(text=>/Started by|Running by/.test(text)),false);
  assert.deepEqual(errors,[]);await page.screenshot({path:path.join(output,`complete-${width}.png`),fullPage:true,animations:'disabled'});
+ await page.evaluate(()=>window.__olderProject());
+ if(width<760&&await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).isVisible())await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+ await page.getByRole('button',{name:'New chat',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Project"]')?.getAttribute('data-value')==='C:/team/alex');
+ assert.equal(await page.locator('.cli-session-messages').count(),0,'A new general chat has no older transcript');
  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,privateProfile:true,queue:true,reloadPreserved:true,technicalDetailsHidden:true,errors:0}));await context.close();
 }
  const context=await browser.newContext({viewport:{width:1440,height:960},serviceWorkers:'block'}),page=await context.newPage();
@@ -321,6 +352,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const masterTranscript=await page.locator('.cli-session-messages').textContent();
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.match(masterTranscript,/C:\\Windows\\System32\\WindowsPowerShell/);assert.match(masterTranscript,/C:\/team\/alex\/output\/commit.cjs/);assert.match(masterTranscript,/Update|Edited/);
- console.log(JSON.stringify({masterDashboardControlsPreserved:true}));await context.close();
+ await page.setViewportSize({width:360,height:640});await page.evaluate(()=>window.__setQuestion(true));
+ const masterQuestion=page.getByRole('dialog',{name:'Codex has a question',exact:true});await masterQuestion.waitFor();
+ const masterSend=await masterQuestion.getByRole('button',{name:'Send answer',exact:true}).boundingBox();assert.ok(masterSend&&masterSend.y>=0&&masterSend.y+masterSend.height<=640);
+ await page.screenshot({path:path.join(output,'master-question-mobile.png'),fullPage:true,animations:'disabled'});await masterQuestion.getByRole('button',{name:'Cancel',exact:true}).click();
+ console.log(JSON.stringify({masterDashboardControlsPreserved:true,masterQuestionMobile:true}));await context.close();
 }finally{await browser.close();}
 console.log('Screenshots: '+output);

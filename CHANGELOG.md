@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-pre.77
+
+- Move Scheduled and Library into subscriber Settings and simplify the chat sidebar with a compact account menu at the bottom.
+- Add configurable Auto routing and Regular, Professional, and Expert profiles, with optional locked Auto and shared model/thinking controls.
+- Show questions in viewport-sized dialogs with scrollable contents and visible answer actions; steer verified active-turn answers ahead of queued follow-ups and compact mobile reminders.
+- Start general subscriber chats in My workspace and keep unrelated project files out of greetings and general conversation, including after an unconfirmed response.
+
 ## 3.0.0-pre.76
 
 - Fix User Workspace chat and model discovery when public API key slots are full; use process-only internal credentials.

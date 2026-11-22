@@ -78,12 +78,16 @@ try {
     await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
     record('Real Browser opens public websites and saved pages with assets; interaction works and host/other-user access is blocked');
   };
+  const earlier=await action('createWorkspaceProject',{projectName:'Earlier project',parentFolder:accounts[0].workspacePath});
+  await action('saveWorkspaceFile',{projectPath:earlier.workspaceProject.path,filePath:'index.html',fileContent:'<!doctype html><title>Earlier work</title>'});
+  const greeting=await chat('Hi, how are you?');const greetingId=page.url().split('/').at(-1);const greetingMessages=(await action('getCodexCliSessionMessages',{sessionId:greetingId})).cliSessionMessages;
+  assert.ok(!greetingMessages.some(message=>message.kind==='tool-call'),'A fresh greeting does not inspect older project files');assert.doesNotMatch(greeting,/Earlier project|index.html|saved files/i);record('Fresh general chat stays independent of existing project files');
   const marker = 'MEM-' + randomUUID().slice(0, 8);
   await chat(`Remember this for future chats: my standard buyer-report reference is ${marker}. Save it in memory.`);
   assert.ok((await get(primary)).entries.some(entry => entry.text.includes(marker))); record('Real assistant saves a requested memory');
   const recalled = await chat('What is my standard buyer-report reference? Reply with the reference only.'); assert.ok(recalled.includes(marker)); record('A new chat recalls the saved preference');
   await browserCheck();
-  const settings = async () => { const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true }); if (await show.isVisible()) await show.click(); await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('tab', { name:'Personalization', exact:true }).click(); return page.getByRole('region', { name: 'Memory settings', exact: true }); };
+  const settings = async () => { const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true }); if (await show.isVisible()) await show.click(); await page.getByRole('button',{name:'Account menu',exact:true}).click(); await page.getByRole('menuitem',{name:'Settings',exact:true}).click(); await page.getByRole('tab', { name:'Personalization', exact:true }).click(); return page.getByRole('region', { name: 'Memory settings', exact: true }); };
   let section = await settings(); await section.getByRole('checkbox', { name: 'Use saved memory', exact: true }).uncheck(); await section.getByRole('status').filter({ hasText: 'Memory is off.' }).waitFor();
   memory = await get(primary); assert.ok(memory.entries.some(entry => entry.text.includes(marker))); assert.equal(memory.enabled, false);
   assert.equal((await change(primary, { operation: 'save', expected: memory.revision, text: 'Cannot save while off' })).status(), 400);

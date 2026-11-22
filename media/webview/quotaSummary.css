@@ -19250,3 +19250,48 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .user-account dl > div { padding:10px 0; border-bottom:1px solid var(--border-default); align-items:center; }
 .user-account dd { display:flex; align-items:center; justify-content:flex-end; gap:12px; text-align:right; min-width:0; }
 @media(max-width:440px) { .user-memory-toggle { min-height:40px; } }
+
+/* Question answers stay above the composer and inside the visible viewport. */
+.session-question-modal.settings-modal.dashboard-modal { width:min(560px,calc(var(--dashboard-viewport-width,100vw) - 24px)); max-height:calc(var(--dashboard-viewport-height,100dvh) - 24px); }
+.session-question-modal > .dashboard-modal-body { display:flex; min-height:0; padding:0!important; overflow:hidden; }
+.session-question-modal .cli-question-prompt { display:flex; flex-direction:column; min-height:0; max-height:none; width:100%; margin:0; padding:0; border:0; background:transparent; overflow:hidden; }
+.session-question-modal .cli-question-scroll { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:6px 16px 12px; }
+.session-question-modal .dialog-actions { flex:none; margin:0; padding:10px 16px; border-top:1px solid var(--border-muted); background:var(--bg-surface); }
+.session-question-modal .dialog-actions button { min-height:36px; }
+.session-question-modal .cli-question-prompt > [role=status] { flex:none; margin:0; padding:6px 16px; }
+body:has(.session-question-modal) .codex-request-background { display:none; }
+@media(max-width:760px) {
+  .codex-request-background { gap:6px; padding:5px 7px; min-height:36px; max-width:none; font-size:calc(12px * var(--dashboard-text-scale,1)); }
+  .codex-request-background > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .codex-request-background > button { min-height:30px; padding:4px 9px; }
+  .codex-request-background .codex-request-dismiss { width:30px; height:30px; min-width:30px; min-height:30px; }
+  .session-question-modal .dialog-actions button { min-height:40px; }
+}
+
+.office-user-theme .cli-composer-options-toggle { display:flex; align-items:center; gap:6px; min-width:0; max-width:calc(var(--dashboard-viewport-width,100vw) - 130px); min-height:30px; padding:4px 7px; border:0; background:transparent; font-size:calc(12px * var(--dashboard-text-scale,1)); }
+.office-user-theme .cli-composer-options-toggle .cli-composer-model { min-width:0; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-user-theme .cli-composer-options-toggle .cli-composer-effort { flex:none; }
+.office-user-theme .cli-composer-options-toggle > svg { width:14px; height:14px; flex:none; }
+.office-user-theme .user-auto-model { cursor:default; }
+.team-auto-models { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.team-auto-models > label:first-child,.team-auto-models > small { grid-column:1/-1; }
+@media(max-width:480px) { .team-auto-models { grid-template-columns:1fr; } }
+
+/* Subscriber navigation stays in Settings; the account row ends the chat rail. */
+.office-user-theme .team-user-footer { position:relative; margin-top:auto; padding:5px 0 max(5px,env(safe-area-inset-bottom)); }
+.office-user-theme .team-user-account { display:flex; align-items:center; gap:8px; width:100%; min-width:0; min-height:42px; padding:4px 6px; border:0; border-radius:7px; background:transparent; color:var(--text-primary); text-align:left; cursor:pointer; }
+.office-user-theme .team-user-account .team-user-footer-copy { line-height:1.25; }
+.office-user-theme .team-user-account:hover,.office-user-theme .team-user-account[aria-expanded=true] { background:var(--bg-hover); }
+.team-user-account > svg { flex:none; width:16px; height:16px; color:var(--text-secondary); }
+.team-user-footer > .cli-session-menu { position:absolute; bottom:calc(100% + 4px); top:auto; left:0; right:0; width:auto; max-height:calc(var(--dashboard-viewport-height,100dvh) - 90px); overflow:auto; }
+.team-user-footer > .cli-session-menu form { margin:0; }
+.team-user-footer > .cli-session-menu button { width:100%; min-height:36px; text-align:left; }
+.office-user-settings .user-workspace-page { padding:10px 0; overflow:visible; }
+.settings-modal.office-user-settings .user-workspace-page button.user-page-icon { border:0; background:transparent; padding:7px; }
+.office-user-settings .user-workspace-page .user-library-files li > button:first-child { border:0; background:transparent; padding:4px 0; }
+.office-user-settings .user-library-files :is(strong,small) { margin:0; font-size:calc(13px * var(--dashboard-text-scale,1)); line-height:1.4; }
+.office-user-settings .user-page-filters { flex-wrap:wrap; }
+@media(max-width:760px) {
+ .office-user-theme .cli-workspace .cli-session-rail { height:var(--dashboard-viewport-height,100dvh); max-height:var(--dashboard-viewport-height,100dvh); box-sizing:border-box; padding-bottom:0; }
+ .team-user-footer > .cli-session-menu button { min-height:40px; }
+}

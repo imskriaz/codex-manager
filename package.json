@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.76",
+  "version": "3.0.0-pre.77",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -94,7 +94,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -409,6 +409,40 @@
           "scope": "machine",
           "maxLength": 128,
           "markdownDescription": "Default model for new User Workspace chats. Users may select another model. Leave empty to require users to choose."
+        },
+        "codexManager.officeModelMode": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "auto"
+          ],
+          "default": "manual",
+          "markdownDescription": "Use manual model selection or automatic Regular, Professional and Expert profiles in User Workspace."
+        },
+        "codexManager.officeRouterModel": {
+          "type": "string",
+          "default": "gpt-6-luna",
+          "markdownDescription": "Lightweight model used to select an automatic User Workspace profile and thinking level."
+        },
+        "codexManager.officeRegularModel": {
+          "type": "string",
+          "default": "gpt-6-luna",
+          "markdownDescription": "Backend model for the Regular User Workspace profile."
+        },
+        "codexManager.officeProfessionalModel": {
+          "type": "string",
+          "default": "gpt-6.1-sol",
+          "markdownDescription": "Backend model for the Professional User Workspace profile."
+        },
+        "codexManager.officeExpertModel": {
+          "type": "string",
+          "default": "gpt-6.1-terra",
+          "markdownDescription": "Backend model for the Expert User Workspace profile."
+        },
+        "codexManager.officeProfilePicker": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow User Workspace users to choose Auto, Regular, Professional or Expert. Turn off to lock Auto."
         }
       }
     },

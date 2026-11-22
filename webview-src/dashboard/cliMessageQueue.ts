@@ -185,7 +185,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     if (!props.canDispatch && !steerAnswer) return;
     if (current.current.some(item => item.state === 'sending' || item.state === 'uncertain')) return;
     // A waiting turn needs its answer before ordinary queued follow-ups can run.
-    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && (item.steerRequested || props.turnId && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0)) : current.current.find(item => item.state !== 'sent');
+    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && (item.steerRequested && (props.turnId || !answeredSessionQuestionIds([queuedMessageView(item)]).size) || props.turnId && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0)) : current.current.find(item => item.state === 'queued' && item.steerRequested) ?? current.current.find(item => item.state !== 'sent');
     if (!next || next.state !== 'queued' || !next.durable) return;
     draining.current = true;
     const epoch = generation.current;
@@ -196,7 +196,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       if (!current.current.some(item => item.id === next.id && item.state === 'sending')) return;
       if (!saved) throw new Error('Browser storage could not save the send state. Your message was kept and was not sent. Free storage before retrying.');
       const currentOptions = options.current;
-      const steer = (next.steerRequested || currentOptions.turnId && answeredSessionQuestionIds([queuedMessageView(next)]).size > 0) && (currentOptions.canSteer ?? currentOptions.canDispatch) ? currentOptions.steer : undefined;
+      const steer = (next.steerRequested && (currentOptions.turnId || !answeredSessionQuestionIds([queuedMessageView(next)]).size) || currentOptions.turnId && answeredSessionQuestionIds([queuedMessageView(next)]).size > 0) && (currentOptions.canSteer ?? currentOptions.canDispatch) ? currentOptions.steer : undefined;
       if (currentOptions.connected === false || !currentOptions.canDispatch && !steer) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
       const turnId = currentOptions.turnId;
       const requestId = steer ? steer(next.draft) : currentOptions.send(next.draft);
@@ -315,7 +315,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
         return duplicate.id;
       }
       if (current.current.length >= CLI_MESSAGE_QUEUE_LIMIT || JSON.stringify([...current.current, draft]).length * 2 > MAX_CLI_MESSAGE_QUEUE_BYTES - 8192) { props.feedback('The local message queue is full. Send or remove queued messages before adding another. Your draft is kept.'); return; }
-      const item: CliQueuedMessage = { id: crypto.randomUUID(), draft: structuredClone(normalized), state: 'queued', createdAt: Date.now(), seenIds: [] };
+      const item: CliQueuedMessage = { id: crypto.randomUUID(), draft: structuredClone(normalized), state: 'queued', createdAt: Date.now(), seenIds: [], ...(answers.size?{steerRequested:true}:{}) };
       const next = [...current.current, item]; update(next);
       const epoch = generation.current;
       void save(next).then(saved => {

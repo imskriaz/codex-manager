@@ -1,3 +1,4 @@
+import type { UserWorkspaceNavigation } from './userWorkspacePages';
 import { retainOfflineAccounts } from './offlinePolicy';
 import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
@@ -229,6 +230,7 @@ function App() {
   useEffect(() => {
     if (initialSettingsSection) dispatch({ type: "open-settings" });
   }, [initialSettingsSection]);
+  const [userWorkspaceNavigation,setUserWorkspaceNavigation]=useState<UserWorkspaceNavigation>();
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
@@ -3016,8 +3018,8 @@ function App() {
       {isCliSessionsPath(browserPath) && backgroundCodexRequest && (backgroundCodexRequest.kind === 'question' || !activeCodexRequest)
         ? createPortal(
             <div class="codex-request-background" role="alert">
-              <span>{sameCliSessionTarget({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }, currentSessionTarget()) ? 'Codex has a question in this session.' : 'Codex is waiting for input in another session.'}</span>
-              <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
+              <span>{sameCliSessionTarget({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }, currentSessionTarget()) ? 'Your answer is needed' : 'Question in another chat'}</span>
+              <button type="button" onClick={reviewBackgroundCodexRequest}>{backgroundCodexRequest.kind==='question'?'Answer':'Review'}</button>
               <button type="button" class="codex-request-dismiss" aria-label="Dismiss request notification" title="Dismiss notification" onClick={() => { if (questionNotifications.active) { codexPrompts.dismiss(codexPromptKey(questionNotifications.active)); questionNotifications.dismiss(questionNotifications.active); } else codexPrompts.dismiss(codexPromptKey(backgroundCodexRequest)); }}>×</button>
             </div>,
             document.body
@@ -3076,6 +3078,9 @@ function App() {
       {dashboardTarget ? createPortal(<div class={`panel dashboard-density-compact workspace-dashboard-content ${state.privacyMode ? "privacy-hidden" : ""}`}><fieldset class="dashboard-action-scope dashboard-content" aria-label="Dashboard actions">{dashboardContent}</fieldset></div>, dashboardTarget) : null}
 
       <SettingsOverlay
+        userWorkspaceRoot={cliComposerConfig?.projects?.[0]?.path}
+        onUserFeedback={showNotice}
+        onUserWorkspaceNavigate={action=>{setUserWorkspaceNavigation(action);dispatch({type:"close-settings"});}}
         connected={!isBrowserDashboard || !connectionUnavailable}
         targetConnected={selectedPeer?.connected !== false}
         onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
@@ -3228,6 +3233,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+              userNavigation={userWorkspaceNavigation}
               officeUser={snapshot.office?.role === "user" ? snapshot.office : undefined}
 
               officeFeatures={snapshot.office?.role === "user" ? snapshot.office.features : undefined}

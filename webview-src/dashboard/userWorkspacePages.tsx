@@ -11,6 +11,8 @@ import { downloadWorkspaceFile } from './workspaceDownload';
 import { userWorkspaceNotice } from './userWorkspacePresentation';
 import { DownloadIcon, renderRefreshIcon } from './icons';
 
+export type UserWorkspaceNavigation = {id:string} & ({kind:'file';path:string}|{kind:'prompt';text:string;project?:string}|{kind:'schedule';task:UserSchedule});
+
 const message=(error:unknown)=>userWorkspaceNotice(error instanceof Error?error.message:'This request could not be completed. Please try again.');
 
 function fileType(file:string){return /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(file)?'images':/\.html?$/i.test(file)?'websites':/\.(zip|rar|7z|tar|gz)$/i.test(file)?'archives':/\.(pdf|docx?|xlsx?|csv|txt|md|pptx?)$/i.test(file)?'documents':'other';}

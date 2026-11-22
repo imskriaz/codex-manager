@@ -14,9 +14,10 @@ import { userSessionActivity } from '../domain/teamWorkspacePresentation';
 import { messageSessionPlan } from '../domain/sessionPlan';
 import { MAX_CODEX_LIVE_ITEMS, MAX_CODEX_LIVE_STATE_BYTES, validMessage } from '../domain/codexSessionLive';
 import { waitWithin } from '../utils/concurrency';
+import {OFFICE_PROFILES,officeProfiles,officeProfileLabel,officeReasoning, type OfficeModelChoice} from '../domain/officeModels';
 
-type Turn = { order?:number; imagePaths?:Array<{path:string;mimeType:string}>; attachmentContext?:Array<{name:string;text:string}>; reviewed?:boolean; scheduled?: boolean; id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
-type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; archived?: boolean; updatedAt: string; turns: Turn[] };
+type Turn = { selection?:"auto"|OfficeModelChoice["profile"]; automatic?:boolean; routed?:boolean; profile?:OfficeModelChoice["profile"]; reasoningEffort?:string; order?:number; imagePaths?:Array<{path:string;mimeType:string}>; attachmentContext?:Array<{name:string;text:string}>; reviewed?:boolean; scheduled?: boolean; id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
+type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; selection?:"auto"|OfficeModelChoice["profile"]; reasoningEffort?:string; profile?:OfficeModelChoice["profile"]; archived?: boolean; updatedAt: string; turns: Turn[] };
 type Action = Extract<import("../domain/dashboard/types").DashboardClientMessage, { type: "dashboard:action" }>;
 export class OfficeCapacityError extends Error {}
 export class OfficeModelSelectionError extends Error {}
@@ -30,7 +31,7 @@ const namespace = (owner: string) => `office-sessions:${owner}`;
 function store() { const value = getSqliteStateStore(); if (!value) throw new Error("Conversation storage is unavailable. Please try again shortly."); return value; }
 function summary(session: Session): DashboardCliSessionSummary {
   const pending = session.turns.find(turn => ["queued", "working", "waiting"].includes(turn.state));
-  return { id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, updatedAt: session.updatedAt, archived: session.archived,
+  return { id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, modelProfile:session.profile, modelSelection:session.selection, reasoningEffort:session.reasoningEffort, updatedAt: session.updatedAt, archived: session.archived,
     status: pending ? "running" : "idle", canStop: !!pending, autoResumeEnabled: false,
     queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : undefined };
 }
@@ -56,8 +57,9 @@ export class OfficeSessionService {
     images?:(user:OfficeUser,images:Array<{path:string;mimeType:string}>)=>Promise<string[]>;
     attachments?: (user:OfficeUser, files:import('../domain/chatAttachments').ChatAttachment[])=>Promise<Array<{path:string;name:string;text:string;image?:string;mimeType?:string}>>;
     models?: (user: OfficeUser) => Promise<import("../domain/dashboard/types").DashboardCliModelOption[]>;
+    selectModel?: (user:OfficeUser,messages:OfficeChatMessage[],signal:AbortSignal,catalogue:import("../domain/dashboard/types").DashboardCliModelOption[],previous?:OfficeModelChoice,requested?:OfficeModelChoice)=>Promise<OfficeModelChoice>;
     readUser: (id: string) => Promise<OfficeUser | undefined>;
-    generate: (user: OfficeUser, model: string | undefined, messages: OfficeChatMessage[], signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean, sessionId?: string) => Promise<string>;
+    generate: (user: OfficeUser, model: string | undefined, messages: OfficeChatMessage[], signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean, sessionId?: string, reasoningEffort?:string) => Promise<string>;
     changed: (owner: string, messages: DashboardHostMessage[]) => void;
   }) {}
   start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.(); void this.pump(); }
@@ -140,7 +142,11 @@ export class OfficeSessionService {
         models = [...known.values()];
       }
       models = models.filter(item => allowed(item.id));
-      return { cliSessions: sessions, cliComposerConfig: { models, defaultModel: configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
+      const settings=readTeamSettings();
+      if(settings.modelMode==='auto'){
+        models=[{id:'auto',label:'Auto',reasoningEfforts:[],defaultReasoningEffort:undefined},...officeProfiles(settings,user.plan?.models,(this.modelCatalogues.get(user.id)??[]).map(model=>model.id)).map(choice=>({id:choice.profile,label:officeProfileLabel(choice.profile),reasoningEfforts:models.find(model=>model.id===choice.model)?.reasoningEfforts??['low','medium','high'],defaultReasoningEffort:({regular:'low',professional:'medium',expert:'high'} as const)[choice.profile]}))];
+      }
+      return { cliSessions: sessions, cliComposerConfig: { models, modelMode:settings.modelMode,profilePicker:settings.profilePicker, defaultModel: settings.modelMode==='auto'?'auto':configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
     if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {
@@ -154,7 +160,7 @@ export class OfficeSessionService {
       if(attachments.filter(file=>file.kind==='image').reduce((sum,file)=>sum+file.size,0)>8*1048576)throw new Error('Keep images under 8 MB in total.');
       if(needsChatAttachmentFiles(attachments)&&!this.options.attachments)throw new Error('File uploads are temporarily unavailable. Please try again shortly.');
       const uploaded=prior?[]:this.options.attachments&&attachments.length?await this.options.attachments(user,attachments):[];
-      const fingerprint = createHash("sha256").update(JSON.stringify([text,attachments,p.model,p.projectPath])).digest("hex");
+      const fingerprint = createHash("sha256").update(JSON.stringify([text,attachments,p.model,p.reasoningEffort,p.projectPath])).digest("hex");
       let session!: Session;
       store().transaction(() => {
         const prior = store().get<string>(`office-session-requests:${user.id}`,action.requestId);
@@ -167,7 +173,15 @@ export class OfficeSessionService {
         if (session.archived) throw new Error("Restore this conversation before sending a message.");
         const interrupted=session.turns.filter(turn=>turn.state==='uncertain'&&!turn.reviewed);
         for(const previous of interrupted)previous.reviewed=true;
-        const model = p.model || session.model || readTeamSettings().defaultModel;
+        const settings=readTeamSettings(),automatic=settings.modelMode==='auto';
+        const selection=automatic?(settings.profilePicker&&(OFFICE_PROFILES as readonly string[]).includes(p.model??'')?p.model as OfficeModelChoice['profile']:'auto'):undefined;
+        const profiles=officeProfiles(settings,user.plan?.models,(this.modelCatalogues.get(user.id)??[]).map(model=>model.id));
+        const model=automatic?(selection==='auto'?(profiles.find(choice=>choice.profile==='regular')??profiles[0])?.model:profiles.find(choice=>choice.profile===selection)?.model):p.model||session.model||settings.defaultModel;
+        if(automatic&&!model)throw new OfficeModelSelectionError('Choose a profile included in your plan.');
+        if((!automatic||selection!=='auto')&&p.reasoningEffort!==undefined&&!officeReasoning(p.reasoningEffort))throw new OfficeModelSelectionError('Choose an available thinking level.');
+        const reasoningEffort=automatic&&selection==='auto'?undefined:officeReasoning(p.reasoningEffort)??(!automatic?session.reasoningEffort:undefined);
+        const levels=this.modelCatalogues.get(user.id)?.find(item=>item.id===model)?.reasoningEfforts;
+        if(!automatic&&reasoningEffort&&levels?.length&&!levels.includes(reasoningEffort))throw new OfficeModelSelectionError('Choose a thinking level supported by this model.');
         if (!model || !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(model)) throw new OfficeModelSelectionError('Choose a model before sending your message.');
         if (session.turns.length >= 200 || session.turns.filter(turn => ["queued","working","waiting"].includes(turn.state)).length >= 20) throw new Error("This conversation is full. Start a new chat or wait for queued messages to finish.");
         recoverOfficeTokens(user.id);
@@ -177,9 +191,9 @@ export class OfficeSessionService {
         const id = randomUUID();
         const order=Math.max(Date.now(),(store().get<number>('office-queue','sequence')??0)+1);store().set('office-queue','sequence',order);
         const imagePaths=uploaded.filter(file=>file.image).map(file=>({path:file.path,mimeType:file.mimeType!}));
-        session.turns.push({order,...(imagePaths.length&&this.options.images?{imagePaths}:{}),...(uploaded.length?{attachmentContext:uploaded.map(file=>({name:file.name,text:(file.text||'Image attached for visual review.')+'\nSaved file: '+file.path}))}:{}), ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,state:'queued',user:{id,role:'user',text,textAttachments:chatAttachmentPreviews(attachments),images:imagePaths.length&&this.options.images?uploaded.filter(file=>file.image).map(file=>({src:'/api/workspace/image?filePath='+encodeURIComponent(file.path)+'&mimeType='+encodeURIComponent(file.mimeType!),alt:file.name})):attachments.filter(file=>file.kind==='image').map(file=>({src:file.data,alt:file.name})),timestamp:new Date().toISOString()}});
+        session.turns.push({order,...(imagePaths.length&&this.options.images?{imagePaths}:{}),...(uploaded.length?{attachmentContext:uploaded.map(file=>({name:file.name,text:(file.text||'Image attached for visual review.')+'\nSaved file: '+file.path}))}:{}), ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,reasoningEffort,automatic,selection,state:'queued',user:{id,role:'user',text,textAttachments:chatAttachmentPreviews(attachments),images:imagePaths.length&&this.options.images?uploaded.filter(file=>file.image).map(file=>({src:'/api/workspace/image?filePath='+encodeURIComponent(file.path)+'&mimeType='+encodeURIComponent(file.mimeType!),alt:file.name})):attachments.filter(file=>file.kind==='image').map(file=>({src:file.data,alt:file.name})),timestamp:new Date().toISOString()}});
 
-        session.model = model;
+        session.model = model;session.selection=selection;session.reasoningEffort=reasoningEffort;if(!automatic)session.profile=undefined;
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
       this.publish(session); this.start();
@@ -264,7 +278,7 @@ export class OfficeSessionService {
       const recent=relevant.slice(-24);
       const history:OfficeChatMessage[]=recent.flatMap(value=>{
         if(value.state==='cancelled')return [];
-        const text=[value.state==='uncertain'?'Earlier work was interrupted. Inspect saved files before continuing; do not repeat unverified actions.':'',value.user.text,...(value.attachmentContext??value.user.textAttachments??[]).map(file=>`<attached_file name=${JSON.stringify(file.name)} chars=${file.text.length}>\n${file.text}\n</attached_file>`)].filter(Boolean).join('\n\n');
+        const text=[value.state==='uncertain'?'An earlier reply was not confirmed. Do not assume an action completed. Inspect saved work only if it is relevant to the current request; greetings and general chat do not need file checks.':'',value.user.text,...(value.attachmentContext??value.user.textAttachments??[]).map(file=>`<attached_file name=${JSON.stringify(file.name)} chars=${file.text.length}>\n${file.text}\n</attached_file>`)].filter(Boolean).join('\n\n');
         const content:OfficeChatMessage['content']=value.id===turn.id&&images.length?[{type:'text',text},...images.map(url=>({type:'image_url' as const,image_url:{url}}))]:text;
         return [{role:'user' as const,content},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant').map(activity=>({role:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:'assistant' as const,content:value.assistant.text}]:[])];
       });
@@ -286,7 +300,14 @@ export class OfficeSessionService {
       const globalPrompt = readTeamSettings().globalPrompt;
       if(relevant.length>recent.length)history.unshift({role:'assistant',content:'Earlier conversation context (excerpt; consult saved workspace files for exact contents): '+relevant.slice(0,-24).map(value=>[value.user.text,value.assistant?.text].filter(Boolean).join('\n')).join('\n').slice(-8000)});
       let historyBytes=0;for(let index=history.length-1;index>=0;index--){historyBytes+=JSON.stringify(history[index]!.content).length;if(historyBytes>140000&&index<history.length-1){history.splice(0,index+1);break;}}
-      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"user" as const,content:'Response preferences (apply within workspace policy): '+instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled,session.id),600_000,UNCERTAIN,controller.signal);
+      if(turn.automatic&&!turn.routed){
+        if(!this.options.selectModel)throw new OfficeModelSelectionError('Automatic selection is unavailable. Contact your administrator.');
+        const selected=await this.options.selectModel(user,history,controller.signal,this.modelCatalogues.get(user.id)??[],session.model?{model:session.model,reasoningEffort:session.reasoningEffort,profile:session.profile}:undefined,turn.selection&&turn.selection!=='auto'?{model:turn.model!,profile:turn.selection,reasoningEffort:turn.reasoningEffort}:undefined);
+        controller.signal.throwIfAborted();checkOfficeEntitlement(user,selected.model);
+        store().transaction(()=>{const saved=this.read(session.owner,session.id),current=saved.turns.find(value=>value.id===turn.id);if(!current||current.state!=='working'||current.lease!==turn.lease)throw new Error('Conversation changed.');current.model=selected.model;current.reasoningEffort=selected.reasoningEffort;current.profile=selected.profile;current.routed=true;saved.model=selected.model;saved.reasoningEffort=selected.reasoningEffort;saved.profile=selected.profile;this.save(saved);});
+        Object.assign(turn,{model:selected.model,reasoningEffort:selected.reasoningEffort,routed:true});Object.assign(session,{model:selected.model,reasoningEffort:selected.reasoningEffort,profile:selected.profile});this.publish(session);
+      }
+      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"user" as const,content:'Response preferences (apply within workspace policy): '+instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled,session.id,turn.reasoningEffort),600_000,UNCERTAIN,controller.signal);
       controller.signal.throwIfAborted();
       if(!content?.trim())throw new Error("Empty response.");
       content=userSessionActivity({id:turn.id,role:'assistant',text:content},[user.workspacePath,session.projectPath]).text;

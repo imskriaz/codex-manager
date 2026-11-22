@@ -542,3 +542,9 @@ it('reports stale or non-owned priority actions and can reorder a full queue wit
   render({ scope: 'another-session' }); await flush(); queue.sendNow(urgent); await flush();
   expect(queue.notice).toContain('not ready'); expect(send).not.toHaveBeenCalled();
 });
+
+it('always steers question answers ahead of ordinary Queue messages when the active turn is verified',async()=>{
+ render({canDispatch:false,canSteer:true,steer,turnId:'verified'});await flush();const ordinary=queue.enqueue(draft('Later work'));await flush();
+ const answer=draft(sessionQuestionReply({id:'ask',text:'',questions:[{title:'Which profile?'}]},{'0':'Auto'}));queue.enqueue(answer);await flush();
+ expect(steer).toHaveBeenCalledExactlyOnceWith(answer);expect(send).not.toHaveBeenCalled();expect(queue.items.find(item=>item.id===ordinary)?.state).toBe('queued');
+});

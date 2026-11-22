@@ -9,6 +9,7 @@ import { CODEX_API_BASE } from "../infrastructure/config/apiEndpoints";
 import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironment";
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
+import {officeReasoning} from '../domain/officeModels';
 import { startApiProxyLog } from "./aiProxyHistory";
 import { recordOfficeAudit } from "./officeAudit";
 import { readClaudeProxyMapping } from './aiProxyModelMapping';
@@ -30,7 +31,7 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // shortcut: advertise the supported Codex wire version; raise this when adopting newer wire features.
 const CODEX_WIRE_VERSION = "0.160.0";
 type Json = Record<string, unknown>;
-type Model = { id: string; name: string; claudeId?: string };
+type Model = { id: string; name: string; claudeId?: string; reasoningEfforts?:string[]; defaultReasoningEffort?:string };
 export const isAiProxyPath = (path: string): boolean => path === "/v1" || path.startsWith("/v1/");
 
 function countClaudeValue(value: unknown): number {
@@ -266,7 +267,7 @@ export class AiProxy {
         const publicModelId = (model: Model): string =>
           protocol === "claude" ? (model.claudeId ?? model.id) : model.id;
         const format = (model: Model): Json => {
-          if (protocol !== "claude") return { id: model.id, object: "model", created: 0, owned_by: "openai" };
+          if (protocol !== "claude") return { id: model.id, object: "model", created: 0, owned_by: "openai", ...(model.reasoningEfforts?.length ? {supported_reasoning_efforts:model.reasoningEfforts,default_reasoning_effort:model.defaultReasoningEffort} : {}) };
           const publicId = model.claudeId ?? model.id;
           const role = claudeRole(publicId);
           return {
@@ -718,7 +719,9 @@ export class AiProxy {
             const displayName = [row["display_name"], row["displayName"], row["name"], row["label"]].find(
               (value): value is string => typeof value === "string" && value.trim().length > 0
             );
-            data.push({ id, name: displayName?.trim() ?? id });
+            const levels = row['supported_reasoning_levels'] ?? row['supportedReasoningEfforts'];
+            const reasoningEfforts = Array.isArray(levels) ? [...new Set(levels.map((level:unknown)=>officeReasoning(typeof level==='string'?level:level&&typeof level==='object'?(level as Record<string,unknown>)['effort']??(level as Record<string,unknown>)['reasoningEffort']:undefined)).filter((level):level is string=>!!level))] : [];
+            data.push({ id, name: displayName?.trim() ?? id, ...(reasoningEfforts.length?{reasoningEfforts,defaultReasoningEffort:officeReasoning(row['default_reasoning_level']??row['defaultReasoningEffort'])}: {}) });
             seen.add(id);
           }
         }

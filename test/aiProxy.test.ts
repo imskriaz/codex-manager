@@ -317,7 +317,7 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
     async () =>
       Response.json({
         models: [
-          { slug: "a", display_name: "A", supported_in_api: false },
+          { slug: "a", display_name: "A", supported_in_api: false, supported_reasoning_levels: [{effort:"low"},{effort:"high"},{effort:"invalid"}], default_reasoning_level:"high" },
           null,
           "malformed row",
           { slug: "hidden", visibility: "hide" },
@@ -331,6 +331,7 @@ it("discovers models in both schemas, caches by credentials, retrieves one and p
     r.json()
   );
   expect(models.data.map((item: { id: string }) => item.id)).toEqual(["a", "b"]);
+  expect(models.data[0]).toMatchObject({supported_reasoning_efforts:["low","high"],default_reasoning_effort:"high"});
   const first = await fetch(origin + "/v1/models?limit=1", { headers: { "x-api-key": key } }).then((r) => r.json());
   expect(first).toMatchObject({ has_more: true, first_id: "claude-opus", data: [{ type: "model", display_name: "claude-opus (A)" }] });
   const next = await fetch(origin + "/v1/models?limit=1000&after_id=claude-opus", { headers: { "x-api-key": key } }).then(
