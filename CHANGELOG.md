@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0-pre.67
+
+- Create and update User Workspace schedules through AI chat, with starter ideas and a management list for running, pausing and removing tasks. Persist one-time, daily and weekly runs with selected models, project scope, usage/queue enforcement, revision checks and crash recovery; prevent recursive scheduling from scheduled runs.
+- Add a searchable Library for workspace and project files, with storage usage, type filters, list/grid views, right-panel viewing, verified downloads and revision-checked deletion.
+- Enable AI file and folder cleanup, folder creation, file copying and moving inside the user workspace, with revision checks, link protection, storage limits and conversation recovery after project deletion.
+- Replace the single-item archive menu with a direct button, match the master mobile composer controls, and keep the account footer anchored below navigation.
+- Collapse activity details and plans by default in both workspaces, preserve manual expansion, and scroll file tabs without shifting the page.
+
 ## 3.0.0-pre.66
 
 - Anchor the compact User Workspace account row to the bottom of the sidebar.

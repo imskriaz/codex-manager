@@ -58,7 +58,10 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  await context.route('**/api/workspace/preview?*',route=>route.fulfill({contentType:'text/html',headers:{'X-Frame-Options':'SAMEORIGIN','Content-Security-Policy':"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; frame-ancestors 'self'"},body:`<h1>Workspace preview</h1><button onclick="this.textContent='Clicked'">Test interaction</button>`}));
  const start=performance.now();await page.goto(origin+'/workspace/'+id);await page.getByText('Your progress is saved.',{exact:false}).waitFor();
  await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete · Paused'}).waitFor();
+ assert.equal(await page.locator('.cli-session-messages details[open], .cli-composer-plan details[open]').count(),0,'Activity blocks and plans start collapsed in both areas');
  await page.evaluate(()=>document.querySelectorAll('.cli-session-messages details').forEach(node=>{node.open=true;}));
+ await page.evaluate(()=>window.__auditPush());await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ assert.equal(await page.locator('.cli-activity.is-reasoning').evaluate(node=>node.open),true,'A live update preserves manual expansion');
  for(const kind of ['reasoning','command','tool-call','collaboration','web-search','image','review','compaction'])assert.ok(await page.locator('.cli-activity.is-'+kind).count(),kind+' is rendered');
  assert.ok(await page.locator('.cli-file-change-list').count());assert.ok(await page.locator('.cli-error-notice').count());
  assert.ok(await page.locator('.cli-activity-group-details > summary .is-failed').count(),'A failed command cannot produce a success group badge');

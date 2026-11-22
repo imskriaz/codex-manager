@@ -38,8 +38,9 @@ else if(['startCodexCliSession','sendCodexCliSessionMessage','steerCodexCliSessi
 session={id:session?.id||'12345678-1234-1234-1234-123456789abc',title:session?.title||message.payload.text,status:'running',queueEnabled:true,queueRetryAt:Date.now()+60000,queueError:'All assistants are busy. You are in the queue.',projectPath:'C:/team/alex',canStop:true,updatedAt:new Date().toISOString()};
 messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});persist();payload={cliSession:session,cliSessions:[session],cliSessionMessages:messages,notice:{level:'info',message:'Message accepted and queued.'}};
 }else if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:'C:/team/alex',projectName:'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
-else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:[]};
-else if(message.action==='readWorkspaceFile')payload={workspaceFile:{path:message.payload.filePath,content:'Saved file contents.',kind:'text',language:'javascript',mimeType:'text/javascript',revision:'r1',size:20}};
+else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:window.__libraryFiles||[]};
+else if(message.action==='readWorkspaceFile'){const content='Saved file contents.';payload=message.payload.fileDownloadOffset!==undefined?{workspaceFileDownload:{path:message.payload.filePath,revision:'r1',offset:0,size:content.length,data:btoa(content)}}:{workspaceFile:{path:message.payload.filePath,content,kind:'text',language:'javascript',mimeType:'text/javascript',revision:'r1',size:content.length}};}
+else if(message.action==='deleteWorkspaceFile'){window.__libraryFiles=window.__libraryFiles.filter(file=>file.path!==message.payload.filePath);payload={notice:{level:'info',message:'File deleted.'}};}
 else if(message.action==='workspaceBrowser')payload={workspaceBrowser:{projectPath:'C:/team/alex',pages:[],feedback:[]}};
 else if(message.action==='getCodexSkills')payload={cliSkills:[]};
 else if(!['refreshView','openExternalUrl'].includes(message.action))throw new Error('Unexpected private-workspace action: '+message.action);
@@ -52,10 +53,10 @@ async function assertPlainUserInterface(page){
  assert.doesNotMatch(presentation,/C:[\\/]|Windows[\\/](?:System32|Temp)|Codex|quota|sandbox|API|model provider|native thread/i);
 }
 const browser=await chromium.launch({channel:'msedge',headless:true});
-try{for(const width of [1440,390]){
- const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
+try{for(const width of [1440,390,360]){
+ const context=await browser.newContext({viewport:{width,height:width===360?674:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
- page.on('console',message=>{if(message.type()==='error'&&!message.text().includes('status of 409'))errors.push('Console: '+message.text());});
+ page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.locator('.cli-workspace').waitFor();
@@ -66,8 +67,60 @@ try{for(const width of [1440,390]){
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').waitFor({ state: 'detached' });
  let instructions='',failSave=true;await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT'){if(failSave){failSave=false;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Instructions changed in another window. Review before saving.'})});return;}instructions=route.request().postDataJSON().instructions;}await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,pending:true,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
- await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
+ let tasks=[],failScheduleRun=true;const scheduleActions=[];
+ await context.route('**/api/workspace/schedules**',async route=>{
+  const req=route.request(),method=req.method(),id=new URL(req.url()).pathname.split('/')[4];
+  let body={schedules:tasks};
+  if(method!=='GET'){
+   const input=req.postDataJSON();scheduleActions.push({method,id,input});
+   if(input.action==='run'&&failScheduleRun){failScheduleRun=false;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Task could not be queued. Refresh before retrying.'})});return;}
+   if(method==='DELETE'){tasks=tasks.filter(task=>task.id!==id);body={message:'Schedule removed. Runs already queued continue.'};}
+   else {const task=tasks.find(task=>task.id===id);if(input.action==='pause')task.enabled=false;else if(input.action==='resume')task.enabled=true;task.revision=crypto.randomUUID();body={schedule:task,message:input.action==='run'?'Task added to your conversation queue.':'Schedule updated.'};}
+  }
+  await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
+ });
+ const nav=async(name)=>{const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.locator('.user-workspace-nav').getByRole('button',{name,exact:true}).click();};
+ await nav('Scheduled');await page.getByRole('heading',{name:'Scheduled',exact:true}).waitFor();
+ assert.equal(await page.locator('.user-scheduled form').count(),0);
+ await page.getByRole('button',{name:/Weekly shipment report/}).click();await page.locator('.cli-composer textarea').waitFor();
+ await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('weekly scheduled task every Monday at 09:30'));
+ assert.equal(await page.evaluate(()=>window.__privateActions.filter(item=>item.action==='startCodexCliSession').length),0,'Examples prepare a request without sending it');
+ await page.locator('.cli-composer textarea').fill('Keep my existing draft.');
+ await nav('Scheduled');await page.getByRole('button',{name:/Buyer follow-ups/}).click();
+ await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Keep my existing draft.')&&document.querySelector('.cli-composer textarea')?.value.includes('Create a daily scheduled task'));
+ await page.locator('.cli-composer textarea').fill('');
+ tasks=[{id:crypto.randomUUID(),revision:crypto.randomUUID(),title:'Buyer lab dip reminder',prompt:'Prepare buyer lab dip reminder drafts.',model:'quality',projectPath:'C:/team/alex',frequency:'daily',timeZone:'Asia/Dhaka',enabled:true,nextRunAt:Date.now()+3600000}];
+ await nav('Scheduled');await page.getByRole('heading',{name:'Buyer lab dip reminder',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Edit with AI',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Please update scheduled task'));
+ await page.locator('.cli-composer textarea').fill('');await nav('Scheduled');
+ await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('alert').filter({hasText:'Task could not be queued'}).waitFor();assert.equal(tasks.length,1);
+ await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('status').filter({hasText:'Task added to your conversation queue.'}).waitFor();
+ await page.getByRole('button',{name:'Pause',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
+ await page.screenshot({path:path.join(output,`scheduled-${width}.png`),fullPage:true});
+ page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Remove',exact:true}).click();assert.equal(tasks.length,1);
+ page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove',exact:true}).click();await page.getByText('No scheduled tasks yet.',{exact:true}).waitFor();
+ assert.equal(scheduleActions.filter(action=>action.method==='DELETE').length,1);
+ await page.evaluate(()=>{window.__libraryFiles=[{name:'buyer-po.csv',path:'buyer-po.csv',type:'file',depth:0},{name:'costing.csv',path:'reports/costing.csv',type:'file',depth:1}];});
+ await nav('Library');await page.getByRole('button',{name:'Download costing.csv',exact:true}).waitFor();
+ await page.getByRole('searchbox',{name:'Search library',exact:true}).fill('reports/');assert.equal(await page.locator('.user-library-files li').count(),1);
+ const [libraryDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Download costing.csv',exact:true}).click()]);assert.equal(libraryDownload.suggestedFilename(),'costing.csv');
+ await page.getByRole('region',{name:'File storage',exact:true}).getByText('1.0 KB',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Grid view',exact:true}).click();assert.equal(await page.locator('.user-library-files.is-grid').count(),1);
+ await page.getByRole('button',{name:'List view',exact:true}).click();
+ page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deletion cancelled.'}).waitFor();
+ await page.screenshot({path:path.join(output,`library-${width}.png`),fullPage:true});
+ await page.locator('.user-library-files li > button').first().click();await page.getByRole('tab',{name:'costing.csv',exact:true}).waitFor();await page.getByRole('complementary',{name:'Workspace tools',exact:true}).getByRole('button',{name:'Close workspace tools',exact:true}).click();
+ page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deleted.'}).waitFor();assert.equal(await page.locator('.user-library-files li').count(),0);
+ await nav('Chats');
+ if(width<760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Conversation options',exact:true}).count(),0);
+ await page.getByRole('button',{name:'Show archived conversations',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Show active conversations',exact:true}).getAttribute('aria-pressed'),'true');
+ await page.getByRole('button',{name:'Show active conversations',exact:true}).click();
+ if(width<760)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
+ if(await page.getByRole('button',{name:'Start a new chat',exact:true}).isVisible())await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
  await page.locator('.cli-composer textarea').waitFor();
+ if(width<760){const compact=await page.locator('.cli-composer').evaluate(element=>({height:element.getBoundingClientRect().height,control:getComputedStyle(element).getPropertyValue('--cli-control-size')}));assert.equal(compact.control.trim(),'30px');assert.ok(compact.height<=88,'User composer matches the compact master height');}
+
  await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
  assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').filter({hasText:'Automatic'}).count(),0);
  await page.evaluate(()=>window.__setModelWarning('Models could not be loaded. Your selected model is kept.'));
@@ -93,9 +146,9 @@ try{for(const width of [1440,390]){
  assert.equal(await page.getByRole('textbox',{name:'Project folder',exact:true}).count(),0);
  await assertPlainUserInterface(page);
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
- if(width===390)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+ if(width<760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
  await page.locator('.team-user-footer').getByText('Alex Morgan',{exact:true}).first().waitFor();
- await page.waitForFunction(()=>Math.abs(document.querySelector('.cli-session-rail').getBoundingClientRect().left)<1);
+ if(width<760)await page.waitForFunction(()=>Math.abs(document.querySelector('.cli-session-rail').getBoundingClientRect().left)<1);
  const accountLayout=await page.evaluate(()=>{const rail=document.querySelector('.cli-session-rail').getBoundingClientRect(),footer=document.querySelector('.team-user-footer').getBoundingClientRect(),list=document.querySelector('.cli-session-list-region').getBoundingClientRect();return{bottomGap:rail.bottom-footer.bottom,height:footer.height,listBottom:list.bottom,footerTop:footer.top};});
  assert.ok(accountLayout.bottomGap>=-1&&accountLayout.bottomGap<=9,'Account footer stays at the sidebar bottom');
  assert.ok(accountLayout.height<=60,'Account footer is compact');
@@ -106,7 +159,7 @@ try{for(const width of [1440,390]){
  assert.equal(await page.getByRole('tab',{name:'General',exact:true}).count(),0);
  assert.equal(await page.getByRole('tab',{name:'Task',exact:true}).count(),0);
  assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),0);
- if(width===390)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
+ if(width<760)await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
  await page.getByRole('combobox',{name:'Model',exact:true}).selectOption('quality');
  await page.locator('.cli-composer textarea').fill('Plan my private workspace');
  assert.equal(await page.locator('.cli-workspace').count(),1);
@@ -141,7 +194,7 @@ try{for(const width of [1440,390]){
  await page.reload();await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete'}).waitFor();
  await page.evaluate(()=>window.__completeOffice());
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
- if(width===390){await page.locator('.cli-file-editor').waitFor({state:'visible'});await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();}
+ if(width<760){await page.locator('.cli-file-editor').waitFor({state:'visible'});await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();}
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.equal(await page.locator('.session-plan').count(),1);
  assert.equal(await page.locator('.session-plan .is-completed').count(),3);
@@ -175,7 +228,7 @@ try{for(const width of [1440,390]){
  await page.getByRole('tab',{name:'Env',exact:true}).click();
  await page.locator('.cli-environment-view').getByText('Your workspace',{exact:true}).waitFor();
  await assertPlainUserInterface(page);
- if(width===390){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
+ if(width<760){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('region',{name:'Your usage',exact:true}).waitFor();
  await page.getByText('A response is running. Usage will update when it finishes.',{exact:true}).waitFor();

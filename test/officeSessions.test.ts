@@ -87,7 +87,7 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function));
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined);
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -211,4 +211,13 @@ it("returns the master default even when the optional model catalogue cannot loa
  const {service}=setup();
  const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"config"});
  expect(result.cliComposerConfig?.defaultModel).toBe("configured-model");expect(result.cliComposerConfig?.models).toEqual([]);
+});
+
+it('persists the internal scheduled-run marker so restarted runs cannot recursively create schedules',async()=>{
+ const {service,generate}=setup();const action=start();const first=await service.handle(user,action,{scheduled:true});
+ await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+ expect((generate.mock.calls as unknown[][])[0]?.[6]).toBe(true);
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'manual-followup',payload:{sessionId:first.cliSession!.id,text:'Change the schedule'}});
+ await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));expect((generate.mock.calls as unknown[][])[1]?.[6]).toBeUndefined();
 });

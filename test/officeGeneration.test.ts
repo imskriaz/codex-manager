@@ -139,3 +139,57 @@ it('returns the user-model catalogue only to an administrator',async()=>{
  await internal.handle({method:'GET',url:'/api/office/models',headers:{host:'127.0.0.1:39875'},socket:{remoteAddress:'127.0.0.1'}},response);
  expect(response.statusCode).toBe(200);expect(JSON.parse(response.end.mock.calls[0][0])).toEqual({models:[{id:'fast',label:'fast',reasoningEfforts:[]}]});
 });
+
+it('creates and manages schedules from AI tools without file access, preserving ownership and selected model',async()=>{
+ const actor={...user,workspacePath:path.join(root,'files'),features:['tasks' as const]};await fs.mkdir(actor.workspacePath);
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const native=vi.spyOn(server as any,'processClientMessage');const report=vi.fn();
+ const first={title:'Buyer follow-ups',prompt:'Prepare buyer approval reminder drafts. Do not send email.',frequency:'daily',timeZone:'Asia/Dhaka',nextRunAt:new Date(Date.now()+3600000).toISOString()};
+ let call=0;
+ vi.mocked(upstream).mockClear().mockImplementation(async()=>{
+  call++;
+  if(call===1)return toolResponse('create_schedule',first) as never;
+  if(call===2)return toolResponse('list_schedules',{}) as never;
+  const task=(server as any).teamSchedules().list(actor)[0];
+  if(call===3)return toolResponse('update_schedule',{...first,id:task.id,revision:task.revision,title:'Updated buyer follow-ups'}) as never;
+  if(call===4)return toolResponse('manage_schedule',{id:task.id,revision:task.revision,action:'pause'}) as never;
+  return new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Your daily buyer follow-up task is saved and paused.'}}]})) as never;
+ });
+ await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Schedule buyer follow-ups'}],new AbortController().signal,actor.workspacePath,report);
+ expect((server as any).teamSchedules().list(actor)).toMatchObject([{title:'Updated buyer follow-ups',model:'fast',projectPath:actor.workspacePath,enabled:false}]);
+ expect((server as any).teamSchedules().list({...actor,id:'another-user'})).toEqual([]);expect(native).not.toHaveBeenCalled();
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);
+ expect(sent.tools.some((tool:any)=>tool.function.name==='create_schedule')).toBe(true);
+ expect(sent.tools.some((tool:any)=>tool.function.name==='save_file')).toBe(false);
+ expect(sent.messages.filter((message:any)=>message.role==='tool').every((message:any)=>!message.content.includes('projectPath'))).toBe(true);
+ expect(report.mock.calls.filter(([message])=>message.status==='failed')).toHaveLength(0);
+});
+it('blocks recursive schedules in scheduled runs, missing permissions, ambiguous dates, and capacity replay after saving',async()=>{
+ const actor={...user,workspacePath:path.join(root,'files'),features:['tasks' as const]};await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const run=(scheduled=false)=> (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn(),scheduled);
+ const task={title:'Reminder',prompt:'Prepare a reminder draft.',frequency:'once',timeZone:'Asia/Dhaka',nextRunAt:new Date(Date.now()+3600000).toISOString()};
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('create_schedule',task) as never);
+ await expect(run(true)).rejects.toThrow('unavailable');expect((server as any).teamSchedules().list(actor)).toHaveLength(0);
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string);expect(sent.tools.some((tool:any)=>tool.function.name.includes('schedule'))).toBe(false);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('create_schedule',{...task,nextRunAt:'2027-01-01T09:00'}) as never);
+ await expect(run()).rejects.toThrow('explicit time zone');expect((server as any).teamSchedules().list(actor)).toHaveLength(0);
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue({...actor,features:['generalChat']});
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('create_schedule',task) as never);await expect(run()).rejects.toThrow('unavailable');
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('create_schedule',task) as never).mockResolvedValueOnce(new Response('busy',{status:429}) as never);
+ await expect(run()).rejects.not.toBeInstanceOf(OfficeCapacityError);expect((server as any).teamSchedules().list(actor)).toHaveLength(1);
+});
+
+it('deletes a requested project through AI tools, preserves outside files, and relocates its conversation to the workspace',async()=>{
+ const actor={...user,workspacePath:path.join(root,'files'),features:['files' as const,'generalChat' as const]};await fs.mkdir(actor.workspacePath);const project=path.join(actor.workspacePath,'test');await fs.mkdir(project);await fs.writeFile(path.join(project,'index.html'),'<h1>Test</h1>');await fs.writeFile(path.join(actor.workspacePath,'keep.txt'),'Keep');
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);const sessions=(server as any).teamSessions();const relocate=vi.spyOn(sessions,'relocateProject');
+ const sessionId=crypto.randomUUID();store.set(`office-sessions:${actor.id}`,sessionId,{id:sessionId,owner:actor.id,title:'Test cleanup',projectPath:project,model:'fast',updatedAt:new Date().toISOString(),turns:[]});
+ let calls=0;
+ vi.mocked(upstream).mockClear().mockImplementation(async(_url,options)=>{
+  calls++;if(calls===1)return toolResponse('manage_files',{operation:'inspect',path:'.'}) as never;
+  if(calls===2){const sent=JSON.parse(options!.body as string),inspection=JSON.parse(sent.messages.at(-1).content);return toolResponse('manage_files',{operation:'delete',path:'.',revision:inspection.revision}) as never;}
+  return new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The test project folder was deleted.'}}]})) as never;
+ });
+ await sessions.options.generate(actor,'fast',[{role:'user',content:'Delete project folder'}],new AbortController().signal,project,vi.fn());
+ expect(relocate).toHaveBeenCalledWith(actor.id,project,actor.workspacePath);expect(sessions.project(actor.id,sessionId)).toBe(actor.workspacePath);await expect(fs.stat(project)).rejects.toThrow();expect(await fs.readFile(path.join(actor.workspacePath,'keep.txt'),'utf8')).toBe('Keep');
+});

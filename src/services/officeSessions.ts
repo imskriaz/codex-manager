@@ -14,7 +14,7 @@ import { messageSessionPlan } from '../domain/sessionPlan';
 import { MAX_CODEX_LIVE_ITEMS, MAX_CODEX_LIVE_STATE_BYTES, validMessage } from '../domain/codexSessionLive';
 import { waitWithin } from '../utils/concurrency';
 
-type Turn = { id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
+type Turn = { scheduled?: boolean; id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
 type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; archived?: boolean; updatedAt: string; turns: Turn[] };
 type Action = Extract<import("../domain/dashboard/types").DashboardClientMessage, { type: "dashboard:action" }>;
 export class OfficeCapacityError extends Error {}
@@ -51,7 +51,7 @@ export class OfficeSessionService {
   constructor(private readonly options: {
     models?: (user: OfficeUser) => Promise<import("../domain/dashboard/types").DashboardCliModelOption[]>;
     readUser: (id: string) => Promise<OfficeUser | undefined>;
-    generate: (user: OfficeUser, model: string | undefined, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void) => Promise<string>;
+    generate: (user: OfficeUser, model: string | undefined, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean) => Promise<string>;
     changed: (owner: string, messages: DashboardHostMessage[]) => void;
   }) {}
   start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.(); void this.pump(); }
@@ -59,6 +59,14 @@ export class OfficeSessionService {
   list(owner: string): DashboardCliSessionSummary[] {
     return store().keys(namespace(owner)).map(id => store().get<Session>(namespace(owner), id)).filter((session): session is Session => !!session && session.owner === owner)
       .sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).map(summary);
+  }
+  relocateProject(owner:string,removed:string,root:string):void {
+    for(const item of this.list(owner)){
+      if(!item.projectPath)continue;
+      const relative=path.relative(removed,item.projectPath);
+      if(relative.startsWith('..')||path.isAbsolute(relative))continue;
+      const session=this.read(owner,item.id);session.projectPath=root;this.save(session);this.publish(session);
+    }
   }
   project(owner: string, id: string): string { return this.read(owner,id).projectPath; }
   private read(owner: string, id: string): Session {
@@ -87,7 +95,7 @@ export class OfficeSessionService {
     ]);
   }
   // eslint-disable-next-line @typescript-eslint/require-await -- Action failures must remain asynchronous for dashboard callers.
-  async handle(user: OfficeUser, action: Action): Promise<DashboardActionResultPayload> {
+  async handle(user: OfficeUser, action: Action, internal?: {scheduled: boolean}): Promise<DashboardActionResultPayload> {
     const p = action.payload ?? {};
     if (!user.enabled || user.role !== "user" || !user.features.some(value => value === "tasks" || value === "generalChat")) throw new Error("Chat is not enabled for your workspace.");
     if (p.targetDeviceId && p.targetDeviceId !== "local") throw new Error("Choose your own workspace.");
@@ -124,7 +132,7 @@ export class OfficeSessionService {
         if (session.turns.length >= 200 || session.turns.filter(turn => ["queued","working","waiting"].includes(turn.state)).length >= 20) throw new Error("This conversation is full. Start a new chat or wait for queued messages to finish.");
         claimOfficeRequest(user);
         const id = randomUUID();
-        session.turns.push({ id,requestId:action.requestId,fingerprint,model,state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
+        session.turns.push({ ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
         session.model = model;
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
@@ -215,7 +223,7 @@ export class OfficeSessionService {
       this.publish(session);
       const instructions = readOfficeInstructions(user.id);
       const globalPrompt = readTeamSettings().globalPrompt;
-      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"system" as const,content:instructions}]:[]),...history],controller.signal,session.projectPath,report),90_000,UNCERTAIN,controller.signal);
+      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"system" as const,content:instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled),90_000,UNCERTAIN,controller.signal);
       controller.signal.throwIfAborted();
       if(!content?.trim())throw new Error("Empty response.");
       content=userSessionActivity({id:turn.id,role:'assistant',text:content},[user.workspacePath,session.projectPath]).text;

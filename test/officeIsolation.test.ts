@@ -2,6 +2,7 @@ import { afterEach,beforeEach,expect,it,vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { Readable } from 'node:stream';
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 import { createOfficeUser, updateOfficeUser, type OfficeUser } from "../src/services/officeUsers";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
@@ -147,6 +148,23 @@ it('serves only authorized HTML previews with an opaque script sandbox', async (
   expect(denied.statusCode).toBe(403);
  }
  expect(read).not.toHaveBeenCalled();
+});
+it('scopes schedule routes to the signed-in user and rejects foreign projects and revisions',async()=>{
+ const internal=server as any;internal.settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true})};
+ vi.spyOn(internal,'isAuthorized').mockResolvedValue(true);const actor=vi.spyOn(internal,'officeUserForRequest').mockResolvedValue(user);
+ const native=vi.spyOn(internal,'processClientMessage');
+ const call=async(method:string,url:string,body?:unknown)=>{
+  const request=Object.assign(Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]),{method,url,headers:{host:'127.0.0.1:39875',origin:'http://127.0.0.1:39875'},socket:{remoteAddress:'127.0.0.1'}});
+  const response={statusCode:200,setHeader:vi.fn(),end:vi.fn()};await internal.handle(request,response);return{status:response.statusCode,body:JSON.parse(response.end.mock.calls[0][0])};
+ };
+ const input={title:'Buyer report',prompt:'Prepare a costing draft.',model:'gpt-6-luna',nextRunAt:Date.now()+3600000,timeZone:'Asia/Dhaka',frequency:'daily'};
+ expect((await call('POST','/api/workspace/schedules',{...input,projectPath:root})).status).toBe(400);
+ const saved=await call('POST','/api/workspace/schedules',input);expect(saved.status).toBe(200);expect(saved.body.schedule.projectPath).toBe(user.workspacePath);expect(saved.body.schedule).not.toHaveProperty('owner');
+ expect((await call('PUT','/api/workspace/schedules/'+saved.body.schedule.id,{...input,revision:'stale'})).status).toBe(400);
+ const other=await createOfficeUser({username:'other@example.test',password:'password-123',workspacePath:path.join(root,'other')});actor.mockResolvedValue(other);
+ expect((await call('GET','/api/workspace/schedules')).body.schedules).toEqual([]);
+ expect((await call('POST','/api/workspace/schedules/'+saved.body.schedule.id,{action:'run',revision:saved.body.schedule.revision})).status).toBe(400);
+ expect(native).not.toHaveBeenCalled();
 });
 it.each(["runWorkspaceTerminalCommand","createWorkspaceTerminal","workspaceTerminal","workspaceGit","commitWorkspaceChanges","pushWorkspaceBranch","workspaceGitHub","openExternalUrl","switch","teamSettingsRequest","respondCodexServerRequest"])("blocks a forged %s request before it reaches host actions",async action=>{
  const internal=server as any,native=vi.spyOn(internal,"processClientMessage");

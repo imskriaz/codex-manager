@@ -33,6 +33,7 @@ import { ScrollMore } from './scrollMore';
 import { AccountQuota, getAccountQuotaMetrics, isSessionQuotaWarning } from './accountQuota';
 import { deferredPanel } from './deferredPanel';
 import UserWebsitePreview from './userWebsitePreview';
+import { UserWorkspaceLibrary, UserWorkspaceScheduled } from './userWorkspacePages';
 const WorkspaceBrowser = deferredPanel(() => import('./workspaceBrowser'), 'browser');
 const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'terminal');
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
@@ -593,6 +594,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [branchReview, setBranchReview] = useState(false);
   useEffect(() => setBranchReview(false), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   const [contextAddOpen, setContextAddOpen] = useState(false);
+  const [pendingSchedulePrompt,setPendingSchedulePrompt]=useState<string>();
+  const [userView,setUserView]=useState<'chats'|'scheduled'|'library'>('chats');
   const [layout, setLayout] = useState(()=>loadWorkspaceLayout(props.officeUser?.id));
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<DashboardCliSessionSummary>();
@@ -955,9 +958,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return () => window.clearInterval(timer);
   }, [officeOffline, Boolean(quotaWaiting)]);
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
-  const toolProjectPath = selectedProjectPath;
+  const userRoot=composerProjects[0]?.path;
+  const toolProjectPath = props.officeUser && userView==='library' ? userRoot : selectedProjectPath;
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
-  const contextProjectPath = props.selectedSession || newChatProject !== undefined ? toolProjectPath : undefined;
+  const contextProjectPath = props.selectedSession || newChatProject !== undefined || props.officeUser && userView==='library' ? toolProjectPath : undefined;
   // Discovery replaces the local placeholder ID without changing this workspace.
   const legacyContextProjectKey = JSON.stringify([props.peers?.some(peer => peer.local && peer.id === contextDeviceId) ? 'local' : contextDeviceId, canonicalWebPath(contextProjectPath ?? '__workspace__')]);
   const contextProjectKey = JSON.stringify([legacyContextProjectKey, props.selectedSession?.id ?? null]);
@@ -1002,7 +1006,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const activeContextTab = contextTabAllowed(contextProjectState.active)
     ? contextProjectState.active
     : contextTabs[0] ?? (officeFeatures?.has("files") ? "files" : officeFeatures?.has("browser") ? "browser" : "accounts");
-  const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));
+  const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && ((!props.selectedSession && !(props.officeUser && userView==='library')) || props.dashboardMode === true));
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
@@ -1058,6 +1062,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       gitNotice: requestId ? undefined : { level: 'error', message: 'Git action was not sent. Your draft was kept.' } } }));
   };
   const startNewChat = (nextProject?: string): void => {
+    setUserView('chats');
     selectNewRequest();
     setComposerFeedback(undefined);
     if (mobileLayout) setRailCollapsed(true);
@@ -1068,6 +1073,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setNewChatProject(selected);
     setProjectPath(selected);
   };
+  useEffect(()=>{
+    if(!pendingSchedulePrompt||userView!=='chats'||newChatProject===undefined||!draftReadyKeys.has(draftKey))return;
+    setDraft(current=>current?`${current}\n\n${pendingSchedulePrompt}`:pendingSchedulePrompt);
+    setPendingSchedulePrompt(undefined);
+    setComposerFeedback({level:'info',message:'Schedule request added. Review your instructions and model, then send.'});
+  },[pendingSchedulePrompt,userView,newChatProject,draftReadyKeys,draftKey]);
   const pcGroups = useMemo(() => {
     const localPeer = props.peers?.find((peer) => peer.local);
     const visibleKeys = new Set(visibleSessions.map((session) => `${session.deviceId ?? "local"}:${session.id}`));
@@ -1168,7 +1179,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     } else openContextTab('files', relative);
   };
   useEffect(() => {
-    if (!props.officeUser || !props.selectedSession || props.messagesLoading || props.messagesError) return;
+    if (!props.officeUser || userView!=='chats' || !props.selectedSession || props.messagesLoading || props.messagesError) return;
     const changes = props.messages.filter(message => message.kind === 'file-change' && message.status === 'completed').flatMap(message => (message.changes ?? []).filter(change => change.path && !/^(?:delete|deleted|remove|removed)$/i.test(change.kind)).map(change => ({path: workspaceRelativePath(change.path, toolProjectPath), key: JSON.stringify([message.id, change.path, change.kind])})));
     for (const message of props.messages) if (message.kind === 'tool-call' && message.title === 'Open preview' && message.status === 'completed') {
       try { const args = JSON.parse(message.arguments ?? '{}') as {path?: unknown}; if (typeof args.path === 'string' && /\.html?$/i.test(args.path)) changes.push({path:args.path, key:JSON.stringify([message.id, args.path, 'preview'])}); } catch { /* Incomplete preview activity is ignored. */ }
@@ -1185,7 +1196,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       return;
     }
     openDeliverable(added.at(-1)!.path);
-  }, [props.officeUser, props.selectedSession?.id, props.messages, props.messagesLoading, props.messagesError, props.connected, toolProjectPath]);
+  }, [props.officeUser, props.selectedSession?.id, props.messages, props.messagesLoading, props.messagesError, props.connected, toolProjectPath, userView]);
 
   const updateBrowserPages = (pages: BrowserWorkspacePage[]): void => {
     setContextTabsByProject(current => {
@@ -1308,7 +1319,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const canDrag = !props.officeUser && grouped && session.status === 'idle' && !session.locked && !session.queueEnabled && !session.subAgent && !session.parentSessionId && props.connected !== false && !(props.isSessionPending?.(session) ?? props.mutating);
       return <div role="listitem" draggable={canDrag} class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={event => { if (!canDrag) { event.preventDefault(); return; } setDraggedSession(session); event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => { setDraggedSession(undefined); setDropProject(undefined); }}>
 
-      <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); selectNewRequest(); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
+      <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setUserView('chats'); selectNewRequest(); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{props.officeUser ? userProjectLabel(session.projectPath,composerProjects) : sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
       <span class={`cli-session-row-status ${indicator === "attention" ? "is-attention" : indicator === "complete" ? "is-complete" : indicator === "new" ? "is-unseen" : indicator === "interrupted" ? "is-interrupted" : ""}`} title={running ? (session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running") : undefined} aria-label={indicator === "attention" ? "Needs attention" : indicator === "new" ? "New unseen session" : indicator === "interrupted" ? "Unseen interruption" : running ? (session.status === "unknown" ? "Running state unavailable" : "Running") : indicator === "complete" ? "Unseen completion" : undefined}>
@@ -1585,7 +1596,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           <div class="cli-rail-header">{!railCollapsed && !props.officeUser ? sidebarToggle : null}
             {props.officeFeatures ? <div class="cli-rail-brand" aria-label="User Workspace" title="User Workspace">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}</div> : <button type="button" class="cli-rail-brand" aria-label="Dashboard home" title="Dashboard home" onClick={() => { selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>}
             {props.browser && !props.officeUser ? <label class="cli-rail-system" title="Switch system"><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
-            {props.officeUser ? <div class="user-rail-actions">{!railCollapsed ? sidebarToggle : null}<button type="button" class="cli-icon-button" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><button type="button" class="cli-icon-button" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title="Conversation view" onClick={() => setLayout(current => ({...current, sessionView: current.sessionView === "projects" ? "compact" : "projects"}))}><SessionListIcon /></button><WorkspaceMenu label="Conversation options" icon={<MoreIcon />}><button type="button" onClick={() => setSection(current => current === "active" ? "archived" : "active")}><ArchiveIcon />{section === "active" ? "Archived conversations" : "Active conversations"}</button></WorkspaceMenu></div> : null}
+            {props.officeUser ? <div class="user-rail-actions">{!railCollapsed ? sidebarToggle : null}<button type="button" class="cli-icon-button" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><button type="button" class="cli-icon-button" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title="Conversation view" onClick={() => setLayout(current => ({...current, sessionView: current.sessionView === "projects" ? "compact" : "projects"}))}><SessionListIcon /></button><button type="button" class="cli-icon-button" aria-pressed={section==='archived'} aria-label={section==='active'?'Show archived conversations':'Show active conversations'} title={section==='active'?'Archived conversations':'Active conversations'} onClick={()=>{setUserView('chats');setSection(current=>current==='active'?'archived':'active');}}><ArchiveIcon /></button></div> : null}
             <IconButton label="Settings" className="cli-settings-shortcut" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}><Icon><path d="m9 3-.5 2-1.7 1L5 5.5 3 9l1.5 1.5v2L3 14l2 3.5 1.8-.5 1.7 1L9 20h4l.5-2 1.7-1 1.8.5 2-3.5-1.5-1.5v-2L19 9l-2-3.5-1.8.5-1.7-1L13 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><circle cx="11" cy="11.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" /></Icon></IconButton>
           </div>
             {!props.officeUser ? <nav class="cli-primary-nav" aria-label="Workspace navigation">
@@ -1595,6 +1606,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav> : null}
+          {props.officeUser ? <nav class="user-workspace-nav" aria-label="Your workspace"><button type="button" aria-current={userView==='chats'?'page':undefined} onClick={()=>{setUserView('chats');if(mobileLayout)setRailCollapsed(true);}}><SessionListIcon />Chats</button>{props.officeFeatures?.includes('tasks')?<button type="button" aria-current={userView==='scheduled'?'page':undefined} onClick={()=>{setUserView('scheduled');setContextCollapsed(true);if(mobileLayout)setRailCollapsed(true);}}><Icon><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.6"/></Icon>Scheduled</button>:null}{props.officeFeatures?.includes('files')?<button type="button" aria-current={userView==='library'?'page':undefined} onClick={()=>{setUserView('library');setContextCollapsed(true);if(mobileLayout)setRailCollapsed(true);}}><EmptyFolderIcon />Library</button>:null}</nav>:null}
           <div class="cli-session-filters">
             <div class="cli-session-search-line"><div class="cli-session-search-wrap"><SearchIcon /><input class="cli-session-search" name="session-search" type="search" autoComplete="off" value={search} placeholder="Search sessions…" aria-label="Search sessions" onInput={(event) => setSearch(event.currentTarget.value)} /></div></div>
           </div>
@@ -1684,10 +1696,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           aria-hidden={props.dashboardMode || undefined}
           inert={props.dashboardMode || (mobileLayout && !railCollapsed) || undefined}
         >
-          {!props.selectedSession && !pendingNewChat ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
+          {(!props.selectedSession && !pendingNewChat || props.officeUser && userView!=='chats') ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
           {props.connectionStatus ? <div class="workspace-connection-status">{props.connectionStatus}</div> : null}
           {props.officeUser && officeOffline && !props.selectedSession && !pendingNewChat ? <div class="cli-turn-usage-strip team-request-state" role="status">{quotaOfflineMessage(props.officeUser.availability!)}</div> : null}
-          {props.selectedSession || pendingNewChat ? (
+          {props.officeUser && userView==='scheduled' ? <UserWorkspaceScheduled onPrompt={(text,project)=>{startNewChat(project);setPendingSchedulePrompt(text);}} onFeedback={props.onActionFeedback} connected={props.connected!==false} onOpen={task=>{if(!task.lastSessionId)return;setUserView('chats');selectNewRequest();setNewChatProject(undefined);setProjectPath(task.projectPath);props.onSelect(props.sessions.find(session=>session.id===task.lastSessionId)??{id:task.lastSessionId,title:task.title,projectPath:task.projectPath,model:task.model,status:'idle'});}}/> : props.officeUser && userView==='library' ? <UserWorkspaceLibrary root={userRoot} connected={props.connected!==false} onOpen={openDeliverable} onFeedback={reportLocalFeedback}/> : props.selectedSession || pendingNewChat ? (
             <>
               {props.selectedSession ? <ConversationHeader projectLabel={props.officeUser ? userProjectLabel(props.selectedSession?.projectPath,composerProjects) : undefined} privateWorkspace={!!props.officeUser}
                 workWindow={props.browser && window.self === window.top ? <span class="cli-work-window-slot" ref={setWorkWindowButtonTarget} /> : undefined}
@@ -2509,7 +2521,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
   if (message.kind === 'error') return sessionNotice(<span class="is-error" title={message.text}>{sessionFailureMessage(message.text, page) || 'The activity could not be completed.'}</span>, privateWorkspace ? undefined : sessionErrorDiagnostics(message), 'cli-error-notice is-error');
   const plan = messageSessionPlan(message);
   if (plan) return <SessionPlanChecklist compact={!!privateWorkspace} plan={plan} status={message.status} />;
-  return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
+  return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`}>
     <summary class={agentLink ? 'cli-agent-activity-link' : undefined} title={[agentLink ? `Open ${agentLabel}` : message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")} onClick={event => { if (agentLink) { event.preventDefault(); openAgent!.open(agentIds.length === 1 ? agentIds[0] : undefined); } }}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
       <span class="cli-activity-heading"><strong>{agentActivityLabel(message, openAgent?.names ?? {}) ?? activityLabel(privateWorkspace && message.kind === 'command' ? {...message, command:userCommandSummary(message.command ?? message.text)} : message)}</strong><small>{activityMeta(message)}</small></span>
@@ -2592,8 +2604,8 @@ function WorkspaceEnvironmentView(props: {
     <div class="cli-inspector-body">
       {environment?.warning ? <p role="status">{environment.warning}</p> : null}
       {props.systemInfoEnabled !== false && props.systemStatus ? <details class="cli-environment-section"><summary><h3>System information</h3><ChevronIcon /></summary><SystemStatusRows peer={{ id: 'environment-system', name: props.systemName, connected: props.connected, systemStatus: props.systemStatus }} connected={props.connected} /></details> : null}
-      <details class="cli-environment-section" open><summary><h3>Project</h3><ChevronIcon /></summary><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></details>
-      <details class="cli-environment-section" open><summary><h3>Session</h3><ChevronIcon /></summary><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', surface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></details>
+      <details class="cli-environment-section"><summary><h3>Project</h3><ChevronIcon /></summary><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></details>
+      <details class="cli-environment-section"><summary><h3>Session</h3><ChevronIcon /></summary><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', surface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></details>
       {environment?.isGitRepository ? <details class="cli-environment-section"><summary><h3>Repository</h3><ChevronIcon /></summary><dl>{detail('Branch', environment.branch)}{detail('Tracking', environment.upstream ?? 'No upstream')}{detail('Changes', environment.changes)}{detail('Ahead / behind', `${environment.ahead} / ${environment.behind}`)}</dl></details> : null}
       <details class="cli-environment-section"><summary><h3>Tools overview</h3><ChevronIcon /></summary><div class="cli-inspector-shortcuts"><button type="button" aria-label="Open Git" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('git')}><WorkspaceToolIcon kind="branch" /><span>Git</span><small>{environment?.availability ? 'Folder unavailable' : environment ? environment.isGitRepository ? `${environment.changes} changed` : 'No repository' : 'Not verified'}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span><small>{props.editedFiles} recorded edits{props.dirtyFiles ? ` · ${props.dirtyFiles} unsaved` : ''}</small></button>{!props.hideTerminal ? <button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('terminal')}><TerminalIcon /><span>Terminals</span><small>{projectTerminals.length} project · {props.terminals.length} observed</small></button> : null}<button type="button" onClick={() => props.onOpen('agents')}><WorkspaceToolIcon kind="agents" /><span>Agents</span><small>{props.agents.length} recorded · {runningAgents} running{unknownAgents ? ` · ${unknownAgents} unknown` : ''}</small></button><button type="button" onClick={() => props.onOpen('reviews')}><ReviewIcon /><span>Reviews</span><small>{props.editedFiles} recorded files</small></button></div></details>
       {props.agents.length ? <details class="cli-environment-section"><summary><h3>Agents</h3><ChevronIcon /></summary><div class="cli-inspector-shortcuts">{props.agents.slice(0, 3).map(agent => <button type="button" key={cliSessionTargetKey(agent)} title={agent.title} onClick={() => props.onOpen('agents', agent.id)}><WorkspaceToolIcon kind="agents" /><span>{agent.agentName ?? agent.title}</span><small>{agent.status === 'running' ? 'Running' : agent.status === 'unknown' ? 'Not verified' : 'Ready'}</small></button>)}{props.agents.length > 3 ? <button type="button" onClick={() => props.onOpen('agents')}>View all {props.agents.length} agents</button> : null}</div></details> : null}
@@ -2799,8 +2811,7 @@ function isGroupableTurnActivity(message: DashboardCliSessionMessage): boolean {
 function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const running = messages.some((message) => message.status === "inProgress");
   const failed = messages.some(message => message.status === 'failed');
-  const [expanded, setExpanded] = useState(running);
-  useLayoutEffect(() => setExpanded(running), [running]);
+  const [expanded, setExpanded] = useState(false);
   const summary = activitySummary(messages);
   const incomplete = messages.find((message) => message.status && !["completed", "inProgress", "failed"].includes(message.status))?.status;
   return <div class={`cli-activity-group ${running ? "is-running" : ""}`}>
@@ -2968,7 +2979,8 @@ function WorkspaceContextPanel(props: {
   }, [props.addOpen, props.collapsed]);
   useEffect(() => {
     const activeTab = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
-    activeTab?.closest("span")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const tab=activeTab?.closest('span'),scroller=tabsRef.current;
+    if(tab&&scroller){const bounds=tab.getBoundingClientRect(),viewport=scroller.getBoundingClientRect();if(bounds.left<viewport.left)scroller.scrollLeft+=bounds.left-viewport.left;else if(bounds.right>viewport.right)scroller.scrollLeft+=bounds.right-viewport.right;}
   }, [props.activeTab, props.tabs.length]);
   const officeFeatures = props.officeFeatures ? new Set(props.officeFeatures) : undefined;
   const featureAllows = (tab: WorkspaceTab): boolean => {
