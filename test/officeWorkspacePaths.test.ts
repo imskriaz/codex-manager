@@ -13,8 +13,9 @@ const action=(args:Record<string,unknown>,project=user.workspacePath)=>manageOff
 it('creates folders, copies and moves files without overwriting, then deletes a verified project folder',async()=>{
  await action({operation:'create_folder',path:'project/reports'});const project=path.join(user.workspacePath,'project');await fs.writeFile(path.join(project,'notes.txt'),'Buyer notes');
  let item=await action({operation:'inspect',path:'notes.txt'},project);
- await action({operation:'copy_file',path:'notes.txt',destination:'reports/copy.txt',revision:item.revision},project);
- await expect(action({operation:'copy_file',path:'notes.txt',destination:'reports/copy.txt',revision:item.revision},project)).rejects.toThrow();
+ const copied=await action({operation:'copy_file',path:'notes.txt',destination:'reports/copy.txt',revision:item.revision},project);
+ const moved=await action({operation:'move_file',path:'reports/copy.txt',destination:'reports/final.txt',revision:copied.revision},project);expect(moved.revision).toEqual(expect.any(String));
+ await expect(action({operation:'copy_file',path:'notes.txt',destination:'reports/final.txt',revision:item.revision},project)).rejects.toThrow();
  await action({operation:'move_file',path:'notes.txt',destination:'moved.txt',revision:item.revision},project);
  expect(await fs.readFile(path.join(project,'moved.txt'),'utf8')).toBe('Buyer notes');await expect(fs.stat(path.join(project,'notes.txt'))).rejects.toThrow();
  item=await action({operation:'inspect',path:'.'},project);expect(item.files).toBe(2);

@@ -23,6 +23,7 @@ export interface WorkspaceSurfaceRequest {
   sessionId?: string;
   tab?: string;
   url?: string;
+  previewPath?: string;
   includeContent?: boolean;
   fileDownload?: { filename: string; mimeType: string; data: string };
 }
@@ -51,7 +52,8 @@ export function isWorkspaceSurfaceState(value: unknown): value is WorkspaceSurfa
 
 export function isWorkspaceSurfaceRequest(value: unknown): value is WorkspaceSurfaceRequest {
   return record(value) && ['list', 'read', 'open', 'select', 'hide', 'download'].includes(String(value['operation'])) &&
-    optional(value['surfaceId'], 128) && optional(value['sessionId'], 256) && optional(value['tab'], 4096) && optional(value['url'], 8192) &&
+    optional(value['surfaceId'], 128) && optional(value['sessionId'], 256) && optional(value['tab'], 4096) && optional(value['url'], 8192) && optional(value['previewPath'],4096) &&
+    (value['previewPath']===undefined||value['operation']==='open'&&value['tab']==='browser'&&/\.html?$/i.test(String(value['previewPath']))) &&
     (value['includeContent'] === undefined || typeof value['includeContent'] === 'boolean') &&
     (value['operation'] !== 'download' || record(value['fileDownload']) && text(value['fileDownload']['filename'], 180) &&
       !/[\\/:*?"<>|\u0000-\u001f]/.test(value['fileDownload']['filename']) && text(value['fileDownload']['mimeType'], 128) &&

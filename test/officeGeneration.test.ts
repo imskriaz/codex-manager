@@ -12,6 +12,8 @@ import {configureSqliteStateStore, SqliteStateStore} from '../src/storage/sqlite
 import type {OfficeUser} from '../src/services/officeUsers';
 import {removeTestDirectory} from './testFilesystem';
 import * as officeUsers from '../src/services/officeUsers';
+import * as officePaths from '../src/services/officeWorkspacePaths';
+import {updateWorkspaceSurface,acknowledgeWorkspaceSurface,removeWorkspaceSurface} from '../src/services/workspaceSurfaces';
 import { messageSessionPlan } from '../src/domain/sessionPlan';
 let root:string, store:SqliteStateStore, server:WebDashboardServer;
 const user:OfficeUser = {id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['generalChat'],defaultPrompt:'',workspacePath:'C:/workspace/alex',mcpServers:[],createdAt:0,limits:{storageMb:0,dailyTokens:100,dailyRequests:10}};
@@ -192,4 +194,28 @@ it('deletes a requested project through AI tools, preserves outside files, and r
  });
  await sessions.options.generate(actor,'fast',[{role:'user',content:'Delete project folder'}],new AbortController().signal,project,vi.fn());
  expect(relocate).toHaveBeenCalledWith(actor.id,project,actor.workspacePath);expect(sessions.project(actor.id,sessionId)).toBe(actor.workspacePath);await expect(fs.stat(project)).rejects.toThrow();expect(await fs.readFile(path.join(actor.workspacePath,'keep.txt'),'utf8')).toBe('Keep');
+});
+
+it('confirms the Browser preview only after the exact subscriber surface acknowledges it',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const,'browser' as const]},owner={},sessionId=crypto.randomUUID();
+ const state={surfaceId:'subscriber',host:'browser' as const,projectPath:actor.workspacePath,sessionId,viewport:{width:390,height:844},visible:true,panelOpen:false,activeTab:'env',tabs:[{id:'env',kind:'env' as const,title:'Env'}],browserPages:[],terminals:[]};
+ (server as any).browserSocketOfficeUser=new WeakMap([[owner,actor]]);
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'<h1>Test</h1>'}}}]});
+ updateWorkspaceSurface(owner,state,message=>{expect(message.request).toMatchObject({previewPath:'index.html',sessionId});acknowledgeWorkspaceSurface(owner,message.requestId,{...state,panelOpen:true,activeTab:'browser',tabs:[...state.tabs,{id:'browser',kind:'browser',title:'Browser'}]});});
+ try{
+  vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('open_preview',{path:'index.html'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The website is open in Browser.'}}]})) as never);
+  await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn(),false,sessionId);
+  const sent=JSON.parse(vi.mocked(upstream).mock.calls.at(-1)![1]!.body as string),tool=JSON.parse(sent.messages.at(-1).content);
+  expect(tool).toEqual({preview:{path:'index.html',status:'opened',panel:'Browser'}});expect(JSON.stringify(tool)).not.toContain('<h1>');
+ }finally{removeWorkspaceSurface(owner);}
+});
+
+it('recovers a stale file revision by inspecting the exact target and never claims an unresolved action succeeded',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const action=vi.spyOn(officePaths,'manageOfficeWorkspacePaths').mockRejectedValueOnce(new Error('These files changed. Inspect them again before continuing.')).mockResolvedValueOnce({path:'backup.csv',revision:'fresh'} as never).mockResolvedValueOnce({path:'final.csv',revision:'moved',message:'File moved.'} as never);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('manage_files',{operation:'move_file',path:'backup.csv',destination:'final.csv',revision:'old'}) as never).mockResolvedValueOnce(toolResponse('manage_files',{operation:'inspect',path:'backup.csv'}) as never).mockResolvedValueOnce(toolResponse('manage_files',{operation:'move_file',path:'backup.csv',destination:'final.csv',revision:'fresh'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'File moved.'}}]})) as never);
+ await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn())).resolves.toBe('File moved.');expect(action).toHaveBeenCalledTimes(3);
+ action.mockRejectedValueOnce(new Error('These files changed.'));
+ vi.mocked(upstream).mockResolvedValueOnce(toolResponse('manage_files',{operation:'move_file',path:'backup.csv',destination:'final.csv',revision:'old'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Everything succeeded.'}}]})) as never);
+ await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn())).rejects.toThrow('files changed');
 });

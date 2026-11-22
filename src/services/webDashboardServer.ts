@@ -1560,7 +1560,7 @@ export class WebDashboardServer implements vscode.Disposable {
     return this.officeConversations ??= new OfficeSessionService({
       models: user => this.userWorkspaceModels(user),
       readUser: async id => this.settingsStore.getDashboardSettings().teamWorkspaceEnabled ? getOfficeUser(id) : undefined,
-      generate: async (user, model, messages, signal, projectPath, report, scheduledRun) => {
+      generate: async (user, model, messages, signal, projectPath, report, scheduledRun, sessionId) => {
         const token = await this.officeProxyToken(user.id);
         const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
         model ||= readTeamSettings().defaultModel;
@@ -1575,7 +1575,7 @@ export class WebDashboardServer implements vscode.Disposable {
             {type:'function',function:{name:'manage_schedule',description:'Pause, resume, or remove a task only when requested. List schedules first to get its current revision. Removing a schedule keeps all existing conversations and files.',parameters:{type:'object',properties:{id:{type:'string'},revision:{type:'string'},action:{type:'string',enum:['pause','resume','remove']}},required:['id','revision','action'],additionalProperties:false}}}
           ] : []),
           ...(user.features.includes("files") ? [
-          {type:'function',function:{name:'manage_files',description:'Manage files and folders inside this workspace. inspect returns a revision and exact contents; use that revision for delete, copy_file or move_file. Delete can remove an explicitly requested project folder and its contents, including the current project via path dot. The workspace root is protected. create_folder creates nested folders. copy_file and move_file never overwrite an existing destination. Perform authorized cleanup using this tool, without asking the user to use server folders or a terminal.',parameters:{type:'object',properties:{operation:{type:'string',enum:['inspect','create_folder','copy_file','move_file','delete']},path:{type:'string'},revision:{type:'string'},destination:{type:'string'}},required:['operation','path'],additionalProperties:false}}},
+          {type:'function',function:{name:'manage_files',description:'Manage files and folders inside this workspace. inspect returns a revision and exact contents; use that revision for delete, copy_file or move_file. Delete can remove an explicitly requested project folder and its contents, including the current project via path dot. The workspace root is protected. create_folder creates nested folders. copy_file and move_file never overwrite an existing destination, and return the destination revision for subsequent actions. Never reuse the source revision for the copied file. Perform authorized cleanup using this tool, without asking the user to use server folders or a terminal.',parameters:{type:'object',properties:{operation:{type:'string',enum:['inspect','create_folder','copy_file','move_file','delete']},path:{type:'string'},revision:{type:'string'},destination:{type:'string'}},required:['operation','path'],additionalProperties:false}}},
           {type:"function",function:{name:"list_files",description:"List files in this private workspace.",parameters:{type:"object",properties:{},additionalProperties:false}}},
           {type:"function",function:{name:"read_file",description:"Read a workspace file and its revision before editing.",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}}},
           {type:"function",function:{name:"save_file",description:"Save a workspace text file. Use the revision from read_file for existing files.",parameters:{type:"object",properties:{path:{type:"string"},content:{type:"string"},revision:{type:"string"}},required:["path","content"],additionalProperties:false}}}
@@ -1685,7 +1685,7 @@ export class WebDashboardServer implements vscode.Disposable {
             if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!current.features.includes('files'))throw new OfficeActionError('File access changed.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>;
             if(!args||typeof args!=='object'||Array.isArray(args))throw new OfficeActionError('The file action could not be read.');
-            const activityId=crypto.randomUUID(),title=args['operation']==='inspect'?'Inspect files':'Manage files';
+            const activityId=crypto.randomUUID(),title=args['operation']==='inspect'?'Inspect files':'Manage files',actionKey=JSON.stringify(['manage_files',args['operation'],args['path']]);
             report({id:activityId,kind:'tool-call',title,text:title,status:'inProgress'});
             try{
               if(args['operation']!=='inspect')sideEffects=true;
@@ -1700,10 +1700,11 @@ export class WebDashboardServer implements vscode.Disposable {
                 if(inside(projectPath))projectPath=current.workspacePath;
                 }catch{throw new OfficeActionError('The files were deleted, but workspace records could not all be updated. Refresh before continuing.');}
               }
+              failedActions.delete(actionKey);
               const {deletedPath:_deleted,...safe}=value;
               report({id:activityId,kind:'tool-call',title,text:value.message??'Files inspected.',status:'completed'});
               conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(safe)});
-            }catch(error){report({id:activityId,kind:'tool-call',title,text:'File management did not complete. Review the remaining files before retrying.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.'));}
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(actionKey,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.'})});}
             continue;
           }
           const activityId=crypto.randomUUID(),title=call.function.name==="list_files"?"Browse files":call.function.name==="read_file"?"Read file":call.function.name==="save_file"?"Update file":call.function.name==='open_preview'?'Open preview':"Workspace action";
@@ -1724,7 +1725,19 @@ export class WebDashboardServer implements vscode.Disposable {
           else failedActions.set(actionKey,value?.type==='dashboard:action-result'&&value.error?userWorkspaceNotice(value.error):'This action could not be completed. Your work is saved. Please try again.');
           if(call.function.name==='save_file'&&value?.type==='dashboard:action-result'&&value.status==='completed')report({id:crypto.randomUUID(),kind:'file-change',title:'Updated files',text:'File saved.',status:'completed',changes:[{path:args.path??'',kind:args.revision?'update':'add'}]});
           if (['save_file','open_preview'].includes(call.function.name) && args.path && value?.type==='dashboard:action-result' && value.status==='completed') deliverables.set(pathLib.relative(projectPath,pathLib.resolve(projectPath,args.path)).split(pathLib.sep).join('/'),/\.html?$/i.test(args.path) && current.features.includes('browser'));
-          conversation.push({role:"tool",tool_call_id:call.id,content:JSON.stringify(value).slice(0,160_000)});
+          let toolResult:unknown=value;
+          if(call.function.name==='open_preview'&&value?.type==='dashboard:action-result'&&value.status==='completed'){
+            const allowed=(owner:object)=>this.browserSocketOfficeUser?.get(owner as WebSocket)?.id===current.id;
+            const listed=await workspaceSurface(projectPath,{operation:'list',sessionId},true,allowed);
+            const surfaces=sessionId?listed.surfaces.filter(surface=>surface.sessionId===sessionId&&surface.visible):[];
+            if(surfaces.length===1){
+              try{
+                const opened=await workspaceSurface(projectPath,{operation:'open',surfaceId:surfaces[0]!.surfaceId,sessionId,tab:'browser',previewPath:args.path},true,allowed,5000);
+                toolResult={preview:{path:args.path,status:opened.surfaces[0]?.panelOpen&&opened.surfaces[0]?.activeTab==='browser'?'opened':'ready',panel:'Browser'}};
+              }catch{toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. Opening the viewer could not be confirmed. Provide its Open preview link without claiming it opened.'};}
+            }else toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. No single active viewer is available for confirmation. Provide its Open preview link.'};
+          }
+          conversation.push({role:"tool",tool_call_id:call.id,content:JSON.stringify(toolResult).slice(0,160_000)});
           } catch(error){report({id:activityId,kind:"tool-call",title,text:"This action could not be completed. Your work is saved.",status:"failed",arguments:call.function.arguments});throw error;}
         }
         }

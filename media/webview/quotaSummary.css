@@ -18789,9 +18789,9 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .office-user-theme .team-user-footer { align-self:stretch; min-width:0; gap:8px; padding:7px 4px max(7px,env(safe-area-inset-bottom)); color:var(--text-primary); }
 .office-user-theme .team-user-avatar { flex-basis:28px; width:28px; height:28px; font-size:11px; }
 .office-user-theme .team-user-footer-copy { gap:1px; line-height:1.35; }
-.office-user-theme .team-user-footer-copy strong { font-size:calc(11px * var(--dashboard-text-scale,1)); }
-.office-user-theme .team-user-footer-copy small { font-size:calc(10px * var(--dashboard-text-scale,1)); color:var(--text-muted); }
-.office-user-theme .team-user-footer-menu > button { display:grid; place-items:center; width:40px; height:40px; min-height:40px; padding:10px; border:0; border-radius:6px; background:transparent; }
+.office-user-theme .team-user-footer-copy strong { font-size:calc(12px * var(--dashboard-text-scale,1)); }
+.office-user-theme .team-user-footer-copy small { font-size:calc(11px * var(--dashboard-text-scale,1)); color:var(--text-muted); }
+.office-user-theme .team-user-footer-menu > button { display:grid; place-items:center; width:32px; height:32px; min-height:32px; padding:6px; border:0; border-radius:6px; background:transparent; }
 .office-user-theme .team-user-footer-menu > button:hover { background:var(--bg-hover); }
 .user-website-preview { display:flex; flex-direction:column; height:100%; min-height:0; }
 .user-website-preview > form { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border-default); }
@@ -18814,13 +18814,13 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 /* User Workspace composer keeps one balanced control row at the viewport edge. */
 .office-user-theme .cli-workspace .cli-conversation { padding-bottom:0; }
 .office-user-theme .cli-workspace .cli-composer-submit { align-items:center; gap:7px; }
-.office-user-theme .user-model-picker { position:relative; display:flex; align-items:center; min-width:0; max-width:220px; height:var(--cli-control-size,32px); margin:0; }
-.office-user-theme .user-model-picker select { appearance:none; box-sizing:border-box; width:100%; max-width:100%; height:100%; min-height:0; padding:0 22px 0 4px; border:0; border-radius:var(--cli-control-radius,8px); background:transparent; color:var(--text-primary); cursor:pointer; font-size:calc(11px * var(--dashboard-text-scale,1)); }
+.office-user-theme .user-model-picker { position:relative; display:inline-grid; flex:0 1 auto; align-items:center; font-size:calc(12px * var(--dashboard-text-scale,1)); min-width:0; max-width:220px; height:var(--cli-control-size,32px); margin:0; }
+.office-user-theme .user-model-width { grid-area:1/1; visibility:hidden; min-width:0; padding:0 22px 0 4px; overflow:hidden; white-space:nowrap; }
+.office-user-theme .user-model-picker select { position:absolute; inset:0; appearance:none; box-sizing:border-box; width:100%; max-width:none; height:100%; min-height:0; padding:0 22px 0 4px; border:0; border-radius:var(--cli-control-radius,8px); background:transparent; color:var(--text-primary); cursor:pointer; font:inherit; text-overflow:ellipsis; }
 .office-user-theme .user-model-picker > svg { position:absolute; right:8px; width:12px; height:12px; pointer-events:none; color:var(--text-muted); }
 .office-user-theme .user-model-picker select:focus-visible { outline:2px solid var(--accent-blue); outline-offset:2px; }
 @media (max-width:760px) {
   .office-user-theme .user-model-picker { max-width:min(220px,calc(100vw - 126px)); }
-  .office-user-theme .user-model-picker select { font-size:calc(10px * var(--dashboard-text-scale,1)); }
 }
 .user-workspace-nav { display:grid; gap:2px; margin:3px 0 6px; }
 .user-workspace-nav > button { display:flex; align-items:center; gap:8px; min-height:30px; border:0; border-radius:6px; padding:5px 8px; background:transparent; color:var(--text-primary); text-align:left; font-size:calc(12px * var(--dashboard-text-scale,1)); }
@@ -19112,6 +19112,8 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .cli-composer-question > .cli-question-context { margin:0 4px 6px; font-size:calc(12px * var(--dashboard-text-scale, 1)); line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere; }
 .cli-composer-question .cli-question-prompt { margin:0; padding:10px; }
 .cli-composer-question .cli-question-message > p { margin:4px 0; }
+.cli-workspace .cli-conversation.has-session > .cli-composer-question { flex:0 1 auto; }
+.cli-question-prompt { box-sizing:border-box; max-height:min(360px,calc(100dvh - 240px)); overflow-y:auto; overscroll-behavior:contain; scroll-padding:8px; }
 .cli-composer-plan { flex:none; min-width:0; padding:0 20px; }
 .cli-composer-plan .session-plan { max-width:none; margin:0 0 8px; }
 .cli-composer-plan .session-plan > ol { max-height:min(220px, 25dvh); overflow-y:auto; overscroll-behavior:contain; }

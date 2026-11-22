@@ -80,3 +80,9 @@ it('rejects an acknowledgement with a different surface identity on the same soc
   acknowledgeWorkspaceSurface(phone, send.mock.calls[0]![0].requestId, state('replacement'));
   await rejected;
 });
+
+it('bounds an optional subscriber preview acknowledgement without replaying it',async()=>{
+ vi.useFakeTimers();const send=vi.fn();updateWorkspaceSurface(phone,{...state(),targetDeviceId:undefined},send);
+ const timed=expect(workspaceSurface('D:/demo',{operation:'open',surfaceId:'phone',sessionId:'session',tab:'browser',previewPath:'index.html'},true,()=>true,5000)).rejects.toThrow('outcome is unknown');
+ await vi.advanceTimersByTimeAsync(5001);await timed;expect(send).toHaveBeenCalledOnce();
+});

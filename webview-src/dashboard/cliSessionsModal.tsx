@@ -1216,7 +1216,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       return { ...current, [contextProjectKey]: { ...entry, tabs: [...new Set([...entry.tabs.filter(tab => tab !== 'browser'), active])], active } };
     });
   };
-  useWorkspaceSurface(toolProjectPath && props.selectedSession && !props.dashboardMode ? {
+  useWorkspaceSurface(toolProjectPath && props.selectedSession && !props.dashboardMode && (!props.officeUser||userView==='chats') ? {
     projectPath: toolProjectPath, sessionId: props.selectedSession.id,
     targetDeviceId: workspacePeer?.local === false ? workspacePeer.id : props.selectedSession.remote ? props.selectedSession.deviceId : undefined,
     panelOpen: !toolsCollapsed, activeTab: activeContextTab,
@@ -1260,6 +1260,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (request.operation === 'open') {
       if (!WORKSPACE_TOOL_KINDS.includes(request.tab as WorkspaceToolKind) || request.tab === 'accounts') throw new Error('Choose Browser, Terminal, Files, Git, Reviews, Agents, or Env.');
       if (request.tab === 'terminal' && props.composerConfig?.terminalSupported === false) throw new Error('Terminals are unavailable on this host.');
+      if(props.officeUser&&request.tab==='browser'){
+        if(!request.previewPath||!contextTabAllowed('browser'))throw new Error('Choose a saved HTML website in this workspace.');
+        const result=await workspaceDownloadRequest('readWorkspaceFile',{filePath:request.previewPath});assertCurrent();
+        if(result.workspaceFile?.kind!=='text'||!/\.html?$/i.test(request.previewPath))throw new Error('Choose a saved HTML website to preview.');
+        openDeliverable(request.previewPath);setRailCollapsed(true);return {preview:{path:request.previewPath,status:'opened',panel:'Browser'}};
+      }
       if (request.tab === 'browser') {
         const response = await workspaceDownloadRequest('workspaceBrowser', { browserRequest: { operation: 'open', operationId: crypto.randomUUID(), url: request.url ?? 'about:blank', openedBy: 'ai' } });
         assertCurrent();
@@ -1364,8 +1370,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   });
 
   const queuedQuestionAnswers = messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView);
-  const rawComposerQuestion = props.officeUser && !selectedArchived ? currentUserWorkspaceQuestion(props.messages, queuedQuestionAnswers) : undefined;
-  const composerQuestion = rawComposerQuestion ? userSessionActivity(rawComposerQuestion, composerProjects.map(project => project.path)) : undefined;
+  const rawComposerQuestion = !selectedArchived ? currentUserWorkspaceQuestion(props.messages, queuedQuestionAnswers) : undefined;
+  const composerQuestion = rawComposerQuestion && props.officeUser ? userSessionActivity(rawComposerQuestion, composerProjects.map(project => project.path)) : rawComposerQuestion;
   const composerQuestionText = composerQuestion ? sessionQuestionText(composerQuestion) : '';
   const submit = (): string | undefined => {
     if (props.officeUser && !model) { reportLocalFeedback({level: "warning", message: "Choose a model before sending your message."}); return; }
@@ -1756,7 +1762,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-composer-unavailable" role="status">{props.connected === false ? 'Connection interrupted. Your prompt is kept; check sessions after reconnecting.' : visiblePendingMessages.some(item => item.failed) ? 'Session creation unconfirmed. Review the sent prompt before retrying.' : <><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</>}</div>
                ) : <>
                  <QueuedMessages queue={messageQueue} onRefresh={props.onRefreshMessages} />
-                 {composerQuestion ? <section class="cli-composer-question" aria-label="Current question" aria-live="polite">{composerQuestionText ? <p class="cli-question-context">{composerQuestionText}</p> : null}<SessionQuestionPrompt assistantName="Assistant" key={`${draftKey}:${composerQuestion.id}`} message={composerQuestion} onReply={text => messageQueue.enqueue({text, attachments: []})} disabled={!messageQueue.ready} scope={draftKey} answered={answeredSessionQuestionIds([...props.messages, ...queuedQuestionAnswers])} autoOpen={!!activeSessionQuestion(props.messages)} /></section> : null}
+                 {composerQuestion ? <section class="cli-composer-question" aria-label="Current question" aria-live="polite">{composerQuestionText ? <p class="cli-question-context">{composerQuestionText}</p> : null}<SessionQuestionPrompt assistantName={props.officeUser ? "Assistant" : "Codex"} key={`${draftKey}:${composerQuestion.id}`} message={composerQuestion} onReply={text => messageQueue.enqueue({text, attachments: []})} disabled={!messageQueue.ready} scope={draftKey} answered={answeredSessionQuestionIds([...props.messages, ...queuedQuestionAnswers])} autoOpen={!!activeSessionQuestion(props.messages)} /></section> : null}
                  {composerPlan ? <section class="cli-composer-plan" aria-label="Current task plan"><SessionPlanChecklist compact={!!props.officeUser} key={`${props.selectedSession.id}:${composerPlan.message.id}:${composerQuestion?.id ?? ''}`} plan={composerPlan.plan} status={composerPlan.message.status} /></section> : null}
                  {props.officeUser && props.composerConfig?.modelDiscoveryWarning ? <p class="user-model-warning" role="status">{props.composerConfig.modelDiscoveryWarning} <button type="button" aria-label="Retry models" disabled={props.connected === false} onClick={() => { reportLocalFeedback({level:"info",message:"Checking available models..."}); props.onRefresh(); }}>Try again</button></p> : null}<Composer simple={!!props.officeUser}
                   onFeedback={props.onActionFeedback}
@@ -2122,7 +2128,7 @@ export function Composer(props: {
           {props.feedback && props.feedback.level !== 'info' && props.onRetryFeedback ? <button type="button" disabled={props.retryFeedbackDisabled} onClick={props.onRetryFeedback}>Retry</button> : null}
           {props.projectLocked ? <small class="cli-access-status">{props.sandboxMode || props.permissionProfile ? "Synced with Codex. Changes apply to the next turn." : "Codex permissions are not reported yet. Refresh to check."}</small> : null}
         </div> : null}
-      </div> : <label class="user-model-picker"><span class="sr-only">Model</span><select aria-label="Model" value={props.model ?? ""} onChange={event => props.onModel(event.currentTarget.value)}><option value="" disabled>Choose a model</option>{props.model && !props.models.some(option => option.id === props.model) ? <option value={props.model}>{props.model}</option> : null}{props.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select><ChevronIcon /></label>}
+      </div> : <label class="user-model-picker"><span class="sr-only">Model</span><span class="user-model-width" aria-hidden="true">{props.models.find(option=>option.id===props.model)?.label||props.model||"Choose a model"}</span><select aria-label="Model" value={props.model ?? ""} onChange={event => props.onModel(event.currentTarget.value)}><option value="" disabled>Choose a model</option>{props.model && !props.models.some(option => option.id === props.model) ? <option value={props.model}>{props.model}</option> : null}{props.models.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select><ChevronIcon /></label>}
       {props.sending && !(props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="button" class="cli-stop-button" disabled={props.stopping || props.stopDisabled} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}>{props.stopping ? <span class="cli-live-spinner" aria-hidden="true" /> : <StopIcon />}<span class="cli-stop-label">{props.stopping ? "Stopping" : "Stop"}</span></button> : null}{showResume ? <button type="button" class="cli-send-button cli-resume-button" aria-label={props.resuming ? "Resuming session" : "Resume session"} title="Resume this interrupted session" aria-busy={props.resuming} disabled={props.resuming || props.resumeDisabled || props.attachmentReading} onClick={props.onResume}>{props.resuming ? <span class="cli-live-spinner" aria-hidden="true" /> : <PlayIcon />}</button> : !props.sending || (props.draft.trim().length > 0 || props.attachments.length > 0) ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.simple && !props.model || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
     {props.unavailableReason ? <small class="sr-only" role="status">{props.unavailableReason}</small> : null}
    </form>{attachmentPreview ? <ImageLightbox image={attachmentPreview} onClose={() => setAttachmentPreview(undefined)} /> : null}</>;

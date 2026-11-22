@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.0-pre.69
+
+- Keep current questions above plans in both workspaces and bound question forms so mobile users can scroll to every option and the answer action.
+
+## 3.0.0-pre.68
+
+- Confirm User Workspace Browser previews with the exact signed-in conversation before reporting them opened, with bounded waits and truthful fallback links.
+- Size the User Workspace model picker to its selected label, align composer controls, and balance the compact account row. Return destination revisions for chained file actions and allow safe recovery from stale revisions.
+- Keep text attachments separate in subscriber transcripts so delivered CSV/file messages acknowledge correctly and do not leave duplicate pending bubbles.
+
 ## 3.0.0-pre.67
 
 - Create and update User Workspace schedules through AI chat, with starter ideas and a management list for running, pausing and removing tasks. Persist one-time, daily and weekly runs with selected models, project scope, usage/queue enforcement, revision checks and crash recovery; prevent recursive scheduling from scheduled runs.

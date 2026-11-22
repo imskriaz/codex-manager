@@ -67,7 +67,7 @@ export async function manageOfficeWorkspacePaths(user:OfficeUser,project:string,
         await fs.link(target,destination);
         try{await fs.unlink(target);}catch{throw new Error('The destination was created, but the original could not be removed. Review both files before retrying.');}
       }
-      return {message:operation==='copy_file'?'File copied.':'File moved.',path:args['destination']};
+      return {message:operation==='copy_file'?'File copied.':'File moved.',path:args['destination'],revision:(await snapshot(root,destination)).revision};
     }
     let changed=false;
     try{

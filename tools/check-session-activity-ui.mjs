@@ -66,13 +66,14 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  assert.ok(await page.locator('.cli-file-change-list').count());assert.ok(await page.locator('.cli-error-notice').count());
  assert.ok(await page.locator('.cli-activity-group-details > summary .is-failed').count(),'A failed command cannot produce a success group badge');
  await page.locator('.cli-question-message').getByRole('button',{name:'Answer',exact:true}).click();
- await page.getByRole('radio',{name:'Document',exact:true}).check();await page.getByRole('button',{name:'Send answer',exact:true}).waitFor({state:'visible'});
+ await page.getByRole('radio',{name:'Document',exact:true}).check();await page.getByRole('button',{name:'Send answer',exact:true}).scrollIntoViewIfNeeded();
+ const historicalAnswer=await page.getByRole('button',{name:'Send answer',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});assert.ok(historicalAnswer,'Historical answer action is reachable above the composer');
  assert.equal(await page.getByRole('button',{name:'Send answer',exact:true}).isEnabled(),true);
  if(user){const text=await page.evaluate(()=>[document.body.innerText,...[...document.querySelectorAll('[aria-label]')].filter(node=>node.getClientRects().length).map(node=>node.getAttribute('aria-label'))].join('\n'));assert.doesNotMatch(text,/Codex|C:[\\/]|sandbox|provider|raw-file-content|private-revision|mimeType|Debug details/);const tools=(await page.locator('.cli-activity.is-tool-call').allTextContents()).join('\n');assert.match(tools,/File created\./);assert.doesNotMatch(tools,/raw-file-content|private-revision|mimeType/);}
  else assert.match((await page.locator('.cli-activity.is-tool-call').allTextContents()).join('\n'),/private-revision/);
  if(user){
-  const layout=await page.evaluate(()=>{const rect=s=>document.querySelector(s).getBoundingClientRect();const c=rect('.cli-composer'),m=rect('.user-model-picker'),s=rect('.cli-send-button');return {gap:innerHeight-c.bottom,alignment:Math.abs((m.top+m.bottom-s.top-s.bottom)/2),modelHeight:m.height,sendHeight:s.height};});
-  assert.ok(layout.gap>=0&&layout.gap<=10,JSON.stringify(layout));assert.ok(layout.alignment<=1,JSON.stringify(layout));assert.equal(layout.modelHeight,layout.sendHeight);
+  const layout=await page.evaluate(()=>{const rect=s=>document.querySelector(s).getBoundingClientRect();const c=rect('.cli-composer'),m=rect('.user-model-picker'),s=rect('.cli-send-button');return {gap:innerHeight-c.bottom,alignment:Math.abs((m.top+m.bottom-s.top-s.bottom)/2),modelHeight:m.height,sendHeight:s.height,modelWidth:m.width,controlGap:s.left-m.right};});
+  assert.ok(layout.gap>=0&&layout.gap<=10,JSON.stringify(layout));assert.ok(layout.alignment<=1,JSON.stringify(layout));assert.equal(layout.modelHeight,layout.sendHeight);assert.ok(layout.modelWidth<110,JSON.stringify(layout));assert.ok(layout.controlGap>=4&&layout.controlGap<=10,JSON.stringify(layout));
  }
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));assert.deepEqual(errors,[]);
  await page.screenshot({path:path.join(output,`${user?'user':'master'}-${width}.png`),fullPage:true});
@@ -83,6 +84,11 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
   await page.locator('iframe[title="Website preview.html"]').waitFor({state:'visible'});
   assert.equal(await page.locator('iframe[title="Website preview.html"]').getAttribute('sandbox'),'allow-scripts');
   assert.equal(await page.getByRole('tab',{name:'Browser',exact:true}).getAttribute('aria-selected'),'true');
+  await page.evaluate(()=>{const state=window.__auditActions.findLast(message=>message.type==='dashboard:workspace-surface'&&message.state)?.state;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:workspace-command',requestId:'preview-ack-check',projectPath:state.projectPath,sessionId:state.sessionId,request:{operation:'open',surfaceId:state.surfaceId,sessionId:state.sessionId,tab:'browser',previewPath:'preview.html'}}}));});
+  await page.waitForFunction(()=>window.__auditActions.some(message=>message.type==='dashboard:workspace-command-result'&&message.requestId==='preview-ack-check'));
+  const previewAck=await page.evaluate(()=>window.__auditActions.find(message=>message.type==='dashboard:workspace-command-result'&&message.requestId==='preview-ack-check'));
+  assert.equal(previewAck.error,undefined);assert.equal(previewAck.content.preview.status,'opened');assert.equal(previewAck.state.activeTab,'browser');
+
   try { await page.frameLocator('iframe[title="Website preview.html"]').getByRole('button',{name:'Test interaction'}).click(); } catch(error) { console.log(JSON.stringify({errors,frames:page.frames().map(frame=>frame.url())})); throw error; }
   await page.frameLocator('iframe[title="Website preview.html"]').getByRole('button',{name:'Clicked'}).waitFor();
   const preview=await(await page.locator('iframe[title="Website preview.html"]').elementHandle()).contentFrame();
@@ -100,24 +106,35 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
   await page.getByText('Updated files are available in Files. Your unsaved edits are still open.',{exact:true}).waitFor();
   assert.equal(await page.locator('.cm-content[contenteditable="true"]').innerText(),'My unsaved draft');
   await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+ }
+ {
   await page.evaluate(()=>window.__auditPush({id:'active-plan',kind:'plan',text:'Task checklist',status:'inProgress',arguments:JSON.stringify({steps:[{step:'Read requirements',status:'completed'},{step:'Make changes',status:'inProgress'},{step:'Check results',status:'pending'}]})}));
   const plan=page.locator('.cli-composer-plan .session-plan');
   if(!await plan.evaluate(node=>node.open))await plan.locator('summary').click();
   const row=await plan.locator('li').first().boundingBox();assert.ok(row.height<=24,'Plan rows stay compact');
-  assert.equal(await plan.locator('.session-plan-marker > svg').count(),3);
+  if(user)assert.equal(await plan.locator('.session-plan-marker > svg').count(),3);
   await page.evaluate(()=>window.__auditQuestion());
   const question=page.getByRole('region',{name:'Current question',exact:true});
   await question.getByRole('radio',{name:'Workspace',exact:true}).check();
   await question.getByText('Choose where to keep the result.',{exact:true}).waitFor();
   assert.equal(await plan.evaluate(node=>node.open),false);
   const layout=await page.evaluate(()=>({question:document.querySelector('.cli-composer-question').getBoundingClientRect().bottom,plan:document.querySelector('.cli-composer-plan').getBoundingClientRect().top,height:document.querySelector('.cli-composer-plan').getBoundingClientRect().height}));
-  assert.ok(layout.question<=layout.plan&&layout.height<=40,JSON.stringify(layout));
+  assert.ok(layout.question<=layout.plan&&layout.height<=(user?40:60),JSON.stringify(layout));
   const button=await question.getByRole('button',{name:'Send answer',exact:true}).boundingBox();assert.ok(button.y+button.height<=layout.question+1,'Answer action stays above the plan');
   assert.doesNotMatch(await page.locator('.cli-session-messages').innerText(),/Which destination\?/);
   await page.evaluate(()=>window.__auditPlan());
   await page.locator('.session-plan-count').filter({hasText:'2 of 3 complete'}).waitFor();
   assert.equal(await question.getByRole('radio',{name:'Workspace',exact:true}).isChecked(),true);
-  await page.screenshot({path:path.join(output,`user-question-${width}.png`),fullPage:true});
+  await question.getByRole('button',{name:'Send answer',exact:true}).scrollIntoViewIfNeeded();
+  assert.ok(await question.getByRole('button',{name:'Send answer',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'Current question answer is not covered by plan or composer');
+  await page.screenshot({path:path.join(output,`${user?'user':'master'}-question-${width}.png`),fullPage:true});
+  if(width===360){
+   await page.setViewportSize({width,height:420});
+   await question.getByRole('textbox').fill('Workspace, with a longer written preference.');
+   await question.getByRole('button',{name:'Send answer',exact:true}).scrollIntoViewIfNeeded();
+   assert.ok(await question.getByRole('button',{name:'Send answer',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return r.bottom<=innerHeight&&node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'Answer remains reachable with a reduced keyboard-sized viewport');
+   await page.screenshot({path:path.join(output,`${user?'user':'master'}-question-short.png`),fullPage:true});
+  }
   await question.getByRole('button',{name:'Send answer',exact:true}).click();await question.waitFor({state:'detached'});
  }
  assert.deepEqual(errors,[]);

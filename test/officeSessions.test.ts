@@ -87,7 +87,7 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined);
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",[{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}],expect.any(AbortSignal),user.workspacePath,expect.any(Function),undefined,expect.any(String));
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -220,4 +220,17 @@ it('persists the internal scheduled-run marker so restarted runs cannot recursiv
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'manual-followup',payload:{sessionId:first.cliSession!.id,text:'Change the schedule'}});
  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));expect((generate.mock.calls as unknown[][])[1]?.[6]).toBeUndefined();
+});
+
+it('acknowledges a subscriber CSV attachment without a duplicate optimistic bubble and retains its model context',async()=>{
+ const {service,generate}=setup();const attachment={id:'po',kind:'text' as const,name:'buyer-po.csv',mimeType:'text/csv',size:10,data:'Style,Qty'};
+ const first=await service.handle(user,{...start(),payload:{text:'Cost this order',attachments:[attachment]}});
+ await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+ const result=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});
+ const echo=result.cliSessionMessages!.find(message=>message.role==='user')!;
+ expect(echo.text).toBe('Cost this order');expect(echo.textAttachments).toEqual([{name:'buyer-po.csv',text:'Style,Qty'}]);
+ const {isCliSubmissionEcho}=await import('../webview-src/dashboard/cliSessionComposerState');
+ expect(isCliSubmissionEcho(echo,{text:'Cost this order',attachments:[attachment]},new Set())).toBe(true);
+ expect((generate.mock.calls as unknown[][])[0]?.[2]).toEqual(expect.arrayContaining([{role:'user',content:'Cost this order\n\n<attached_file name="buyer-po.csv" chars=9>\nStyle,Qty\n</attached_file>'}]));
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
 });

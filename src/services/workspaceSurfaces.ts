@@ -35,7 +35,7 @@ export function acknowledgeWorkspaceSurface(owner: object, requestId: string, st
   item.resolve({ surfaces: [state], ...(content === undefined ? {} : { content }) });
 }
 
-export async function workspaceSurface(projectPath: string | undefined, request: unknown, localOnly = false, ownerAllowed: (owner: object) => boolean = () => true): Promise<WorkspaceSurfaceResult> {
+export async function workspaceSurface(projectPath: string | undefined, request: unknown, localOnly = false, ownerAllowed: (owner: object) => boolean = () => true, timeoutMs=25000): Promise<WorkspaceSurfaceResult> {
   if (!projectPath?.trim() || !isWorkspaceSurfaceRequest(request)) throw new Error('Provide a projectPath and a valid workspace surface request.');
   const matches = [...connections.entries()].filter(([owner, value]) => ownerAllowed(owner) && (!localOnly || !value.state.targetDeviceId) && Date.now() - value.seenAt < 45000 && projectTaskKey(value.state.projectPath) === projectTaskKey(projectPath) &&
     (!request.surfaceId || value.state.surfaceId === request.surfaceId) &&
@@ -48,7 +48,7 @@ export async function workspaceSurface(projectPath: string | undefined, request:
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     const finish = (error?: Error, value?: WorkspaceSurfaceResult) => { clearTimeout(timer); pending.delete(requestId); if (error) reject(error); else resolve(value!); };
-    const timer = setTimeout(() => finish(new Error('The dashboard did not acknowledge the panel command. Its outcome is unknown; inspect before retrying.')), 25000);
+    const timer = setTimeout(() => finish(new Error('The dashboard did not acknowledge the panel command. Its outcome is unknown; inspect before retrying.')), timeoutMs);
     pending.set(requestId, { owner, context: connection.state, resolve: value => finish(undefined, value), reject: error => finish(error) });
     try { connection.send({ type: 'dashboard:workspace-command', requestId, projectPath: connection.state.projectPath, sessionId: connection.state.sessionId, targetDeviceId: connection.state.targetDeviceId, request: request as WorkspaceSurfaceRequest }); }
     catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }

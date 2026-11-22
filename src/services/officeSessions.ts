@@ -3,7 +3,7 @@ import { officeCapacityMessage } from "../domain/officeCapacity";
 import { readTeamSettings } from "./teamSettings";
 import { createHash, randomUUID } from "node:crypto";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { needsChatAttachmentFiles, prepareChatInput, validateChatAttachments } from "../domain/chatAttachments";
+import { needsChatAttachmentFiles, prepareChatInput, validateChatAttachments, chatAttachmentPreviews } from "../domain/chatAttachments";
 import type { DashboardActionResultPayload, DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardHostMessage } from "../domain/dashboard/types";
 import type { OfficeUser } from "./officeUsers";
 import { readOfficeInstructions } from "./officePreferences";
@@ -51,7 +51,7 @@ export class OfficeSessionService {
   constructor(private readonly options: {
     models?: (user: OfficeUser) => Promise<import("../domain/dashboard/types").DashboardCliModelOption[]>;
     readUser: (id: string) => Promise<OfficeUser | undefined>;
-    generate: (user: OfficeUser, model: string | undefined, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean) => Promise<string>;
+    generate: (user: OfficeUser, model: string | undefined, messages: Array<{ role: "system" | "user" | "assistant"; content: string }>, signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean, sessionId?: string) => Promise<string>;
     changed: (owner: string, messages: DashboardHostMessage[]) => void;
   }) {}
   start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.(); void this.pump(); }
@@ -114,7 +114,7 @@ export class OfficeSessionService {
       const attachments = validateChatAttachments(p.attachments);
       if (attachments.some(item => item.kind !== "text")) throw new Error("Attach text files to this conversation. Other file types are available in Files.");
       if (needsChatAttachmentFiles(attachments)) throw new Error('These attachments are too large for chat. Use Files to add them to your workspace.');
-      const input = prepareChatInput(text, attachments);
+      prepareChatInput(text, attachments);
       const fingerprint = createHash("sha256").update(JSON.stringify([text,attachments,p.model,p.projectPath])).digest("hex");
       let session!: Session;
       store().transaction(() => {
@@ -132,7 +132,7 @@ export class OfficeSessionService {
         if (session.turns.length >= 200 || session.turns.filter(turn => ["queued","working","waiting"].includes(turn.state)).length >= 20) throw new Error("This conversation is full. Start a new chat or wait for queued messages to finish.");
         claimOfficeRequest(user);
         const id = randomUUID();
-        session.turns.push({ ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,state:"queued",user:{ id,role:"user",text:input.text,timestamp:new Date().toISOString() } });
+        session.turns.push({ ...(internal?.scheduled?{scheduled:true}:{}),id,requestId:action.requestId,fingerprint,model,state:"queued",user:{ id,role:"user",text,textAttachments:chatAttachmentPreviews(attachments),timestamp:new Date().toISOString() } });
         session.model = model;
         this.save(session); store().set(`office-session-requests:${user.id}`,action.requestId,session.id); store().set("office-session-owners",user.id,true);
       });
@@ -206,7 +206,7 @@ export class OfficeSessionService {
       const user=await waitWithin(this.options.readUser(session.owner),90_000,UNCERTAIN,controller.signal);
       controller.signal.throwIfAborted();
       if(!user?.enabled || user.role!=='user' || !user.features.some(value=>value==="generalChat"||value==="tasks"))throw new Error("Workspace access changed.");
-      const history=session.turns.slice(0,session.turns.findIndex(value=>value.id===turn.id)+1).flatMap(value=>value.state==="cancelled"?[]:[{role:"user" as const,content:value.user.text},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant').map(activity=>({role:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:"assistant" as const,content:value.assistant.text}]:[])]);
+      const history=session.turns.slice(0,session.turns.findIndex(value=>value.id===turn.id)+1).flatMap(value=>value.state==="cancelled"?[]:[{role:"user" as const,content:[value.user.text,...(value.user.textAttachments??[]).map(file=>`<attached_file name=${JSON.stringify(file.name)} chars=${file.text.length}>\n${file.text}\n</attached_file>`)].filter(Boolean).join('\n\n')},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant').map(activity=>({role:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:"assistant" as const,content:value.assistant.text}]:[])]);
       const report=(activity:DashboardCliSessionMessage)=>{
         if(controller.signal.aborted)return;
         let updated:Session|undefined;
@@ -223,7 +223,7 @@ export class OfficeSessionService {
       this.publish(session);
       const instructions = readOfficeInstructions(user.id);
       const globalPrompt = readTeamSettings().globalPrompt;
-      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"system" as const,content:instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled),90_000,UNCERTAIN,controller.signal);
+      content=await waitWithin(this.options.generate(user,turn.model === "" ? undefined : turn.model ?? session.model,[...(globalPrompt?[{role:"system" as const,content:globalPrompt}]:[]),...(user.defaultPrompt?[{role:"system" as const,content:user.defaultPrompt}]:[]),...(instructions?[{role:"system" as const,content:instructions}]:[]),...history],controller.signal,session.projectPath,report,turn.scheduled,session.id),90_000,UNCERTAIN,controller.signal);
       controller.signal.throwIfAborted();
       if(!content?.trim())throw new Error("Empty response.");
       content=userSessionActivity({id:turn.id,role:'assistant',text:content},[user.workspacePath,session.projectPath]).text;
