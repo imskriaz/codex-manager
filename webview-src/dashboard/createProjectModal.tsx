@@ -141,12 +141,8 @@ export function CreateProjectModal(props: {
       <div class="folder-picker-toolbar">
         <button type="button" class="folder-picker-icon-button" aria-label="Up one level" title="Up one level" disabled={blocked || !listing || listing.path === listing.parent} onClick={() => browse(listing!.parent)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>
         <form class="folder-picker-path" onSubmit={event => { event.preventDefault(); if (!blocked && location.trim()) browse(location.trim()); }}><FolderIcon /><input autoFocus aria-label="Folder path" value={location} disabled={blocked} maxLength={4096} spellcheck={false} autoComplete="off" placeholder="Enter a folder path" onInput={event => setLocation(event.currentTarget.value)} /><button type="submit" aria-label="Go to folder" title="Go to folder" disabled={blocked || !location.trim()}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 5 7 7-7 7" /></svg></button></form>
+        <button type="button" class="folder-picker-new-button" disabled={blocked || !listing || location.trim() !== listing.path || newFolder !== undefined} onClick={() => { setNewFolder(''); setFolderNotice(undefined); }}>New folder</button>
       </div>
-      <button type="button" class="folder-picker-new-button" disabled={blocked || !listing || location.trim() !== listing.path || newFolder !== undefined} onClick={() => { setNewFolder(''); setFolderNotice(undefined); }}>New folder</button>
-      {newFolder !== undefined ? <form class="folder-picker-new-form" onSubmit={event => { event.preventDefault(); createFolder(); }}>
-        <label>Folder name<input autoFocus aria-label="Folder name" required maxLength={120} value={newFolder} disabled={blocked} autoComplete="off" spellcheck={false} onInput={event => setNewFolder(event.currentTarget.value)} /></label>
-        <div class="folder-picker-actions"><button type="button" disabled={creatingFolder} onClick={() => { setNewFolder(undefined); setFolderNotice({ level: 'info', message: 'Folder creation cancelled.' }); }}>Cancel new folder</button><button type="submit" class="modal-primary-btn" disabled={blocked || !newFolder.trim()}>{creatingFolder ? 'Creating…' : 'Create folder'}</button></div>
-      </form> : null}
       {folderNotice ? <p class="folder-picker-notice" role={folderNotice.level === 'error' ? 'alert' : 'status'}>{folderNotice.message}</p> : null}
       <div class="folder-picker-layout">
         <aside class="folder-picker-locations"><small>LOCATIONS</small><nav aria-label="Folder locations"><button type="button" disabled={blocked} onClick={() => browse()}><FolderIcon />Home</button>{listing?.roots.map(root => <button type="button" key={root} class={listing.path.toLowerCase().startsWith(root.toLowerCase()) ? 'is-active' : ''} disabled={blocked} onClick={() => browse(root)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 17h2" /></svg><span>{root.replace(/[\\/]+$/, '') || 'File system'}</span></button>)}</nav></aside>
@@ -156,6 +152,12 @@ export function CreateProjectModal(props: {
         </section>
       </div>
       <footer class="folder-picker-footer"><div class="folder-picker-selection"><small>SELECTED FOLDER</small><code title={listing?.path}>{listing?.path || 'No folder selected'}</code></div><div class="folder-picker-actions"><button type="button" disabled={creatingFolder} onClick={closeBrowser}>Cancel</button><button type="button" class="modal-primary-btn" disabled={blocked || newFolder !== undefined || !listing || location.trim() !== listing.path} onClick={() => { setFolder(listing!.path); closeBrowser(); }}>Select folder</button></div></footer>
+    </ModalShell> : null}
+    {newFolder !== undefined ? <ModalShell open title="New folder" closeLabel="Cancel new folder" className="folder-picker-new-modal dashboard-modal-compact" closeDisabled={creatingFolder} closeOnBackdrop={false} onClose={() => { if (creatingFolder) return; setNewFolder(undefined); setFolderNotice({ level: 'info', message: 'Folder creation cancelled.' }); }}>
+      <form class="folder-picker-new-form" onSubmit={event => { event.preventDefault(); createFolder(); }}>
+        <label>Folder name<input autoFocus aria-label="Folder name" required maxLength={120} value={newFolder} disabled={blocked} autoComplete="off" spellcheck={false} onInput={event => setNewFolder(event.currentTarget.value)} /></label>
+        <div class="folder-picker-actions"><button type="button" disabled={creatingFolder} onClick={() => { setNewFolder(undefined); setFolderNotice({ level: 'info', message: 'Folder creation cancelled.' }); }}>Cancel new folder</button><button type="submit" class="modal-primary-btn" disabled={blocked || !newFolder.trim()}>{creatingFolder ? 'Creating…' : 'Create folder'}</button></div>
+      </form>
     </ModalShell> : null}
   </>;
 }

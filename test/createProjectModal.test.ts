@@ -150,7 +150,7 @@ const openNewFolder = () => {
   button('New folder').props.onClick();
   (input('Folder name').props.onInput ?? input('Folder name').props.oninput)({ currentTarget: { value: 'New folder' } });
 };
-const submitFolder = () => nodes(modal('Select project folder')).filter(node => node.type === 'form')[1]!.props.onSubmit({ preventDefault() {} });
+const submitFolder = () => nodes(modal('New folder')).find(node => node.type === 'form')!.props.onSubmit({ preventDefault() {} });
 it('creates a folder once on the selected system and selects it only after confirmation', () => {
   openNewFolder(); submitFolder(); submitFolder();
   expect(fixture.send).toHaveBeenCalledTimes(2);
