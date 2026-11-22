@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.70
+
+- Simplify Scheduled into a compact task management list without templates or creation buttons.
+- Compact Library headers, storage, filters and file rows; align accessible download, removal and refresh icons and remove the redundant view switch.
+
 ## 3.0.0-pre.69
 
 - Keep current questions above plans in both workspaces and bound question forms so mobile users can scroll to every option and the answer action.

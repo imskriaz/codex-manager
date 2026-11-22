@@ -63,10 +63,11 @@ try {
       await page.locator('.cli-workspace').waitFor();
       const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
       if (await rail.isVisible()) await rail.click();
-      await page.getByRole('button', { name: 'Open account center', exact: true }).click();
+      await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Open account center', exact: true }).click();
       const accounts = page.locator('.workspace-dashboard');
       await accounts.waitFor();
-      await accounts.locator('.hero').waitFor();
+      await accounts.locator('.hero').waitFor({state:'attached'});
       assert.equal(await page.locator('.hero').count(), 1, 'Dashboard content mounts once across the page and workspace tool');
       assert.ok(await accounts.locator('#settingsOpenButton').count(), 'Full dashboard settings are available in the tool');
       assert.ok(await accounts.getByRole('heading', { name: /Saved Accounts/ }).count(), 'The tool reuses the full saved accounts section');
@@ -86,12 +87,10 @@ try {
     }
     await page.goto(origin + '/', { waitUntil: 'domcontentloaded' });
     await page.locator('#dashboard-main').waitFor();
-    if (width === 390) {
-      await page.locator(".dashboard-mobile-actions > summary").click();
-      await page.locator(".dashboard-mobile-actions-menu").getByRole("menuitem", { name: /Settings/ }).click();
-    } else {
-      await page.locator("#settingsOpenButton").click();
-    }
+    const settingsRail=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+    if(await settingsRail.isVisible())await settingsRail.click();
+    await page.getByRole('button',{name:'Account menu',exact:true}).click();
+    await page.getByRole('menuitem',{name:'Settings',exact:true}).click();
     for (const tab of await page.locator(".settings-tab:visible").all()) await tab.click();
     await page.keyboard.press("Escape");
     await page.goto(`${origin}/workspace`, { waitUntil: "commit", timeout: 15_000 }).catch(() => undefined);

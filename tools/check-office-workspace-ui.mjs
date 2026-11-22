@@ -63,7 +63,7 @@ try{for(const width of [1440,390,360]){
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 3660 }));
  await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1h/ }).waitFor();
  await assertPlainUserInterface(page);
- await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').waitFor({ state: 'detached' });
  let instructions='',failSave=true;await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT'){if(failSave){failSave=false;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Instructions changed in another window. Review before saving.'})});return;}instructions=route.request().postDataJSON().instructions;}await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,pending:true,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
@@ -82,21 +82,18 @@ try{for(const width of [1440,390,360]){
  const nav=async(name)=>{const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.locator('.user-workspace-nav').getByRole('button',{name,exact:true}).click();};
  await nav('Scheduled');await page.getByRole('heading',{name:'Scheduled',exact:true}).waitFor();
  assert.equal(await page.locator('.user-scheduled form').count(),0);
- await page.getByRole('button',{name:/Weekly shipment report/}).click();await page.locator('.cli-composer textarea').waitFor();
- await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('weekly scheduled task every Monday at 09:30'));
- assert.equal(await page.evaluate(()=>window.__privateActions.filter(item=>item.action==='startCodexCliSession').length),0,'Examples prepare a request without sending it');
- await page.locator('.cli-composer textarea').fill('Keep my existing draft.');
- await nav('Scheduled');await page.getByRole('button',{name:/Buyer follow-ups/}).click();
- await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Keep my existing draft.')&&document.querySelector('.cli-composer textarea')?.value.includes('Create a daily scheduled task'));
- await page.locator('.cli-composer textarea').fill('');
+ assert.equal(await page.locator('.user-schedule-examples').count(),0);
+ assert.equal(await page.getByRole('button',{name:'Create with AI',exact:true}).count(),0);
+ assert.equal(await page.getByRole('heading',{name:'Your schedules',exact:true}).count(),0);
+ await page.screenshot({path:path.join(output,`scheduled-empty-${width}.png`),fullPage:true,animations:'disabled'});
  tasks=[{id:crypto.randomUUID(),revision:crypto.randomUUID(),title:'Buyer lab dip reminder',prompt:'Prepare buyer lab dip reminder drafts.',model:'quality',projectPath:'C:/team/alex',frequency:'daily',timeZone:'Asia/Dhaka',enabled:true,nextRunAt:Date.now()+3600000}];
- await nav('Scheduled');await page.getByRole('heading',{name:'Buyer lab dip reminder',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Refresh schedules',exact:true}).click();await page.getByRole('heading',{name:'Buyer lab dip reminder',exact:true}).waitFor();
  await page.getByRole('button',{name:'Edit with AI',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Please update scheduled task'));
  await page.locator('.cli-composer textarea').fill('');await nav('Scheduled');
  await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('alert').filter({hasText:'Task could not be queued'}).waitFor();assert.equal(tasks.length,1);
  await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('status').filter({hasText:'Task added to your conversation queue.'}).waitFor();
  await page.getByRole('button',{name:'Pause',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
- await page.screenshot({path:path.join(output,`scheduled-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`scheduled-${width}.png`),fullPage:true,animations:'disabled'});
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Remove',exact:true}).click();assert.equal(tasks.length,1);
  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove',exact:true}).click();await page.getByText('No scheduled tasks yet.',{exact:true}).waitFor();
  assert.equal(scheduleActions.filter(action=>action.method==='DELETE').length,1);
@@ -105,10 +102,10 @@ try{for(const width of [1440,390,360]){
  await page.getByRole('searchbox',{name:'Search library',exact:true}).fill('reports/');assert.equal(await page.locator('.user-library-files li').count(),1);
  const [libraryDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Download costing.csv',exact:true}).click()]);assert.equal(libraryDownload.suggestedFilename(),'costing.csv');
  await page.getByRole('region',{name:'File storage',exact:true}).getByText('1.0 KB',{exact:true}).waitFor();
- await page.getByRole('button',{name:'Grid view',exact:true}).click();assert.equal(await page.locator('.user-library-files.is-grid').count(),1);
- await page.getByRole('button',{name:'List view',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Grid view',exact:true}).count(),0);
+ const fileLayout=await page.locator('.user-library-files li').first().evaluate(node=>{const r=node.getBoundingClientRect(),actions=node.querySelector('.user-page-actions').getBoundingClientRect(),file=node.querySelector('button').getBoundingClientRect();return {height:r.height,aligned:actions.left>=file.right,center:Math.abs((actions.top+actions.bottom-file.top-file.bottom)/2)};});assert.ok(fileLayout.height<=70&&fileLayout.aligned&&fileLayout.center<=1,JSON.stringify(fileLayout));
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deletion cancelled.'}).waitFor();
- await page.screenshot({path:path.join(output,`library-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`library-${width}.png`),fullPage:true,animations:'disabled'});
  await page.locator('.user-library-files li > button').first().click();await page.getByRole('tab',{name:'costing.csv',exact:true}).waitFor();await page.getByRole('complementary',{name:'Workspace tools',exact:true}).getByRole('button',{name:'Close workspace tools',exact:true}).click();
  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deleted.'}).waitFor();assert.equal(await page.locator('.user-library-files li').count(),0);
  await nav('Chats');
@@ -153,7 +150,7 @@ try{for(const width of [1440,390,360]){
  assert.ok(accountLayout.bottomGap>=-1&&accountLayout.bottomGap<=9,'Account footer stays at the sidebar bottom');
  assert.ok(accountLayout.height<=60,'Account footer is compact');
  assert.ok(accountLayout.listBottom<=accountLayout.footerTop+1,'Session list cannot cover the account footer');
- await page.screenshot({path:path.join(output,`account-sidebar-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`account-sidebar-${width}.png`),fullPage:true,animations:'disabled'});
 
  assert.equal(await page.getByRole('button',{name:'Dashboard',exact:true}).count(),0);
  assert.equal(await page.getByRole('tab',{name:'General',exact:true}).count(),0);
@@ -169,13 +166,13 @@ try{for(const width of [1440,390,360]){
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 90060 }));
  await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1d 1h/ }).waitFor();
  await assertPlainUserInterface(page);
- await page.screenshot({path:path.join(output,`offline-queued-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`offline-queued-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(() => window.__setAvailability({ status: 'offline' }));
  await page.locator('.team-request-state').filter({ hasText: "We're offline. Checking availability." }).waitFor();
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').filter({hasText:'All assistants are busy'}).waitFor();
  await assertPlainUserInterface(page);
- await page.screenshot({path:path.join(output,`queued-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`queued-${width}.png`),fullPage:true,animations:'disabled'});
  const first=await page.evaluate(()=>JSON.parse(localStorage.getItem('private-workspace-fixture')).session.id);
  await page.evaluate(()=>window.__updateOfficePlan());
  await page.locator('.session-plan-count').filter({hasText:'0 of 3 complete'}).waitFor();
@@ -187,7 +184,7 @@ try{for(const width of [1440,390,360]){
  assert.ok(placement.bottom<=placement.top+2,'Current plan is directly above the composer');
  assert.equal(await page.locator('.cli-session-messages .session-plan').count(),0);
  await assertPlainUserInterface(page);
- await page.screenshot({path:path.join(output,`plan-running-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`plan-running-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(()=>window.__updateOfficePlan(1,'unknown'));
  await page.locator('.session-plan-count').filter({hasText:'Paused'}).waitFor();
  assert.equal(await page.locator('.session-plan [aria-current=step]').count(),0);
@@ -214,7 +211,7 @@ try{for(const width of [1440,390,360]){
  await page.locator('.cli-activity.is-command > summary').click();
  await page.getByLabel('Command output',{exact:true}).waitFor({state:'visible'});
  await assertPlainUserInterface(page);
- await page.screenshot({path:path.join(output,`activity-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`activity-${width}.png`),fullPage:true,animations:'disabled'});
  await assertPlainUserInterface(page);
  await page.reload();
  await page.getByText('Your private workspace response is ready.',{exact:true}).waitFor();
@@ -240,11 +237,11 @@ try{for(const width of [1440,390,360]){
  await page.getByRole('button',{name:'Save instructions',exact:true}).click();
  await page.getByText('Workspace instructions saved. They apply to your next message.',{exact:true}).waitFor();
  assert.equal(instructions,'Be clear and ask when requirements are unclear.');
- await page.screenshot({path:path.join(output,`settings-${width}.png`),fullPage:true});
+ await page.screenshot({path:path.join(output,`settings-${width}.png`),fullPage:true,animations:'disabled'});
  await page.locator('.office-user-settings .settings-close').click();await page.locator('.overlay.open .office-user-settings').waitFor({state:'hidden'});await page.waitForFunction(()=>![...document.querySelectorAll('.overlay')].some(node=>Number(getComputedStyle(node).opacity)>0));
  assert.equal(await page.locator('.cli-account-footer').count(),0);
  assert.equal(await page.locator('.cli-conversation-header').innerText().then(text=>/Started by|Running by/.test(text)),false);
- assert.deepEqual(errors,[]);await page.screenshot({path:path.join(output,`complete-${width}.png`),fullPage:true});
+ assert.deepEqual(errors,[]);await page.screenshot({path:path.join(output,`complete-${width}.png`),fullPage:true,animations:'disabled'});
  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,privateProfile:true,queue:true,reloadPreserved:true,technicalDetailsHidden:true,errors:0}));await context.close();
 }
  const context=await browser.newContext({viewport:{width:1440,height:960},serviceWorkers:'block'}),page=await context.newPage();
