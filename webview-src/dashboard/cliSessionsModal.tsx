@@ -2495,12 +2495,13 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
 }
 
 function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: NonNullable<DashboardCliSessionMessage["changes"]>; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
-  const privateWorkspace = useContext(PrivateWorkspaceContext);
   if (changes.length === 0) return <div class="cli-activity-copy">File changes are being prepared…</div>;
-  return <div class="cli-file-change-list">{changes.map((change) => <details key={`${change.path}-${change.kind}`}>
-    <summary><span><FileIcon /><strong>{change.path}</strong></span><button type="button" disabled={!onOpenFile} onClick={(event) => { event.preventDefault(); onOpenFile?.(change.path); }}>Open</button><button type="button" disabled={!onOpenReviews} onClick={(event) => { event.preventDefault(); onOpenReviews?.(change.path); }}>Review</button><small>{privateWorkspace ? /^(?:add|added|create|created)$/i.test(change.kind) ? 'Added' : /^(?:update|updated|edit|edited|modify|modified)$/i.test(change.kind) ? 'Edited' : capitalize(change.kind) : capitalize(change.kind)}</small><ChevronIcon /></summary>
+  return <div class="cli-file-change-list">{changes.map((change) => {
+    const label = /^(?:add|added|create|created)$/i.test(change.kind) ? 'Created' : /^(?:update|updated|edit|edited|modify|modified)$/i.test(change.kind) ? 'Edited' : /^(?:delete|deleted|remove|removed)$/i.test(change.kind) ? 'Deleted' : capitalize(change.kind);
+    return <details key={`${change.path}-${change.kind}`}>
+    <summary><span><FileIcon /><strong title={`${label} ${change.path}`}>{label} {change.path}</strong></span><button type="button" disabled={!onOpenFile} onClick={(event) => { event.preventDefault(); onOpenFile?.(change.path); }}>Open</button><button type="button" disabled={!onOpenReviews} onClick={(event) => { event.preventDefault(); onOpenReviews?.(change.path); }}>Review</button><ChevronIcon /></summary>
     {change.diff ? <DiffPreview diff={change.diff} /> : <div class="cli-activity-copy">No diff details were recorded.</div>}
-  </details>)}</div>;
+  </details>; })}</div>;
 }
 
 function WorkspaceEnvironmentView(props: {

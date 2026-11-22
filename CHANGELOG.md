@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.56
+
+- Show file activity in bold with action prefixes such as Edited, Created and Deleted; preserve file and review controls and expandable diffs.
+
 ## 3.0.0-pre.55
 
 - Replace Automatic in User Workspace with explicit model selection and a master-configured default for new chats. Keep existing conversation choices and queued requests tied to their selected model.

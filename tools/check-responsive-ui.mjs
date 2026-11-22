@@ -934,9 +934,10 @@ try {
       await context.close(); continue;
     }
     if (process.argv.includes('--session-formatting')) {
-      await checkSessionFormattingUi(page, { origin, parentId, width, output });
+      page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+      await checkSessionFormattingUi(page, { origin, parentId, width, output, transcriptOnly: process.argv.includes('--transcript-only') });
       assert.deepEqual(errors, [], 'Session formatting has no browser runtime errors');
-      results.push({ width, height, checks: 'Session formatting and compact General-only zoom' });
+      results.push({ width, height, checks: process.argv.includes('--transcript-only') ? 'Session formatting and bold file action labels' : 'Session formatting and compact General-only zoom' });
       await context.close(); continue;
     }
     if (process.argv.includes('--message-types') || process.argv.includes('--session-errors')) {

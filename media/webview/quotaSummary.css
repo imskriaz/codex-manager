@@ -6754,7 +6754,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   overflow: hidden;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
   font-size: calc(9px * var(--dashboard-text-scale, 1));
-  font-weight: 520;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -14795,7 +14795,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-file-change-list > details { min-width: 0; border: 0; border-radius: 0; background: transparent; }
 .cli-workspace .cli-file-change-list > details > summary { display: flex; gap: 6px; min-height: 28px; padding: 2px 0; }
 .cli-workspace .cli-file-change-list > details > summary > span { flex: 1; min-width: 0; }
-.cli-workspace .cli-file-change-list > details > summary strong { font-size: calc(11px * var(--dashboard-text-scale, 1)); font-weight: 400; }
+.cli-workspace .cli-file-change-list > details > summary strong { font-size: calc(11px * var(--dashboard-text-scale, 1)); font-weight: 600; }
 .cli-workspace .cli-file-change-list > details > summary > button { flex: 0 0 auto; min-width: 0; min-height: 24px; margin: 0; padding: 2px 5px; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); font-size: calc(11px * var(--dashboard-text-scale, 1)); }
 .cli-workspace .cli-file-change-list > details > summary > button:hover { background: var(--bg-hover); color: var(--text-primary); }
 .cli-workspace .cli-file-change-list > details > summary > small { flex: 0 0 auto; font-size: calc(10px * var(--dashboard-text-scale, 1)); }

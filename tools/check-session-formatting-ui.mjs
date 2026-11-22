@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-export async function checkSessionFormattingUi(page, { origin, parentId, width, output }) {
+export async function checkSessionFormattingUi(page, { origin, parentId, width, output, transcriptOnly = false }) {
   const started = performance.now();
   await page.goto(origin + '/workspace/' + parentId);
   await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
@@ -12,7 +12,7 @@ export async function checkSessionFormattingUi(page, { origin, parentId, width, 
     { id: 'format-user', role: 'user', kind: 'message', text: 'Inspect formatting.' },
     { id: 'format-tool', kind: 'tool-call', title: 'Used exec', text: 'Script completed', arguments: args, result: 'Done', status: 'completed' },
     { id: 'format-search', kind: 'web-search', text: 'Documentation query', result, status: 'completed' },
-    ...[1, 2].map(index => ({ id: `format-file-${index}`, kind: 'file-change', text: 'Edited files', status: 'completed', changes: [{ path: `src/example${index}.ts`, kind: 'update', diff: '@@ -1 +1 @@\n-before\n+after' }] }))
+    ...['update', 'add', 'delete', 'rename'].map((kind, index) => ({ id: `format-file-${index}`, kind: 'file-change', text: 'Changed files', status: 'completed', changes: [{ path: `src/example${index}.ts`, kind, diff: '@@ -1 +1 @@\n-before\n+after' }] }))
   ];
   await page.evaluate(({ messages, sessionId }) => {
     window.__questionHistory = messages;
@@ -35,7 +35,17 @@ export async function checkSessionFormattingUi(page, { origin, parentId, width, 
   await tool.getByRole('button', { name: 'Copied', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.__formatCopied), args);
   assert.equal(await page.getByRole('button', { name: 'Open all in Reviews', exact: true }).count(), 0);
-  assert.equal(await group.getByRole('button', { name: 'Review', exact: true }).count(), 2);
+  assert.equal(await group.getByRole('button', { name: 'Review', exact: true }).count(), 4);
+  const fileLabels = group.locator('.cli-file-change-list > details > summary strong');
+  assert.deepEqual(await fileLabels.allTextContents(), ['Edited src/example0.ts', 'Created src/example1.ts', 'Deleted src/example2.ts', 'Rename src/example3.ts']);
+  const activityWeight = await tool.locator('.cli-activity-heading strong').evaluate(element => getComputedStyle(element).fontWeight);
+  assert.ok(await fileLabels.evaluateAll((elements, weight) => elements.every(element => getComputedStyle(element).fontWeight === weight), activityWeight), 'File labels match the bold tool activity headings');
+  const file = group.locator('.cli-file-change-list > details').first();
+  await file.locator(':scope > summary').click();
+  assert.ok(await file.locator('.cli-diff-surface').isVisible(), 'Labeled file rows still expand their diffs');
+  await file.locator(':scope > summary').click();
+  await file.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, `session-file-labels-${width}.png`) });
   const search = group.locator('.cli-activity.is-web-search');
   const region = search.getByRole('region', { name: 'Search results', exact: true });
   assert.ok(await region.evaluate(element => element.scrollHeight > element.clientHeight && element.clientHeight <= 360), 'Long search results scroll inside a bounded panel');
@@ -46,6 +56,10 @@ export async function checkSessionFormattingUi(page, { origin, parentId, width, 
   assert.ok(await group.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Transcript panels fit the viewport');
   await search.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, `session-formatting-${width}.png`) });
+  if (transcriptOnly) {
+    console.log(JSON.stringify({ width, durationMs: Math.round(performance.now() - started), checks: 'Bold file action labels, expandable diffs, exact copies, bounded search results and transcript overflow' }));
+    return;
+  }
 
   await page.goto(origin + '/');
   await page.locator('#settingsOpenButton').click();
