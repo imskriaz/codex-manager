@@ -4,7 +4,7 @@ export type OfficeSchedule = {
   enabled: boolean; nextRunAt: number; lastRunAt?: number; lastSessionId?: string; lastError?: string;
   pending?: { requestId: string; dueAt: number; manual: boolean };
 };
-export type UserSchedule = Omit<OfficeSchedule, 'owner' | 'pending'>;
+export type UserSchedule = Omit<OfficeSchedule, 'owner' | 'pending'> & {runStatus?:'queued'|'working'|'completed'|'failed'|'needs-answer'|'cancelled'};
 
 function fields(at: number, zone: string): number[] {
   const parts = new Intl.DateTimeFormat('en-GB', {timeZone:zone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'}).formatToParts(at);

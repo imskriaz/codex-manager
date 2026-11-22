@@ -10,6 +10,9 @@ const id='12345678-1234-1234-1234-123456789abc';
 const output=path.join(os.tmpdir(),'codex-manager-session-activities');await mkdir(output,{recursive:true});
 const plan={steps:[{step:'Read requirements',status:'completed'},{step:'Make changes',status:'inProgress'},{step:'Check results',status:'pending'}]};
 const messages=[
+ {id:'completed-user',role:'user',text:'Save notes'},
+ {id:'completed-file',kind:'file-change',text:'File saved.',changes:[{path:'notes.txt',kind:'add'}],status:'completed'},
+ {id:'completed-answer',role:'assistant',text:'Your notes are saved.'},
  {id:'user',role:'user',text:'Show my task progress'},
  {id:'thinking',kind:'reasoning',text:'Requirements reviewed.',status:'completed'},
  {id:'plan',kind:'plan',text:'Task checklist',arguments:JSON.stringify(plan),status:'unknown'},
@@ -59,6 +62,7 @@ try{for(const user of [true,false])for(const width of [1440,390,360]){
  const start=performance.now();await page.goto(origin+'/workspace/'+id);await page.getByText('Your progress is saved.',{exact:false}).waitFor();
  await page.locator('.session-plan-count').filter({hasText:'1 of 3 complete · Paused'}).waitFor();
  assert.equal(await page.locator('.cli-session-messages details[open], .cli-composer-plan details[open]').count(),0,'Activity blocks and plans start collapsed in both areas');
+ if(user){const changed=page.locator('.cli-completed-changes.is-user');assert.ok(await changed.count(),'Updated file summary is rendered');assert.equal(await changed.locator('.is-added,.is-removed').count(),0,'Subscriber file summaries omit unavailable line counts');assert.equal(await changed.locator('button').first().getAttribute('aria-label'),'Open notes.txt');}
  await page.evaluate(()=>document.querySelectorAll('.cli-session-messages details').forEach(node=>{node.open=true;}));
  await page.evaluate(()=>window.__auditPush());await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  assert.equal(await page.locator('.cli-activity.is-reasoning').evaluate(node=>node.open),true,'A live update preserves manual expansion');

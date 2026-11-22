@@ -488,3 +488,10 @@ describe("persistent browser push", () => {
   });
 
 });
+
+it('delivers subscriber notices only to that subscriber, independently of an administrator viewing the dashboard',async()=>{
+ const secrets={get:async(key:string)=>stored.get(key),store:async(key:string,value:string)=>{stored.set(key,value);}};
+ service=new BrowserPushService(secrets,async()=>password,async(owner,notice)=>notice?.workspaceOwner===owner,()=>true);
+ const alex=subscription('alex'),sam=subscription('sam');await service.subscribe(alex,'alex','https://dashboard.example');await service.subscribe(sam,'sam','https://dashboard.example');
+ service.notify({workspaceOwner:'alex',level:'info',title:'Response ready',message:'Your response is ready.',notificationId:'alex-turn',url:'/workspace/11111111-1111-4111-8111-111111111111'});await settle();expect(send).toHaveBeenCalledTimes(1);expect(send.mock.calls[0]?.[0].endpoint).toBe(alex.endpoint);expect(JSON.parse(send.mock.calls[0]?.[1])).not.toHaveProperty('workspaceOwner');
+});

@@ -30,6 +30,7 @@ if (dependencies.includes('node-pty')) {
   for (const binary of binaries) if (!paths.has(`extension/node_modules/node-pty/prebuilds/${binary}`)) throw new Error(`VSIX terminal backend is incomplete: ${binary}`);
   if ([...paths].some(name => name.startsWith('extension/node_modules/node-pty/') && name.endsWith('.pdb'))) throw new Error('VSIX contains unnecessary terminal debug symbols.');
 }
+if(dependencies.includes('pdf-parse'))for(const file of ['out/services/officeDocumentWorker.js','media/fonts/NotoSans-Regular.ttf','media/fonts/NotoSansBengali-Regular.ttf','media/fonts/LICENSE-Noto.txt'])if(!listing.split('\n').includes('extension/'+file))throw new Error('VSIX document support is missing: '+file);
 const missing = dependencies.filter((dependency) => {
   const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return !new RegExp(`^extension/node_modules/${escaped}/`, "m").test(listing);

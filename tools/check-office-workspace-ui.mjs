@@ -53,7 +53,7 @@ async function assertPlainUserInterface(page){
  assert.doesNotMatch(presentation,/C:[\\/]|Windows[\\/](?:System32|Temp)|Codex|quota|sandbox|API|model provider|native thread/i);
 }
 const browser=await chromium.launch({channel:'msedge',headless:true});
-try{for(const width of [1440,390,360]){
+try{for(const width of [1440,390,360,320]){
  const context=await browser.newContext({viewport:{width,height:width===360?674:960},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(15_000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
@@ -66,6 +66,9 @@ try{for(const width of [1440,390,360]){
  await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').waitFor({ state: 'detached' });
+ let profile={displayName:'Alex Morgan',username:'alex@example.test'};let signedIn=[{id:'current',expiresAt:Date.now()+3600000,current:true},{id:'other',expiresAt:Date.now()+3600000,current:false}];
+ await context.route('**/api/workspace/account',async route=>{const input=route.request().postDataJSON();let message='';if(input?.action==='profile'){profile={...profile,displayName:input.displayName};message='Profile saved.';}if(input?.action==='password')message='Password changed. Other devices have been signed out.';if(input?.action==='revoke'){signedIn=signedIn.filter(session=>session.current);message='Other devices signed out.';}await route.fulfill({contentType:'application/json',body:JSON.stringify({profile,plan:{name:'Workspace',status:'active',models:[]},sessions:signedIn,message})});});
+ await context.route('**/api/workspace/file-history',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({records:[]})}));
  let instructions='',failSave=true;await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT'){if(failSave){failSave=false;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Instructions changed in another window. Review before saving.'})});return;}instructions=route.request().postDataJSON().instructions;}await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,pending:true,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
  let tasks=[],failScheduleRun=true;const scheduleActions=[];
  await context.route('**/api/workspace/schedules**',async route=>{
@@ -88,14 +91,14 @@ try{for(const width of [1440,390,360]){
  await page.screenshot({path:path.join(output,`scheduled-empty-${width}.png`),fullPage:true,animations:'disabled'});
  tasks=[{id:crypto.randomUUID(),revision:crypto.randomUUID(),title:'Buyer lab dip reminder',prompt:'Prepare buyer lab dip reminder drafts.',model:'quality',projectPath:'C:/team/alex',frequency:'daily',timeZone:'Asia/Dhaka',enabled:true,nextRunAt:Date.now()+3600000}];
  await page.getByRole('button',{name:'Refresh schedules',exact:true}).click();await page.getByRole('heading',{name:'Buyer lab dip reminder',exact:true}).waitFor();
- await page.getByRole('button',{name:'Edit with AI',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Please update scheduled task'));
+ await page.getByRole('button',{name:'Actions for Buyer lab dip reminder',exact:true}).click();await page.getByRole('menuitem',{name:'Edit with AI',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.cli-composer textarea')?.value.includes('Please update scheduled task'));
  await page.locator('.cli-composer textarea').fill('');await nav('Scheduled');
  await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('alert').filter({hasText:'Task could not be queued'}).waitFor();assert.equal(tasks.length,1);
  await page.getByRole('button',{name:'Run now',exact:true}).click();await page.getByRole('status').filter({hasText:'Task added to your conversation queue.'}).waitFor();
- await page.getByRole('button',{name:'Pause',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Actions for Buyer lab dip reminder',exact:true}).click();await page.getByRole('menuitem',{name:'Pause',exact:true}).click();await page.getByText('Paused',{exact:true}).waitFor();
  await page.screenshot({path:path.join(output,`scheduled-${width}.png`),fullPage:true,animations:'disabled'});
- page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Remove',exact:true}).click();assert.equal(tasks.length,1);
- page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove',exact:true}).click();await page.getByText('No scheduled tasks yet.',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Actions for Buyer lab dip reminder',exact:true}).click();await page.getByRole('menuitem',{name:'Remove schedule',exact:true}).click();await page.getByRole('dialog',{name:'Remove schedule',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(tasks.length,1);
+ await page.getByRole('button',{name:'Actions for Buyer lab dip reminder',exact:true}).click();await page.getByRole('menuitem',{name:'Remove schedule',exact:true}).click();await page.getByRole('dialog',{name:'Remove schedule',exact:true}).getByRole('button',{name:'Remove schedule',exact:true}).click();await page.getByText('No scheduled tasks yet.',{exact:true}).waitFor();
  assert.equal(scheduleActions.filter(action=>action.method==='DELETE').length,1);
  await page.evaluate(()=>{window.__libraryFiles=[{name:'buyer-po.csv',path:'buyer-po.csv',type:'file',depth:0},{name:'costing.csv',path:'reports/costing.csv',type:'file',depth:1}];});
  await nav('Library');await page.getByRole('button',{name:'Download costing.csv',exact:true}).waitFor();
@@ -104,10 +107,10 @@ try{for(const width of [1440,390,360]){
  await page.getByRole('region',{name:'File storage',exact:true}).getByText('1.0 KB',{exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Grid view',exact:true}).count(),0);
  const fileLayout=await page.locator('.user-library-files li').first().evaluate(node=>{const r=node.getBoundingClientRect(),actions=node.querySelector('.user-page-actions').getBoundingClientRect(),file=node.querySelector('button').getBoundingClientRect();return {height:r.height,aligned:actions.left>=file.right,center:Math.abs((actions.top+actions.bottom-file.top-file.bottom)/2)};});assert.ok(fileLayout.height<=70&&fileLayout.aligned&&fileLayout.center<=1,JSON.stringify(fileLayout));
- page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deletion cancelled.'}).waitFor();
+ await page.getByRole('button',{name:'Actions for costing.csv',exact:true}).click();await page.getByRole('menuitem',{name:'Move to Trash',exact:true}).click();await page.getByRole('dialog',{name:'Move file to Trash',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
  await page.screenshot({path:path.join(output,`library-${width}.png`),fullPage:true,animations:'disabled'});
  await page.locator('.user-library-files li > button').first().click();await page.getByRole('tab',{name:'costing.csv',exact:true}).waitFor();await page.getByRole('complementary',{name:'Workspace tools',exact:true}).getByRole('button',{name:'Close workspace tools',exact:true}).click();
- page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Delete costing.csv',exact:true}).click();await page.getByRole('status').filter({hasText:'File deleted.'}).waitFor();assert.equal(await page.locator('.user-library-files li').count(),0);
+ await page.getByRole('button',{name:'Actions for costing.csv',exact:true}).click();await page.getByRole('menuitem',{name:'Move to Trash',exact:true}).click();await page.getByRole('dialog',{name:'Move file to Trash',exact:true}).getByRole('button',{name:'Move to Trash',exact:true}).click();await page.getByRole('status').filter({hasText:'File moved to Trash.'}).waitFor();assert.equal(await page.getByRole('button',{name:'Download costing.csv',exact:true}).count(),0);
  await nav('Chats');
  if(width<760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
  assert.equal(await page.getByRole('button',{name:'Conversation options',exact:true}).count(),0);
@@ -237,6 +240,13 @@ try{for(const width of [1440,390,360]){
  await page.getByRole('button',{name:'Save instructions',exact:true}).click();
  await page.getByText('Workspace instructions saved. They apply to your next message.',{exact:true}).waitFor();
  assert.equal(instructions,'Be clear and ask when requirements are unclear.');
+ const accountSection=page.getByRole('region',{name:'Account settings',exact:true});
+ await accountSection.getByLabel('Name',{exact:true}).fill('Alex Review');await accountSection.getByRole('button',{name:'Save name',exact:true}).click();await accountSection.getByRole('status').filter({hasText:'Profile saved.'}).waitFor();
+ await accountSection.locator('summary').filter({hasText:'Password and devices'}).click();
+ await accountSection.getByRole('button',{name:'Sign out other devices',exact:true}).click();await accountSection.getByRole('status').filter({hasText:'Other devices signed out.'}).waitFor();
+ await accountSection.getByLabel('Current password',{exact:true}).fill('old-password');await accountSection.getByLabel('New password',{exact:true}).fill('new-password');await accountSection.getByLabel('Confirm new password',{exact:true}).fill('mismatch-pass');await accountSection.getByRole('button',{name:'Change password',exact:true}).click();await accountSection.getByRole('alert').filter({hasText:'do not match'}).waitFor();
+ await accountSection.getByLabel('Confirm new password',{exact:true}).fill('new-password');await accountSection.getByRole('button',{name:'Change password',exact:true}).click();await accountSection.getByRole('status').filter({hasText:'Password changed.'}).waitFor();
+ await accountSection.locator('summary').filter({hasText:'Password and devices'}).click();await page.locator('.office-user-settings .settings-modal-body').evaluate(element=>element.scrollTop=0);
  await page.screenshot({path:path.join(output,`settings-${width}.png`),fullPage:true,animations:'disabled'});
  await page.locator('.office-user-settings .settings-close').click();await page.locator('.overlay.open .office-user-settings').waitFor({state:'hidden'});await page.waitForFunction(()=>![...document.querySelectorAll('.overlay')].some(node=>Number(getComputedStyle(node).opacity)>0));
  assert.equal(await page.locator('.cli-account-footer').count(),0);

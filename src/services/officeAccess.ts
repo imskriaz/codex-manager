@@ -8,5 +8,6 @@ export function assertOfficeHostIsolation(action: DashboardActionName): void {
 
 export function validateOfficeFilePath(file: string): void {
   const parts = file.replace(/\\/g, '/').split('/');
+  if(parts.some(part=>/^\.workspace-(?:history|trash)$/i.test(part)))throw new Error('Choose a file in your workspace. Use Library to manage saved versions and Trash.');
   if (parts.some(part => /[\x00-\x1f:]/.test(part) || /[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) throw new Error('Choose a valid file name inside your workspace.');
 }

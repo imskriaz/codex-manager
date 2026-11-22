@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {configureSqliteStateStore, SqliteStateStore} from '../src/storage/sqliteState';
-import {beginOfficeTokens, checkOfficeStorage, checkOfficeTokens, claimOfficeRequest, officeStorageBytes, readOfficeUsage, recordOfficeTokens, validateOfficeLimits} from '../src/services/officeQuota';
+import {beginOfficeTokens, recoverOfficeTokens, reconcileOfficeTokens, checkOfficeStorage, checkOfficeTokens, claimOfficeRequest, officeStorageBytes, readOfficeUsage, recordOfficeTokens, validateOfficeLimits} from '../src/services/officeQuota';
 import {readOfficeInstructions, saveOfficeInstructions} from '../src/services/officePreferences';
 import type {OfficeUser} from '../src/services/officeUsers';
 import {removeTestDirectory} from './testFilesystem';
@@ -50,4 +50,11 @@ it('accepts a queued request while token usage for the active request is pending
   expect(() => beginOfficeTokens(user)).toThrow('daily token allowance');
   recordOfficeTokens(user.id,20);
   expect(() => beginOfficeTokens(user)).not.toThrow();
+});
+
+it('settles unknown usage into a reservation, recovers stale claims, reconciles with a revision and keeps midnight accounting on its original day',()=>{
+ const claim=beginOfficeTokens(user,20);recordOfficeTokens(user.id,undefined,claim);expect(readOfficeUsage(user.id)).toMatchObject({pending:false,reservedTokens:20,unconfirmed:true});expect(()=>checkOfficeTokens(user)).not.toThrow();
+ const usage=readOfficeUsage(user.id),revision=JSON.stringify([usage.day,usage.tokens,usage.reservedTokens,!!usage.unconfirmed]);expect(()=>reconcileOfficeTokens(user.id,'stale',12)).toThrow('changed');reconcileOfficeTokens(user.id,revision,12);expect(readOfficeUsage(user.id)).toMatchObject({tokens:12,reservedTokens:0,unconfirmed:false});
+ vi.useFakeTimers();const next=beginOfficeTokens(user,30);vi.advanceTimersByTime(660001);recoverOfficeTokens(user.id);expect(readOfficeUsage(user.id)).toMatchObject({pending:false,reservedTokens:30});recordOfficeTokens(user.id,9,next);expect(readOfficeUsage(user.id).tokens).toBe(12);
+ const before=readOfficeUsage(user.id).day;const crossing=beginOfficeTokens(user,10);vi.setSystemTime(new Date(readOfficeUsage(user.id).resetsAt+1));recordOfficeTokens(user.id,7,crossing);expect(readOfficeUsage(user.id).tokens).toBe(0);expect(store.get<any>(`office-usage:${user.id}`,before).tokens).toBe(19);
 });

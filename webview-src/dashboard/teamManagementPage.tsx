@@ -1,3 +1,4 @@
+import {UserUsageReview} from './userUsageReview';
 import type { OfficeLimits } from "../../src/services/officeQuota";
 const unlimitedOfficeLimits = {storageMb: 0, dailyTokens: 0, dailyRequests: 0};
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -12,6 +13,7 @@ export { request } from "./teamSettingsRequest";
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
 type TeamSettings = { defaultModel: string; globalPrompt: string; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
+  plan?:import('../../src/services/officeUsers').OfficePlan;
   limits?: OfficeLimits;
   id?: string;
   username: string;
@@ -494,7 +496,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                     <small>Applied automatically to this user's conversations.</small>
                   </label>
                 </div>
-                <fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
+                <fieldset class="team-settings-form"><legend>Plan access</legend><label>Plan name<input maxLength={80} value={draft.plan?.name??'Workspace'} onInput={event=>setDraft({...draft,plan:{status:'active',models:[],...draft.plan,name:event.currentTarget.value}})}/></label><label>Status<select value={draft.plan?.status??'active'} onChange={event=>setDraft({...draft,plan:{name:'Workspace',models:[],...draft.plan,status:event.currentTarget.value as 'active'|'paused'}})}><option value="active">Active</option><option value="paused">Paused</option></select></label><label>Access expires (optional)<input type="datetime-local" value={draft.plan?.expiresAt?new Date(draft.plan.expiresAt-new Date(draft.plan.expiresAt).getTimezoneOffset()*60000).toISOString().slice(0,16):''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',models:[],...draft.plan,expiresAt:event.currentTarget.value?new Date(event.currentTarget.value).getTime():undefined}})}/></label><label>Included models<input placeholder="All available models" value={draft.plan?.models.join(', ')??''} onInput={event=>setDraft({...draft,plan:{name:'Workspace',status:'active',...draft.plan,models:event.currentTarget.value.split(',').map(model=>model.trim()).filter(Boolean)}})}/></label><small>Enter model IDs separated by commas, or leave empty for all available models. Plans are managed here; payment and recovery email services are not configured.</small></fieldset>
+                {draft.id?<UserUsageReview key={draft.id} id={draft.id}/>:null}<fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
                 <details class="team-editor-advanced"><summary>Permissions & data access</summary><p class="settings-note">User Workspace has no host terminal, Git, or GitHub execution. Browser navigation and execution require an isolated runtime. These restrictions protect the host even when a feature was previously enabled.</p>
                 <div
                   id="team-editor-panel-permissions"

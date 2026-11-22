@@ -7,6 +7,8 @@ import { publishDashboardRealtime } from "../services/dashboardRealtime";
 export type MirroredNotificationLevel = "info" | "warning" | "error";
 
 export interface MirroredNotification {
+  /** Internal audience filter; never included in a push payload. */
+  workspaceOwner?:string;
   notificationId?: string;
   level: MirroredNotificationLevel;
   /** Optional human-readable subject used as the browser push title. */

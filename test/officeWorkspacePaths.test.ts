@@ -1,3 +1,4 @@
+import {configureSqliteStateStore,SqliteStateStore} from '../src/storage/sqliteState';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -6,9 +7,9 @@ import {manageOfficeWorkspacePaths} from '../src/services/officeWorkspacePaths';
 import {configureCrossWindowOperationCoordinator} from '../src/utils/crossWindowOperations';
 import type {OfficeUser} from '../src/services/officeUsers';
 import {removeTestDirectory} from './testFilesystem';
-let root:string,user:OfficeUser;
-beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'office-paths-'));vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT',root);await configureCrossWindowOperationCoordinator(root);const workspace=path.join(root,'user');await fs.mkdir(workspace);user={id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['files'],workspacePath:workspace,defaultPrompt:'',mcpServers:[],createdAt:0};});
-afterEach(async()=>{vi.unstubAllEnvs();await removeTestDirectory(root);});
+let root:string,user:OfficeUser,store:SqliteStateStore;
+beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'office-paths-'));store=await SqliteStateStore.open(path.join(root,'state.sqlite'));configureSqliteStateStore(store);vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT',root);await configureCrossWindowOperationCoordinator(root);const workspace=path.join(root,'user');await fs.mkdir(workspace);user={id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['files'],workspacePath:workspace,defaultPrompt:'',mcpServers:[],createdAt:0};});
+afterEach(async()=>{configureSqliteStateStore(undefined);store.close();vi.unstubAllEnvs();await removeTestDirectory(root);});
 const action=(args:Record<string,unknown>,project=user.workspacePath)=>manageOfficeWorkspacePaths(user,project,args);
 it('creates folders, copies and moves files without overwriting, then deletes a verified project folder',async()=>{
  await action({operation:'create_folder',path:'project/reports'});const project=path.join(user.workspacePath,'project');await fs.writeFile(path.join(project,'notes.txt'),'Buyer notes');
@@ -21,7 +22,7 @@ it('creates folders, copies and moves files without overwriting, then deletes a 
  item=await action({operation:'inspect',path:'.'},project);expect(item.files).toBe(2);
  await fs.writeFile(path.join(project,'later.txt'),'New work');await expect(action({operation:'delete',path:'.',revision:item.revision},project)).rejects.toThrow('changed');
  item=await action({operation:'inspect',path:'.'},project);const deleted=await action({operation:'delete',path:'.',revision:item.revision},project);
- expect(deleted.message).toContain('Folder and its contents deleted');await expect(fs.stat(project)).rejects.toThrow();expect((await fs.stat(user.workspacePath)).isDirectory()).toBe(true);
+ expect(deleted.message).toContain('Folder moved to Trash');await expect(fs.stat(project)).rejects.toThrow();expect((await fs.stat(user.workspacePath)).isDirectory()).toBe(true);
 });
 it('protects root, other users, linked files, stale revisions, disabled access and storage limits',async()=>{
  await fs.writeFile(path.join(root,'outside.txt'),'Secret');await fs.writeFile(path.join(user.workspacePath,'notes.txt'),'Notes');

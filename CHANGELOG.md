@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-pre.72
+
+- Polish compact User Workspace menus, settings, account security, schedule outcomes, and recoverable file actions on mobile and desktop.
+- Support uploaded images and Office documents, real spreadsheet/document/PDF exports, file history and Trash, bounded document previews, public website reading, and assigned read-only data connections.
+- Keep sign-ins independent per user, revoke old sessions after password resets, enforce manual plan access, show queue positions, and recover interrupted usage without silently discarding unknown consumption.
+- Verify subscriber workflows and maintain host isolation. Payment and email integrations remain disabled until configured.
+
 ## 3.0.0-pre.71
 
 - Hide the Failed badge on activity group summaries in both workspaces while preserving individual failure details inside expanded groups.

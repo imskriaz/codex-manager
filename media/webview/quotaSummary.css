@@ -19120,3 +19120,78 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .task-context-select > .project-picker { flex:1; }
 .task-context-select .project-picker-trigger { border:0; padding:0; color:var(--text-secondary); font-size:calc(12px * var(--dashboard-text-scale, 1)); }
 @media (pointer:coarse) { .project-picker-popover .project-picker-options button, .project-picker-popover .project-picker-add { min-height:32px; height:32px; } .project-picker-popover .project-picker-options .project-picker-remove { flex-basis:30px; width:30px; min-height:30px; height:30px; } }
+/* User Workspace: consistent density, readable forms and viewport-safe dialogs. */
+.settings-modal.office-user-settings { display:flex; flex-direction:column; width:min(600px,calc(100vw - 24px)); max-height:calc(100dvh - 32px); padding:0; overflow:hidden; }
+.office-user-settings > .settings-modal-head { flex:none; padding:12px 16px; border-bottom:1px solid var(--border-default); }
+.office-user-settings .settings-modal-kicker { color:var(--text-muted); font-size:11px; margin-bottom:2px; }
+.office-user-settings > .settings-modal-body { min-height:0; overflow:auto; padding:0 16px 12px; display:block; overscroll-behavior:contain; }
+.office-user-settings .settings-block { display:grid; gap:8px; margin:0; padding:14px 0; border:0; border-bottom:1px solid var(--border-default); border-radius:0; background:transparent; font-size:13px; }
+.office-user-settings .settings-block:last-child { border-bottom:0; }
+.office-user-settings .settings-block-title { font-size:13px; font-weight:600; margin:0; }
+.office-user-settings :is(p,small,.settings-block-sub,.settings-note) { font-size:12px; line-height:1.5; overflow-wrap:anywhere; margin:0; color:var(--text-secondary); }
+.office-user-settings :is(input,textarea) { box-sizing:border-box; width:100%; min-width:0; padding:8px 10px; border:1px solid var(--border-default); border-radius:7px; background:var(--bg-base); color:var(--text-primary); font:inherit; }
+.office-user-settings textarea { min-height:92px; max-height:240px; resize:vertical; }
+.office-user-settings button:not(.settings-close):not(.settings-theme-option) { justify-self:start; min-height:32px; border:1px solid var(--border-default); border-radius:7px; padding:6px 10px; background:var(--bg-elevated); color:var(--text-primary); font:inherit; }
+.user-account form { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px; }
+.user-account label { display:grid; gap:5px; font-size:12px; }
+.user-account-email { grid-column:1; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.user-account form > button { grid-column:2; grid-row:1; }
+.user-account details { border-top:1px solid var(--border-default); padding-top:8px; }
+.user-account summary { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-height:32px; cursor:pointer; font-size:12px; font-weight:500; }
+.user-account summary::before { content:'›'; font-size:18px; color:var(--text-muted); }
+.user-account details[open] > summary::before { transform:rotate(90deg); }
+.user-account summary > span { margin-left:auto; font-weight:400; color:var(--text-muted); }
+.user-account details form { grid-template-columns:1fr; padding:8px 0; }
+.user-account details form > button { grid-column:auto; grid-row:auto; }
+.user-account dl,.user-workspace-usage dl { display:grid; gap:7px; margin:4px 0; }
+.user-account dl > div,.user-workspace-usage dl > div { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+.user-account :is(dt,dd),.user-workspace-usage :is(dt,dd) { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.user-account dt { color:var(--text-muted); }
+.user-account ul { list-style:none; padding:0; margin:0; }
+.user-account li { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--border-default); }
+.user-account li > span { flex:1; min-width:0; font-size:12px; }
+.user-account li small { display:block; }
+.user-account [role=alert],.office-user-settings [role=alert],.user-workspace-page [role=alert] { color:var(--danger); }
+.user-actions-menu { z-index:10050; width:180px; padding:4px; border:1px solid var(--border-default); border-radius:9px; background:var(--bg-elevated); box-shadow:0 8px 28px #0003; overflow:auto; }
+.user-actions-menu button { display:block; width:100%; padding:8px 10px; min-height:34px; border:0; border-radius:5px; color:var(--text-primary); background:transparent; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
+.user-actions-menu button:hover { background:var(--bg-hover); }
+.user-workspace-page :is(button,input,select):focus-visible,.user-actions-menu button:focus-visible,.office-user-settings :is(button,input,textarea,summary):focus-visible { outline:2px solid var(--accent-blue); outline-offset:2px; }
+.settings-modal:is(.user-confirm-modal,.user-recovery-modal) { width:min(600px,calc(100vw - 24px)); max-height:calc(100dvh - 32px); padding:0; }
+.user-confirm-modal .dashboard-modal-body,.user-recovery-modal .dashboard-modal-body { padding:14px 16px; font-size:13px; overflow:auto; overscroll-behavior:contain; }
+.user-confirm-modal .user-page-actions { justify-content:flex-end; margin-top:16px; }
+.user-recovery-filter { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.user-recovery-filter select { max-width:65%; }
+.user-recovery-path { overflow-wrap:anywhere; }
+.user-recovery-files { list-style:none; margin:8px 0 0; padding:0; }
+.user-recovery-files li { display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--border-default); }
+.user-recovery-files li > span { flex:1; min-width:0; }
+.user-recovery-files :is(strong,small) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.user-recovery-files small { color:var(--text-muted); margin-top:3px; }
+.user-recovery-confirm { margin:10px 0; padding:10px; border:1px solid var(--border-default); border-radius:7px; }
+.user-recovery-confirm > div { display:flex; justify-content:flex-end; gap:8px; }
+.user-workspace-page { font-size:13px; }
+.user-run-status { display:inline-block; width:fit-content; padding:2px 6px; border-radius:5px; background:var(--bg-hover); }
+.user-run-status:is(.is-failed,.is-needs-answer) { color:var(--danger); }
+@media(max-width:760px) {
+ .settings-modal.office-user-settings,.settings-modal:is(.user-confirm-modal,.user-recovery-modal) { max-height:calc(100dvh - 16px); width:calc(100vw - 16px); }
+ .office-user-settings > .settings-modal-head { padding:10px 12px; }
+ .office-user-settings > .settings-modal-body { padding:0 12px 8px; }
+ .office-user-settings :is(input,textarea),.user-page-filters :is(input,select) { font-size:16px; }
+ .office-user-settings button:not(.settings-close):not(.settings-theme-option),.office-user-settings summary,.user-actions-menu button,.user-workspace-page button,.user-confirm-modal button,.user-recovery-modal button { min-height:40px; }
+ .user-workspace-page .user-page-icon { width:40px; height:40px; min-height:40px; padding:11px; }
+ .user-schedule-list > li { padding:10px 0; }
+ .user-recovery-files li { flex-wrap:wrap; }
+ .user-recovery-files li > span { flex-basis:100%; }
+}
+
+.user-run-status.is-needs-answer { color:var(--accent-blue); }
+.office-user-theme .session-plan.is-compact .session-plan-count { flex:0 1 auto; max-width:65%; white-space:normal; text-align:right; }
+.cli-workspace .cli-completed-changes.is-user > summary { display:flex; align-items:center; gap:8px; min-height:36px; padding:8px 10px; list-style:none; cursor:pointer; font-size:calc(12px * var(--dashboard-text-scale,1)); }
+.cli-workspace .cli-completed-changes.is-user > summary::-webkit-details-marker { display:none; }
+.cli-workspace .cli-completed-changes.is-user > summary > svg { width:14px; height:14px; flex:none; color:var(--text-muted); }
+.cli-workspace .cli-completed-changes.is-user > summary > strong { flex:1; font-weight:500; }
+.cli-workspace .cli-completed-changes.is-user[open] > summary { border-bottom:1px solid var(--border-default); }
+.cli-workspace .cli-completed-changes.is-user[open] > summary > svg:last-child { transform:rotate(90deg); }
+.cli-workspace .cli-completed-changes.is-user > summary:focus-visible { outline:2px solid var(--accent-blue); outline-offset:-2px; }
+.cli-workspace .cli-completed-changes.is-user .cli-completed-file { min-height:40px; }
+.cli-workspace .cli-completed-changes.is-user .cli-completed-file > span { flex:1; font-size:inherit; }

@@ -31,7 +31,7 @@ const GIT_TIMEOUT_MS = 30_000;
 const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 5_000;
 const WORKSPACE_READ_TIMEOUT_MS = 5_000;
-const HIDDEN_TREE_DIRECTORIES = new Set([".git", "node_modules"]);
+const HIDDEN_TREE_DIRECTORIES = new Set([".git", "node_modules", ".workspace-history", ".workspace-trash"]);
 const activeTerminalCommands = new Map<string, ChildProcessWithoutNullStreams>();
 const activeTerminalCancels = new Map<string, () => void>();
 const nativeTerminalIds = new WeakMap<vscode.Terminal, string>();

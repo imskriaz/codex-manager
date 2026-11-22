@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './teamSettingsRequest';
 import type { OfficeLimits } from '../../src/services/officeQuota';
 
-type Preferences = {instructions: string; limits?: OfficeLimits; usage?: {tokens: number; requests: number; storageBytes?: number; storageWarning?: string; resetsAt: number; unconfirmed?: boolean; pending?: boolean}};
+type Preferences = {instructions: string; limits?: OfficeLimits; usage?: {tokens: number; requests: number; storageBytes?: number; storageWarning?: string; resetsAt: number; unconfirmed?: boolean; reservedTokens?:number; pending?: boolean}};
 
 export function UserWorkspaceInstructions(props: { open: boolean; owner: string }) {
   const [draft, setDraft] = useState(''), [saved, setSaved] = useState<string>();
@@ -24,7 +24,7 @@ export function UserWorkspaceInstructions(props: { open: boolean; owner: string 
     ['Tokens today', preferences.usage.tokens, preferences.limits?.dailyTokens],
     ['Requests today', preferences.usage.requests, preferences.limits?.dailyRequests],
     ['File storage (MB)', preferences.usage.storageBytes === undefined ? undefined : Math.ceil(preferences.usage.storageBytes / 1024 / 1024 * 100) / 100, preferences.limits?.storageMb]
-  ] as const).map(([label, used, limit]) => <div key={label}><dt>{label}</dt><dd>{used === undefined ? 'Unavailable' : used.toLocaleString()} / {limit ? limit.toLocaleString() : 'Unlimited'}</dd></div>)}</dl><small>Daily allowances reset {new Date(preferences.usage.resetsAt).toLocaleString()}. A response already running may finish.</small>{preferences.usage.unconfirmed ? <p role="status">Some token usage could not be confirmed. Your remaining allowance will be available after the daily reset.</p> : preferences.usage.pending ? <p role="status">A response is running. Usage will update when it finishes.</p> : null}{preferences.usage.storageWarning ? <p role="status">{preferences.usage.storageWarning}</p> : null}</section> : null}<form class="settings-block settings-block-wide user-workspace-instructions" onSubmit={event => {
+  ] as const).map(([label, used, limit]) => <div key={label}><dt>{label}</dt><dd>{used === undefined ? 'Unavailable' : used.toLocaleString()} / {limit ? limit.toLocaleString() : 'Unlimited'}</dd></div>)}</dl><small>Daily allowances reset {new Date(preferences.usage.resetsAt).toLocaleString()}. A response already running may finish.</small>{preferences.usage.unconfirmed ? <p role="status">Some usage is awaiting confirmation. {preferences.usage.reservedTokens ? `${preferences.usage.reservedTokens.toLocaleString()} tokens are reserved; your remaining allowance is available.` : 'Contact your workspace administrator to review it.'}</p> : preferences.usage.pending ? <p role="status">A response is running. Usage will update when it finishes.</p> : null}{preferences.usage.storageWarning ? <p role="status">{preferences.usage.storageWarning}</p> : null}</section> : null}<form class="settings-block settings-block-wide user-workspace-instructions" onSubmit={event => {
     event.preventDefault(); if (saved === undefined || busy) return;
     const current=revision.current;
     setBusy(true); setError(false); setStatus('Saving instructions…');

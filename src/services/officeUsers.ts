@@ -10,7 +10,21 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 export type OfficeRole = "admin" | "user" | "unrestricted-admin";
 export type OfficeFeature = "generalChat" | "tasks" | "files" | "browser" | "env" | "terminal" | "git" | "github";
+export type OfficePlan={name:string;status:'active'|'paused';expiresAt?:number;models:string[]};
+export function validateOfficePlan(value:unknown):OfficePlan{
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Choose valid plan settings.');
+  const plan=value as Record<string,unknown>;
+  if(typeof plan['name']!=='string'||!plan['name'].trim()||plan['name'].length>80||!['active','paused'].includes(String(plan['status']))||!Array.isArray(plan['models'])||plan['models'].length>100||plan['models'].some(model=>typeof model!=='string'||!/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(model))||plan['expiresAt']!==undefined&&(typeof plan['expiresAt']!=='number'||!Number.isSafeInteger(plan['expiresAt'])||plan['expiresAt']<0))throw new Error('Choose a plan name, status, expiry and valid models.');
+  return {name:plan['name'].trim(),status:plan['status'] as OfficePlan['status'],models:[...new Set(plan['models'] as string[])],...(plan['expiresAt']!==undefined?{expiresAt:plan['expiresAt'] as number}:{})};
+}
+export class OfficeEntitlementError extends Error {}
+export function checkOfficeEntitlement(user:OfficeUser,model?:string):void{
+  if(user.role!=='user'||!user.plan)return;
+  if(user.plan.status!=='active'||user.plan.expiresAt!==undefined&&user.plan.expiresAt<=Date.now())throw new OfficeEntitlementError('Your plan is inactive. Contact your workspace administrator to continue. Your saved files are available in Library.');
+  if(model&&user.plan.models.length&&!user.plan.models.includes(model))throw new OfficeEntitlementError('This model is not included in your plan. Choose an available model.');
+}
 export interface OfficeUser {
+  plan?:OfficePlan;
   id: string;
   username: string;
   displayName: string;
@@ -22,6 +36,7 @@ export interface OfficeUser {
   workspacePath: string;
   mcpServers: string[];
   createdAt: number;
+  sessionVersion?: string;
 }
 type StoredOfficeUser = OfficeUser & { salt: string; passwordHash: string };
 
@@ -257,6 +272,7 @@ export async function createOfficeUser(input: {
   workspacePath: string;
   mcpServers?: string[];
   limits?: OfficeLimits;
+  plan?:OfficePlan;
 }): Promise<OfficeUser> {
   const username = normalizeUsername(input.username);
   if (input.password.length < 8 || input.password.length > 256) throw new Error("Use a password between 8 and 256 characters.");
@@ -271,7 +287,8 @@ export async function createOfficeUser(input: {
       defaultPrompt: (input.defaultPrompt ?? "").trim().slice(0, 8_000), workspacePath: input.workspacePath,
       mcpServers: [...new Set((input.mcpServers ?? []).filter(item => typeof item === "string" && item.length <= 160))].slice(0, 64),
       limits: input.limits === undefined ? undefined : validateOfficeLimits(input.limits),
-      createdAt: Date.now(), salt, passwordHash: await derive(input.password, salt)
+      ...(input.plan?{plan:validateOfficePlan(input.plan)}:{}),
+      createdAt: Date.now(), sessionVersion: crypto.randomUUID(), salt, passwordHash: await derive(input.password, salt)
     };
     await validateSeparateOfficeWorkspace(users,row);
     await fs.mkdir(row.workspacePath, { recursive: true });
@@ -280,7 +297,7 @@ export async function createOfficeUser(input: {
   }, { waitMs: 2_000 });
 }
 
-export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUser, "id" | "username" | "createdAt">> & { password?: string }): Promise<OfficeUser> {
+export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUser, "id" | "username" | "createdAt">> & { password?: string }, expected?:{sessionVersion?:string;displayName?:string}): Promise<OfficeUser> {
   if (patch.role !== undefined && !["user", "admin", "unrestricted-admin"].includes(patch.role)) throw new Error("Choose a valid Team role.");
   if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") throw new Error("Choose a valid sign-in status.");
   for (const key of ["displayName", "defaultPrompt", "workspacePath", "password"] as const) {
@@ -292,11 +309,14 @@ export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUse
     const index = users.findIndex(item => item.id === id);
     if (index < 0) throw new Error("Office user was not found.");
     const current = users[index]!;
+    if(expected&&('sessionVersion' in expected&&expected.sessionVersion!==current.sessionVersion||'displayName' in expected&&expected.displayName!==current.displayName))throw new Error('Your account changed. Reopen settings or sign in again before saving.');
     const next: StoredOfficeUser = { ...current };
+    if (patch.plan !== undefined) next.plan=validateOfficePlan(patch.plan);
+    if (patch.sessionVersion !== undefined) next.sessionVersion=crypto.randomUUID();
     if (patch.limits !== undefined) next.limits = validateOfficeLimits(patch.limits);
     if (patch.displayName !== undefined) next.displayName = patch.displayName.trim().slice(0, 120) || current.username;
     if (patch.role !== undefined) next.role = patch.role;
-    if (patch.enabled !== undefined) next.enabled = patch.enabled;
+    if (patch.enabled !== undefined) { next.enabled = patch.enabled; if (!patch.enabled) next.sessionVersion = crypto.randomUUID(); }
     if (patch.features !== undefined) next.features = normalizeFeatures(patch.features);
     if (patch.defaultPrompt !== undefined) next.defaultPrompt = patch.defaultPrompt.trim().slice(0, 8_000);
     if (patch.workspacePath !== undefined) {
@@ -308,6 +328,7 @@ export async function updateOfficeUser(id: string, patch: Partial<Omit<OfficeUse
       if (patch.password.length < 8 || patch.password.length > 256) throw new Error("Use a password between 8 and 256 characters.");
       next.salt = crypto.randomBytes(24).toString("hex");
       next.passwordHash = await derive(patch.password, next.salt);
+      next.sessionVersion = crypto.randomUUID();
     }
     await validateSeparateOfficeWorkspace(users,next);
     await fs.mkdir(next.workspacePath, { recursive: true });

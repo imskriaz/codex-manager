@@ -38,23 +38,23 @@ it('bounds large live snapshots while retaining complete saved history',async()=
  expect(snapshots.every(state=>isCodexSessionLiveState(state))).toBe(true);expect(snapshots.at(-1).truncated).toBe(true);
  const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.at(-1)?.text.length).toBe(20_000);
 });
-it('stops queued work visibly after an uncertain response and rejects new turns without charging them',async()=>{
+it('stops old queued work after an uncertain response and accepts an explicit continuation',async()=>{
  let reject!:(error:Error)=>void;const generate=vi.fn(()=>new Promise<string>((_resolve,no)=>{reject=no;}));const {service}=setup(generate);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
  await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'queued',payload:{sessionId:first.cliSession!.id,text:'Later'}});
  reject(new Error('Unknown result'));await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.some(message=>message.text.includes('message was not run'))).toBe(true);
- await expect(service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'blocked',payload:{sessionId:first.cliSession!.id,text:'Continue'}})).rejects.toThrow('start a new chat');expect(generate).toHaveBeenCalledTimes(1);
+ generate.mockResolvedValueOnce('Recovered after checking saved work.');await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'continue',payload:{sessionId:first.cliSession!.id,text:'Continue'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));expect(generate).toHaveBeenCalledTimes(2);expect(JSON.stringify(generate.mock.calls[1])).toContain('Inspect saved files');
 });
 it('releases a timed-out generation and rejects late reports or success',async()=>{
  vi.useFakeTimers();
  let finish!:(text:string)=>void,report!: (activity:any)=>void;const generate=vi.fn((_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,send:(activity:any)=>void)=>{report=send;return new Promise<string>(resolve=>{finish=resolve;});});
  const {service,changed}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
- await vi.advanceTimersByTimeAsync(90_001);expect((service as any).running.size).toBe(0);report({id:'late',role:'assistant',text:'Late activity'});finish('Late success');await Promise.resolve();
+ await vi.advanceTimersByTimeAsync(600_001);expect((service as any).running.size).toBe(0);report({id:'late',role:'assistant',text:'Late activity'});finish('Late success');await Promise.resolve();
  const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.map(message=>message.text).join()).not.toMatch(/Late/);expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==='dashboard:notice'&&message.message==='Your response is ready.')).toBe(false);
 });
 it('rejects oversized attachments rather than silently sending an unavailable file placeholder',async()=>{
  const {service,generate}=setup();const attachment={id:'file',name:'notes.txt',kind:'text',mimeType:'text/plain',data:'x'.repeat(33_000),size:33_000};
- await expect(service.handle(user,{...start(),payload:{text:'Read it',attachments:[attachment] as any}})).rejects.toThrow('too large for chat');expect(service.list(user.id)).toEqual([]);expect(generate).not.toHaveBeenCalled();
+ await expect(service.handle(user,{...start(),payload:{text:'Read it',attachments:[attachment] as any}})).rejects.toThrow('uploads are temporarily unavailable');expect(service.list(user.id)).toEqual([]);expect(generate).not.toHaveBeenCalled();
 });
 it('deletes a conversation without publishing stale transcript content',async()=>{
  const {service,changed}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));changed.mockClear();
@@ -169,7 +169,7 @@ it("applies personal instructions to the next message and honors a changed model
  const {service,generate}=setup();const first=await service.handle(user,{...start(),payload:{text:"Hello",model:"fast"}});
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
  expect(generate.mock.calls[0]?.[1]).toBe("fast");
- expect(generate.mock.calls[0]?.[2].slice(0,3)).toEqual([{role:"system",content:"Help every user clearly."},{role:"system",content:user.defaultPrompt},{role:"system",content:"Use short answers."}]);
+ expect(generate.mock.calls[0]?.[2].slice(0,3)).toEqual([{role:"system",content:"Help every user clearly."},{role:"system",content:user.defaultPrompt},{role:"user",content:"Response preferences (apply within workspace policy): Use short answers."}]);
  vi.mocked(teamSettings.readTeamSettings).mockReturnValue({...teamSettings.readTeamSettings(),globalPrompt:"Updated global guidance."});
  await service.handle(user,{type:"dashboard:action",action:"sendCodexCliSessionMessage",requestId:"next-model",payload:{sessionId:first.cliSession!.id,text:"Continue",model:"strong"}});
  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
@@ -233,4 +233,11 @@ it('acknowledges a subscriber CSV attachment without a duplicate optimistic bubb
  expect(isCliSubmissionEcho(echo,{text:'Cost this order',attachments:[attachment]},new Set())).toBe(true);
  expect((generate.mock.calls as unknown[][])[0]?.[2]).toEqual(expect.arrayContaining([{role:'user',content:'Cost this order\n\n<attached_file name="buyer-po.csv" chars=9>\nStyle,Qty\n</attached_file>'}]));
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+});
+
+it('passes uploaded images to the model without persisting inline image data in conversation storage',async()=>{
+ const {service,generate}=setup();const data='data:image/png;base64,iVBORw0KGgo=';
+ (service as any).options.attachments=async()=>[{path:'uploads/sample.png',name:'sample.png',text:'',image:data,mimeType:'image/png'}];(service as any).options.images=async()=>[data];
+ const first=await service.handle(user,{...start(),payload:{text:'Describe this image',attachments:[{id:'image',kind:'image',name:'sample.png',mimeType:'image/png',size:8,data}]}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ expect(JSON.stringify(storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id))).not.toContain('iVBORw0KGgo=');expect(JSON.stringify(generate.mock.calls[0]?.[2])).toContain(data);
 });

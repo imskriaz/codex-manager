@@ -1,3 +1,4 @@
+import {UserWorkspaceAccount} from './userWorkspaceAccount';
 import { UserWorkspaceInstructions } from "./userWorkspaceInstructions";
 import type {
   DashboardCopy,
@@ -208,10 +209,10 @@ export function SettingsOverlay(props: {
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
   if (props.office?.role === "user") {
-    return createPortal(<div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open}>
+    return createPortal(<div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="settings-modal-head"><div><div class="settings-modal-kicker">User Workspace</div><div class="settings-modal-title" id="office-user-settings-title">User settings</div></div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
-        <div class="settings-modal-body"><UserWorkspaceInstructions open={props.open} owner={props.office.id} />
+        <div class="settings-modal-body"><UserWorkspaceAccount open={props.open} owner={props.office.id} /><UserWorkspaceInstructions open={props.open} owner={props.office.id} />{props.open?<BrowserNotifications workspace/>:null}
 <div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Appearance</div><div class="settings-block-sub">Choose how your workspace looks.</div></div><SettingsThemeBlock lang={props.lang} settings={props.settings} onChange={value => { props.onPatchSettings({ dashboardTheme: value }); props.onSendSetting("dashboardTheme", value); }} /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Working with your assistant</div><div class="settings-block-sub">Ask questions, explore ideas, or create something together.</div></div><div class="settings-note">{props.office.features.includes("files") ? "Ask your assistant to create or update a file, and it will get to work. You can ask follow-up questions or stop a response at any time." : "Start a conversation to explore ideas and get help with your work."}</div></div></div>
       </div>
     </div>, document.body);

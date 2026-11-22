@@ -870,6 +870,7 @@ export interface DashboardCliSessionSummary {
   queuePriority?: number;
   queueError?: string;
   queueRetryAt?: number;
+  queuePosition?:number;
 }
 
 export interface DashboardCliSessionMessage {

@@ -103,7 +103,7 @@ async function workerReady(): Promise<ServiceWorkerRegistration> {
   }
 }
 
-export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
+export function BrowserNotifications(props: { offerOnLoad?: boolean; workspace?:boolean } = {}) {
   const supported =
     window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   const [enabled, setEnabled] = useState(false);
@@ -246,6 +246,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const bell = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>;
   const installFeedback = app.notice ? <p class={`browser-notification-feedback ${app.notice.level === "warning" ? "is-failed" : ""}`} role={app.notice.level === "warning" ? "alert" : "status"}>{app.notice.message}</p> : null;
   const feedbackView = feedback ? <p class={`browser-notification-feedback ${failed ? "is-failed" : ""}`} role={failed ? "alert" : "status"}>{feedback}</p> : null;
+  if(props.workspace)return <div class="settings-block settings-block-wide browser-notification-settings"><div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Notifications</div><p class="settings-block-sub">Let me know when work finishes or needs an answer.</p></div><button type="button" class="browser-notification-button" aria-busy={busy} disabled={busy||!supported} onClick={()=>void toggle()}>{busy?'Please wait...':enabled?'Disable':'Enable'}</button></div>{!supported?<p class="settings-note">Notifications are unavailable in this browser.</p>:null}{feedbackView}</div>;
   if (props.offerOnLoad) return <aside class={`browser-notification-offer ${enabled ? "is-enabled" : ""}`} aria-label="Notification and app install offer" role="region">
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{installAvailable && enabled ? "Install Codex Manager" : enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{installAvailable && enabled ? "Keep the dashboard ready while you work." : enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={dismiss}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
     {feedbackView}{installFeedback}

@@ -15,10 +15,10 @@ export class OfficeScheduleService {
   private timer?:NodeJS.Timeout;
   private pumping=false;
   private stopped=true;
-  constructor(private readonly options:{readUser:(id:string)=>Promise<OfficeUser|undefined>; enqueue:(user:OfficeUser,schedule:OfficeSchedule,requestId:string,signal:AbortSignal)=>Promise<string>}){}
+  constructor(private readonly options:{readUser:(id:string)=>Promise<OfficeUser|undefined>; result?:(owner:string,id:string)=>{status:NonNullable<UserSchedule['runStatus']>;error?:string};enqueue:(user:OfficeUser,schedule:OfficeSchedule,requestId:string,signal:AbortSignal)=>Promise<string>}){}
   start(){this.stopped=false;this.timer??=setInterval(()=>void this.pump(),15000);this.timer.unref?.();void this.pump();}
   stop(){this.stopped=true;if(this.timer)clearInterval(this.timer);this.timer=undefined;}
-  list(user:OfficeUser):UserSchedule[]{access(user);return store().keys(namespace).map(id=>store().get<OfficeSchedule>(namespace,id)).filter((task):task is OfficeSchedule=>task?.owner===user.id).sort((a,b)=>a.nextRunAt-b.nextRunAt).map(publicSchedule);}
+  list(user:OfficeUser):UserSchedule[]{access(user);return store().keys(namespace).map(id=>store().get<OfficeSchedule>(namespace,id)).filter((task):task is OfficeSchedule=>task?.owner===user.id).sort((a,b)=>a.nextRunAt-b.nextRunAt).map(task=>{const result=task.lastSessionId?this.options.result?.(user.id,task.lastSessionId):undefined;return {...publicSchedule(task),...(result?{runStatus:result.status,lastError:task.lastError??result.error}:{})};});}
   private read(user:OfficeUser,id:string){access(user);const task=store().get<OfficeSchedule>(namespace,id);if(!task||task.owner!==user.id)throw new Error('This scheduled task is unavailable.');return task;}
   async save(user:OfficeUser,input:Record<string,unknown>,id:string=randomUUID()):Promise<UserSchedule>{
     access(user);

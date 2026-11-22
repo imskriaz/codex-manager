@@ -1,3 +1,4 @@
+import {runWithConcurrencyLimit} from '../utils/concurrency';
 import { notificationTargetUrl } from '../domain/notificationTarget';
 import type webPush from "web-push";
 import type * as vscode from "vscode";
@@ -69,7 +70,7 @@ export class BrowserPushService {
   constructor(
     private readonly secrets: vscode.SecretStorage,
     private readonly password: () => Promise<string | undefined>,
-    private readonly ownerAllowed: (owner: string) => Promise<boolean> = () => Promise.resolve(true),
+    private readonly ownerAllowed: (owner: string, notice?:MirroredNotification) => Promise<boolean> = () => Promise.resolve(true),
     private readonly userViewing: () => boolean = () => false
   ) {}
 
@@ -118,7 +119,7 @@ export class BrowserPushService {
       state.subscriptions = state.subscriptions.filter(
         (item) => item.endpoint !== subscription.endpoint && item.expiresAt > Date.now()
       );
-      if (state.subscriptions.length >= MAX_SUBSCRIPTIONS)
+      if (state.subscriptions.filter(item=>item.owner===owner).length >= MAX_SUBSCRIPTIONS||state.subscriptions.length>=10000)
         throw new Error(
           "Too many devices are connected. Disable one first."
         );
@@ -150,9 +151,9 @@ export class BrowserPushService {
   }
 
   notify(notice: MirroredNotification): void {
-    if (notice.suppressPush || this.userViewing()) return;
-    if (notice.level === "info" && !notice.actions?.length) return;
-    const key = createHash("sha256").update(JSON.stringify([notice.systemName?.trim() || hostname(),
+    if (notice.suppressPush || !notice.workspaceOwner&&this.userViewing()) return;
+    if (notice.level === "info" && !notice.actions?.length && !notice.workspaceOwner) return;
+    const key = createHash("sha256").update(JSON.stringify([notice.workspaceOwner,notice.systemName?.trim() || hostname(),
       notice.notificationId ?? [notice.level, notice.title, notice.message]])).digest("hex");
     const now = Date.now();
     const expiresAt = now + (notice.notificationId ? DELIVERY_RETENTION_MS : 5 * 60_000);
@@ -182,7 +183,7 @@ export class BrowserPushService {
         const accepted: Array<[string, number]> = [];
         let retryable = false;
         const payload = JSON.stringify({
-          title: compactNotificationMessage(`${notice.systemName?.trim() || hostname()} · ${notice.title ?? "Codex Manager"}`, 120),
+          title: compactNotificationMessage(`${notice.workspaceOwner?"User Workspace":notice.systemName?.trim() || hostname()} · ${notice.title ?? "Codex Manager"}`, 120),
           body: compactNotificationMessage(notice.message, 180),
           tag: `codex-manager-${key}`,
           eventId: key,
@@ -194,8 +195,8 @@ export class BrowserPushService {
           url: notificationTargetUrl(notice.url),
           createdAt: now
         });
-        await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => {
-          if (!(await this.ownerAllowed(subscription.owner))) return;
+        await runWithConcurrencyLimit(state.subscriptions,8,async subscription => {
+          if (!(await this.ownerAllowed(subscription.owner,notice))) return;
           const deliveryId = createHash("sha256").update(`${key}:${subscription.endpoint}`).digest("hex");
           if (delivered.has(deliveryId)) return;
           if (Date.now() - now > (notice.actions?.length ? 120_000 : 300_000)) return;
@@ -206,7 +207,7 @@ export class BrowserPushService {
             expired.add(subscription.endpoint);
             return;
           }
-          if (this.userViewing()) { this.recent.delete(key); return; }
+          if (!notice.workspaceOwner&&this.userViewing()) { this.recent.delete(key); return; }
           try {
             await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {
               TTL: notice.actions?.length ? 120 : 300,
@@ -221,7 +222,7 @@ export class BrowserPushService {
             if (status === 404 || status === 410) expired.add(subscription.endpoint);
             else { retryable = true; console.warn("[codexManager] push delivery failed", status ?? "network unavailable"); }
           }
-        }));
+        });
         if (retryable || !accepted.length && !state.subscriptions.length) this.recent.delete(key);
         if (expired.size || accepted.length)
           await this.mutate((current) => {
@@ -253,7 +254,7 @@ export class BrowserPushService {
       const state = await this.read();
       const password = await this.password();
       const webPush = await loadWebPush();
-      const eligible = await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => (await this.ownerAllowed(subscription.owner)) ? subscription : undefined));
+      const eligible = await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => (await this.ownerAllowed(subscription.owner,{level:"info",message:"Delivery test"})) ? subscription : undefined));
       const subscriptions = eligible.filter((subscription): subscription is Subscription => !!subscription).filter(subscription =>
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };

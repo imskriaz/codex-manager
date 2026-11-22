@@ -25,6 +25,17 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('lets the model recover an unsupported document format using the text save tool',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{}}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('create_document',{path:'costing.csv',text:'Style,Cost\nST100,2.75'}))
+ .mockResolvedValueOnce(toolResponse('save_file',{path:'costing.csv',content:'Style,Cost\nST100,2.75'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Saved costing.csv.'}}]})) as never);
+ const report=vi.fn();const result=await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Create costing.csv'}],new AbortController().signal,actor.workspacePath,report);
+ expect(result).toContain('Saved costing.csv.');expect(action).toHaveBeenCalledOnce();
+ const retry=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(retry.messages.at(-1).content).toContain('save_file for CSV');
+ expect(report.mock.calls.some(([message])=>message.status==='failed')).toBe(true);expect(report.mock.calls.some(([message])=>message.kind==='file-change'&&message.status==='completed')).toBe(true);
+});
 it('opens a verified saved website through the Browser preview tool without executing host commands',async()=>{
  const actor={...user,features:['generalChat' as const,'files' as const,'browser' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
  const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'<h1>Buyer portal</h1>'}}}]});
@@ -218,4 +229,9 @@ it('recovers a stale file revision by inspecting the exact target and never clai
  action.mockRejectedValueOnce(new Error('These files changed.'));
  vi.mocked(upstream).mockResolvedValueOnce(toolResponse('manage_files',{operation:'move_file',path:'backup.csv',destination:'final.csv',revision:'old'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Everything succeeded.'}}]})) as never);
  await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn())).rejects.toThrow('files changed');
+});
+
+it('releases failed fetch and invalid response body reservations while preserving unknown consumption for review',async()=>{
+ vi.mocked(upstream).mockRejectedValueOnce(new Error('Network interrupted'));await expect(generate()).rejects.toThrow();expect(readOfficeUsage(user.id)).toMatchObject({pending:false,unconfirmed:true});
+ const other={...user,id:'sam'};vi.mocked(upstream).mockResolvedValueOnce(new Response('{invalid') as never);await expect((server as any).teamSessions().options.generate(other,'fast',[],new AbortController().signal,other.workspacePath,vi.fn())).rejects.toThrow();expect(readOfficeUsage(other.id)).toMatchObject({pending:false,unconfirmed:true});
 });

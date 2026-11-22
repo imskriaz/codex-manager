@@ -10,7 +10,7 @@ import type {OfficeUser} from './officeUsers';
 
 const within=(root:string,target:string)=>{const relative=path.relative(root,target);return relative===''||!relative.startsWith('..')&&!path.isAbsolute(relative);};
 /** Every component is checked: these operations never follow workspace links. */
-async function resolve(root:string,project:string,input:unknown,missing=false){
+export async function resolveOfficePath(root:string,project:string,input:unknown,missing=false){
   if(typeof input!=='string'||!input||input.length>4096||path.isAbsolute(input))throw new Error('Choose a relative path inside your workspace.');
   if(input!=='.')validateOfficeFilePath(input);
   const target=path.resolve(project,input.replace(/\\/g,path.sep));
@@ -25,6 +25,7 @@ async function resolve(root:string,project:string,input:unknown,missing=false){
   if(!within(root,await fs.realpath(target)))throw new Error('Workspace access denied.');
   return target;
 }
+const resolve=resolveOfficePath;
 async function snapshot(root:string,target:string){
   const deadline=Date.now()+5000,entries:Array<{file:string;directory:boolean;stamp:string;bytes:number}>=[],pending=[target];
   while(pending.length){
@@ -33,7 +34,7 @@ async function snapshot(root:string,target:string){
     const stat=await waitWithin(fs.lstat(file),Math.max(1,deadline-Date.now()),'File inspection timed out. Refresh before retrying.');
     if(!stat.isDirectory()&&!stat.isFile())throw new Error('Only ordinary files and folders can be managed here.');
     entries.push({file,directory:stat.isDirectory(),stamp:JSON.stringify([stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs]),bytes:stat.isFile()?stat.size:0});
-    if(stat.isDirectory())for(const name of await waitWithin(fs.readdir(file),Math.max(1,deadline-Date.now()),'Folder inspection timed out.'))pending.push(path.join(file,name));
+    if(stat.isDirectory())for(const name of await waitWithin(fs.readdir(file),Math.max(1,deadline-Date.now()),'Folder inspection timed out.'))if(!/^\.workspace-(history|trash)$/i.test(name))pending.push(path.join(file,name));
   }
   entries.sort((a,b)=>a.file.localeCompare(b.file));
   return {entries,revision:createHash('sha256').update(JSON.stringify(entries)).digest('base64url')};
@@ -69,15 +70,10 @@ export async function manageOfficeWorkspacePaths(user:OfficeUser,project:string,
       }
       return {message:operation==='copy_file'?'File copied.':'File moved.',path:args['destination'],revision:(await snapshot(root,destination)).revision};
     }
-    let changed=false;
-    try{
-      for(const item of [...before.entries.filter(item=>!item.directory),...before.entries.filter(item=>item.directory).sort((a,b)=>b.file.length-a.file.length)]){
-        await resolve(root,root,path.relative(root,item.file));
-        if(item.directory)await fs.rmdir(item.file);
-        else {const latest=await snapshot(root,item.file);if(latest.entries[0]!.stamp!==item.stamp)throw new Error('A file changed during cleanup.');await fs.unlink(item.file);}
-        changed=true;
-      }
-    }catch(error){throw new Error(changed?'Some items were deleted, but cleanup stopped. Inspect the remaining files before retrying.':error instanceof Error?error.message:'Cleanup failed. Your files were kept.');}
-    return {message:folder?'Folder and its contents deleted.':'File deleted.',deletedPath:target};
+    // The inspected tree contains no links; moving it preserves recovery without partial deletion.
+    if((await snapshot(root,target)).revision!==before.revision)throw new Error('These files changed. Inspect them again before continuing.');
+    const {preserveOfficeFile}=await import('./officeFileHistory');
+    await preserveOfficeFile(user,cwd,String(args['path']),'trash');
+    return {message:folder?'Folder moved to Trash.':'File moved to Trash.',deletedPath:target};
   });
 }
