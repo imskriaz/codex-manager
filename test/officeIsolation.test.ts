@@ -40,6 +40,14 @@ it("returns only personal state and keeps admin state intact",()=>{
  expect(safe.office.id).toBe(user.id);expect(safe.accounts).toEqual([]);
  expect(internal.stateForOfficeUser(source,{...user,role:"admin"}).accounts).toEqual(source.accounts);
 });
+it('shares only aggregate return time with users while keeping account details private', () => {
+ const reset = Math.floor(Date.now() / 1000) + 3600;
+ const source = { settings: {}, accounts: [{ id: 'private-account', email: 'secret@example.test', enabled: true, metrics: [{ key: 'weekly', period: 'monthly', visible: true, percentage: 0, resetAt: reset }] }] };
+ const safe = (server as any).stateForOfficeUser(source, user);
+ expect(safe.office.availability).toEqual({ status: 'offline', availableAt: reset });
+ expect(safe.accounts).toEqual([]);
+ expect(JSON.stringify(safe)).not.toMatch(/private-account|secret@example|monthly|resetAt|percentage/);
+});
 it("hides technical action feedback without changing the user's file contents",()=>{
  const internal=server as any;
  const [result]=internal.sanitizeOfficeMessages([{type:"dashboard:action-result",requestId:"read",action:"readWorkspaceFile",status:"completed",payload:{workspaceFilesWarning:"ENOENT C:/team/alex/missing",notice:{level:"warning",message:"Provider API HTTP 503"},workspaceFile:{path:"notes.txt",content:"My API notes are user content."}}}]);

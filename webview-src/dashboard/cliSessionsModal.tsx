@@ -1,4 +1,5 @@
 import { officeCapacityMessage } from "../../src/domain/officeCapacity";
+import { quotaAvailability, quotaOfflineMessage } from '../../src/domain/quotaAvailability';
 import { ProjectPicker } from './projectPicker';
 import { SystemPicker, SystemStatusRows } from './systemPicker';
 import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary } from './userWorkspacePresentation';
@@ -78,15 +79,9 @@ export function sessionQuotaWaitingMessage(session: DashboardCliSessionSummary |
   const quotaFailure = live ? (live.status === 'failed' || live.status === 'disconnected') && isCodexQuotaInterruption(live.error ?? '') : latest?.kind === 'error' && isCodexQuotaInterruption(latest.text);
   if (!quotaFailure && session.goal?.status !== 'usage_limited') return;
   if (!connected) return 'Waiting for connection to check quota and resume automatically.';
-  const eligible = accounts.filter(account => account.enabled && (!account.runningDeviceName || account.runningOnThisDevice));
-  const available = eligible.some(account => {
-    const quota = account.metrics.filter(metric => metric.visible && ['hourly', 'weekly'].includes(metric.key));
-    return !account.hasQuotaError && !account.hasPendingResetCreditAttempt &&
-      (quota.length ? quota.every(metric => typeof metric.percentage === 'number' && Number.isFinite(metric.percentage) && metric.percentage > 0 && metric.percentage <= 100) : account.creditsUnlimited || (account.creditsBalance ?? 0) > 0);
-  });
-  if (available) return 'Quota remains. Checking account switching and automatic recovery.';
-  const exhausted = eligible.length > 0 && eligible.every(account => !account.hasQuotaError && !account.hasPendingResetCreditAttempt && account.metrics.some(metric => metric.visible && ['hourly', 'weekly'].includes(metric.key) && metric.percentage === 0));
-  return exhausted ? 'No account quota available. Waiting for quota to reset, then resuming automatically.' : 'Checking account quota and automatic recovery.';
+  const availability = quotaAvailability(accounts);
+  if (availability.status === 'available') return 'Quota remains. Checking account switching and automatic recovery.';
+  return availability.status === 'offline' ? quotaOfflineMessage(availability) : 'Checking account quota and automatic recovery.';
 }
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}` | `browser:${string}`;
 type WorkspaceToolTab = "accounts" | "browser" | "env" | "git" | "terminal" | "files" | "reviews" | "agents";
@@ -933,6 +928,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const showWorking = transcriptRunning && !hasInProgressActivity;
   const quotaWaiting = sessionQuotaWaitingMessage(props.selectedSession, props.messages, props.liveState, props.selectedSession?.remote ? props.peerAccounts?.[props.selectedSession.deviceId ?? ''] ?? [] : props.localAccounts ?? [], props.standalone === true && props.autoResumeEnabled, props.connected !== false, currentTurnRunning);
   const quotaError = quotaWaiting ? [...props.messages].reverse().find(message => message.kind === 'error' && isCodexQuotaInterruption(message.text)) : undefined;
+  const [, setQuotaClock] = useState(0);
+  const officeOffline = props.officeUser?.availability?.status === 'offline';
+  useEffect(() => {
+    if (!officeOffline && !quotaWaiting) return;
+    const timer = window.setInterval(() => setQuotaClock(value => value + 1), 15_000);
+    return () => window.clearInterval(timer);
+  }, [officeOffline, Boolean(quotaWaiting)]);
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
   const contextDeviceId = props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local';
@@ -1629,6 +1631,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         >
           {!props.selectedSession && !pendingNewChat ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
           {props.connectionStatus ? <div class="workspace-connection-status">{props.connectionStatus}</div> : null}
+          {props.officeUser && officeOffline && !props.selectedSession && !pendingNewChat ? <div class="cli-turn-usage-strip team-request-state" role="status">{quotaOfflineMessage(props.officeUser.availability!)}</div> : null}
           {props.selectedSession || pendingNewChat ? (
             <>
               {props.selectedSession ? <ConversationHeader projectLabel={props.officeUser ? userProjectLabel(props.selectedSession?.projectPath,composerProjects) : undefined} privateWorkspace={!!props.officeUser}
@@ -1673,7 +1676,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               </section>
               {showLatestButton ? <button type="button" class={"cli-scroll-latest" + (currentTurnRunning ? " is-running" : "")} aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}>{currentTurnRunning ? <span class="cli-scroll-dots" aria-hidden="true"><i /><i /><i /></span> : <ChevronIcon />}</button> : null}</div>
               {props.requestPanel}
-              {props.officeUser ? props.selectedSession?.queueError || currentTurnRunning ? <div class="cli-turn-usage-strip team-request-state" role="status">{props.selectedSession?.queueRetryAt ? officeCapacityMessage(props.selectedSession.queueRetryAt) : props.selectedSession?.queueError || "Working on your request…"}</div> : null : <TurnUsageStrip account={props.account} quotaWarningSettings={props.quotaWarningSettings} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpenAccountCenter={() => openContextTab("accounts")} />}
+              {props.officeUser ? officeOffline || props.selectedSession?.queueError || currentTurnRunning ? <div class="cli-turn-usage-strip team-request-state" role="status">{officeOffline ? quotaOfflineMessage(props.officeUser.availability!) : props.selectedSession?.queueRetryAt ? officeCapacityMessage(props.selectedSession.queueRetryAt) : props.selectedSession?.queueError || "Working on your request…"}</div> : null : <TurnUsageStrip account={props.account} quotaWarningSettings={props.quotaWarningSettings} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpenAccountCenter={() => openContextTab("accounts")} />}
 
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatUsageDuration(goal.elapsedMs).toUpperCase() : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Delete goal" title={currentTurnRunning ? 'Stop the session before deleting its goal' : 'Delete goal'} disabled={props.goalUpdating || props.connected === false || props.selectedSession.status !== 'idle' || currentTurnRunning} onClick={event => { event.preventDefault(); event.stopPropagation(); setGoalDeleteTarget(props.selectedSession?.id); }}><TrashIcon /></button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               <ModalShell open={!!goalDeleteTarget && goalDeleteTarget === props.selectedSession?.id} title="Delete goal?" closeLabel="Cancel goal deletion" className="dashboard-modal-compact" onClose={() => { setGoalDeleteTarget(undefined); reportLocalFeedback({ level: 'info', message: 'Goal deletion cancelled.' }); }}>

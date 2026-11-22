@@ -134,6 +134,8 @@ export interface DashboardSettings {
 }
 
 export interface DashboardOfficeView {
+  /** Shared availability only; never contains account identities or quota details. */
+  availability?: import('../quotaAvailability').QuotaAvailability;
   id: string;
   username: string;
   displayName: string;

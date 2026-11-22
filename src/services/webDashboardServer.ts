@@ -4,6 +4,7 @@ import { readOfficeInstructions, saveOfficeInstructions } from "./officePreferen
 import { createOfficeWorkspaceFile } from "./officeWorkspaceFile";
 import { getSystemStatus } from './systemStatus';
 import { userWorkspaceNotice } from '../domain/teamWorkspacePresentation';
+import { quotaAvailability } from '../domain/quotaAvailability';
 import { OfficeCapacityError, OfficeModelSelectionError, OfficeSessionService } from './officeSessions';
 import { createWorkspaceProject, renameWorkspaceProject, removeWorkspaceProject } from './workspaceProjects';
 import { listWorkspaceTerminals } from './workspaceTools';
@@ -1831,7 +1832,7 @@ export class WebDashboardServer implements vscode.Disposable {
     settings.workspaceTextFileLimitMb=state.settings.workspaceTextFileLimitMb;
     return {
       lang:state.lang,copy:state.copy,logoUri:state.logoUri,panelTitle:"User Workspace",brandSub:"",onboardingCompleted:true,
-      office: this.officeView(office),
+      office: { ...this.officeView(office), availability: quotaAvailability(state.accounts) },
       // User snapshots must not carry account identities, quota, peer, or host controls.
       accounts: [], peerAccounts: {}, connectedPeers: [], tokenAutomation: { enabled: false },
       indexHealth: { status: "healthy", availableBackups: 0 },

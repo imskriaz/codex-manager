@@ -17,6 +17,7 @@ const mockHost=`(()=>{
 document.documentElement.dataset.dashboardUser='fixture-alex';
 const state=${JSON.stringify(state)},key='private-workspace-fixture';
 const saved=JSON.parse(localStorage.getItem(key)||'null');let session=saved?.session,messages=saved?.messages||[];
+window.__setAvailability=availability=>{state.office.availability=availability;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));};
 const config={defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:[]},{id:'quality',label:'Quality',reasoningEfforts:[]}],projects:[{id:'personal',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
 window.__setModelDefault=defaultModel=>{config.defaultModel=defaultModel;dispatch({type:'dashboard:action-result',requestId:'auto-config',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:session?[session]:[],cliComposerConfig:config}});};
@@ -53,6 +54,13 @@ try{for(const width of [1440,390]){
  page.on('console',message=>{if(message.type()==='error')errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
  const start=Date.now();await page.goto(origin+'/workspace');
+ await page.locator('.cli-workspace').waitFor();
+ await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 3660 }));
+ await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1h/ }).waitFor();
+ await assertPlainUserInterface(page);
+ await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true});
+ await page.evaluate(() => window.__setAvailability({ status: 'available' }));
+ await page.locator('.team-request-state').waitFor({ state: 'detached' });
  let instructions='';await context.route('**/api/workspace/preferences',async route=>{if(route.request().method()==='PUT')instructions=route.request().postDataJSON().instructions;await route.fulfill({contentType:'application/json',body:JSON.stringify({instructions,limits:{storageMb:100,dailyTokens:100000,dailyRequests:50},usage:{tokens:1200,requests:3,storageBytes:1024,resetsAt:Date.now()+3600000}})});});
  await page.getByRole('button',{name:'Start a new chat',exact:true}).click();
  await page.locator('.cli-composer textarea').waitFor();
@@ -88,6 +96,14 @@ try{for(const width of [1440,390]){
  await page.getByRole('button',{name:'Send message',exact:true}).click();
  assert.equal(await page.evaluate(()=>window.__privateActions.find(item=>item.action==='startCodexCliSession').payload.model),'quality');
  await page.locator('.team-request-state').filter({hasText:'All assistants are busy'}).waitFor();
+ await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 90060 }));
+ await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1d 1h/ }).waitFor();
+ await assertPlainUserInterface(page);
+ await page.screenshot({path:path.join(output,`offline-queued-${width}.png`),fullPage:true});
+ await page.evaluate(() => window.__setAvailability({ status: 'offline' }));
+ await page.locator('.team-request-state').filter({ hasText: "We're offline. Checking availability." }).waitFor();
+ await page.evaluate(() => window.__setAvailability({ status: 'available' }));
+ await page.locator('.team-request-state').filter({hasText:'All assistants are busy'}).waitFor();
  await assertPlainUserInterface(page);
  await page.screenshot({path:path.join(output,`queued-${width}.png`),fullPage:true});
  const first=await page.evaluate(()=>JSON.parse(localStorage.getItem('private-workspace-fixture')).session.id);
@@ -97,7 +113,7 @@ try{for(const width of [1440,390]){
  const transcript=await page.locator('.cli-session-messages').textContent();
  assert.match(transcript,/npm test/);assert.match(transcript,/All 83 checks passed/);assert.match(transcript,/Read the document/);
  assert.match(transcript,/Ran PowerShell: \$r=1; npm test/);assert.match(transcript,/\"PowerShell\" -NoProfile -Command/);
- assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Added/);assert.match(transcript,/Edited/);
+ assert.match(transcript,/alex\/output\/commit.cjs/);assert.match(transcript,/Created/);assert.match(transcript,/Edited/);
  assert.match(transcript,/Read File · alex\/notes.txt/);
  assert.doesNotMatch(transcript,/C:[\\/]|Windows[\\/](?:System32|Temp)/);
  await page.locator('.cli-completed-work > summary').click();

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.58
+
+- Show a short offline notice with the next local availability time and remaining days, hours and minutes, checking blocking 5-hour and weekly/monthly windows across enabled accounts. Share only aggregate availability with User Workspace.
+
 ## 3.0.0-pre.56
 
 - Show file activity in bold with action prefixes such as Edited, Created and Deleted; preserve file and review controls and expandable diffs.

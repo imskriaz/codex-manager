@@ -15,7 +15,7 @@ const state = structuredClone(snapshot);
 Object.assign(state.settings, { cliIntegrationEnabled: true, taskBoardEnabled: true, autoResumeEnabled: true, privacyMode: false });
 state.connectedPeers = [{ id: 'fixture-local', name: 'This PC', local: true, connected: true }];
 state.peerAccounts = {};
-state.accounts = state.accounts.slice(0, 1).map(account => ({ ...account, enabled: true, runningDeviceName: undefined, hasQuotaError: false, hasPendingResetCreditAttempt: false, metrics: account.metrics.map(metric => ({ ...metric, visible: true, percentage: 0 })) }));
+state.accounts = state.accounts.slice(0, 1).map(account => ({ ...account, enabled: true, runningDeviceName: undefined, hasQuotaError: false, hasPendingResetCreditAttempt: false, metrics: [{ key: 'hourly', label: '5h', visible: true, percentage: 0, resetAt: Math.floor(Date.now() / 1000) + 3600 }, { key: 'weekly', label: 'Monthly', period: 'monthly', visible: true, percentage: 0, resetAt: Math.floor(Date.now() / 1000) + 90060 }] }));
 const session = { id: '01a04882-d037-7a42-ad24-9afb61901188', title: 'Compact session', status: 'idle', interrupted: true, autoResumeEnabled: true, projectPath: 'D:/demo', model: 'gpt-5', updatedAt: new Date().toISOString() };
 const messages = [
   { id: 'user', kind: 'message', role: 'user', text: 'Check compact notices.' },
@@ -62,8 +62,9 @@ try {
     await page.goto(`${origin}/workspace/${session.id}`, { waitUntil: 'domcontentloaded' });
     await page.locator('.cli-conversation .cli-error-notice').first().waitFor();
     const loadMs = Date.now() - start;
-    const recovery = page.locator('.cli-conversation .cli-capacity-notice').filter({ hasText: /Waiting for quota to reset|Checking account quota/ });
+    const recovery = page.locator('.cli-conversation .cli-capacity-notice').filter({ hasText: /We're offline\. Back at/ });
     await recovery.waitFor();
+    assert.match(await recovery.innerText(), /1d 1h(?: 0m)? left/);
     assert.equal(await page.getByText('Account usage limit · saved for recovery', { exact: true }).count(), 0);
     assert.equal(await page.locator('.cli-conversation .cli-quota-recovery-detail').count(), 0);
     const geometry = await page.locator('.cli-conversation .cli-capacity-notice, .cli-conversation .cli-error-notice').evaluateAll(elements => elements.map(element => {

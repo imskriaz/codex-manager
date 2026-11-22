@@ -66,7 +66,7 @@ describe("sessions sidebar layout", () => {
   it('shows quota waiting only for the blocked session and clears it on resume, completion, pause, or opt-out', () => {
     const session = { id: 'quota', status: 'idle' as const, interrupted: true };
     const error = { id: 'error', kind: 'error' as const, text: 'You have hit your usage limit' };
-    const waiting = 'No account quota available. Waiting for quota to reset, then resuming automatically.';
+    const waiting = "We're offline. Checking availability.";
     const status = (s = session, messages = [error], live = undefined, automatic = true, connected = true, running = false) => sessionQuotaWaitingMessage(s, messages, live, [], automatic, connected, running);
     expect(status()).toBe('Checking account quota and automatic recovery.');
     expect(status(session, [error], undefined, true, false)).toContain('Waiting for connection');
@@ -253,7 +253,8 @@ describe("sessions sidebar layout", () => {
     expect(brand).toContain("props.logoUri");
     expect(source).toContain("createPortal(sidebarToggle, sidebarToggleTarget)");
     expect(source).not.toContain("if (props.taskBoardActive) setRailCollapsed(true)");
-    expect(brand).toContain('<strong>Team</strong>');
+    expect(brand).toContain('aria-label="User Workspace"');
+    expect(brand).not.toContain('<strong>Team</strong>');
     expect(brand).toContain('<strong>Codex</strong>');
     expect(brand).toContain('aria-label="Dashboard home"');
     expect(brand).toContain('selectNewRequest(); if (mobileLayout) setRailCollapsed(true); props.onDashboard();');
