@@ -46,7 +46,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("const retained = entry.tabs.flatMap");
     expect(source).toContain("props.browserPages.find(page => page.id === path)?.title");
     expect(source).toContain("if (tab.startsWith('browser:'))");
-    expect(source).toContain("window.open(url, \"_blank\", \"noopener,noreferrer\")");
+    expect(source).not.toContain("window.open(url");
+    expect(source).toContain("openContextTab('browser', undefined, url)");
     expect(source).toContain('link.download = ""');
     expect(source).not.toContain('openInternal: (url: string) => openContextTab("browser"');
   });

@@ -1150,6 +1150,16 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
     if (tab === 'accounts' && mobileLayout) setRailCollapsed(true);
     if (tab === "reviews") setBranchReview(false);
+    if (tab === 'browser' && browserUrl) {
+      setContextTabsByProject(current => {
+        const entry = current[contextProjectKey] ?? userWorkspaceProject();
+        const selected = workspaceTabKind(entry.active) === 'browser' ? entry.active : entry.tabs.find(item => workspaceTabKind(item) === 'browser') ?? 'browser';
+        return { ...current, [contextProjectKey]: { ...entry, tabs: entry.tabs.includes(selected) ? entry.tabs : [...entry.tabs, selected], active: selected, browserUrl, browserPreviewPath: undefined, browserDownloadUrl: undefined, browserOpenNonce: undefined, browserActionNonce: (entry.browserActionNonce ?? 0) + 1 } };
+      });
+      setContextCollapsed(false);
+      setContextAddOpen(false);
+      return;
+    }
     if (tab === "browser" && !filePath && !browserUrl && !browserDownloadUrl) {
       setContextTabsByProject(current => {
         const entry = current[contextProjectKey] ?? userWorkspaceProject();
@@ -1295,11 +1305,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     return undefined;
   });
   const openSessionUrl = (url: string): void => {
-    const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (!opened) {
-      props.onOpenExternalLink?.(url, props.selectedSession?.deviceId);
-      reportLocalFeedback({ level: "warning", message: "The link could not open in a new tab. Allow pop-ups for this dashboard and retry." });
-    }
+    openContextTab('browser', undefined, url);
   };
   const downloadSessionUrl = (url: string): void => {
     const link = document.createElement("a");
@@ -1865,12 +1871,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           browserUrl={contextProjectState.browserUrl}
           browserDownloadUrl={contextProjectState.browserDownloadUrl}
           browserActionNonce={contextProjectState.browserActionNonce}
+          onBrowserUrlHandled={nonce => setContextTabsByProject(current => {
+            const entry = current[contextProjectKey] ?? userWorkspaceProject();
+            return entry.browserActionNonce === nonce ? { ...current, [contextProjectKey]: { ...entry, browserUrl: undefined, browserPreviewPath: undefined } } : current;
+          })}
           browserOpenNonce={contextProjectState.browserOpenNonce}
           onBrowserOpenHandled={nonce => setContextTabsByProject(current => {
             const entry = current[contextProjectKey] ?? userWorkspaceProject();
             return entry.browserOpenNonce === nonce ? { ...current, [contextProjectKey]: { ...entry, browserOpenNonce: undefined } } : current;
           })}
           browserPages={browserPages}
+          browserSessionActive={Boolean(props.selectedSession && !props.dashboardMode && !props.taskBoardActive && (!props.officeUser || userView === 'chats'))}
           browserClosePageId={contextProjectState.browserClosePageId}
           onBrowserCloseHandled={() => setContextTabsByProject(current => {
             const entry = current[contextProjectKey] ?? userWorkspaceProject();
@@ -2914,9 +2925,11 @@ function WorkspaceContextPanel(props: {
   browserUrl?: string;
   browserDownloadUrl?: string;
   browserActionNonce?: number;
+  onBrowserUrlHandled: (nonce: number) => void;
   browserOpenNonce?: number;
   onBrowserOpenHandled: (nonce: number) => void;
   browserPages: BrowserWorkspacePage[];
+  browserSessionActive: boolean;
   browserClosePageId?: string;
   onBrowserCloseHandled: () => void;
   onBrowserPagesChange: (pages: BrowserWorkspacePage[]) => void;
@@ -3048,7 +3061,7 @@ function WorkspaceContextPanel(props: {
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{addTabs.map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'browser' ? <BrowserIcon /> : tab === 'accounts' ? <DashboardIcon /> : tab === 'git' ? <WorkspaceToolIcon kind="branch" /> : tab === 'agents' ? <WorkspaceToolIcon kind="agents" /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{tab === 'accounts' ? 'Dashboard' : capitalize(tab)}</span></button>)}{!addTabs.length ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {!props.collapsed && props.activeTab === 'accounts' ? <section class="workspace-dashboard" aria-label="Dashboard" ref={props.onDashboardTarget} /> : null}
-    <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}><WorkspaceBrowser privateWorkspace={!!props.officeFeatures} key={props.scopeKey} sessionId={props.session?.id} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === 'browser' ? activePath ?? '' : undefined} closePageId={props.browserClosePageId} initialUrl={props.officeFeatures ? props.browserPreviewPath || props.browserUrl : props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} openPageNonce={props.browserOpenNonce} onOpenPageHandled={props.onBrowserOpenHandled} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /></div>
+    <div hidden={props.collapsed || activeKind !== 'browser'} style={{ height: '100%' }}>{props.browserSessionActive ? <WorkspaceBrowser privateWorkspace={!!props.officeFeatures} key={props.scopeKey} sessionId={props.session?.id} active={!props.collapsed && activeKind === 'browser'} onInstruction={props.onBrowserInstruction} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} initialPageId={activeKind === 'browser' ? activePath ?? '' : undefined} closePageId={props.browserClosePageId} initialUrl={props.officeFeatures ? props.browserPreviewPath || props.browserUrl : props.browserUrl} downloadUrl={props.browserDownloadUrl} actionNonce={props.browserActionNonce} onUrlHandled={props.onBrowserUrlHandled} openPageNonce={props.browserOpenNonce} onOpenPageHandled={props.onBrowserOpenHandled} connected={props.connected !== false} onClosePageHandled={() => props.onBrowserCloseHandled()} onPagesChange={props.onBrowserPagesChange} onPageSelected={props.onBrowserPageSelected} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.activeTab === 'env' ? <WorkspaceEnvironmentView officeFeatures={props.officeFeatures} hideTerminal={props.hideTerminal} standalone={props.standalone} targetDeviceId={props.targetDeviceId} liveState={props.liveState} autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} systemInfoEnabled={props.systemInfoEnabled} systemStatus={props.systemStatus} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : !props.collapsed && props.activeTab === 'git' ? <WorkspaceGit onFeedback={props.onFeedback} key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
     <div hidden={props.collapsed || activeKind !== 'agents'} class="cli-agent-panel">{props.tabs.some(tab => workspaceTabKind(tab) === 'agents') ? <AgentWorkspace key={props.scopeKey} active={!props.collapsed && activeKind === 'agents'} connected={props.connected} sessions={props.agentSessions} data={props.agentMessages} activeId={activeKind === 'agents' ? activePath : undefined} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : null}</div>
     {!props.collapsed && props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} standalone={props.standalone && !props.targetDeviceId} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView targetDeviceId={props.targetDeviceId} projectPath={props.projectPath} key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} filesByPath={props.filesByPath} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} readError={props.readError} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : !props.collapsed && props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}

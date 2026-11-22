@@ -27,6 +27,7 @@ export default function WorkspaceBrowser(props: {
   initialUrl?: string;
   downloadUrl?: string;
   actionNonce?: number;
+  onUrlHandled?: (nonce: number) => void;
   openPageNonce?: number;
   onOpenPageHandled?: (nonce: number) => void;
   initialPageId?: string;
@@ -108,7 +109,7 @@ export default function WorkspaceBrowser(props: {
   const pageDrafts = useRef(new Map<string, { points: BrowserPoint[]; text: string; reference: string; mode: typeof mode; editingMark?: BrowserFeedback }>());
   const draftPage = useRef(selected);
   pageDrafts.current.set(draftPage.current, { points, text, reference, mode, editingMark });
-  const revision = state.pageId === selected ? state.revision : undefined;
+  const revision = state.pageId === selected ? state.revision : state.pages.find(page => page.id === selected)?.revision;
   const current = state.pages.find((page) => page.id === selected);
   const noticeAction = (message: string): void => { setNotice(message); setFailed(false); };
   useEffect(() => {
@@ -213,11 +214,13 @@ export default function WorkspaceBrowser(props: {
   useEffect(() => {
     const target = props.initialUrl?.trim();
     const nonce = props.actionNonce ?? 0;
-    if (!target || nonce === openedRequest.current || !props.connected) return;
+    if (!target || nonce === openedRequest.current || !props.connected || busy || locked.current) return;
+    if (props.initialPageId !== undefined && props.initialPageId !== selected || selected && !revision) return;
     openedRequest.current = nonce;
+    latest.current.onUrlHandled?.(nonce);
     setUrl(target);
     void run({ operation: selected ? "navigate" : "open", pageId: selected || undefined, revision: selected ? revision : undefined, url: target });
-  }, [props.initialUrl, props.actionNonce, props.connected, selected, revision]);
+  }, [props.initialUrl, props.actionNonce, props.connected, props.initialPageId, selected, revision, busy]);
   useEffect(() => {
     const nonce = props.openPageNonce ?? 0;
     if (!nonce || nonce === openedPageRequest.current || !props.connected || busy || locked.current) return;

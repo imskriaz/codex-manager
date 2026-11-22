@@ -109,3 +109,25 @@ it('consumes a page-open intent before dispatch so a remount cannot replay it', 
   render({downloadUrl:undefined,openPageNonce:pending,onOpenPageHandled});
   expect(fixture.request.mock.calls.filter(([,payload])=>payload.browserRequest.operation === 'open')).toHaveLength(1);
 });
+
+it('reuses a discovered page with its current revision for a website link', async () => {
+  fixture.request.mockResolvedValue({ workspaceBrowser: { ...browserState, pageId: undefined, revision: undefined } });
+  const props = { downloadUrl: undefined, initialPageId: page.id, initialUrl: 'https://example.test/help', actionNonce: 2 };
+  render(props);
+  await vi.waitFor(() => { render(props); expect(fixture.request.mock.calls.some(([, payload]) => payload.browserRequest.operation === 'navigate')).toBe(true); });
+  const navigation = fixture.request.mock.calls.map(([, payload]) => payload.browserRequest).filter(request => request.operation === 'navigate');
+  expect(navigation).toEqual([expect.objectContaining({ pageId: page.id, revision: page.revision, url: props.initialUrl })]);
+  expect(fixture.request.mock.calls.some(([, payload]) => payload.browserRequest.operation === 'open')).toBe(false);
+});
+
+it('consumes website links before dispatch and keeps failures visible without remount replay', async () => {
+  let pending: string | undefined = 'https://example.test/help';
+  const handled = vi.fn(() => { pending = undefined; });
+  fixture.request.mockRejectedValue(new Error('Connection refused. Start the app and retry.'));
+  render({ downloadUrl: undefined, initialUrl: pending, actionNonce: 2, onUrlHandled: handled });
+  expect(handled).toHaveBeenCalledWith(2);
+  await vi.waitFor(() => expect(JSON.stringify(render({ downloadUrl: undefined, initialUrl: pending, actionNonce: 2, onUrlHandled: handled }))).toContain('Connection refused. Start the app and retry.'));
+  fixture.cleanups.splice(0).forEach(cleanup => cleanup()); fixture.slots = [];
+  render({ downloadUrl: undefined, initialUrl: pending, actionNonce: 2, onUrlHandled: handled });
+  expect(fixture.request.mock.calls.filter(([, payload]) => payload.browserRequest.operation === 'open')).toHaveLength(1);
+});

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.84
+
+- Open conversation website links in the workspace Browser and reuse its selected page.
+- Fix duplicate workspace tab controls by restoring desktop and mobile picker styles to their correct scope.
+- Keep Browser and AI-opened tabs within their owning conversation, restoring them when that conversation is shown.
+
 ## 3.0.0-pre.80
 
 - Open Team users directly in the editor, add a top Delete action, and organize settings with left-side tabs on desktop and a section dropdown on mobile.
