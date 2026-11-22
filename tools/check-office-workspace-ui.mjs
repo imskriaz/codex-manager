@@ -41,7 +41,12 @@ messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});pe
 else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:window.__libraryFiles||[]};
 else if(message.action==='readWorkspaceFile'){if(message.payload.filePath==='missing.html'){dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'failed',error:'File could not be opened. Choose another file.'});return;}const content='Saved file contents.';payload=message.payload.fileDownloadOffset!==undefined?{workspaceFileDownload:{path:message.payload.filePath,revision:'r1',offset:0,size:content.length,data:btoa(content)}}:{workspaceFile:{path:message.payload.filePath,content,kind:'text',language:'javascript',mimeType:'text/javascript',revision:'r1',size:content.length}};}
 else if(message.action==='deleteWorkspaceFile'){window.__libraryFiles=window.__libraryFiles.filter(file=>file.path!==message.payload.filePath);payload={notice:{level:'info',message:'File deleted.'}};}
-else if(message.action==='workspaceBrowser')payload={workspaceBrowser:{projectPath:'C:/team/alex',pages:[],feedback:[]}};
+else if(message.action==='workspaceBrowser'){
+ const r=message.payload.browserRequest;window.__browserPages??=[];
+ if(['open','navigate'].includes(r.operation)) {const url=r.url.includes('://')?r.url:'https://workspace.invalid/'+encodeURIComponent(r.url);const next={id:r.pageId||crypto.randomUUID(),title:'Workspace website',url,revision:crypto.randomUUID()};window.__browserPages=[next];}
+ const current=window.__browserPages.find(page=>page.id===r.pageId)||window.__browserPages[0];
+ payload={workspaceBrowser:{pages:window.__browserPages,feedback:[],...(current?{pageId:current.id,revision:current.revision,image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII='}:{})}};
+}
 else if(message.action==='getCodexSkills')payload={cliSkills:[]};
 else if(!['refreshView','openExternalUrl'].includes(message.action))throw new Error('Unexpected private-workspace action: '+message.action);
 dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload});
@@ -142,9 +147,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.waitForFunction(()=>document.querySelector('.user-model-picker select')?.value==='fast');
  assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).locator('option').filter({hasText:'Automatic'}).count(),0);
  await page.evaluate(()=>window.__setModelWarning('Models could not be loaded. Your selected model is kept.'));
- const beforeRetry=await page.evaluate(()=>window.__privateActions.filter(message=>message.action==='listCodexCliSessions').length);
- await page.getByRole('button',{name:'Retry models',exact:true}).click();
- await page.waitForFunction(before=>window.__privateActions.filter(message=>message.action==='listCodexCliSessions').length>before,beforeRetry);
+ assert.equal(await page.locator('.user-model-warning').count(),0);
  assert.equal(await page.getByRole('combobox',{name:'Model',exact:true}).inputValue(),'fast');
  await page.evaluate(()=>window.__setModelWarning(''));
  await assertPlainUserInterface(page);
@@ -245,17 +248,19 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await page.getByRole('button',{name:'Session actions',exact:true}).click();await page.getByRole('menuitem',{name:'Rename',exact:true}).click();const renameDialog=page.getByRole('dialog',{name:'Rename chat',exact:true});await renameDialog.getByRole('textbox',{name:'Session name',exact:true}).fill('Cancelled rename');await renameDialog.getByRole('button',{name:'Cancel',exact:true}).click();await renameDialog.waitFor({state:'hidden'});assert.equal(await page.locator('.cli-conversation-header .cli-rename-form').count(),0);
  if(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count())await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
  await page.getByRole('tab',{name:'Env',exact:true}).click();
- await page.locator('.cli-environment-view').getByText('Your workspace',{exact:true}).waitFor();
+ await page.locator('.cli-environment-view').getByText('Connection',{exact:true}).waitFor();
+ assert.equal(await page.locator('.cli-environment-view p').count(),0);
+ assert.ok(await page.locator('.cli-environment-view dt').count()>=5);
  await assertPlainUserInterface(page);
  await page.getByRole('tab',{name:'Browser',exact:true}).click();
- const preview=page.getByRole('region',{name:'Website preview',exact:true}),website=preview.getByRole('textbox',{name:'Website file',exact:true});
- await preview.getByText('Open an HTML file from Files or Library.',{exact:true}).waitFor();
- assert.equal(await preview.getByRole('button',{name:'Open preview',exact:true}).isDisabled(),true);
- for(const theme of ['light','dark']){await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);const layout=await preview.locator('form').evaluate(node=>{const input=node.querySelector('input'),button=node.querySelector('button'),rect=node.getBoundingClientRect();return {height:rect.height,inputWidth:input.getBoundingClientRect().width,right:button.getBoundingClientRect().right,max:rect.right,font:getComputedStyle(input).fontFamily,bg:getComputedStyle(input).backgroundColor};});assert.ok(layout.height<=44&&layout.inputWidth>150&&layout.right<=layout.max,JSON.stringify(layout));if(theme==='dark')assert.notEqual(layout.bg,'rgb(255, 255, 255)');await page.screenshot({path:path.join(output,`browser-${theme}-${width}.png`),fullPage:true,animations:'disabled'});}
- await website.fill('missing.html');await preview.getByRole('button',{name:'Open preview',exact:true}).click();await preview.getByRole('alert').filter({hasText:'File could not be opened'}).waitFor();
- await website.fill('report draft.html');await website.press('Enter');const frame=page.frameLocator('.user-website-preview iframe');await frame.locator('body').evaluate(()=>new Promise(resolve=>{if(document.readyState==='complete')resolve();else window.addEventListener('load',resolve,{once:true});}));await frame.locator('body').evaluate(()=>{window.__previewEvents=[];for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>window.__previewEvents.push({type,tag:event.target.tagName,trusted:event.isTrusted}),true);});await frame.getByRole('button',{name:'Test website',exact:true}).click();try{await frame.getByRole('button',{name:'Clicked',exact:true}).waitFor();}catch(error){await page.screenshot({path:path.join(output,`browser-click-failure-${width}.png`)});console.error(JSON.stringify({preview:await preview.innerText(),frame:await frame.locator('body').evaluate(()=>({html:document.body.innerHTML,events:window.__previewEvents,active:document.activeElement?.tagName})),iframe:await preview.locator('iframe').boundingBox(),button:await frame.getByRole('button').boundingBox(),errors}));throw error;}
- assert.equal(await preview.locator('iframe').getAttribute('sandbox'),'allow-scripts');assert.match(await preview.locator('iframe').getAttribute('src'),/report\+draft.html/);
- await preview.getByRole('button',{name:'Refresh preview',exact:true}).click();await frame.getByRole('button',{name:'Test website',exact:true}).waitFor();
+ const preview=page.getByRole('region',{name:'Browser',exact:true}),website=preview.getByRole('textbox',{name:'Browser URL',exact:true});
+ assert.equal(await website.getAttribute('placeholder'),'Enter a URL or workspace file');
+ for(const name of ['Go back','Go forward','Go to URL','Browser menu'])assert.equal(await preview.getByRole('button',{name,exact:true}).count(),1);
+ await preview.getByRole('button',{name:'Browser menu',exact:true}).click();await preview.getByRole('menuitemcheckbox',{name:'Browser inspector',exact:true}).waitFor();await preview.getByRole('menuitem',{name:'Comments',exact:true}).focus();await page.keyboard.press('Escape');
+ for(const theme of ['light','dark']){await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);const layout=await preview.locator('form.workspace-browser-address').evaluate(node=>{const input=node.querySelector('input'),rect=node.getBoundingClientRect();return {height:rect.height,inputWidth:input.getBoundingClientRect().width,right:input.getBoundingClientRect().right,max:rect.right,bg:getComputedStyle(input).backgroundColor};});assert.ok(layout.inputWidth>20&&layout.right<=layout.max+1,JSON.stringify(layout));if(theme==='dark')assert.notEqual(layout.bg,'rgb(255, 255, 255)');await page.screenshot({path:path.join(output,`browser-${theme}-${width}.png`),fullPage:true,animations:'disabled'});}
+ await website.fill('report draft.html');await website.press('Enter');await page.waitForFunction(()=>window.__privateActions.some(message=>message.payload?.browserRequest?.url==='report draft.html'));
+ await page.waitForFunction(()=>!document.querySelector('[aria-label="Go to URL"]')?.disabled);
+ await website.fill('https://example.com');await website.press('Enter');await page.waitForFunction(()=>window.__privateActions.some(message=>message.payload?.browserRequest?.url==='https://example.com'));
  await page.evaluate(()=>document.documentElement.dataset.theme='light');
  if(width<760){await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();}
  await page.getByRole('button',{name:'Settings',exact:true}).click();

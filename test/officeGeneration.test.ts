@@ -278,3 +278,13 @@ it('releases failed fetch and invalid response body reservations while preservin
  vi.mocked(upstream).mockRejectedValueOnce(new Error('Network interrupted'));await expect(generate()).rejects.toThrow();expect(readOfficeUsage(user.id)).toMatchObject({pending:false,unconfirmed:true});
  const other={...user,id:'sam'};vi.mocked(upstream).mockResolvedValueOnce(new Response('{invalid') as never);await expect((server as any).teamSessions().options.generate(other,'fast',[],new AbortController().signal,other.workspacePath,vi.fn())).rejects.toThrow();expect(readOfficeUsage(other.id)).toMatchObject({pending:false,unconfirmed:true});
 });
+
+it('creates stable process-only workspace credentials without consuming public API keys',async()=>{
+ vi.mocked((server as any).officeProxyToken).mockRestore();
+ const secrets=(server as any).context.secrets;vi.mocked(secrets.get).mockRejectedValue(new Error('All 32 public token slots are occupied'));
+ const [first,second]=await Promise.all([(server as any).officeProxyToken('one'),(server as any).officeProxyToken('one')]);
+ expect(first).toMatch(/^cm_[a-f0-9]{64}$/);expect(second).toBe(first);expect(await (server as any).officeProxyToken('two')).not.toBe(first);expect(secrets.get).not.toHaveBeenCalled();
+});
+it.each([502,503,504])('queues a confirmed temporary rejection (%s) before workspace actions',async status=>{
+ vi.mocked(upstream).mockResolvedValueOnce(new Response('Unavailable',{status}) as never);await expect(generate()).rejects.toBeInstanceOf(OfficeCapacityError);
+});

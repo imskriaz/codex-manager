@@ -19,6 +19,7 @@ import type {
 
 export default function WorkspaceBrowser(props: {
   simple?: boolean;
+  privateWorkspace?: boolean;
   projectPath?: string;
   sessionId?: string;
   targetDeviceId?: string;
@@ -46,7 +47,7 @@ export default function WorkspaceBrowser(props: {
   const [busy, setBusy] = useState(false),
     [notice, updateNotice] = useState(""),
     [failed, setFailed] = useState(false);
-  const setNotice=(message:string)=>updateNotice(props.simple ? userWorkspaceNotice(message) : message);
+  const setNotice=(message:string)=>updateNotice(props.simple || props.privateWorkspace ? userWorkspaceNotice(message) : message);
   const [credentialsOpen, setCredentialsOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [pageCursor, setPageCursor] = useState('default');
@@ -440,15 +441,15 @@ export default function WorkspaceBrowser(props: {
     }}><BrowserMarkIcon tool={tool} /></button>)}
   </div>;
   return (
-    <section class="workspace-browser" aria-label={props.simple ? "Browser" : "Development browser"} onKeyDownCapture={event => {
+    <section class="workspace-browser" aria-label={props.simple || props.privateWorkspace ? "Browser" : "Development browser"} aria-busy={busy} onKeyDownCapture={event => {
       if ((event.ctrlKey || event.metaKey) && ['+', '=', '-', '0'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); if (event.key === '0') setZoom(100); else zoomBy(event.key === '-' ? -25 : 25); return; }
       if (event.key === 'Escape' && (points.length || activeFeedback || inspect || mode !== 'interact')) { event.preventDefault(); event.stopPropagation(); cancelMark(); noticeAction('Mark cancelled.'); }
     }}>
-      <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); const nextUrl = normalizeBrowserInput(url); if (!nextUrl) { setFailed(true); setNotice("Enter a website address."); return; } setUrl(nextUrl); command({ operation: current ? "navigate" : "open", url: nextUrl }); }}>
+      <form class="workspace-browser-address" onSubmit={(event) => { event.preventDefault(); const nextUrl = props.privateWorkspace && /^(?:https:\/\/workspace\.invalid\/|.*\.(?:html?|pdf|png|jpe?g|svg|webp)(?:[?#]|$))/i.test(url.trim()) ? url.trim() : normalizeBrowserInput(url); if (!nextUrl) { setFailed(true); setNotice("Enter a website address."); return; } setUrl(nextUrl); command({ operation: current ? "navigate" : "open", url: nextUrl }); }}>
         <button class="workspace-browser-icon-button" aria-label="Go back" title="Go back" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "back" })}><ToolIcon kind="left" /></button>
         <button class="workspace-browser-icon-button" aria-label="Go forward" title="Go forward" disabled={busy || !current || !props.connected} type="button" onClick={() => command({ operation: "forward" })}><ToolIcon kind="right" /></button>
 
-        <input aria-label="Browser URL" type="text" inputMode="url" placeholder="Search or enter a URL" value={url} onInput={(e) => setUrl(e.currentTarget.value)} />
+        <input aria-label="Browser URL" type="text" inputMode="url" placeholder={props.privateWorkspace ? "Enter a URL or workspace file" : "Search or enter a URL"} value={props.privateWorkspace ? privateBrowserAddress(url) : url} onInput={(e) => setUrl(e.currentTarget.value)} />
         <button class="workspace-browser-icon-button workspace-browser-go" type="submit" aria-label="Go to URL" title="Go to URL" disabled={busy || !props.connected || !url.trim()}><ToolIcon kind="right" /></button>
       <div class="workspace-browser-actions">
         {notice && !points.length ? <span class={`workspace-browser-action-status ${failed ? 'is-error' : ''}`} role={failed ? 'alert' : 'status'} title={notice} tabIndex={0}><span aria-hidden="true">{failed ? '⚠' : 'ⓘ'}</span><span class="workspace-browser-status-detail">{notice}</span></span> : null}
@@ -648,7 +649,7 @@ export default function WorkspaceBrowser(props: {
             </>}
           </div> : null}
         </div>
-      ) : (
+      ) : props.privateWorkspace ? <div class="workspace-browser-blank" aria-label="New browser tab" /> : (
         <div class="workspace-browser-welcome" aria-label="New browser tab">
           <div class="workspace-browser-welcome-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="8" width="38" height="32" rx="5" /><path d="M5 17h38M11 12.5h1m4 0h1m4 0h1M18 25l-5 4 5 4m12-8 5 4-5 4m-4-11-4 14" /></svg></div>
           <small>CODEX MANAGER BROWSER</small><h2>Your next idea starts here</h2><p>Enter a URL above and choose Go to open your website.</p>
@@ -693,6 +694,11 @@ export function normalizeBrowserInput(value: string): string {
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(input)) return input;
   if (/^(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(input)) return `http://${input}`;
   return `https://${input}`;
+}
+
+function privateBrowserAddress(value:string):string {
+  if (!value.startsWith('https://workspace.invalid/')) return value;
+  try { return decodeURIComponent(value.slice('https://workspace.invalid/'.length)); } catch { return value; }
 }
 
 function browserToolCursor(tool: string): string {

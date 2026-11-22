@@ -63,7 +63,7 @@ it('deletes a conversation without publishing stale transcript content',async()=
 it('bounds optional model discovery and keeps the configured model available',async()=>{
  vi.useFakeTimers();const {service,generate}=setup();(service as any).options.models=()=>new Promise(()=>{});
  const pending=service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'slow-models'});await vi.advanceTimersByTimeAsync(3001);
- const result=await pending;expect(result.cliComposerConfig?.defaultModel).toBe('configured-model');expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain('selected model is kept');expect(generate).not.toHaveBeenCalled();
+ const result=await pending;expect(result.cliComposerConfig?.defaultModel).toBe('configured-model');expect(result.cliComposerConfig?.models.map(item=>item.id)).toContain('configured-model');expect(result.cliComposerConfig?.modelDiscoveryWarning).toBeUndefined();expect(generate).not.toHaveBeenCalled();
 });
 it('repairs queues already blocked by an uncertain result from an older host',async()=>{
  const {service}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.stop();
@@ -182,7 +182,7 @@ it("offers available models and preserves chat when discovery fails",async()=>{
  expect((await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"models"})).cliComposerConfig?.models[0]?.id).toBe("fast");
  models.mockRejectedValueOnce(new Error("provider-secret"));
  const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"fallback"});
- expect(result.cliComposerConfig?.modelDiscoveryWarning).toContain("selected model is kept");expect(JSON.stringify(result)).not.toContain("provider-secret");
+ expect(result.cliComposerConfig?.models.map(item=>item.id)).toEqual(["fast","configured-model"]);expect(result.cliComposerConfig?.modelDiscoveryWarning).toBeUndefined();expect(JSON.stringify(result)).not.toContain("provider-secret");
 });
 it("charges accepted requests once and rejects requests beyond the daily allowance",async()=>{
  const {service}=setup(),limited={...user,limits:{storageMb:0,dailyTokens:0,dailyRequests:1}};
@@ -210,7 +210,7 @@ it("requires a user model when no default is configured and does not charge a re
 it("returns the master default even when the optional model catalogue cannot load",async()=>{
  const {service}=setup();
  const result=await service.handle(user,{type:"dashboard:action",action:"listCodexCliSessions",requestId:"config"});
- expect(result.cliComposerConfig?.defaultModel).toBe("configured-model");expect(result.cliComposerConfig?.models).toEqual([]);
+ expect(result.cliComposerConfig?.defaultModel).toBe("configured-model");expect(result.cliComposerConfig?.models.map(item=>item.id)).toEqual(["configured-model"]);
 });
 
 it('persists the internal scheduled-run marker so restarted runs cannot recursively create schedules',async()=>{
@@ -240,4 +240,21 @@ it('passes uploaded images to the model without persisting inline image data in 
  (service as any).options.attachments=async()=>[{path:'uploads/sample.png',name:'sample.png',text:'',image:data,mimeType:'image/png'}];(service as any).options.images=async()=>[data];
  const first=await service.handle(user,{...start(),payload:{text:'Describe this image',attachments:[{id:'image',kind:'image',name:'sample.png',mimeType:'image/png',size:8,data}]}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  expect(JSON.stringify(storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id))).not.toContain('iVBORw0KGgo=');expect(JSON.stringify(generate.mock.calls[0]?.[2])).toContain(data);
+});
+
+it('filters fallback models against current plan permissions without choosing a replacement',async()=>{
+ const {service}=setup();(service as any).options.models=vi.fn().mockResolvedValueOnce([{id:'fast',label:'Fast',reasoningEfforts:[]}]).mockRejectedValue(new Error('unavailable'));
+ await service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'catalogue'});
+ const limited={...user,plan:{name:'Limited',status:'active' as const,models:['permitted']}};
+ const result=await service.handle(limited,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'fallback'});
+ expect(result.cliComposerConfig?.models.map(model=>model.id)).toEqual(['permitted']);expect(result.cliComposerConfig?.defaultModel).toBeUndefined();
+});
+
+it('keeps late model discovery for subsequent refreshes after the bounded initial fallback',async()=>{
+ vi.useFakeTimers();const {service}=setup();let finish!:(models:any[])=>void;
+ const discover=vi.fn(()=>new Promise<any[]>(resolve=>finish=resolve));(service as any).options.models=discover;
+ const first=service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'initial'});await vi.advanceTimersByTimeAsync(3001);
+ expect((await first).cliComposerConfig?.models.map(item=>item.id)).toEqual(['configured-model']);
+ const second=service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'refresh'});finish([{id:'late',label:'Late',reasoningEfforts:[]}]);await vi.advanceTimersByTimeAsync(0);
+ expect((await second).cliComposerConfig?.models[0].id).toBe('late');expect(discover).toHaveBeenCalledTimes(1);
 });

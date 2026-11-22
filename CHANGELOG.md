@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-pre.76
+
+- Fix User Workspace chat and model discovery when public API key slots are full; use process-only internal credentials.
+- Keep permitted configured and saved models available during discovery delays without changing the selected model. Queue temporary service rejections before any workspace action.
+- Match the subscriber Browser to the main navigation, feedback, responsive viewport, and inspector controls, with isolated pages and workspace assets.
+- Align sidebar controls and conversation icons, remove duplicate outcome banners and placeholder prose, and show compact environment details.
+
 ## 3.0.0-pre.75
 
 - Keep User Workspace settings navigation rounded and remove horizontal-tab underlines without changing workspace tool tabs or master settings.

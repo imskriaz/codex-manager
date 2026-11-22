@@ -30,6 +30,9 @@ vi.mock("playwright-core", () => ({
         newContext: vi.fn(async () => {
           const handlers = new Map<string, (value: any) => void>();
           const context = {
+            route: vi.fn(async()=>{}),
+            routeWebSocket: vi.fn(async()=>{}),
+            addInitScript: vi.fn(async()=>{}),
             setDefaultTimeout: vi.fn(),
             setDefaultNavigationTimeout: vi.fn(),
             on: (name: string, fn: any) => handlers.set(name, fn),
@@ -293,4 +296,21 @@ it('moves and resizes saved marks with revision and concurrent-edit protection',
   expect(updated.feedback[0]?.points).toEqual(changed.points);
   await expect(workspaceBrowser(project, { operation: 'updateFeedback', operationId: 'stale-edit', pageId: first.pageId, revision: first.revision, feedback, params: { expected } })).rejects.toThrow('edited elsewhere');
   expect((await workspaceBrowser(project, { operation: 'list' })).feedback[0]?.points).toEqual(changed.points);
+});
+
+it('isolates user pages, feedback, routing and browser contexts from the master and another user',async()=>{
+ const route=vi.fn(async()=>{});
+ const first=await workspaceBrowser(project,{operation:'open',operationId:'same-id',url:'about:blank'},{owner:'alex',route});
+ const other=await workspaceBrowser(project,{operation:'list'},{owner:'sam',route});
+ const master=await workspaceBrowser(project,{operation:'list'});
+ expect(first.pages).toHaveLength(1);expect(other.pages).toEqual([]);expect(master.pages).toEqual([]);
+ expect(m.contexts[0].route).toHaveBeenCalledWith('**/*',route);expect(m.contexts[0].routeWebSocket).toHaveBeenCalled();expect(m.contexts[0].addInitScript).toHaveBeenCalled();
+ await expect(workspaceBrowser(project,{operation:'snapshot',pageId:first.pageId},{owner:'sam',route})).rejects.toThrow('no longer open');
+});
+
+it('keeps user browser capacity separate from the master browser allowance',async()=>{
+ const route=vi.fn(async()=>{});
+ for(let index=0;index<4;index++)await workspaceBrowser(project+index,{operation:'open',operationId:'user-'+index,url:'about:blank'},{owner:'alex',route});
+ const master=await workspaceBrowser(project,{operation:'open',operationId:'master',url:'about:blank'});expect(master.pages).toHaveLength(1);
+ await expect(workspaceBrowser(project+'extra',{operation:'open',operationId:'extra',url:'about:blank'},{owner:'alex',route})).rejects.toThrow('capacity');
 });

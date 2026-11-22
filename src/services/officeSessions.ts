@@ -30,10 +30,9 @@ const namespace = (owner: string) => `office-sessions:${owner}`;
 function store() { const value = getSqliteStateStore(); if (!value) throw new Error("Conversation storage is unavailable. Please try again shortly."); return value; }
 function summary(session: Session): DashboardCliSessionSummary {
   const pending = session.turns.find(turn => ["queued", "working", "waiting"].includes(turn.state));
-  const uncertain = session.turns.some(turn => turn.state === "uncertain" && !turn.reviewed);
   return { id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, updatedAt: session.updatedAt, archived: session.archived,
     status: pending ? "running" : "idle", canStop: !!pending, autoResumeEnabled: false,
-    queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : uncertain ? UNCERTAIN : undefined };
+    queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : undefined };
 }
 function messages(session: Session): DashboardCliSessionMessage[] {
   return session.turns.flatMap(turn => [turn.user,...(turn.activities??[]), ...(turn.assistant ? [turn.assistant] : []), ...(turn.error ? [{id: `${turn.id}:error`, kind: "error" as const, text: turn.error, timestamp: session.updatedAt}] : []), ...(turn.state === "uncertain" ? [{ id: `${turn.id}:unconfirmed`, kind: "error" as const, text: UNCERTAIN, timestamp: session.updatedAt }] : [])].map(message=>({...message,turnId:turn.id})));
@@ -48,6 +47,8 @@ function stopBlockedMessages(session: Session): boolean {
 
 /** Team conversations use the model endpoint only; this module never opens a native Codex thread. */
 export class OfficeSessionService {
+  private readonly modelCatalogues = new Map<string, import('../domain/dashboard/types').DashboardCliModelOption[]>();
+  private readonly modelDiscovery = new Map<string, Promise<import('../domain/dashboard/types').DashboardCliModelOption[]>>();
   private timer?: NodeJS.Timeout;
   private running = new Map<string, AbortController>();
   private stopped = false;
@@ -119,10 +120,27 @@ export class OfficeSessionService {
     if (p.targetDeviceId && p.targetDeviceId !== "local") throw new Error("Choose your own workspace.");
     if (action.action === "listCodexCliSessions") {
       const projects=readWorkspaceProjects(`office-projects:${user.id}`).filter(project=>{const relative=path.relative(user.workspacePath,project.path);return relative!==""&&!relative.startsWith("..")&&!path.isAbsolute(relative);});
-      let models: import("../domain/dashboard/types").DashboardCliModelOption[] = [], modelDiscoveryWarning: string | undefined;
-      try { models = await waitWithin(this.options.models?.(user)??Promise.resolve([]),3000,'Models are still loading.'); if (!models.length) modelDiscoveryWarning = "Models are temporarily unavailable. Your selected model is kept. Try again shortly."; }
-      catch { modelDiscoveryWarning = "Models could not be loaded. Your selected model is kept. Try again shortly."; }
-      return { cliSessions: this.list(user.id), cliComposerConfig: { models, modelDiscoveryWarning, defaultModel: readTeamSettings().defaultModel || undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
+      let models: import("../domain/dashboard/types").DashboardCliModelOption[] = [];
+      const sessions = this.list(user.id), configured = readTeamSettings().defaultModel;
+      try {
+        let discovery = this.modelDiscovery.get(user.id);
+        if (!discovery) {
+          discovery = (this.options.models?.(user) ?? Promise.resolve([])).then(items => {if (items.length) this.modelCatalogues.set(user.id,items);return items;}).finally(()=>this.modelDiscovery.delete(user.id));
+          this.modelDiscovery.set(user.id,discovery);
+        }
+        models = await waitWithin(discovery,3000,'Models are still loading.');
+      }
+      catch { /* Discovery is optional; sending uses the user's selected model. */ }
+      const allowed = (id: string) => !user.plan?.models.length || user.plan.models.includes(id);
+      if (!models.length) {
+        const known = new Map((this.modelCatalogues.get(user.id) ?? []).filter(item => allowed(item.id)).map(item => [item.id, item]));
+        for (const id of [...(user.plan?.models ?? []), configured, ...sessions.map(session => session.model)]) {
+          if (id && allowed(id) && !known.has(id)) known.set(id, {id, label: id.replace(/^gpt-/i, ''), reasoningEfforts: []});
+        }
+        models = [...known.values()];
+      }
+      models = models.filter(item => allowed(item.id));
+      return { cliSessions: sessions, cliComposerConfig: { models, defaultModel: configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
     if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {

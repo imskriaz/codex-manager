@@ -183,7 +183,8 @@ export class AiProxy {
     private readonly enabled: () => boolean,
     private readonly canUseAccount: (id: string) => boolean = () => true,
     private readonly refresh: () => void = () => undefined,
-    private readonly internalTokenAllowed: (id: string) => boolean = () => false
+    private readonly internalTokenAllowed: (id: string) => boolean = () => false,
+    private readonly internalToken: (candidate: string | undefined) => import('./dashboardApiToken').DashboardApiToken | undefined = () => undefined
   ) {}
   stop(): void {
     this.stopped = true;
@@ -225,7 +226,7 @@ export class AiProxy {
         throw new AiProxyError(401, "Supply one valid Manager API key.", "authentication_error");
       const candidate = bearer ?? apiKey;
       const token = await waitWithin(
-        readDashboardApiToken(this.context, candidate),
+        Promise.resolve(this.internalToken(candidate) ?? readDashboardApiToken(this.context, candidate)),
         5000,
         "API key verification timed out.",
         signal

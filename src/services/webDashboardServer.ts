@@ -1,10 +1,11 @@
 import {readOfficeWebPage,listOfficeConnections,readOfficeConnection} from './officeSources';
+import {officeBrowser} from './officeBrowser';
 import {preserveOfficeFile,listOfficeFileHistory,restoreOfficeFile,discardOfficeFile} from './officeFileHistory';
 import {createOfficeDocument} from './officeDocuments';
 import {importOfficeAttachment,writeOfficeBinary,readOfficeDocument,readOfficeImage} from './officeFiles';
 import {readWorkspaceFileRevision} from './workspaceTools';
 import { readOfficeUsage, beginOfficeTokens, recordOfficeTokens, checkOfficeStorage, officeStorageBytes, unlimitedOfficeLimits, reconcileOfficeTokens } from "./officeQuota";
-import { assertOfficeHostIsolation, OFFICE_ISOLATION_REQUIRED, validateOfficeFilePath } from './officeAccess';
+import { assertOfficeHostIsolation, validateOfficeFilePath } from './officeAccess';
 import { readOfficeInstructions, saveOfficeInstructions } from "./officePreferences";
 import { readOfficeMemory, updateOfficeMemory, officeMemoryContext, OfficeMemoryConflict } from './officeMemory';
 import { manageOfficeWorkspacePaths,resolveOfficePath } from './officeWorkspacePaths';
@@ -103,7 +104,7 @@ import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState, combineCliLiveMessages } from "../domain/codexSessionLive";
 import { isMaintenanceJob, type MaintenanceJob } from '../domain/maintenance';
 import { readStoredSessionLive } from '../storage/sqliteSessions';
-import { createDashboardApiToken, isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
+import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { ApiPermissionError, authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
 import { normalizeAccountTags } from '../domain/accountTags';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
@@ -1040,7 +1041,11 @@ export class WebDashboardServer implements vscode.Disposable {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
     if (isAiProxyPath(path)) {
-      this.aiProxy ??= new AiProxy(this.context, this.repo, () => !this.shuttingDown && this.settingsStore.getDashboardSettings().apiAccessEnabled === true, id => this.encryptedSync?.canAutomateAccount(id) ?? true, () => this.publishLocalStateChange(), id => !this.shuttingDown && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled === true && this.officeInternalProxyIds.has(id));
+      this.aiProxy ??= new AiProxy(this.context, this.repo, () => !this.shuttingDown && this.settingsStore.getDashboardSettings().apiAccessEnabled === true, id => this.encryptedSync?.canAutomateAccount(id) ?? true, () => this.publishLocalStateChange(), id => !this.shuttingDown && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled === true && this.officeInternalProxyIds.has(id), candidate => {
+        if (!candidate || this.shuttingDown || !this.settingsStore.getDashboardSettings().teamWorkspaceEnabled) return undefined;
+        const owner = [...this.officeProxyTokens].find(([, token]) => token === candidate)?.[0];
+        return owner ? {id: owner, name: 'User Workspace', permissions: ['aiProxy'], createdAt: 0} : undefined;
+      });
       await this.aiProxy.handle(request, response, requestUrl); return;
     }
     if (request.method === "POST" && path === "/shutdown") {
@@ -1620,7 +1625,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async userWorkspaceModels(user: OfficeUser): Promise<import("../domain/dashboard/types").DashboardCliModelOption[]> {
     const token = await this.officeProxyToken(user.id);
-    const response = await undiciFetch(this.getUrl("/v1/models"), {headers: {Authorization: `Bearer ${token}`}, signal: AbortSignal.timeout(3000)});
+    const response = await undiciFetch(this.getUrl("/v1/models"), {headers: {Authorization: `Bearer ${token}`}, signal: AbortSignal.timeout(15000)});
     if (!response.ok) { await response.body?.cancel(); throw new Error("Models unavailable."); }
     const result = await response.json() as {data?: Array<{id?: string}>};
     return (result.data ?? []).filter((item): item is {id:string}=>typeof item.id==='string'&&(!user.plan?.models.length||user.role!=='user'||user.plan.models.includes(item.id))).map(item=>({id:item.id,label:item.id.replace(/^gpt-/i,'').replace(/^(\d+(?:\.\d+)?)-(luna|sol|terra|astra)$/i,(_match:string,version:string,name:string)=>name.charAt(0).toUpperCase()+name.slice(1)+' '+version),reasoningEfforts:[]}));
@@ -1698,8 +1703,9 @@ export class WebDashboardServer implements vscode.Disposable {
           const upstream = await undiciFetch(this.getUrl("/v1/chat/completions"), { method:"POST", headers, signal, body:JSON.stringify({model,messages:conversation,...(tools.length?{tools}:{}),max_tokens:8192,stream:false}) });
           if (!upstream.ok) {
             recordOfficeTokens(user.id,0,claim);settled=true;
-            const text=(await upstream.text()).slice(0,16000);
-            if(!sideEffects&&([402,429].includes(upstream.status)||upstream.status===503&&/capacity|quota|credit|rate.?limit|no.*available/i.test(text)))throw new OfficeCapacityError();
+            await upstream.body?.cancel();
+            if(!sideEffects&&[402,429,500,502,503,504].includes(upstream.status))throw new OfficeCapacityError();
+            if(!sideEffects&&[400,404].includes(upstream.status))throw new OfficeModelSelectionError('Choose another available model to continue. Your message is saved.');
             throw new Error('The response could not be confirmed.');
           }
           body=await upstream.json() as typeof body;
@@ -1954,10 +1960,9 @@ export class WebDashboardServer implements vscode.Disposable {
       if(["resumeCodexSessions","forkCodexCliSession","openCodexCliSession","setCodexSessionAccess","setCodexSessionGoalStatus","getCodexSubAgentMessages","respondCodexServerRequest","setCodexSessionAutoResume","getProjectBoard","startProjectTask","startProjectSubtask"].includes(message.action)) throw new Error("This action is unavailable in your workspace.");
       const scoped = await this.scopePrivateOfficeAction(user,message);
       if (message.action === 'workspaceBrowser') {
-        if (scoped.payload?.browserRequest?.operation !== 'list') throw new Error(OFFICE_ISOLATION_REQUIRED);
-        return reply({workspaceBrowser:{pages:[],feedback:[],warning:'Preview is not available right now. You can keep working with chat and files.'}});
+        return reply({workspaceBrowser:await officeBrowser(user,scoped.payload!.projectPath!,scoped.payload?.browserRequest)});
       }
-      if (message.action === 'getWorkspaceEnvironment') return reply({workspaceEnvironment:{projectPath:scoped.payload!.projectPath!,projectName:'User Workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}});
+      if (message.action === 'getWorkspaceEnvironment') return reply({workspaceEnvironment:{projectPath:scoped.payload!.projectPath!,projectName:readWorkspaceProjects(`office-projects:${user.id}`).find(project=>pathLib.resolve(project.path)===scoped.payload!.projectPath)?.label ?? 'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}});
       if (message.action === "saveWorkspaceFile") {
         if (!user.features.includes("files")) throw new Error("File access is disabled for this workspace.");
         return await runCrossWindowExclusive(`office-storage:${user.id}`, "Workspace storage check", async () => {
@@ -2060,14 +2065,14 @@ export class WebDashboardServer implements vscode.Disposable {
     return {...message,payload};
   }
 
-  private async officeProxyToken(userId: string): Promise<string> {
+  private officeProxyToken(userId: string): Promise<string> {
     const current = this.officeProxyTokens.get(userId);
-    if (current) return current;
-    const user = await getOfficeUser(userId);
-    const created = await createDashboardApiToken(this.context, { name: user ? `Team: ${user.username}` : `Team user ${userId.slice(0, 8)}`, permissions: ["aiProxy"] });
-    this.officeProxyTokens.set(userId, created.token);
-    this.officeInternalProxyIds.add(created.record.id);
-    return created.token;
+    if (current) return Promise.resolve(current);
+    // Internal credentials live only for this host process and never consume public API keys.
+    const token = `cm_${crypto.randomBytes(32).toString('hex')}`;
+    this.officeProxyTokens.set(userId, token);
+    this.officeInternalProxyIds.add(userId);
+    return Promise.resolve(token);
   }
 
   private async handleLogin(

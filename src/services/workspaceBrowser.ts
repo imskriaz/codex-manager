@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { Browser, BrowserContext, Page, Download } from "playwright-core";
+import type { Browser, BrowserContext, Page, Download, Route } from "playwright-core";
 import {
   browserUrl,
   validateBrowserRequest,
@@ -16,7 +16,7 @@ import { publishDashboardRealtime } from './dashboardRealtime';
 import { browserCredentials, fillBrowserCredential, redactBrowserCredentials } from './browserCredentials';
 
 type ManagedPage = { mobile?: boolean; desktopUserAgent?: string; page: Page; revision: string; logs: string[]; openedBy?: 'ai' | 'user'; agentPointer?: WorkspaceBrowserState['agentPointer']; agentActivity?: WorkspaceBrowserState['agentActivity']; debug?: Promise<BrowserDebugger>; capture?: Promise<Buffer> };
-type Session = { context: BrowserContext; pages: Map<string, ManagedPage>; projectPath: string; sessionId?: string; scope: string };
+type Session = { context: BrowserContext; pages: Map<string, ManagedPage>; projectPath: string; sessionId?: string; scope: string; owner?: string };
 const sessions = new Map<string, Session>();
 const busy = new Set<string>();
 const attempts = new Map<string, { fingerprint: string; promise: Promise<string | undefined> }>();
@@ -115,9 +115,9 @@ async function actionState(project: string, pageId: string): Promise<WorkspaceBr
   }
 }
 
-export function workspaceBrowser(projectPath: string, raw: unknown): Promise<WorkspaceBrowserState> {
+export function workspaceBrowser(projectPath: string, raw: unknown, isolated?: {owner:string;route:(route:Route)=>Promise<void>}): Promise<WorkspaceBrowserState> {
   const request = validateBrowserRequest(raw),
-    project = request.sessionId ? JSON.stringify([projectTaskKey(projectPath), request.sessionId]) : projectTaskKey(projectPath);
+    project = isolated ? JSON.stringify(['user',isolated.owner,projectTaskKey(projectPath),request.sessionId??'']) : request.sessionId ? JSON.stringify([projectTaskKey(projectPath), request.sessionId]) : projectTaskKey(projectPath);
   const read = ["list", "snapshot", "screenshot", "readFeedback", "html", "styles", "events", "cursor"].includes(request.operation) || request.operation === 'credentials' && (!request.params?.['action'] || request.params['action'] === 'list') || (request.operation === 'storage' && (!request.params?.['action'] || request.params['action'] === 'read'));
   if (!read && !request.operationId) return Promise.reject(new Error("A unique browser operationId is required."));
   const key = `${project}:${request.operationId ?? ""}`;
@@ -137,7 +137,7 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
     );
   if (!read) busy.add(project);
   const activity: WorkspaceBrowserState['agentActivity'] = request.operation !== 'list' && request.openedBy === 'ai' ? { operation: request.operation, status: 'running', updatedAt: Date.now() } : undefined;
-  const promise = run(project, request, projectPath, activity, read).then(value => {
+  const promise = run(project, request, projectPath, activity, read, isolated).then(value => {
     if (activity) { activity.status = 'completed'; activity.updatedAt = Date.now(); }
     return redactBrowserCredentials(value);
   }, error => {
@@ -155,11 +155,11 @@ export function workspaceBrowser(projectPath: string, raw: unknown): Promise<Wor
   return promise;
 }
 
-async function run(project: string, r: WorkspaceBrowserRequest, projectPath: string, activity?: WorkspaceBrowserState['agentActivity'], read = false): Promise<WorkspaceBrowserState> {
+async function run(project: string, r: WorkspaceBrowserRequest, projectPath: string, activity?: WorkspaceBrowserState['agentActivity'], read = false, isolated?: {owner:string;route:(route:Route)=>Promise<void>}): Promise<WorkspaceBrowserState> {
   // Verify durable storage before launching or modifying a page.
   feedbackFor(project);
   let session = sessions.get(project);
-  if (r.operation === 'credentials' && r.params?.['action'] !== 'fill') return { ...(await state(project)), value: await browserCredentials(projectTaskKey(projectPath), r) };
+  if (r.operation === 'credentials' && r.params?.['action'] !== 'fill') return { ...(await state(project)), value: await browserCredentials(isolated ? project : projectTaskKey(projectPath), r) };
   if (r.operation === "list") return state(project, r.pageId);
   const startActivity = (item: ManagedPage) => {
     item.agentActivity = activity;
@@ -181,18 +181,24 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
   if (r.operation === "open") {
     const url = r.url === undefined || r.url === "about:blank" ? "about:blank" : browserUrl(r.url);
     if (!session) {
-      if (sessions.size >= 4) throw new Error("Four browser sessions are already open. Close their pages first.");
+      const full = () => [...sessions.values()].filter(value=>value.owner===isolated?.owner).length >= 4 || !!isolated && [...sessions.values()].filter(value=>value.owner).length >= 16;
+      if (full()) throw new Error(isolated ? "Browser capacity reached. Close an unused browser session first." : "Four browser sessions are already open. Close their pages first.");
       const instance = await engine();
       // Recheck after launch because other projects can start concurrently.
-      if (sessions.size >= 4) throw new Error("Browser session capacity reached. Close another session.");
-      const context = await instance.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
-      if (sessions.size >= 4 || browser !== instance) {
+      if (full()) throw new Error("Browser session capacity reached. Close another session.");
+      const context = await instance.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, ...(isolated?{serviceWorkers:'block' as const}: {}) });
+      if (isolated) {
+        await context.route('**/*', isolated.route);
+        await context.routeWebSocket('**/*', socket=>socket.close());
+        await context.addInitScript(() => { Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined,configurable:false}); Object.defineProperty(globalThis,'webkitRTCPeerConnection',{value:undefined,configurable:false}); });
+      }
+      if (full() || browser !== instance) {
         await context.close();
         throw new Error("Browser capacity or host changed. Refresh before retrying.");
       }
       context.setDefaultTimeout(10_000);
       context.setDefaultNavigationTimeout(15_000);
-      session = { context, pages: new Map(), projectPath, sessionId: r.sessionId, scope: project };
+      session = { context, pages: new Map(), projectPath, sessionId: r.sessionId, scope: project, ...(isolated?{owner:isolated.owner}:{}) };
       sessions.set(project, session);
       context.on("page", (page) => {
         if (session!.pages.size >= 8) {
@@ -248,7 +254,7 @@ async function run(project: string, r: WorkspaceBrowserRequest, projectPath: str
     throw new Error("This page changed. Refresh the preview before interacting; no action was started.");
   startActivity(item);
   if (r.operation === 'credentials') {
-    const value = await fillBrowserCredential(projectTaskKey(projectPath), page, r);
+    const value = await fillBrowserCredential(isolated ? project : projectTaskKey(projectPath), page, r);
     item.revision = randomUUID();
     return { ...(await actionState(project, r.pageId!)), value };
   }

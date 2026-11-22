@@ -1,0 +1,30 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {lookup} from 'node:dns/promises';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import {officeBrowserUrl,publicOfficeBrowserUrl,routeOfficeBrowser} from '../src/services/officeBrowser';
+import type {OfficeUser} from '../src/services/officeUsers';
+import {removeTestDirectory} from './testFilesystem';
+vi.mock('node:dns/promises',()=>({lookup:vi.fn()}));
+let root:string,user:OfficeUser;
+beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'office-browser-'));user={id:'alex',username:'alex',displayName:'Alex',role:'user',enabled:true,features:['browser','files'],workspacePath:root,mcpServers:[],createdAt:0,defaultPrompt:''};});
+afterEach(async()=>{vi.resetAllMocks();await removeTestDirectory(root);});
+it('accepts public sites and workspace files while rejecting host schemes and private addresses',async()=>{
+ expect(officeBrowserUrl('report draft.html')).toBe('https://workspace.invalid/report%20draft.html');
+ expect(()=>officeBrowserUrl('file:///C:/secret')).toThrow();
+ vi.mocked(lookup).mockResolvedValue([{address:'93.184.216.34',family:4}] as never);
+ expect((await publicOfficeBrowserUrl('https://example.com')).address).toBe('93.184.216.34');
+ for(const url of ['http://127.0.0.1:39875/api/state','http://10.0.0.1/','http://[::1]/','http://169.254.169.254/','file:///etc/passwd','https://example.com:444/']) await expect(publicOfficeBrowserUrl(url)).rejects.toThrow();
+ vi.mocked(lookup).mockResolvedValue([{address:'93.184.216.34',family:4},{address:'127.0.0.1',family:4}] as never);
+ await expect(publicOfficeBrowserUrl('https://rebinding.example')).rejects.toThrow();
+});
+it('serves owned files and assets without following links or exposing file history or other workspaces',async()=>{
+ const invoke=async(url:string,actor=user)=>{const route={request:()=>({url:()=>url}),fulfill:vi.fn(async()=>{}),abort:vi.fn(async()=>{})};await routeOfficeBrowser(route as never,actor,root);return route;};
+ await fs.writeFile(path.join(root,'index.html'),'<h1>Private page</h1>');await fs.writeFile(path.join(root,'style.css'),'body{color:red}');
+ const html=await invoke('https://workspace.invalid/index.html');expect(html.fulfill).toHaveBeenCalledWith(expect.objectContaining({contentType:'text/html',body:Buffer.from('<h1>Private page</h1>')}));
+ expect((await invoke('https://workspace.invalid/style.css')).fulfill).toHaveBeenCalledWith(expect.objectContaining({contentType:'text/css'}));
+ await fs.symlink(path.dirname(root),path.join(root,'escape'),'junction');
+ for(const suffix of ['escape/secret.txt','.workspace-history/saved','%2E%2E%2Fsecret.txt'])expect((await invoke('https://workspace.invalid/'+suffix)).abort).toHaveBeenCalled();
+ expect((await invoke('https://workspace.invalid/index.html',{...user,features:['browser']})).abort).toHaveBeenCalled();
+});

@@ -56,10 +56,33 @@ try {
     }
     throw Error('Memory conversation did not complete within the test deadline.');
   };
+  const browserCheck = async () => {
+    await action('saveWorkspaceFile',{filePath:'browser-check.html',fileContent:'<!doctype html><title>Workspace browser check</title><link rel="stylesheet" href="browser-check.css"><button id="counter" onclick="this.textContent=Number(this.textContent)+1">0</button>'});
+    await action('saveWorkspaceFile',{filePath:'browser-check.css',fileContent:'body{background:rgb(240, 245, 250)}'});
+    const sessionId=page.url().split('/').at(-1);
+    const browse=async request=>(await action('workspaceBrowser',{browserRequest:{operationId:randomUUID(),sessionId,...request}})).workspaceBrowser;
+    const show=page.getByRole('button',{name:'Show workspace tools',exact:true});if(await show.isVisible())await show.click();await page.getByRole('tab',{name:'Browser',exact:true}).click();
+    const panel=page.getByRole('region',{name:'Browser',exact:true}),address=panel.getByRole('textbox',{name:'Browser URL',exact:true});
+    assert.equal(await address.getAttribute('placeholder'),'Enter a URL or workspace file');await address.fill('browser-check.html');await address.press('Enter');
+    let opened;const deadline=Date.now()+30000;while(Date.now()<deadline){opened=await browse({operation:'list'});if(opened.pages.some(page=>page.title==='Workspace browser check'))break;await new Promise(resolve=>setTimeout(resolve,500));}
+    const tab=opened.pages.find(page=>page.title==='Workspace browser check');assert.ok(tab,'Saved website opened through the visible Browser');
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Browser"]')?.getAttribute('aria-busy')==='false');
+    let state=await browse({operation:'snapshot',pageId:tab.id});assert.match(state.text,/button "0"/);
+    state=await browse({operation:'click',pageId:tab.id,revision:state.revision,selector:'#counter'});state=await browse({operation:'snapshot',pageId:tab.id});assert.match(state.text,/button "1"/);
+    let checked=await browse({operation:'evaluate',pageId:tab.id,revision:state.revision,confirmed:true,text:'({color:getComputedStyle(document.body).backgroundColor,privateSession:document.cookie})'});assert.equal(checked.value.color,'rgb(240, 245, 250)');assert.equal(checked.value.privateSession,'');
+    const forbidden=await primary.request.post(origin+'/api/message',{headers:{Origin:origin,'X-Codex-Dashboard':'1'},data:{type:'dashboard:action',action:'workspaceBrowser',requestId:randomUUID(),payload:{browserRequest:{operation:'open',operationId:randomUUID(),url:origin+'/api/state',sessionId}}}});assert.equal((await forbidden.json()).messages[0].status,'failed');
+    const foreign=await secondary.request.post(origin+'/api/message',{headers:{Origin:origin,'X-Codex-Dashboard':'1'},data:{type:'dashboard:action',action:'workspaceBrowser',requestId:randomUUID(),payload:{browserRequest:{operation:'snapshot',pageId:tab.id}}}});assert.equal((await foreign.json()).messages[0].status,'failed');
+    await page.screenshot({path:path.join(output,'browser-mobile.png')});
+    const web=await browse({operation:'open',url:'https://example.com'});assert.ok(web.pages.some(page=>page.title==='Example Domain'));const snapshot=await browse({operation:'snapshot',pageId:web.pageId});assert.ok(snapshot.text.length>40,'Public website returned readable page content');
+    for(const tab of (await browse({operation:'list'})).pages)await browse({operation:'close',pageId:tab.id,revision:tab.revision});
+    await page.getByRole('button',{name:'Hide workspace tools',exact:true}).click();
+    record('Real Browser opens public websites and saved pages with assets; interaction works and host/other-user access is blocked');
+  };
   const marker = 'MEM-' + randomUUID().slice(0, 8);
   await chat(`Remember this for future chats: my standard buyer-report reference is ${marker}. Save it in memory.`);
   assert.ok((await get(primary)).entries.some(entry => entry.text.includes(marker))); record('Real assistant saves a requested memory');
   const recalled = await chat('What is my standard buyer-report reference? Reply with the reference only.'); assert.ok(recalled.includes(marker)); record('A new chat recalls the saved preference');
+  await browserCheck();
   const settings = async () => { const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true }); if (await show.isVisible()) await show.click(); await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('tab', { name:'Personalization', exact:true }).click(); return page.getByRole('region', { name: 'Memory settings', exact: true }); };
   let section = await settings(); await section.getByRole('checkbox', { name: 'Use saved memory', exact: true }).uncheck(); await section.getByRole('status').filter({ hasText: 'Memory is off.' }).waitFor();
   memory = await get(primary); assert.ok(memory.entries.some(entry => entry.text.includes(marker))); assert.equal(memory.enabled, false);
@@ -77,6 +100,11 @@ finally {
     const account = accounts[index], context = index ? secondary : primary;
     try {
       if (context) { const response = await context.request.get(origin + '/api/workspace/memory'); if (response.ok()) { const {memory} = await response.json(); await context.request.post(origin + '/api/workspace/memory', { headers: {Origin:origin}, data: {operation:'clear',expected:memory.revision,confirmed:true} }); } }
+      if (!index && context && page?.url().match(/\/workspace\/[a-f0-9-]{36}$/)) {
+        const sessionId=page.url().split('/').at(-1);
+        const call=async browserRequest=>{const response=await context.request.post(origin+'/api/message',{headers:{Origin:origin,'X-Codex-Dashboard':'1'},data:{type:'dashboard:action',action:'workspaceBrowser',requestId:randomUUID(),payload:{browserRequest:{operationId:randomUUID(),sessionId,...browserRequest}}}});return (await response.json()).messages.find(item=>item.type==='dashboard:action-result')?.payload?.workspaceBrowser;};
+        for(const tab of (await call({operation:'list'}))?.pages??[])await call({operation:'close',pageId:tab.id,revision:tab.revision});
+      }
       await admin('/api/office/users/' + account.id, 'DELETE');
       const base = await realpath(path.dirname(account.workspacePath)), target = path.resolve(account.workspacePath);
       if (path.dirname(target).toLowerCase() !== base.toLowerCase() || !/^qa-memory-[a-f0-9]{8}-example\.test$/.test(path.basename(target)) || (await lstat(target)).isSymbolicLink() || (await realpath(target)).toLowerCase() !== target.toLowerCase()) throw Error('Unexpected QA workspace path; left in place.');

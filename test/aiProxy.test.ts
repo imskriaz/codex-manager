@@ -997,3 +997,12 @@ it('keeps Claude mid-conversation system reminders in order and omits empty cont
   expect(result.body.input).toContainEqual({ role: 'developer', content: [{ type: 'input_text', text: 'New reminder' }] });
   expect(() => normalizeAiRequest({ model: 'claude-fable', max_tokens: 100, messages: [{ role: 'invented', content: 'bad' }] }, 'claude')).toThrow('Invalid message role');
 });
+
+it('accepts an ephemeral internal credential with public key storage unavailable, without enabling public API access',async()=>{
+ proxy.stop();const credential='cm_'+ 'a'.repeat(64);let internalEnabled=true;
+ const secrets=vi.spyOn(context.secrets,'get').mockRejectedValue(new Error('Public key storage unavailable'));
+ proxy=new AiProxy(context,repo as unknown as AccountsRepository,()=>false,()=>true,()=>{},id=>internalEnabled&&id==='private-user',candidate=>internalEnabled&&candidate===credential?{id:'private-user',name:'User Workspace',createdAt:0,permissions:['aiProxy']}:undefined);
+ const response=await fetch(origin+'/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+credential,'Content-Type':'application/json'},body:JSON.stringify(chat())});
+ expect(response.status).toBe(200);await response.text();expect(secrets).not.toHaveBeenCalled();
+ internalEnabled=false;secrets.mockResolvedValue(undefined);const denied=await fetch(origin+'/v1/models',{headers:{Authorization:'Bearer '+credential}});expect(denied.status).toBe(401);
+});

@@ -191,7 +191,7 @@ it("blocks symlink and hardlink escapes without touching files outside the user'
  }
  expect(native).not.toHaveBeenCalled();expect(await fs.readFile(outside,"utf8")).toBe("Host data");
 });
-it.each(["evaluate","cdp","navigate","open","credentials","download"])("blocks host browser %s even with approval flags",async operation=>{
+it.each(["cdp","navigate","open","download"])("blocks host browser %s even with approval flags",async operation=>{
  const native=vi.spyOn(server as any,"processClientMessage");
  const result=await (server as any).processOfficeMessage(user,{type:"dashboard:action",action:"workspaceBrowser",requestId:"browser-attack",payload:{browserRequest:{operation,url:"http://127.0.0.1:39875/api/state",text:"fetch('/api/state')",confirmed:true,operationId:"attack"}}});
  expect(result.messages[0].status).toBe("failed");expect(native).not.toHaveBeenCalled();
