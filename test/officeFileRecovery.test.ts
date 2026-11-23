@@ -60,13 +60,13 @@ it('rejects invalid document headers, external spreadsheet formulas and unsuppor
 it('rejects compressed Office archives whose expanded contents exceed the parser budget',async()=>{
  const zip=new JSZip();zip.file('word/document.xml','x'.repeat(21*1048576));const data=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
  expect(data.length).toBeLessThan(10*1048576);await expect(extractOfficeDocument('oversized.docx',data)).rejects.toThrow('too large');
-},60000);
+},30000);
 
 it('renders spreadsheet tables and PDF pages as sandboxable document previews, including Bengali text',async()=>{
  const pdf=await createOfficeDocument({path:'buyer.pdf',text:'Buyer follow-up: ????? ??????? ???????'});expect(await extractOfficeDocument('buyer.pdf',pdf,'html')).toMatch(/data:image\/png;base64,/);
  const xlsx=await createOfficeDocument({path:'buyer.xlsx',sheets:[{name:'Buyer',rows:[['<script>unsafe</script>',2400]]}]});const html=await extractOfficeDocument('buyer.xlsx',xlsx,'html');expect(html).toContain('<table>');expect(html).toContain('&lt;script&gt;');expect(html).not.toContain('<script>');
  const pptx=await createOfficeDocument({path:'buyer.pptx',slides:[{title:'<script>Buyer</script>',bullets:['Approval pending']}]});const outline=await extractOfficeDocument('buyer.pptx',pptx,'html');expect(outline).toContain('Text content only');expect(outline).toContain('&lt;script&gt;Buyer');expect(outline).not.toContain('<script>');
-},30000);
+},60000);
 
 it('keeps each conversation upload in its own folder and charges its bytes',async()=>{
  const id=crypto.randomUUID(),file={id:'upload',name:'brief.txt',kind:'text' as const,mimeType:'text/plain',size:5,data:'brief'};

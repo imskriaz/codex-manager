@@ -105,7 +105,7 @@ describe("office workspace boundaries", () => {
   });
 
   it("generates once across concurrent requests and rejects stale rotations", async () => {
-    const names = await Promise.all(Array.from({ length: 4 }, () => resolveMasterOfficeUsername()));
+    const names = await Promise.all(Array.from({ length: 64 }, () => resolveMasterOfficeUsername()));
     expect(new Set(names).size).toBe(1);
     const previous = names[0]!;
     const replacement = await resolveMasterOfficeUsername(previous);

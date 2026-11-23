@@ -45,6 +45,7 @@ const MCP_KEY = "mcp-servers";
 export const MASTER_USERNAME_ENV = "CODEX_MANAGER_ADMIN_USERNAME";
 const scrypt = promisify(crypto.scrypt);
 const DEFAULT_FEATURES: OfficeFeature[] = ["generalChat", "tasks", "files", "browser"];
+let masterUsernameInFlight: { file: string; promise: Promise<string> } | undefined;
 
 function validMasterUsername(value: string | undefined): string | undefined {
   const username = value?.trim().toLowerCase();
@@ -60,7 +61,8 @@ export async function resolveMasterOfficeUsername(expectedUsername?: string): Pr
     return configured;
   }
   const file = path.join(getCodexManagerStorageRoot(), "codex-manager.env");
-  const username = await runCrossWindowExclusive(`state:master-username:${file}`, "Dashboard username setup", async () => {
+  if (expectedUsername === undefined && masterUsernameInFlight?.file === file) return masterUsernameInFlight.promise;
+  const operation = runCrossWindowExclusive(`state:master-username:${file}`, "Dashboard username setup", async () => {
     let text: string;
     try { text = await fs.readFile(file, "utf8"); }
     catch (error) {
@@ -90,7 +92,13 @@ export async function resolveMasterOfficeUsername(expectedUsername?: string): Pr
     }
     return stored;
   }, { waitMs: 2_000 });
-  return username;
+  if (expectedUsername !== undefined) return operation;
+  let promise: Promise<string>;
+  promise = operation.finally(() => {
+    if (masterUsernameInFlight?.promise === promise) masterUsernameInFlight = undefined;
+  });
+  masterUsernameInFlight = { file, promise };
+  return promise;
 }
 
 export function masterOfficeUser(username: string): OfficeUser {
