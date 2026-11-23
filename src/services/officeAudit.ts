@@ -19,8 +19,9 @@ export function recordOfficeAudit(action: string, status: string, actor = curren
   if (!store) return true;
   try {
     store.transaction(() => {
-      const entries = store.get<OfficeAuditEntry[]>("office-audit", "entries") ?? [];
-      store.set("office-audit", "entries", [{ id: randomUUID(), at: Date.now(), actor, action, status, ...(sessionId ? { sessionId } : {}) }, ...entries].slice(0, 500));
+      const namespace = actor.id === 'master' ? 'master-office-audit' : 'office-audit';
+      const entries = store.get<OfficeAuditEntry[]>(namespace, "entries") ?? [];
+      store.set(namespace, "entries", [{ id: randomUUID(), at: Date.now(), actor, action, status, ...(sessionId ? { sessionId } : {}) }, ...entries].slice(0, 500));
     });
     return true;
   } catch (error) { console.warn("[codexManager] user audit could not be saved", error); return false; }
@@ -28,18 +29,21 @@ export function recordOfficeAudit(action: string, status: string, actor = curren
 export function readOfficeAudit(): OfficeAuditEntry[] {
   const store = getSqliteStateStore();
   if (!store) throw new Error("Audit storage is unavailable. Retry when the host is ready.");
-  return store.get<OfficeAuditEntry[]>("office-audit", "entries") ?? [];
+  return [...(store.get<OfficeAuditEntry[]>('master-office-audit', 'entries') ?? []), ...(store.get<OfficeAuditEntry[]>("office-audit", "entries") ?? [])].sort((a,b) => b.at-a.at).slice(0,500);
 }
 export function recordSessionInitiator(sessionId: string, actor = currentOfficeActor()): void {
   const store = getSqliteStateStore();
   if (!actor || !store) return;
   store.transaction(() => {
-    const previous = store.get<{ startedBy: OfficeActor }>("office-session-actors", sessionId);
-    store.set("office-session-actors", sessionId, { startedBy: previous?.startedBy ?? actor, lastRunBy: actor });
+    const namespace = actor.id === 'master' ? 'master-session-actors' : 'office-session-actors';
+    const previous = store.get<{ startedBy: OfficeActor }>(namespace, sessionId);
+    store.set(namespace, sessionId, { startedBy: previous?.startedBy ?? actor, lastRunBy: actor });
   });
 }
 export function withSessionInitiator(session: DashboardCliSessionSummary): DashboardCliSessionSummary {
   if (session.remote || session.deviceId) return session;
-  const actor = getSqliteStateStore()?.get<{ startedBy: OfficeActor; lastRunBy: OfficeActor }>("office-session-actors", session.id);
+  const store = getSqliteStateStore();
+  let actor = store?.get<{ startedBy: OfficeActor; lastRunBy: OfficeActor }>('master-session-actors', session.id);
+  try { actor ??= store?.get("office-session-actors", session.id); } catch { /* Optional attribution must not block master conversations. */ }
   return actor ? { ...session, startedBy: actor.startedBy, lastRunBy: actor.lastRunBy } : session;
 }

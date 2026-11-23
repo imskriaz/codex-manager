@@ -20,6 +20,7 @@ import {publicOfficePresentation} from '../domain/officePresentation';
 import {readOfficeRecommendations} from './officeRecommendations';
 import { cleanupOfficeDeletedSessions } from './officeWorkspaceCleanup';
 import {runCrossWindowExclusive} from '../utils/crossWindowOperations';
+import {withOfficeActor} from './officeAudit';
 
 type Turn = { selection?:"auto"|OfficeModelChoice["profile"]; automatic?:boolean; routed?:boolean; profile?:OfficeModelChoice["profile"]; reasoningEffort?:string; order?:number; imagePaths?:Array<{path:string;mimeType:string}>; attachmentContext?:Array<{name:string;text:string}>; reviewed?:boolean; scheduled?: boolean; id: string; requestId: string; fingerprint: string; user: DashboardCliSessionMessage; assistant?: DashboardCliSessionMessage; error?: string; activities?:DashboardCliSessionMessage[]; state: "queued" | "working" | "waiting" | "done" | "cancelled" | "uncertain"; model?: string; retryAt?: number; lease?: string; leaseUntil?: number };
 type Session = { id: string; owner: string; title: string; projectPath: string; model?: string; selection?:"auto"|OfficeModelChoice["profile"]; reasoningEffort?:string; profile?:OfficeModelChoice["profile"]; archived?: boolean; deletedAt?:number; updatedAt: string; turns: Turn[] };
@@ -85,8 +86,7 @@ export class OfficeSessionService {
     })().catch(error => console.warn('[codexManager] Deleted conversation cleanup deferred', error)).finally(() => { this.cleanupRunning = false; });
   }
   private active(owner: string): Session[] {
-    return store().keys(namespace(owner)).flatMap(id => {
-      const session = store().get<Session>(namespace(owner), id);
+    return store().entries<Session>(namespace(owner)).flatMap(([,session]) => {
       return session?.owner === owner && session.deletedAt === undefined ? [session] : [];
     });
   }
@@ -305,7 +305,7 @@ export class OfficeSessionService {
             turn.state="working";turn.lease=randomUUID();turn.leaseUntil=Date.now()+660_000;this.save(session);claimed={session,turn};break;
           }
         });
-        if(claimed){ const {session,turn}=claimed;const controller=new AbortController();this.running.set(turn.id,controller);void this.execute(session,turn,controller); }
+        if(claimed){ const {session,turn}=claimed;const controller=new AbortController();this.running.set(turn.id,controller);void withOfficeActor({id:owner,name:'User Workspace'},()=>this.execute(session,turn,controller)); }
       }
     }catch(error){console.warn("[codexManager] Team queue check delayed",error);}
   }

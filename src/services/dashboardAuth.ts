@@ -9,6 +9,14 @@ const SESSION_KEY = "codexManager.webDashboard.sessions.v1";
 const NAMESPACE = "dashboard-auth";
 const scrypt = promisify(crypto.scrypt);
 type Credential = { salt: string; hash: string };
+type Session = { officeUserId?: string };
+function sessionRows(value: string | undefined): Session[] {
+  if (!value) return [];
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed)) throw new Error('Sign-in sessions are unavailable. Please try again.');
+  return parsed as Session[];
+}
+const member = (session: Session) => !!session.officeUserId && session.officeUserId !== 'master';
 type PasswordSource = {
   hasDashboardPassphrase(): Promise<boolean>;
   verifyDashboardPassphrase(candidate: string): Promise<boolean>;
@@ -73,16 +81,30 @@ export class DashboardAuth {
     return this.fingerprint(credential);
   }
 
-  async readSessions(): Promise<string | undefined> {
+  async readSessions(localOnly = false): Promise<string | undefined> {
     const store = getSqliteStateStore();
-    return store ? store.get<string>(NAMESPACE, "sessions") : this.secrets.get(SESSION_KEY);
+    if (!store) return this.secrets.get(SESSION_KEY);
+    const raw = store.get<string>(NAMESPACE, 'sessions');
+    if (raw === undefined && !store.get('migrations', 'office-postgres-v1')) return undefined;
+    const local = sessionRows(raw);
+    if (!store.get('migrations', 'office-postgres-v1')) return JSON.stringify(localOnly ? local.filter(value => !member(value)) : local);
+    return JSON.stringify([...local.filter(value => !member(value)), ...(localOnly ? [] : store.get<Session[]>('office-auth', 'sessions') ?? [])]);
   }
 
-  async writeSessions(sessions: string, credential?: string): Promise<void> {
+  async writeSessions(sessions: string, credential?: string, localOnly = false): Promise<void> {
     const store = getSqliteStateStore();
     if (store) store.transaction(() => {
       if (credential !== undefined && credential !== this.fingerprint(store.get<Credential>(NAMESPACE, "credential"))) throw new Error("The dashboard password changed during sign-in. Sign in again.");
-      store.set(NAMESPACE, "sessions", sessions);
+      if (localOnly) {
+        const rows = sessionRows(sessions);
+        if (rows.some(member)) throw new Error('Choose master sessions for local authentication.');
+        const retained = store.get('migrations', 'office-postgres-v1') ? [] : sessionRows(store.get<string>(NAMESPACE, 'sessions')).filter(member);
+        store.set(NAMESPACE, 'sessions', JSON.stringify([...rows, ...retained]));
+      } else if (store.get('migrations', 'office-postgres-v1')) {
+        const rows = sessionRows(sessions);
+        store.set('office-auth', 'sessions', rows.filter(member));
+        store.set(NAMESPACE, 'sessions', JSON.stringify(rows.filter(value => !member(value))));
+      } else store.set(NAMESPACE, "sessions", sessions);
     });
     else {
       if (credential !== undefined && credential !== await this.source?.getDashboardPassphraseFingerprint()) throw new Error("The dashboard password changed during sign-in. Sign in again.");

@@ -71,6 +71,8 @@ export function reconcileOfficeTokens(owner:string,expected:unknown,additionalTo
 export function officeStateBytes(owner: string): number {
   const store = getSqliteStateStore();
   if (!store) throw new Error('Storage usage is unavailable.');
+  const postgresBytes = store.officePayloadBytes(owner);
+  if (postgresBytes !== undefined) return postgresBytes;
   const namespaces = ['office-sessions', 'office-session-requests', 'office-session-revisions', 'office-preferences', 'office-projects', 'office-schedules', 'office-usage'].map(name => `${name}:${owner}`);
   const row = store.prepare(`SELECT COALESCE(SUM(length(CAST(value AS BLOB))),0) AS bytes FROM state WHERE namespace IN (${namespaces.map(() => '?').join(',')}) OR (namespace IN ('office-memory','office-recommendations') AND key=?) OR (namespace='office-schedules' AND json_extract(value,'$.owner')=?)`).get(...namespaces, owner, owner);
   return Number(row?.['bytes'] ?? 0);

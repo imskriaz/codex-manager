@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.91
+
+- Use PostgreSQL as the only active store for non-master Office records, including conversations, sign-ins, audit and request logs, usage, memory, schedules, preferences, projects and file-history metadata.
+- Automatically migrate existing records once, verify them before retiring local copies, and retain a recovery export. Keep master data local and report database failures without falling back to SQLite.
+
+
 ## 3.0.0-pre.88
 
 - Preserve supplied Codex model names, including GPT prefixes.

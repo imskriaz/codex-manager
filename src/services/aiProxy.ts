@@ -10,7 +10,7 @@ import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironme
 import { readDashboardApiToken, hasApiPermission } from "./dashboardApiToken";
 import { apiTokenProjects } from "../domain/dashboard/apiActions";
 import {officeReasoning} from '../domain/officeModels';
-import { startApiProxyLog } from "./aiProxyHistory";
+import { startApiProxyLog, saveOfficeProxyLog } from "./aiProxyHistory";
 import { recordOfficeAudit } from "./officeAudit";
 import { readClaudeProxyMapping } from './aiProxyModelMapping';
 import { CLAUDE_PROXY_MODELS, claudeProxyModelName, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
@@ -213,6 +213,7 @@ export class AiProxy {
     response.setHeader("Cache-Control", "no-store");
     let timer: ReturnType<typeof setTimeout> | undefined;
     let acceptedGeneration = false;
+    let officeRequest = false;
     const disconnect = () => {
       if (!response.writableEnded) controller.abort(new Error("The API client disconnected."));
     };
@@ -236,8 +237,10 @@ export class AiProxy {
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
       if (!this.enabled() && !this.internalTokenAllowed(token.id)) throw new AiProxyError(401, "Dashboard API access is disabled.", "authentication_error");
       log.apiKeyId = token.id;
+      officeRequest = this.internalTokenAllowed(token.id);
       log.apiKeyName = token.name;
       log.actor = { id: token.id, name: token.name, ...(token.name.startsWith("Team: ") ? { email: token.name.slice(6) } : {}) };
+      if (officeRequest) saveOfficeProxyLog(log);
       response.once("finish", () => recordOfficeAudit(`proxy ${log.method} ${log.path}`, response.statusCode < 400 ? "completed" : "failed", log.actor));
       if (apiTokenProjects(token).length || !hasApiPermission(token, "aiProxy"))
         throw new AiProxyError(
@@ -473,6 +476,9 @@ export class AiProxy {
         log.httpStatus = response.statusCode;
       }
       log.durationMs = Math.max(0, Date.now() - log.startedAt);
+      if (officeRequest) {
+        try { saveOfficeProxyLog(log); } catch (error) { console.warn('[codexManager] Workspace request history could not be finalized', error); }
+      }
       clearTimeout(timer);
       controller.abort();
       this.running.delete(controller);

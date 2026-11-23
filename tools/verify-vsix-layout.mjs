@@ -31,6 +31,7 @@ if (dependencies.includes('node-pty')) {
   if ([...paths].some(name => name.startsWith('extension/node_modules/node-pty/') && name.endsWith('.pdb'))) throw new Error('VSIX contains unnecessary terminal debug symbols.');
 }
 if(dependencies.includes('pdf-parse'))for(const file of ['out/services/officeDocumentWorker.js','media/fonts/NotoSans-Regular.ttf','media/fonts/NotoSansBengali-Regular.ttf','media/fonts/LICENSE-Noto.txt'])if(!listing.split('\n').includes('extension/'+file))throw new Error('VSIX document support is missing: '+file);
+if (dependencies.includes('pg') && !listing.split('\n').includes('extension/out/storage/officePostgresWorker.js')) throw new Error('VSIX PostgreSQL driver worker is missing.');
 const missing = dependencies.filter((dependency) => {
   const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return !new RegExp(`^extension/node_modules/${escaped}/`, "m").test(listing);

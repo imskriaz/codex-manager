@@ -8,7 +8,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { redactDebugText } from "./debug";
 import { getCodexManagerStorageRoot } from "./storageRoot";
-import { SqliteStateStore, sqliteStoreForFile } from "../storage/sqliteState";
+import { SqliteStateStore, sqliteStoreForFile, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "./crossWindowOperations";
 import { logRetentionCutoff } from "../storage/logRetention";
 import { compactManagerDatabase, waitForManagerDatabaseMaintenance } from "../storage/databaseMaintenance";
@@ -87,7 +87,10 @@ export class PersistentSqliteLogger {
       store.transaction(() => {
         const control = store.get<{ enabled?: boolean; generation?: string }>("log-control", "state");
         if (control?.enabled === false || (control?.generation ?? "") !== (generation ?? "")) return;
-        store.set("logs", key, record);
+        const actor = (record as {actor?: OfficeActor}).actor;
+        const office = actor && actor.id !== 'master' ? getSqliteStateStore() : undefined;
+        if (office) office.set('office-diagnostics', key, record);
+        else store.set("logs", key, record);
       });
       return Promise.resolve();
     }
@@ -223,6 +226,7 @@ export class PersistentSqliteLogger {
   async pruneExpiredLogs(): Promise<void> {
     await this.database();
     this.maintenanceStarted = true;
+    getSqliteStateStore()?.deleteBefore('office-diagnostics', logRetentionCutoff(this.retentionDays, this.now()));
     const outcome = await compactManagerDatabase(this.databasePath, { days: this.retentionDays, now: this.now() });
     if (outcome === "deferred") throw new Error("Log cleanup was deferred because storage is busy. The retention policy is saved; retry after storage responds.");
   }
@@ -249,7 +253,11 @@ export class PersistentSqliteLogger {
       if (bytes > 512 * 1024) break;
       records.push(record);
     }
-    return { records: records.reverse(), limited: records.length < count };
+    const remote = (getSqliteStateStore()?.recent<PersistentLogRecord>('office-diagnostics',1000) ?? []).filter(record => record.timestamp >= cutoff);
+    const merged = [...records,...remote].sort((a,b) => String((a as PersistentLogRecord).timestamp).localeCompare(String((b as PersistentLogRecord).timestamp)));
+    const selected: unknown[] = []; let total = 0;
+    for (const record of merged.reverse()) { total += Buffer.byteLength(JSON.stringify(record)); if (selected.length >= 1000 || total > 512*1024) break; selected.push(record); }
+    return { records: selected.reverse(), limited: records.length < count || selected.length < merged.length };
   }
 
   async close(): Promise<void> {
@@ -266,6 +274,8 @@ export class PersistentSqliteLogger {
   async clear(disable = false): Promise<void> {
     const clearing = this.writeChain.then(async () => {
       const store = await this.database();
+      const office = getSqliteStateStore();
+      if (office) office.transaction(() => { for (const key of office.keys('office-diagnostics')) office.set('office-diagnostics',key,undefined); });
       store.transaction(() => {
         store.set("log-control", "state", { enabled: !disable, generation: randomUUID(), clearedAt: this.now().toISOString() });
         store.prepare("DELETE FROM state WHERE namespace='logs' OR (namespace='legacy-files' AND key LIKE 'logs/%')").run();

@@ -6,6 +6,7 @@ import { hostname } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { compactNotificationMessage, type MirroredNotification } from "../utils/notificationMirror";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import {getSqliteStateStore} from '../storage/sqliteState';
 
 const STORAGE_KEY = "codexManager.browserPush.v1";
 const MAX_SUBSCRIPTIONS = 64;
@@ -82,6 +83,8 @@ export class BrowserPushService {
         throw new Error("Notification storage is unavailable. Try again.");
     state.delivered = Array.isArray(state.delivered) ? state.delivered.filter(entry => Array.isArray(entry) &&
       typeof entry[0] === "string" && /^[a-f0-9]{64}$/.test(entry[0]) && Number.isFinite(entry[1]) && entry[1] > Date.now()).slice(-MAX_DELIVERIES) : [];
+    const store = getSqliteStateStore();
+    if (store?.get('migrations','office-postgres-v1')) state.subscriptions.push(...(store.get<Subscription[]>('office-push','subscriptions') ?? []));
     return state;
   }
 
@@ -92,7 +95,13 @@ export class BrowserPushService {
         const state = await this.read();
         state.subscriptions = state.subscriptions.filter(item => item && typeof item === "object" && typeof item.endpoint === "string" && item.keys && Number.isFinite(item.expiresAt) && item.expiresAt > Date.now());
         const result = await work(state);
-        await this.secrets.store(STORAGE_KEY, JSON.stringify(state));
+        const store = getSqliteStateStore();
+        if (store?.get('migrations','office-postgres-v1')) {
+          const local = JSON.parse(store.get<string>('dashboard-auth','sessions') ?? '[]') as Array<{fingerprint:string}>;
+          const masters = new Set([createHash('sha256').update('local').digest('hex'), ...local.map(value=>value.fingerprint)]);
+          store.set('office-push','subscriptions',state.subscriptions.filter(value=>!masters.has(value.owner)));
+          await this.secrets.store(STORAGE_KEY, JSON.stringify({...state,subscriptions:state.subscriptions.filter(value=>masters.has(value.owner))}));
+        } else await this.secrets.store(STORAGE_KEY, JSON.stringify(state));
         return result;
       }, { waitMs: 2_000 })
     );
@@ -285,9 +294,7 @@ export class BrowserPushService {
   async hasSubscriptions(): Promise<boolean> {
     await this.mutations.catch(() => undefined);
     await sharedPushMutation.catch(() => undefined);
-    const raw = await this.secrets.get(STORAGE_KEY);
-    if (!raw) return false;
-    const state = JSON.parse(raw) as PushState;
+    const state = await this.read();
     return Array.isArray(state.subscriptions) && state.subscriptions.some(item => item.expiresAt > Date.now());
   }
 

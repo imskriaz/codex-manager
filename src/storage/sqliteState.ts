@@ -2,6 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import type * as vscode from "vscode";
 import { hasAccountRows, readAccountIndex } from "./sqliteAccounts";
+import { isOfficeState } from './officeStatePolicy';
+import type { OfficePostgresStore } from './officePostgres';
 
 export type Database = {
   exec(sql: string): void;
@@ -26,7 +28,24 @@ export class SqliteStateStore {
   private pollingFailed = false;
   private depth = 0;
   private closed = false;
+  private officeStore?: () => OfficePostgresStore | undefined;
+  private officeTransaction?: OfficePostgresStore;
+  private officeDepth = 0;
   private constructor(readonly file: string, readonly database: Database) {}
+
+  routeOfficeState(resolve: () => OfficePostgresStore | undefined): void { this.officeStore = resolve; }
+
+  officePayloadBytes(owner: string): number | undefined { return this.office(`office-sessions:${owner}`)?.request<number>('bytes', [owner]); }
+
+  private office(namespace: string, key?: string): OfficePostgresStore | undefined {
+    if (!isOfficeState(namespace, key)) return undefined;
+    const store = this.officeTransaction ?? this.officeStore?.();
+    if (store && this.depth) {
+      while (this.officeDepth < this.depth) { store.begin(); this.officeDepth++; }
+      this.officeTransaction = store;
+    }
+    return store;
+  }
 
   /** Reuse bounded prepared statements across all readers and writers on this connection. */
   prepare(sql: string): ReturnType<Database["prepare"]> {
@@ -45,6 +64,9 @@ export class SqliteStateStore {
     this.database.exec("CREATE TABLE IF NOT EXISTS manager_revisions(topic TEXT PRIMARY KEY,revision INTEGER NOT NULL)");
     for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
       const row = operation === "DELETE" ? "OLD" : "NEW";
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_api_accounts_${operation} AFTER ${operation} ON state
+        WHEN ${row}.namespace IN ('api-accounts','api-account-selection')
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('accounts',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
       const topic = `CASE WHEN ${row}.namespace LIKE 'settings%' THEN 'settings' WHEN ${row}.namespace='account-index' OR (${row}.namespace='files' AND ${row}.key LIKE 'accounts-index%') THEN 'accounts' ELSE 'state' END`;
       this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_state_${operation} AFTER ${operation} ON state
         WHEN ${row}.namespace IN ('global','files','account-index') OR ${row}.namespace LIKE 'workspace:%' OR ${row}.namespace LIKE 'settings%'
@@ -140,11 +162,15 @@ export class SqliteStateStore {
   }
 
   get<T>(namespace: string, key: string): T | undefined {
+    const office = this.office(namespace, key);
+    if (office) return office.get<T>(namespace, key);
     const row = this.prepare("SELECT value FROM state WHERE namespace = ? AND key = ?").get(namespace, key);
     return row ? JSON.parse(String(row["value"])) as T : undefined;
   }
 
   set(namespace: string, key: string, value: unknown): void {
+    const office = this.office(namespace, key);
+    if (office) { office.set(namespace, key, value); return; }
     if (value === undefined) {
       this.prepare("DELETE FROM state WHERE namespace = ? AND key = ?").run(namespace, key);
     } else {
@@ -157,15 +183,27 @@ export class SqliteStateStore {
   }
 
   keys(namespace: string): string[] {
+    const office = this.office(namespace);
+    if (office) return [...new Set([...office.keys(namespace), ...this.prepare("SELECT key FROM state WHERE namespace=? AND key='master'").all(namespace).map(row => String(row['key']))])].sort();
     return this.prepare("SELECT key FROM state WHERE namespace = ? ORDER BY key").all(namespace).map(row => String(row["key"]));
   }
 
+  entries<T>(namespace: string): Array<[string,T]> {
+    const office = this.office(namespace);
+    if (office) return office.request('entries', [namespace]);
+    return this.prepare('SELECT key,value FROM state WHERE namespace=? ORDER BY key').all(namespace).map(row => [String(row['key']),JSON.parse(String(row['value'])) as T]);
+  }
+
   recent<T>(namespace: string, limit: number): T[] {
+    const office = this.office(namespace);
+    if (office) return office.recent<T>(namespace, limit);
     return this.prepare("SELECT value FROM state WHERE namespace = ? ORDER BY key DESC LIMIT ?").all(namespace, limit)
       .map(row => JSON.parse(String(row["value"])) as T).reverse();
   }
 
   deleteBefore(namespace: string, key: string): void {
+    const office = this.office(namespace);
+    if (office) { office.deleteBefore(namespace, key); return; }
     this.prepare("DELETE FROM state WHERE namespace = ? AND key < ?").run(namespace, key);
   }
 
@@ -175,15 +213,21 @@ export class SqliteStateStore {
     this.depth++;
     try {
       const result = write();
+      if (this.officeDepth === this.depth) { this.officeTransaction!.commit(); this.officeDepth--; }
       this.database.exec(this.depth > 1 ? `RELEASE ${savepoint}` : "COMMIT");
       return result;
     } catch (error) {
+      if (this.officeDepth === this.depth) {
+        try { this.officeTransaction!.rollback(); } catch { /* Preserve the failed PostgreSQL outcome. */ }
+        this.officeDepth--;
+      }
       try {
         this.database.exec(this.depth > 1 ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : "ROLLBACK");
       } catch { /* Preserve the original write failure. */ }
       throw error;
     } finally {
       this.depth--;
+      if (!this.depth) { this.officeDepth = 0; this.officeTransaction = undefined; }
       if (mode !== "read") this.changed();
     }
   }

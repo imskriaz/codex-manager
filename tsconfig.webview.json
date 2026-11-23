@@ -23,7 +23,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": []
+    "types": ["node"]
   },
   "include": ["webview-src/**/*.ts", "webview-src/**/*.tsx", "src/domain/autoQueueOrder.ts", "src/domain/dashboard/**/*.ts", "src/localization/**/*.ts"]
 }

@@ -7,10 +7,12 @@ import { migrateManagerStorage } from "./storageMigration";
 import { fireSqliteConfigurationChanges } from "./configurationEvents";
 import { migrateRelayStartup } from "../utils/relayStartup";
 import { createSqliteSecretStorage } from "./sqliteSecrets";
+import { configureOfficeStorage } from './officeStorageMigration';
 
 const WORKSPACE_ID_KEY = "codexManager.sqliteWorkspaceId";
 let configurationNamespace: string | undefined;
 let configurationStore: SqliteStateStore | undefined;
+let officeStorage: ReturnType<typeof configureOfficeStorage> | undefined;
 let configurationKeys: string[] = [];
 type SettingSchema = { type: string; enum?: unknown[]; minimum?: number; maximum?: number; multipleOf?: number };
 let configurationSchema: Record<string, SettingSchema> = {};
@@ -56,6 +58,11 @@ export async function initializeSqliteContext(context: vscode.ExtensionContext):
     }));
     context.subscriptions.push({ dispose: store.subscribe(["settings"], publishConfigurationChanges) });
     const secrets = await createSqliteSecretStorage(store, context.secrets, context.subscriptions);
+    officeStorage = configureOfficeStorage(store, () => {
+      const config = sqliteConfiguration(vscode.workspace.getConfiguration('codexManager'));
+      return {provider: config.get<string>('officeDatabaseProvider', 'sqlite'), url: config.get<string>('officePostgresUrl', '').trim()};
+    });
+    void officeStorage.ready().catch(error => console.warn('[codexManager] Workspace storage initialization deferred', error));
     return Object.create(context, { globalState: { value: globalState }, workspaceState: { value: workspaceState }, secrets: { value: secrets } }) as vscode.ExtensionContext;
   } catch (error) {
     configurationNamespace = undefined;
@@ -149,6 +156,7 @@ export function sqliteConfiguration(config: vscode.WorkspaceConfiguration): vsco
 }
 
 export function disposeSqliteContext(): void {
+  officeStorage?.dispose(); officeStorage = undefined;
   configurationStore?.close();
   configurationStore = undefined;
   configurationNamespace = undefined;
@@ -157,3 +165,5 @@ export function disposeSqliteContext(): void {
   configurationSchema = {};
   configureSqliteStateStore(undefined);
 }
+
+export async function ensureOfficeStorageReady(): Promise<void> { await officeStorage?.ready(); }

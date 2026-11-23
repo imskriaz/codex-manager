@@ -5,6 +5,8 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { DEFAULT_USER_WORKSPACE_PROMPT } from '../domain/teamWorkspacePresentation';
 import { DEFAULT_OFFICE_SKILLS, type OfficeSkillId } from '../domain/officeSkills';
 import {DEFAULT_OFFICE_PRESENTATION,validateOfficePresentation,type OfficePresentation} from '../domain/officePresentation';
+import { ensureOfficeStorageReady } from '../storage/sqliteContext';
+import { getSqliteStateStore } from '../storage/sqliteState';
 
 export function readTeamSettings() {
   const config = getCodexManagerConfiguration();
@@ -72,6 +74,7 @@ export async function saveTeamSettings(input: Record<string, unknown>): Promise<
   if (input["databaseProvider"] !== undefined) {
     if (input["databaseProvider"] !== "sqlite" && input["databaseProvider"] !== "postgres")
       throw new Error("Choose SQLite or PostgreSQL.");
+    if (input['databaseProvider'] === 'sqlite' && getSqliteStateStore()?.get('migrations', 'office-postgres-v1')) throw new Error('This workspace has migrated to PostgreSQL. Restore its connection instead of switching to an empty local store.');
     updates.push(["officeDatabaseProvider", input["databaseProvider"]]);
   }
   if (input["postgresUrl"] !== undefined) {
@@ -95,5 +98,6 @@ export async function saveTeamSettings(input: Record<string, unknown>): Promise<
   if (!updates.length) throw new Error("Choose a Team setting to save.");
   // Validate the whole form before changing any setting.
   for (const [key, value] of updates) await config.update(key, value, vscode.ConfigurationTarget.Global);
+  if (input['databaseProvider'] === 'postgres' || input['postgresUrl'] !== undefined) await ensureOfficeStorageReady();
   return readTeamSettings();
 }
