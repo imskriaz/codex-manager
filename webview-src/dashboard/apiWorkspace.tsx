@@ -1,7 +1,8 @@
 import {MobileSectionPicker} from './mobileSectionPicker';
 import { ProjectPicker } from './projectPicker';
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { DashboardCliProject } from "../../src/domain/dashboard/types";
+import { createPortal } from "preact/compat";
+import type { DashboardCliProject, DashboardNotice } from "../../src/domain/dashboard/types";
 import type { DashboardApiToken } from "../../src/domain/dashboard/apiActions";
 import { DASHBOARD_API_ACTIONS, PROJECT_API_ACTIONS, apiTokenProjects } from "../../src/domain/dashboard/apiActions";
 import { formatApiResponse, readApiResponse } from "./apiResponse";
@@ -13,7 +14,7 @@ import {
   type ApiEndpointId,
   type ApiInspection
 } from "./apiPlayground";
-import { handleTabKeyDown } from "./primitives";
+import { handleTabKeyDown, ModalShell } from "./primitives";
 import { ApiProxyPanel } from "./apiProxyPanel";
 import { ApiDocsModal } from "./apiDocs";
 import { ApiChoicePicker } from "./apiChoicePicker";
@@ -82,6 +83,18 @@ export function ApiWorkspace(props: {
   const checked = access?.credential === bearer ? access : undefined;
   const [createdToken, setCreatedToken] = useState<string>(),
     [copyStatus, setCopyStatus] = useState("");
+  const [visibleNotice, setVisibleNotice] = useState<DashboardNotice>();
+  const showNotice = (message: string, level: DashboardNotice['level'] = 'info') => {
+    setVisibleNotice({ message, level });
+  };
+  useEffect(() => {
+    if (props.open && props.notice) showNotice(props.notice);
+  }, [props.open, props.notice]);
+  useEffect(() => {
+    if (!visibleNotice) return;
+    const timer = window.setTimeout(() => setVisibleNotice(undefined), visibleNotice.level === 'info' ? 4500 : 10000);
+    return () => window.clearTimeout(timer);
+  }, [visibleNotice]);
   useEffect(() => {
     if (props.token && createOpen && !editing && !copyTarget) setCreatedToken(props.token);
   }, [props.token]);
@@ -89,7 +102,7 @@ export function ApiWorkspace(props: {
     if (!copyTarget || !props.token || props.tokenId !== copyTarget) return;
     let active = true;
     void Promise.resolve().then(() => navigator.clipboard.writeText(props.token!)).then(
-      () => { if (active) { setKeyCopyStatus('API key copied.'); setCopyTarget(undefined); } },
+      () => { if (active) { setKeyCopyStatus(''); setCopyTarget(undefined); showNotice('API key copied.'); } },
       () => { if (active) setKeyCopyStatus('Copy blocked. Select the key below and copy it manually.'); }
     );
     return () => { active = false; };
@@ -107,6 +120,7 @@ export function ApiWorkspace(props: {
       setEditing(undefined);
       setCopyTarget(undefined);
       setKeyCopyStatus('');
+      setVisibleNotice(undefined);
       setTab("keys");
       setDetailsOpen(false);
       setDocsOpen(false);
@@ -285,7 +299,7 @@ export function ApiWorkspace(props: {
     void Promise.resolve()
       .then(() => navigator.clipboard.writeText(value))
       .then(
-        () => setRequestCopy("Copied."),
+        () => { setRequestCopy(""); showNotice("Copied."); },
         () => setRequestCopy("Copy blocked. Select the text and copy it manually.")
       );
   };
@@ -306,9 +320,22 @@ export function ApiWorkspace(props: {
   } catch {
     requestPreview = "Enter a valid request payload to see the complete request.";
   }
+  const closeKeyEditor = () => {
+    setCreateOpen(false);
+    if (!createdToken) showNotice(editing ? 'Key editing closed.' : 'Key creation cancelled.');
+  };
   if (!props.open) return null;
   return (
     <>
+      {visibleNotice ? createPortal(
+        <div class="dashboard-notice-stack api-workspace-toast" aria-label="API notifications" aria-live="polite">
+          <div class={`dashboard-notice is-${visibleNotice.level}`} role={visibleNotice.level === 'error' ? 'alert' : 'status'}>
+            <span>{visibleNotice.message}</span>
+            <button type="button" aria-label="Dismiss API notification" onClick={() => setVisibleNotice(undefined)}>×</button>
+          </div>
+        </div>,
+        document.body
+      ) : null}
       <section class="api-workspace-screen" aria-label="API access">
         {requestCopy ? (
           <p class="api-inline-feedback" role="status">
@@ -377,7 +404,6 @@ export function ApiWorkspace(props: {
             <ApiProxyPanel
               onClear={props.onClearProxyLogs}
               clearing={props.clearingProxyLogs}
-              clearNotice={props.notice === 'Proxy request logs cleared.' ? props.notice : undefined}
               snapshot={props.proxy}
               onSaveMapping={props.onSaveMapping}
               baseUrl={baseUrl}
@@ -390,10 +416,10 @@ export function ApiWorkspace(props: {
                 loading: props.loading,
                 uncertain: props.uncertain,
                 error: props.error,
-                notice: props.notice,
                 onCreate: (name) => props.onGenerate(name, undefined, ["aiProxy"]),
                 onLoad: (id) => { setCopyTarget(undefined); setKeyCopyStatus(''); props.onCopy(id); },
-                onRefresh: props.onRefresh
+                onRefresh: props.onRefresh,
+                onNotice: showNotice
               }}
               privacyMode={props.privacyMode}
               connected={props.connected}
@@ -404,12 +430,7 @@ export function ApiWorkspace(props: {
         ) : null}
 
         <div role="tabpanel" id="api-panel-keys" aria-labelledby="api-tab-keys" hidden={tab !== "keys"}>
-          {props.notice ? (
-            <p class="api-workspace-notice" role="status">
-              {props.notice}
-            </p>
-          ) : null}
-          <div class={createOpen ? "api-keys-layout is-creating" : "api-keys-layout"}>
+          <div class="api-keys-layout">
             <div class="api-token-workspace">
               <section class="api-token-pane api-token-list-pane" aria-label="API keys">
                 <div class="api-pane-heading">
@@ -523,13 +544,18 @@ export function ApiWorkspace(props: {
               </section>
             </div>
             {createOpen ? (
-              <section class="api-key-create-panel" aria-label={editing ? "Edit API key" : "Create API key"} tabIndex={0}>
-                <header class="api-section-heading">
-                  <h2>{editing ? "Edit API key" : "Create API key"}</h2>
-                  <button type="button" disabled={props.pending} onClick={() => setCreateOpen(false)}>
-                    {createdToken ? "Done" : "Close form"}
-                  </button>
-                </header>
+              <ModalShell
+                open
+                title={editing ? "Edit API key" : "Create API key"}
+                closeLabel={createdToken ? "Done" : "Close form"}
+                className="api-create-modal"
+                closeDisabled={props.pending}
+                onClose={closeKeyEditor}
+              >
+                <section class="api-key-create-panel" aria-label={editing ? "Edit API key" : "Create API key"} tabIndex={0}>
+                {props.error ? <p class="share-outcome is-error" role="alert">{props.error}</p> : null}
+                {props.uncertain ? <p role="status">Refresh the list to verify the previous request before creating another token.<button type="button" disabled={!props.connected || props.loading || props.pending} onClick={props.onRefresh}>Refresh keys</button></p> : null}
+                {!props.connected ? <p role="status">Offline. Your draft is kept; reconnect before saving.</p> : null}
                 <fieldset
                   hidden={!!createdToken}
                   disabled={props.pending || !!createdToken}
@@ -697,10 +723,7 @@ export function ApiWorkspace(props: {
                         type="button"
                         class="modal-secondary-btn"
                         disabled={props.pending}
-                        onClick={() => {
-                          setCreateOpen(false);
-                          setRequestCopy(editing ? "Key editing cancelled." : "Key creation cancelled.");
-                        }}
+                        onClick={closeKeyEditor}
                       >
                         Cancel
                       </button>
@@ -736,7 +759,7 @@ export function ApiWorkspace(props: {
                         void Promise.resolve()
                           .then(() => navigator.clipboard.writeText(createdToken))
                           .then(
-                            () => setCopyStatus("Token copied."),
+                            () => { setCopyStatus(''); showNotice("Token copied."); },
                             () => setCopyStatus("Copy blocked. Select the token and copy it manually.")
                           );
                       }}
@@ -746,7 +769,8 @@ export function ApiWorkspace(props: {
                     <p role="status">{copyStatus}</p>
                   </div>
                 ) : null}
-              </section>
+                </section>
+              </ModalShell>
             ) : null}
           </div>
         </div>

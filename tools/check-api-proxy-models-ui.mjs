@@ -44,6 +44,11 @@ const compiled = await build({ stdin: { contents: `
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
+async function selectSection(scope, label, name) {
+  const picker = scope.getByRole('combobox', { name: label, exact: true });
+  if (await picker.isVisible()) await picker.selectOption({ label: name });
+  else await scope.getByRole('tab', { name, exact: true }).click();
+}
 try {
   for (const width of [1440, 390, 320]) {
     const page = await browser.newPage({ viewport: { width, height: 950 }, serviceWorkers: 'block' });
@@ -61,15 +66,15 @@ try {
     await page.goto(origin + '/__proxy-models');
     for (const file of ['shared.css', 'quotaSummary.css']) await page.addStyleTag({ content: await readFile('media/webview/' + file, 'utf8') });
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { window.copied = value; } } }));
-    await page.getByRole('tab', { name: 'Proxy', exact: true }).click();
+    await selectSection(page, 'API view', 'Proxy');
     await page.getByRole('button', { name: 'Proxy connection settings' }).click();
     const dialog = page.getByRole('dialog', { name: 'Proxy connection' });
-    assert.deepEqual(await dialog.getByRole('tab').allTextContents(), ['Claude', 'Codex'], 'Claude is the first proxy tab');
-    assert.equal(await dialog.getByRole('tab', { name: 'Claude', exact: true }).getAttribute('aria-selected'), 'true', 'Claude opens by default');
-    await dialog.getByRole('tab', { name: 'Codex', exact: true }).click();
+    assert.deepEqual(await dialog.getByRole('tab', { includeHidden: true }).allTextContents(), ['Claude', 'Codex'], 'Claude is the first proxy tab');
+    assert.equal(await dialog.getByRole('tab', { includeHidden: true, name: 'Claude', exact: true }).getAttribute('aria-selected'), 'true', 'Claude opens by default');
+    await selectSection(dialog, 'Proxy client', 'Codex');
     await dialog.getByRole('button', { name: 'Copy Codex launch command', exact: true }).click();
     assert.ok((await page.evaluate(() => window.copied)).includes('cm_'+'a'.repeat(64)), 'Codex launch includes the selected key');
-    await dialog.getByRole('tab', { name: 'Claude', exact: true }).click();
+    await selectSection(dialog, 'Proxy client', 'Claude');
     assert.ok(!/Claude Desktop gateway|Save these host-wide routes|Available models \(|Claude model names stay/.test(await dialog.innerText()), 'Removed setup explanations stay absent');
     await page.waitForFunction(() => document.querySelector('[aria-label="Claude configuration"]').textContent.includes('cm_'+'a'.repeat(64)));
     assert.equal(await dialog.getByLabel('Key value', { exact: true }).count(), 0, 'No manual key field');
@@ -94,7 +99,7 @@ try {
     assert.equal(await opus.inputValue(), 'gpt-fast', 'Save failure retains the draft');
     await page.evaluate(() => { window.rejectSave=false; });
     await mapping.getByRole('button', { name: 'Save model mapping', exact: true }).click();
-    await dialog.getByRole('status').filter({ hasText: 'Claude model mapping saved.' }).waitFor();
+    await page.getByRole('status').filter({ hasText: 'Claude model mapping saved.' }).waitFor();
     assert.equal(await page.evaluate(() => window.savedMapping.opus), 'gpt-fast');
     assert.equal(await mapping.getByRole('button', { name: 'Save model mapping', exact: true }).isDisabled(), true);
     await dialog.getByRole('button', { name: 'Copy Claude configuration', exact: true }).click();

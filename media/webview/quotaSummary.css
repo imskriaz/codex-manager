@@ -15345,7 +15345,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .task-detail-scroll { max-height:34vh; }
 .task-file-row { width:100%; text-align:left; border-radius:7px !important; margin:3px 0; }
 .task-file-row small { color:var(--text-muted); }
-/* API is a workspace page; its controls never use modal layout. */
+/* API is a workspace page; the key editor is the one focused modal flow. */
 .api-page-container { min-width: 0; min-height: 0; height: 100%; }
 body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: hidden; }
 .api-workspace-screen { --api-space: 12px; display: flex; flex-direction: column; gap: var(--api-space); min-width: 0; min-height: 0; height: var(--dashboard-viewport-height, 100dvh); overflow: hidden; padding: 12px clamp(12px, 1.5vw, 22px); box-sizing: border-box; background: var(--bg-base); color: var(--text-primary); font-size: calc(12px * var(--dashboard-text-scale, 1)); }
@@ -15896,6 +15896,13 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .project-share-controls .settings-actions { margin:0; gap:6px; }
 .project-share-controls .modal-primary-btn { order:1; }
 .api-create-modal { width:min(760px,calc(var(--dashboard-viewport-width, 100vw) - 24px)); }
+.api-create-modal .api-key-create-panel { padding:0; border:0; border-radius:0; background:transparent; overflow:visible; }
+.api-create-modal .api-key-form-fields { margin:0; }
+.api-create-modal label { display:flex; flex-direction:column; gap:7px; font-size:calc(11px * var(--dashboard-text-scale,1)); }
+.api-create-modal label:has(input[type=checkbox]) { flex-direction:row; align-items:center; gap:8px; overflow-wrap:anywhere; }
+.api-create-modal input:not([type=checkbox]),.api-create-modal textarea { width:100%; box-sizing:border-box; }
+.api-create-modal button { font:inherit; cursor:pointer; }
+.api-create-modal .share-outcome.is-error { color:var(--accent-red); overflow-wrap:anywhere; }
 .api-create-modal .api-token-create { grid-template-columns:minmax(200px,.8fr) minmax(0,1.2fr); gap:12px 18px; align-items:start; }
 .api-token-identity,.api-token-permission-column { min-width:0; }
 .api-token-identity>label { margin-top:0; }
@@ -15908,6 +15915,8 @@ body.is-api-workspace-route #dashboard-main { padding: 0; margin: 0; overflow: h
 .api-create-modal .api-permissions label { padding:5px 6px; margin:0; border-radius:4px; min-height:28px; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
 .api-create-modal .api-permissions label:has(input:checked) { background:color-mix(in srgb,var(--accent-blue) 5%,transparent); }
 .api-create-modal .dialog-actions { grid-column:1/-1; }
+.api-workspace-toast .dashboard-notice.is-info { border-color:color-mix(in srgb,var(--accent-green) 38%,var(--border-default)); }
+.api-workspace-toast .dashboard-notice.is-info::before { background:var(--accent-green); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-green) 14%,transparent); }
 .api-token-table thead { background:var(--bg-base); }
 .task-detail-panel { width:min(560px,var(--dashboard-viewport-width, 100vw)); overflow:hidden; }
 .task-detail-panel>.settings-modal-head { gap:10px; align-items:flex-start; padding:12px 14px; }

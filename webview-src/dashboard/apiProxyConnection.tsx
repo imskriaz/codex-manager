@@ -20,10 +20,10 @@ export type ApiProxyKeyAccess = {
   loading?: boolean;
   uncertain?: boolean;
   error?: string;
-  notice?: string;
   onCreate: (name: string) => void;
   onLoad: (id: string) => void;
   onRefresh: () => void;
+  onNotice: (message: string, level?: 'info' | 'warning') => void;
 };
 
 export function ApiProxyConnection(props: {
@@ -36,7 +36,6 @@ export function ApiProxyConnection(props: {
   keyAccess: ApiProxyKeyAccess;
   onClose: () => void;
 }) {
-  const [notice, setNotice] = useState("");
   const [client, setClient] = useState<"codex" | "claude">("claude");
   const [selectedId, setSelectedId] = useState("");
   const [waiting, setWaiting] = useState(false);
@@ -69,15 +68,15 @@ export function ApiProxyConnection(props: {
       setSelectedId(keyAccess.tokenId);
       setWaiting(false);
       creating.current = false;
-      setNotice("Proxy key created. Copy its configuration now.");
+      keyAccess.onNotice("Proxy key created. Copy its configuration now.");
     } else if (!proxyKeys.some((token) => token.id === selectedId)) {
       setSelectedId(proxyKeys[0]?.id ?? "");
     }
     if (creating.current && !keyAccess.pending && keyAccess.token && proxyKeys.length && !keyAccess.tokenId) {
       setWaiting(false);
       creating.current = false;
-      setNotice(
-        "The host did not identify the created key. Refresh keys and select it again."
+      keyAccess.onNotice(
+        "The host did not identify the created key. Refresh keys and select it again.", 'warning'
       );
     }
     if ((keyAccess.error || keyAccess.uncertain) && !keyAccess.pending) {
@@ -102,7 +101,6 @@ export function ApiProxyConnection(props: {
     if (creating.current) return;
     creating.current = true;
     setWaiting(true);
-    setNotice('');
     keyAccess.onCreate(selectedKey ? `${selectedKey.name.slice(0, 60)} replacement` : client === 'codex' ? 'Codex proxy' : 'Claude proxy');
   };
   useEffect(() => {
@@ -111,7 +109,6 @@ export function ApiProxyConnection(props: {
     keyAccess.onLoad(selectedId);
   }, [props.open, selectedId, selectedKey?.id, freshKey, busy, keyAccess.enabled, keyAccess.uncertain]);
   useLayoutEffect(() => {
-    setNotice("");
     if (props.open) setClient("claude");
   }, [props.open]);
   const baseUrl = props.baseUrl?.replace(/\/+$/, "");
@@ -131,8 +128,8 @@ export function ApiProxyConnection(props: {
     void Promise.resolve()
       .then(() => navigator.clipboard.writeText(value))
       .then(
-        () => setNotice("Copied."),
-        () => setNotice("Copy blocked. Select the text and copy it manually.")
+        () => keyAccess.onNotice("Copied."),
+        () => keyAccess.onNotice("Copy blocked. Select the text and copy it manually.", 'warning')
       );
   };
   const codexConfig = [
@@ -177,7 +174,7 @@ export function ApiProxyConnection(props: {
     >
       <div class="api-docs-content api-proxy-connection">
         <div class="api-connection-toolbar">
-          <MobileSectionPicker label="Proxy client" value={client} options={[{value:'claude',label:'Claude'},{value:'codex',label:'Codex'}]} onChange={value=>{setClient(value);setNotice('');}}/>
+          <MobileSectionPicker label="Proxy client" value={client} options={[{value:'claude',label:'Claude'},{value:'codex',label:'Codex'}]} onChange={value=>{setClient(value);}}/>
           <div class="api-token-tabs" role="tablist" aria-label="Proxy clients" onKeyDown={handleTabKeyDown}>
             {(["claude", "codex"] as const).map((value) => (
               <span key={value} class={client === value ? "is-active" : undefined}>
@@ -190,7 +187,6 @@ export function ApiProxyConnection(props: {
                   tabIndex={client === value ? 0 : -1}
                   onClick={() => {
                     setClient(value);
-                    setNotice("");
                   }}
                 >
                   {value === "codex" ? "Codex" : "Claude"}
@@ -198,8 +194,6 @@ export function ApiProxyConnection(props: {
               </span>
             ))}
           </div>
-          {notice ? <p role="status">{notice}</p> : null}
-          {keyAccess.notice ? <p role="status">{keyAccess.notice}</p> : null}
           {keyAccess.error ? (
             <p role="alert" class="api-key-error">
               {keyAccess.error}
@@ -225,7 +219,6 @@ export function ApiProxyConnection(props: {
                   disabled={busy}
                   onChange={(event) => {
                     setSelectedId(event.currentTarget.value);
-                    setNotice("");
                   }}
                 >
                   {proxyKeys.map((token) => (
@@ -391,7 +384,7 @@ export function ApiProxyConnection(props: {
                     ))}
                   </tbody>
             </table>
-            <button type="button" disabled={busy || keyAccess.loading || !!keyAccess.uncertain || !keyAccess.enabled || !props.onSaveMapping || !Object.values(claudeMapping).every(id => models.some(model => model.id === id)) || savedMappingKey === JSON.stringify(claudeMapping)} onClick={() => { setNotice(""); props.onSaveMapping?.(claudeMapping); }}>
+            <button type="button" disabled={busy || keyAccess.loading || !!keyAccess.uncertain || !keyAccess.enabled || !props.onSaveMapping || !Object.values(claudeMapping).every(id => models.some(model => model.id === id)) || savedMappingKey === JSON.stringify(claudeMapping)} onClick={() => { props.onSaveMapping?.(claudeMapping); }}>
               {keyAccess.pending ? "Saving..." : "Save model mapping"}
             </button>
             {!models.length && !keyAccess.loading && !props.modelsWarning ? (

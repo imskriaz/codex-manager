@@ -17,7 +17,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.equal(await shortcut.count(), 1, 'Only the sidebar has an API shortcut');
     assert.equal(await task.evaluate(element => element.nextElementSibling?.getAttribute('aria-label')), 'API access');
     await shortcut.click();
-    await page.waitForURL(origin + '/api');
+    await page.waitForURL(origin + '/api/keys');
     let list = page.getByRole('region', { name: 'API access', exact: true });
     const main = list;
     assert.equal(await page.getByRole('dialog').count(), 0, 'API is a page');
@@ -25,13 +25,14 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await page.waitForFunction(() => !!window.__heldApiList);
     await list.getByRole('button', { name: 'Create API key', exact: true }).click();
     const form = page.getByRole('region', { name: 'Create API key', exact: true });
+    assert.equal(await page.getByRole('dialog', { name: 'Create API key', exact: true }).count(), 1, 'API key creation opens a modal');
     assert.equal(await page.locator(':popover-open').count(), 0, 'Page leaves no native flyout above it');
-    assert.equal(await page.locator('.overlay.open').count(), 0, 'Inline creation uses the page');
+    assert.equal(await page.locator('.overlay.open').count(), 1, 'API key creation uses the shared modal overlay');
     await form.getByLabel('Token name', { exact: true }).fill('First creation');
     await form.getByRole('button', { name: 'Create token', exact: true }).click();
     await form.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
     assert.equal(await form.locator('button[type=submit]').isDisabled(), true);
-    await form.getByRole('button', { name: 'Done', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Create API key', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldApiList })));
     await list.getByRole('cell', { name: 'First creation', exact: true }).waitFor();
     assert.equal(await list.locator('tbody tr').count(), 3, 'Stale listing cannot erase confirmed creation');
@@ -48,9 +49,9 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldApiCreate, status: 'failed', payload: undefined, error: 'The connection closed before confirmation. Outcome unknown.' } })));
     await main.getByRole('alert').waitFor();
     assert.equal(await form.getByRole('button', { name: 'Create token', exact: true }).isDisabled(), true);
-    await main.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await form.getByRole('button', { name: 'Refresh keys', exact: true }).click();
     await main.getByRole('alert').waitFor({ state: 'detached' });
-    await form.getByRole('button', { name: 'Close form', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Create API key', exact: true }).getByRole('button', { name: 'Close form', exact: true }).click();
     await list.getByRole('cell', { name: 'Unknown confirmation', exact: true }).waitFor();
 
     // Requests are intercepted; permission and presentation checks cannot mutate the live host.
@@ -98,7 +99,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     assert.equal(await send.isDisabled(), true, 'Changing a token immediately invalidates old grants');
     await operations.filter({hasText:'getProjectBoard'}).waitFor();
     await checkOperations(['getProjectBoard']);
-    assert.equal(await list.getByLabel('Host project', { exact: true }).inputValue(), 'D:/demo');
+    assert.equal(await list.getByRole('combobox', { name: 'Host project', exact: true }).getAttribute('data-value'), 'D:/demo');
     failure = false; await send.click();
     await list.locator('.api-test-result').filter({ hasText: 'HTTP 200' }).waitFor();
     assert.equal(sent.at(-1).payload.projectPath, 'D:/demo', 'Scoped requests use the verified host project');
@@ -175,7 +176,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await list.getByRole('button',{name:'Create API key',exact:true}).click();
     assert.equal(await form.getByRole('textbox',{name:'New API token',exact:true}).count(),0,'Late key confirmation is not shown on reentry');
     await form.getByRole('button',{name:'Cancel',exact:true}).click();
-    await list.getByRole('status').filter({hasText:'Key creation cancelled.'}).waitFor();
+    await page.locator('.api-workspace-toast').getByRole('status').filter({hasText:'Key creation cancelled.'}).waitFor();
     // Remove the fixture owner key so the proxy setup can create its minimal key.
     const owner=list.locator('tbody tr').filter({hasText:'Owner operations'});
     await owner.getByRole('button',{name:'Revoke',exact:true}).click();
@@ -186,7 +187,7 @@ export async function checkListsApiUi(page, { origin, width, height, output, api
     await connection.getByRole('button',{name:'Create proxy key',exact:true}).click();
     const proxyKeys=connection.getByRole('combobox',{name:'Proxy API key',exact:true});
     await proxyKeys.waitFor();
-    assert.equal(await proxyKeys.locator('option:checked').innerText(),'Codex proxy');
+    assert.equal(await proxyKeys.locator('option:checked').innerText(),'Claude proxy');
     const creation=await page.evaluate(()=>window.__uiActions.filter(action=>action.action==='generateApiToken').at(-1));
     assert.deepEqual(creation.payload.tokenPermissions,['aiProxy']);
     assert.equal(creation.payload.tokenProjectPaths,undefined);
