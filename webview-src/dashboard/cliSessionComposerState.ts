@@ -16,10 +16,10 @@ export type CliSubmissionResult = { requestId: string; status: "completed" | "fa
 export function isCliSubmissionEcho(message: DashboardCliSessionMessage, submitted: CliComposerDraft, seenIds: Set<string>, turnId?: string): boolean {
   if (seenIds.has(message.id) || message.role !== "user" || (message.kind && message.kind !== "message") || (turnId && message.turnId && message.turnId !== turnId)) return false;
   const imageCount = submitted.attachments.filter(file => file.kind === 'image').length;
-  const text = (value: string) => imageCount ? value.replace(/^[\t ]*\[Image unavailable\][\t ]*$/gm, '').trim() : value.trim();
+  const text = (value: string) => imageCount && !submitted.text.trim() && value === 'Please review the attached image files.' ? '' : imageCount ? value.replace(/^[\t ]*\[Image unavailable\][\t ]*$/gm, '').trim() : value.trim();
   return text(message.text) === text(submitted.text)
     && JSON.stringify(message.textAttachments ?? []) === JSON.stringify(chatAttachmentPreviews(submitted.attachments))
-    && (message.images?.length ?? 0) === imageCount;
+    && (message.imageCount ?? message.images?.length ?? 0) === imageCount;
 }
 
 export function cliContextUsage(usage: DashboardCodexSessionLiveState["tokenUsage"]) {
@@ -69,8 +69,8 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
 /** A queued message keeps the model settings captured when the current turn began. */
 export function cliDraftChangesActiveTurnSettings(draft: CliComposerDraft, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort">): boolean {
   if (!session) return false;
-  return (draft.model !== undefined && session.model !== undefined && draft.model !== session.model)
-    || (draft.reasoningEffort !== undefined && session.reasoningEffort !== undefined && draft.reasoningEffort !== session.reasoningEffort);
+  return (draft.model !== undefined && draft.model !== session.model)
+    || (draft.reasoningEffort !== undefined && draft.reasoningEffort !== session.reasoningEffort);
 }
 
 export function acknowledgeCliComposerDraft(current: CliComposerDraft, submitted: CliComposerDraft): CliComposerDraft {

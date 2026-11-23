@@ -1,4 +1,6 @@
+import { providerConversation, saveProviderConversation, nativeSessionId, routedSessionId, presentProviderSessions, presentProviderSummary, providerHistoryPage, withNativeSession, providerRoutingSuppressed } from './sessionProviders';
 import { hydrateSessionImages } from './codexSessionImages';
+import { activeApiAccount, apiAccountIdentity, hasApiAccountRuntime, withApiAccountRuntime } from './apiAccounts';
 import { codexFallbackModels } from '../domain/codexModelFallback';
 import { readSessionPlan, sessionPlanMessage } from '../domain/sessionPlan';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
@@ -25,7 +27,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
 import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_WIRE_BYTES, needsChatAttachmentFiles, prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput, materializeChatAttachments } from "./codexChatAttachments";
-import { adoptCodexAttachmentFiles } from './projectTaskAttachments';
+import { saveCodexAttachmentFiles, adoptCodexAttachmentFiles } from './projectTaskAttachments';
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError, type AppServerTransport } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, autoApprovePendingCodexPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
@@ -265,7 +267,8 @@ type CliSessionIndexEntry = { id: string; thread_name?: string; updated_at?: str
 /** Read local Codex session metadata without resuming or subscribing to a thread. */
 export async function readCodexCliSessions(codexHome = resolveCodexHome(), limit = MAX_VISIBLE_CLI_SESSIONS, force = false): Promise<DashboardCliSessionSummary[]> {
   const native = path.resolve(codexHome) === path.resolve(resolveCodexHome()) ? claude.listClaudeSessions() : [];
-  return [...await readCodexOnlySessions(codexHome, limit, force), ...native];
+  const sessions = [...await readCodexOnlySessions(codexHome, limit, force), ...native];
+  return providerRoutingSuppressed() ? sessions : presentProviderSessions(sessions);
 }
 
 async function readCodexOnlySessions(
@@ -498,6 +501,7 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
 }
 
 export async function clearCodexSessionGoal(sessionId: string, completedObjective?: string): Promise<void> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   claude.rejectClaudeAutomation(sessionId, 'clearCodexSessionGoal');
   const details = { sessionRef: toSessionLogRef(sessionId), actor: "manager", origin: completedObjective === undefined ? "user" : "completed-goal-cleanup", method: "thread/goal/clear" };
@@ -520,6 +524,7 @@ export async function clearCodexSessionGoal(sessionId: string, completedObjectiv
 
 /** Explicit goal controls can pause a running owner without waiting for its turn lease. */
 export async function setCodexSessionGoalStatus(sessionId: string, status: "active" | "paused"): Promise<void> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   claude.rejectClaudeAutomation(sessionId, 'setCodexSessionGoalStatus');
   if (status !== "active" && status !== "paused") throw new Error("Choose Pause or Resume for this goal.");
@@ -570,7 +575,7 @@ export async function readCodexCliSessionRecoveryMetadata(ids: string[], home = 
   return titles;
 }
 
-export async function readCodexCliSessionSummary(
+async function readCodexCliSessionSummaryNative(
   sessionId: string,
   codexHome = resolveCodexHome(),
   requireNativeRuntime: boolean | "display" = false
@@ -979,7 +984,7 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
   let modelDiscoveryWarning: string | undefined;
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome())) {
     const auth = await readSmallOptionalFile(path.join(codexHome, 'auth.json'), MAX_CONFIG_BYTES);
-    const identity = createHash('sha256').update(JSON.stringify([auth, configRaw])).digest('hex');
+    const identity = createHash('sha256').update(JSON.stringify([auth, configRaw, apiAccountIdentity('openai')])).digest('hex');
     const live = await readLiveCliModels(codexHome, identity);
     if (live.length) models = live;
     else {
@@ -1058,10 +1063,16 @@ export async function sendCodexCliSessionMessage(options: {
   interruptedOnly?: boolean;
   preferPrivate?: boolean;
 }): Promise<'steered' | void> {
+  if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => sendCodexCliSessionMessage(options));
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
+  if (!providerRoutingSuppressed()) {
+    if (providerConversation(options.sessionId)?.starting) throw new Error('The provider switch is still awaiting confirmation. Refresh before sending another message.');
+    const nativeId = nativeSessionId(options.sessionId);
+    if (options.model && isClaudeModel(options.model) !== claude.isClaudeSession(nativeId)) return switchSessionProvider(options);
+    return withNativeSession(() => sendCodexCliSessionMessage({ ...options, sessionId: nativeId }));
+  }
   if (claude.isClaudeSession(options.sessionId)) return claude.sendClaudeMessage(options.sessionId, options);
-  if (isClaudeModel(options.model)) throw new Error('This is an OpenAI conversation. Start a new conversation to use Claude.');
   newSessionFailures.delete(options.sessionId);
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
@@ -1131,6 +1142,7 @@ async function readLiveCliModels(codexHome: string, identity: string): Promise<D
 }
 
 export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSession>[0]): Promise<string> {
+  if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => startCodexCliSession(options));
   const home = path.resolve(resolveCodexHome());
   if (isClaudeModel(options.model)) return claude.startClaudeSession({ ...options, projectPath: resolveCliProjectPath(options.projectPath) });
   return new Promise((resolve, reject) => {
@@ -1152,7 +1164,7 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
   });
 }
 
-export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSessionSummary | undefined {
+function readNewCodexCliSessionSummaryNative(sessionId: string): DashboardCliSessionSummary | undefined {
 
   if (claude.isClaudeSession(sessionId)) return claude.readClaudeSession(sessionId);
   const summary = getRecentNewSession(sessionId)?.summary;
@@ -1171,6 +1183,7 @@ async function runNewCodexCliSession(options: {
   sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean;
   projectPath?: string;
+  onCreated?: (id: string) => void;
 }, onStarted: (sessionId: string) => void): Promise<string> {
   options = { ...options, sandboxMode: options.sandboxMode ?? 'danger-full-access', autoApprove: options.autoApprove === undefined ? true : options.autoApprove };
   if (options.autoApprove !== undefined && typeof options.autoApprove !== 'boolean') throw new Error('Auto approval must be on or off.');
@@ -1202,6 +1215,7 @@ async function startAppServerSession(options: {
   sandboxMode?: DashboardCliSandboxMode;
   autoApprove?: boolean;
   projectPath?: string;
+  onCreated?: (id: string) => void;
 }, onStarted: (sessionId: string) => void): Promise<string> {
   const home = path.resolve(resolveCodexHome());
   const cwd = resolveCliProjectPath(options.projectPath);
@@ -1220,6 +1234,7 @@ async function startAppServerSession(options: {
     recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: appServerTransport.getStore() ?? "stdio" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
+      ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.sandboxMode === 'danger-full-access' ? { permissions: ':danger-full-access' } : options.sandboxMode ? { sandbox: options.sandboxMode } : {}),
       approvalPolicy: options.autoApprove ? "never" : "on-request"
@@ -1227,6 +1242,7 @@ async function startAppServerSession(options: {
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
     if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
     threadId = candidateThreadId;
+    options.onCreated?.(threadId);
     if (path.resolve(resolveCodexHome()) !== home) throw new Error('The Codex home changed while starting the conversation. No message was sent.');
     if (pendingUpload) adoptCodexAttachmentFiles(home, pendingUpload, threadId);
     live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => isAppServerTurnCancelled(threadId!));
@@ -1376,7 +1392,7 @@ async function sendAppServerSessionMessage(options: {
       throw error;
     }
   };
-  if ((getOwnerBridgeState(home, options.sessionId) || !options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase()))) && await startNative()) {
+  if (!activeApiAccount('openai') && (getOwnerBridgeState(home, options.sessionId) || !options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase()))) && await startNative()) {
     options.onStarted?.();
     await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
     return;
@@ -1397,7 +1413,7 @@ async function sendAppServerSessionMessage(options: {
     try {
       if (standalone) {
         const settings = { permissions: ':danger-full-access', approvalPolicy: standaloneApproval };
-        const current = await rpc.request('thread/resume', { threadId: options.sessionId, cwd, excludeTurns: true, ...settings });
+        const current = await rpc.request('thread/resume', { threadId: options.sessionId, cwd, excludeTurns: true, ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}), ...settings });
         const applied = await syncCodexSessionAccess(rpc, options.sessionId, settings, current);
         if (!rememberSessionAccess(home, options.sessionId, applied.access, applied.settings)) throw new Error('Codex applied Full access, but recovery storage could not save it. No continuation was sent.');
       } else {
@@ -1416,13 +1432,13 @@ async function sendAppServerSessionMessage(options: {
       const approvalPolicy = inherited?.approvalPolicy ?? stored?.approvalPolicy ?? 'never';
       if (approvalPolicy) Object.assign(params, { approvalPolicy });
       const restore = defaultSandbox || options.sandboxMode === 'danger-full-access' ? { permissions: ':danger-full-access' } : !options.sandboxMode && (!opaqueProfile || preserved) ? permissions ? { permissions } : sandboxPolicy ? { sandbox: (inherited?.mode ?? stored?.access?.mode) } : {} : {};
-      const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...restore });
+      const result = await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true, ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}), ...restore });
       if (!options.sandboxMode) Object.assign(params, defaultSandbox ? sessionAccessSettings('danger-full-access', cwd) : preserved ?? (!opaqueProfile ? permissions ? { permissions } : sandboxPolicy ? { sandboxPolicy } : {} : {}));
       if (!preserved && !opaqueProfile) rememberSessionAccess(home, options.sessionId, parseCodexSessionAccess(result), result);
       }
     }
     catch (error) {
-      if (options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
+      if (activeApiAccount('openai') || options.preferPrivate || !(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
       if (!await needsContinuation()) return;
       if (!await startNative()) throw error;
       options.signal?.removeEventListener("abort", abort);
@@ -1558,6 +1574,8 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
 
 /** Observe work that Codex restored itself without taking ownership or starting another turn. */
 export function observeRunningCodexSession(session: DashboardCliSessionSummary): void {
+  if (session.provider === 'claude') return;
+  session = { ...session, id: routedSessionId(session.id) };
   validateSessionId(session.id);
   const home = resolveCodexHome(), key = `${home}:${session.id}`;
   if (session.status !== "running" || ownsSessionTurn(home, session.id) || nativeTurnObservers.has(key)) return;
@@ -1647,6 +1665,7 @@ async function observedNativeTurn(home: string, sessionId: string): Promise<stri
 
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
 export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
+  options = { ...options, sessionId: routedSessionId(options.sessionId) };
   if (claude.isClaudeSession(options.sessionId)) return claude.steerClaudeSession(options.sessionId, options, options.expectedTurnId);
   return sendCodexQuestionReply(resolveCodexHome(), options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId), onAttempt => steerCodexCliSessionTurnOnce(options, onAttempt));
 }
@@ -1718,6 +1737,7 @@ function attachSessionSettingsAndPrompts(rpc: CodexAppServerRpc, home: string, i
 }
 /** Change the owner's thread defaults; an in-flight turn keeps its captured policy. */
 export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandboxMode, autoApprove?: boolean): Promise<CodexSessionAccess> {
+  id = routedSessionId(id);
   validateSessionId(id);
   if (claude.isClaudeSession(id)) return claude.setClaudeAccess(id, mode, autoApprove);
   id = id.toLowerCase();
@@ -1764,6 +1784,7 @@ export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandb
 }
 
 export async function cancelCodexCliSessionTurn(sessionId: string, expectedTurnId?: string): Promise<boolean> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) return claude.stopClaudeSession(sessionId, expectedTurnId);
   sessionId = sessionId.toLowerCase();
@@ -1845,6 +1866,7 @@ const AUTO_RESUME_EDITOR_SETTLE_MS = 1_000;
 
 export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false, readinessTimeoutMs = 40_000, automaticRecovery = false): Promise<void> {
   claude.rejectClaudeAutomation(sessionId, 'Open in Codex');
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
@@ -2009,7 +2031,8 @@ async function activateOfficialCodexExtension(): Promise<vscode.Extension<unknow
   return codexExtension;
 }
 
-export async function renameCodexCliSession(sessionId: string, name: string): Promise<void> {
+async function renameCodexCliSessionNative(sessionId: string, name: string): Promise<void> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'rename', name); return; }
   const normalized = name.trim().replace(/\s+/g, " ");
@@ -2036,6 +2059,7 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
 
 /** Resume with a new cwd without starting a turn; native storage must confirm it. */
 export async function moveCodexCliSession(sessionId: string, destination: string, source: string): Promise<DashboardCliSessionSummary> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   claude.rejectClaudeAutomation(sessionId, 'moveCodexCliSession');
   if (typeof destination !== 'string' || destination.length > 4096 || destination.includes('\0') || !path.isAbsolute(normalizeNativePath(destination))) throw new Error('Choose an absolute destination project folder.');
@@ -2061,6 +2085,7 @@ export async function moveCodexCliSession(sessionId: string, destination: string
 }
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   claude.rejectClaudeAutomation(sessionId, 'setCodexSessionAutoResume');
   if (typeof enabled !== 'boolean') throw new Error('Choose an Auto Resume state.');
@@ -2077,6 +2102,7 @@ export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): 
 }
 
 export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority = 3): void {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   claude.rejectClaudeAutomation(sessionId, 'setCodexSessionQueue');
   if (typeof enabled !== 'boolean' || !isSessionQueuePriority(priority)) throw new Error('Choose a positive whole number for queue priority.');
@@ -2090,7 +2116,7 @@ export function setCodexSessionQueue(sessionId: string, enabled: boolean, priori
   });
 }
 
-export async function forkCodexCliSession(sessionId: string): Promise<string> {
+async function forkCodexCliSessionNative(sessionId: string): Promise<string> {
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) return await claude.mutateClaudeSession(sessionId, 'fork') as string;
   const result = await runCliSessionMutation(sessionId, "Codex session fork", () =>
@@ -2106,7 +2132,7 @@ export async function forkCodexCliSession(sessionId: string): Promise<string> {
   return forkedId;
 }
 
-export async function archiveCodexCliSession(sessionId: string): Promise<void> {
+async function archiveCodexCliSessionNative(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'archive'); return; }
   const home = resolveCodexHome();
@@ -2120,7 +2146,7 @@ export async function archiveCodexCliSession(sessionId: string): Promise<void> {
   if (recent) recent.summary = { ...recent.summary, archived: true };
 }
 
-export async function unarchiveCodexCliSession(sessionId: string): Promise<void> {
+async function unarchiveCodexCliSessionNative(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'restore'); return; }
   await runCliSessionMutation(sessionId, "Codex session restore", () =>
@@ -2130,7 +2156,7 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
   if (recent) recent.summary = { ...recent.summary, archived: false };
 }
 
-export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
+async function deleteCodexCliSessionNative(sessionId: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'delete'); return; }
   const home = resolveCodexHome();
@@ -2160,7 +2186,7 @@ export async function deleteCodexCliSession(sessionId: string, options: { archiv
 
 /** Read a bounded history page without locking the writer or retaining the complete transcript. */
 /** The initial prompt is immutable: read a bounded transcript head on demand. */
-export async function readCodexCliSessionInitialPrompt(sessionId: string, home = resolveCodexHome()): Promise<string | undefined> {
+async function readCodexCliSessionInitialPromptNative(sessionId: string, home = resolveCodexHome()): Promise<string | undefined> {
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) return claude.claudeInitialPrompt(sessionId);
   const value = await runCrossWindowSharedRead(sharedResourceKey('session-initial-prompt', [getCodexHomeStateKey(home), sessionId.toLowerCase()]), 'Initial session prompt', async signal => {
@@ -2186,7 +2212,7 @@ export async function readCodexCliSessionInitialPrompt(sessionId: string, home =
   return value ?? undefined;
 }
 
-export async function readCodexCliSessionMessagePage(sessionId: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
+async function readCodexCliSessionMessagePageNative(sessionId: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
   if (claude.isClaudeSession(sessionId)) return claude.readClaudeHistory(sessionId, before);
   if (!SESSION_ID_PATTERN.test(sessionId) || (before !== undefined && !/^\d{1,16}$/.test(before))) throw new Error('The session history cursor is invalid.');
   const transcript = await findCliSessionTranscript(home, sessionId);
@@ -2221,7 +2247,7 @@ export async function readCodexCliSessionMessagePage(sessionId: string, before?:
   return { messages: await hydrateSessionImages(parsed.messages), olderThan: boundary > 0 ? String(boundary) : undefined, warnings };
 }
 
-export async function readCodexCliSessionMessages(
+async function readCodexCliSessionMessagesNative(
   sessionId: string,
   codexHome = resolveCodexHome()
 ): Promise<DashboardCliSessionMessage[]> {
@@ -2916,6 +2942,7 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
 }
 
 export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string, requireAvailable = true): Promise<string> {
+  sessionId = routedSessionId(sessionId);
   validateSessionId(sessionId);
   if (claude.isClaudeSession(sessionId)) {
     const cwd = claude.readClaudeSession(sessionId)!.projectPath!;
@@ -4574,4 +4601,130 @@ function createLocalCodexConversationUri(sessionId: string): vscode.Uri {
     scheme: CODEX_CONVERSATION_SCHEME,
     authority: CODEX_CONVERSATION_AUTHORITY
   });
+}
+
+
+export async function readCodexCliSessionSummary(...args: Parameters<typeof readCodexCliSessionSummaryNative>): Promise<DashboardCliSessionSummary | undefined> {
+  if (providerRoutingSuppressed()) return readCodexCliSessionSummaryNative(...args);
+  const [id, home, runtime] = args;
+  const summary = await withNativeSession(() => readCodexCliSessionSummaryNative(nativeSessionId(id), home, runtime));
+  return summary ? presentProviderSummary(summary) : undefined;
+}
+export function readNewCodexCliSessionSummary(id: string): DashboardCliSessionSummary | undefined {
+  const summary = readNewCodexCliSessionSummaryNative(routedSessionId(id));
+  return summary && !providerRoutingSuppressed() ? presentProviderSummary(summary) : summary;
+}
+export async function readCodexCliSessionMessagePage(id: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
+  if (!providerRoutingSuppressed() && providerConversation(id)) return providerHistoryPage(id, before, (nativeId, cursor) => withNativeSession(() => readCodexCliSessionMessagePageNative(nativeId, cursor, home)));
+  return readCodexCliSessionMessagePageNative(id, before, home);
+}
+export async function readCodexCliSessionMessages(id: string, home = resolveCodexHome()): Promise<DashboardCliSessionMessage[]> {
+  if (!providerRoutingSuppressed() && providerConversation(id)) return (await readCodexCliSessionMessagePage(id, undefined, home)).messages;
+  return readCodexCliSessionMessagesNative(id, home);
+}
+export async function readCodexCliSessionInitialPrompt(id: string, home = resolveCodexHome()): Promise<string | undefined> {
+  const conversation = !providerRoutingSuppressed() && providerConversation(id);
+  return conversation ? conversation.firstPrompt : readCodexCliSessionInitialPromptNative(id, home);
+}
+
+async function switchSessionProvider(options: Parameters<typeof sendCodexCliSessionMessage>[0]): Promise<void> {
+  const sourceId = nativeSessionId(options.sessionId);
+  const switchProvider = async () => {
+    options.signal?.throwIfAborted();
+    if (nativeSessionId(options.sessionId) !== sourceId) throw new Error('The conversation provider changed. Refresh before retrying.');
+    const source = await withNativeSession(() => readCodexCliSessionSummaryNative(sourceId, undefined, true));
+    if (!source || source.status !== 'idle' || source.locked || source.archived || source.subAgent || source.parentSessionId) throw new Error('The conversation must be idle and available before switching provider. Your message was kept.');
+    if (source.goal && !['complete', 'paused'].includes(source.goal.status)) throw new Error('Pause or clear the Codex goal before switching provider. Your message was kept.');
+    if (source.queueEnabled) throw new Error('Remove the session from the automatic queue before switching provider.');
+    const cwd = await withNativeSession(() => resolveRecordedSessionProject(sourceId, options.projectPath));
+    const history: DashboardCliSessionMessage[] = [];
+    let before: string | undefined;
+    const cursors = new Set<string>();
+    let bytes = 0;
+    do {
+      const page = await readCodexCliSessionMessagePage(options.sessionId, before);
+      options.signal?.throwIfAborted();
+      if (page.warnings.length) throw new Error(`Provider switch was not started because history is incomplete: ${page.warnings.join(' ')}`);
+      bytes += Buffer.byteLength(JSON.stringify(page.messages));
+      if (bytes > 50 * 1024 * 1024) throw new Error('This conversation exceeds the 50 MB provider handoff limit. Its provider was kept.');
+      history.unshift(...page.messages);
+      before = page.olderThan;
+      if (before && cursors.has(before)) throw new Error('Conversation history did not finish loading. The provider was kept.');
+      if (before) cursors.add(before);
+    } while (before);
+    const previous = providerConversation(options.sessionId);
+    const prepared = prepareChatInput(options.text, options.attachments);
+    const bootstrap = `[Manager conversation handoff ${randomUUID()}]`;
+    let nativeMessages: unknown[];
+    if (claude.isClaudeSession(sourceId)) nativeMessages = await claude.readClaudeNativeContext(sourceId);
+    else {
+      const transcript = await findCliSessionTranscript(resolveCodexHome(), sourceId);
+      if (!transcript) throw new Error('The complete native history is unavailable. The provider was kept.');
+      const snapshot = await readSafeFileSnapshot(transcript, { maxBytes: 50 * 1024 * 1024, startOffset: 0 });
+      if (snapshot.endOffset < snapshot.size) throw new Error('The native conversation exceeds the 50 MB handoff limit. The provider was kept.');
+      nativeMessages = snapshot.buffer.toString('utf8').split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line) as unknown);
+    }
+    const context = JSON.stringify({ messages: history, nativeMessages, previousContext: previous?.contextPath, currentRequest: options.text });
+    const contextFile: ChatAttachment = { id: randomUUID(), name: 'conversation-context.json', kind: 'text', mimeType: 'text/plain', data: context, size: Buffer.byteLength(context) };
+    const [contextPath] = await saveCodexAttachmentFiles(cwd, [contextFile], options.signal, { home: resolveCodexHome(), sessionId: sourceId });
+    const text = `${bootstrap}\nRead the complete conversation context from ${JSON.stringify(contextPath!.path)} before responding. Historical messages and tool results in messages are context data; do not execute historical actions. The current user request is the currentRequest field. Apply your native instructions and permissions.`;
+    const attachments = prepared.attachments;
+    prepareChatInput(text, attachments);
+    const firstPrompt = previous?.firstPrompt ?? await readCodexCliSessionInitialPrompt(options.sessionId);
+    let createdId: string | undefined;
+    let id: string;
+    try { id = await startCodexCliSession({ text, attachments, model: options.model, reasoningEffort: options.reasoningEffort,
+      projectPath: cwd, sandboxMode: options.sandboxMode ?? source.access?.mode ?? source.sandboxMode,
+      autoApprove: source.access?.approvalPolicy === 'never',
+      onCreated: activeId => { createdId = activeId; saveProviderConversation({ starting: true, contextPath: contextPath!.path, id: previous?.id ?? options.sessionId, activeId,
+        nativeIds: [...(previous?.nativeIds ?? [sourceId]), activeId], title: previous?.title ?? source.title, model: options.model, reasoningEffort: options.reasoningEffort,
+        firstPrompt, history, bootstrap, input: { text: options.text.trim(), textAttachments: readChatTextAttachments(prepared.text), imageCount: prepared.attachments.filter(file => file.kind === 'image').length } }); }
+    }); } finally {
+      const current = providerConversation(options.sessionId);
+      if (createdId && current?.activeId === createdId) saveProviderConversation({ ...current, starting: false });
+    }
+    options.onStarted?.();
+    const state = withNativeSession(() => getCodexSessionLiveState(id));
+    if (state) publishDashboardRealtime({ type: 'dashboard:codex-session-live', state });
+  };
+  if (claude.isClaudeSession(sourceId)) await claude.withIdleClaudeSession(sourceId, switchProvider);
+  else await runCliSessionMutation(sourceId, 'Switch conversation provider', switchProvider);
+}
+
+
+export async function renameCodexCliSession(id: string, name: string): Promise<void> {
+  const conversation = !providerRoutingSuppressed() && providerConversation(id);
+  const nativeId = routedSessionId(id);
+  await withNativeSession(() => renameCodexCliSessionNative(nativeId, name));
+  if (conversation) saveProviderConversation({ ...conversation, title: name.trim().replace(/\s+/g, ' ') });
+}
+export async function forkCodexCliSession(id: string): Promise<string> {
+  const conversation = !providerRoutingSuppressed() && providerConversation(id);
+  const nativeId = routedSessionId(id);
+  const fork = await withNativeSession(() => forkCodexCliSessionNative(nativeId));
+  if (conversation) saveProviderConversation({ ...conversation, id: fork, activeId: fork, nativeIds: [fork], title: conversation.title + ' (fork)' });
+  return fork;
+}
+export function archiveCodexCliSession(id: string): Promise<void> {
+  const nativeId = routedSessionId(id);
+  return withNativeSession(() => archiveCodexCliSessionNative(nativeId));
+}
+export function unarchiveCodexCliSession(id: string): Promise<void> {
+  const nativeId = routedSessionId(id);
+  return withNativeSession(() => unarchiveCodexCliSessionNative(nativeId));
+}
+export async function deleteCodexCliSession(id: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
+  const conversation = !providerRoutingSuppressed() && providerConversation(id);
+  if (!conversation) return deleteCodexCliSessionNative(id, options);
+  const summary = await readCodexCliSessionSummary(id, undefined, true);
+  if (!summary || summary.status !== 'idle' || options.archivedOnly && !summary.archived) throw new Error('The conversation must be idle and in the expected archive before deletion.');
+  for (const nativeId of conversation.nativeIds) {
+    const segment = await withNativeSession(() => readCodexCliSessionSummaryNative(nativeId, undefined, true));
+    if (segment && (segment.status !== 'idle' || segment.locked)) throw new Error('A native segment is still running or locked. Stop it before deleting this conversation.');
+  }
+  for (const nativeId of conversation.nativeIds) {
+    const segment = await withNativeSession(() => readCodexCliSessionSummaryNative(nativeId, undefined, 'display'));
+    if (segment) await withNativeSession(() => deleteCodexCliSessionNative(nativeId, { ...options, archivedOnly: false }));
+  }
+  saveProviderConversation({ ...conversation, deleted: true });
 }

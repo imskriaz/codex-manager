@@ -1,4 +1,5 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
+import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, validateApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
@@ -132,6 +133,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "teamSettingsRequest",
   "enableSystemStartup",
   "addAccount",
+  "saveApiAccount",
   "generateApiToken", "editApiToken", "copyApiToken", "listApiTokens", "clearApiProxyLogs", "saveApiProxyModelMapping", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "deleteProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
@@ -387,7 +389,29 @@ async function executeDashboardActionMessageCore(
     if (ACCOUNT_REQUIRED_ACTIONS.has(message.action) && !message.accountId) {
       throw new Error("This action requires an account. Refresh the dashboard and try again.");
     }
+    if (message.accountId && isApiAccountId(message.accountId)) {
+      const account = listApiAccounts().find(item => item.id === message.accountId);
+      if (!account) throw new Error('That API account no longer exists. Refresh and retry.');
+      let notice: DashboardNotice;
+      if (message.action === 'switch') {
+        selectApiAccount(account.id);
+        notice = { level: 'info', message: `Selected ${account.name} for new ${account.provider === 'openai' ? 'OpenAI' : 'Claude'} turns. Running turns keep their credentials.` };
+      } else if (message.action === 'remove') {
+        if (message.payload?.confirmed !== true) throw new Error('Confirm removal in the account list before retrying.');
+        removeApiAccount(account.id);
+        notice = { level: 'info', message: `Removed ${account.name}.` };
+      } else if (message.action === 'refresh') {
+        await validateApiAccount(account);
+        notice = { level: 'info', message: 'API key verified. API billing and limits are managed by the provider.' };
+      } else throw new Error('This API account supports selection, key verification and removal from the account list.');
+      ctx.schedulePublishState();
+      return { status: 'completed', payload: { notice } };
+    }
     if (message.accountId && isClaudeAccount(message.accountId)) {
+      if (message.action === 'switch') {
+        clearApiAccountSelection('anthropic'); ctx.schedulePublishState();
+        return { status: 'completed', payload: { notice: { level: 'info', message: 'Claude Code native credentials selected for new turns.' } } };
+      }
       if (message.action !== 'refresh') throw new Error('This login is managed by Claude Code. Choose a Claude model to use it.');
       const notice = await refreshClaudeDashboardAccount();
       ctx.schedulePublishState();
@@ -449,6 +473,12 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case 'saveApiAccount': {
+      if (!payload?.apiAccount) throw new Error('Enter the API account details.');
+      const saved = saveApiAccount(payload.apiAccount);
+      ctx.schedulePublishState();
+      return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Saved ${saved.name}. Select the account to use it; Refresh verifies its key.` } };
+    }
     case "teamSettingsRequest": {
       if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
       if (getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Modules settings first.");
@@ -595,9 +625,15 @@ async function runDashboardAction(
         }
       };
     }
-    case "importCurrent":
+    case "importCurrent": {
+      const apiAccounts = await importCurrentApiAccounts(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+      if (apiAccounts.length) {
+        ctx.schedulePublishState();
+        return { notice: { level: 'info', message: `Imported ${apiAccounts.length} API account${apiAccounts.length === 1 ? '' : 's'}: ${apiAccounts.map(account => account.name).join(', ')}. Select an account to use it; Refresh verifies the key.` } };
+      }
       if (ctx.hostKind === "browser") {
         const imported = await ctx.repo.importCurrentAuth();
+        clearApiAccountSelection('openai');
         const quotaResult = await refreshImportedAccountQuota(ctx.repo, imported.id);
         const reloadRequired = deferWindowReloadForAccount(imported.id);
         ctx.schedulePublishState();
@@ -620,6 +656,7 @@ async function runDashboardAction(
         const reloadRequired = deferWindowReloadForAccount(imported.id);
         return { reloadRequired, reloadAccountId: imported.id, email: imported.email };
       }
+    }
     case "inspectCurrentAuth": {
       const identity = await ctx.repo.inspectCurrentAuth();
       return {
@@ -949,6 +986,7 @@ async function runDashboardAction(
         }
         if (currentAccount.isActive) {
           await ctx.repo.lockAutoSwitchForManualSelection?.(currentAccount.id);
+          clearApiAccountSelection('openai');
           const held = isAutoSwitchLocked(currentAccount.id);
           const reloadNeeded = deferWindowReloadForAccount(currentAccount.id);
           const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true);
@@ -965,6 +1003,7 @@ async function runDashboardAction(
           forceTokenRefresh:
             currentAccount.tokenRefreshEnabled === true
         });
+        clearApiAccountSelection('openai');
         const held = isAutoSwitchLocked(currentAccount.id);
         clearTokenAutomationError(currentAccount.id);
         void handleCodexAppRestartPreference({ allowManualPrompt: false });
@@ -1156,7 +1195,7 @@ async function runDashboardAction(
       const session = await ensureCliSessionIsActive(payload.sessionId);
       if (payload.projectPath && session.projectPath && await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath)) throw new Error('This session belongs to a different project. Refresh before changing access.');
       const access = await setCodexSessionAccess(payload.sessionId, payload.sandboxMode, payload.autoApprove);
-      return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: payload.autoApprove === true ? 'Auto approval is active in Manager, including permission requests in the current turn. Access changes apply to the next turn.' : payload.autoApprove === false ? 'Auto approval is off for new permission requests. Responses already sent cannot be withdrawn.' : session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
+      return { cliSession: { ...session, access, sandboxMode: access.mode }, notice: { level: 'info' as const, message: session.provider === 'claude' ? session.status === 'running' ? 'Claude permission settings saved for the next turn. The active turn keeps its current permissions.' : 'Claude permission settings saved.' : payload.autoApprove === true ? 'Auto approval is active in Manager, including permission requests in the current turn. Access changes apply to the next turn.' : payload.autoApprove === false ? 'Auto approval is off for new permission requests. Responses already sent cannot be withdrawn.' : session.status === 'running' ? 'Access synced with Codex for the next turn. The active turn keeps its current permissions.' : 'Access synced with Codex.' } };
     }
     case "respondCodexServerRequest":
       if (!payload?.codexRequestId || !payload.codexDecision) throw new Error("Choose a Codex prompt response before continuing.");
@@ -2212,7 +2251,7 @@ async function handleSteerCodexCliSessionTurn(payload: DashboardActionPayload | 
   if (typeof payload.expectedTurnId !== "string" || !payload.expectedTurnId.trim() || payload.expectedTurnId.length > 256)
     throw new Error("The active turn changed. Refresh this session before sending a follow-up.");
   const session = await ensureCliSessionIsActive(payload.sessionId);
-  if (payload.model && session.model && payload.model !== session.model)
+  if (payload.model && payload.model !== session.model || payload.reasoningEffort && payload.reasoningEffort !== session.reasoningEffort)
     throw new Error('Stop the active turn before changing model or provider. Your follow-up was not sent.');
   if (payload.projectPath?.trim() && session.projectPath?.trim() &&
     await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath))
@@ -2274,7 +2313,7 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
     if (Date.now() >= deadline) { failures.push("Remaining sessions timed out"); break; }
     const controller = new AbortController();
     try {
-      if (vscode.env.appHost === "node") {
+      if (vscode.env.appHost === "node" || session.provider === 'claude') {
         // Standalone owns the private app-server; opening a VS Code webview
         // would fail even though the saved session can still be recovered.
         const result = await waitWithin(
@@ -2294,11 +2333,11 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
       failures.push(`${session.title}: ${toFailureMessage(error)}`);
     } finally { controller.abort(); }
   }
-  const standalone = vscode.env.appHost === "node";
+  const standalone = vscode.env.appHost === "node" || sessions.every(session => session.provider === 'claude');
     const cliSessionLive = sessionId ? getCodexSessionLiveState(sessionId) : undefined;
     const cliSession = sessionId ? await waitWithin(readCodexCliSessionSummary(sessionId), 500, 'Session details are still refreshing.').catch(() => undefined) : undefined;
     return { cliSession, cliSessionLive, notice: { level: failures.length ? "warning" as const : "info" as const,
-      message: `${!opened && !failures.length ? 'No unfinished work was found. No continuation was sent.' : `${opened} conversation${opened === 1 ? "" : "s"} ${standalone ? "recovered in the background" : "opened in VS Code"}.`}${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not recover; recovery was kept. ${failures[0]}` : ""}` } };
+      message: `${!opened && !failures.length ? 'No unfinished work was found. No continuation was sent.' : `${opened} conversation${opened === 1 ? "" : "s"} ${standalone ? "recovered in the background" : sessions.some(session => session.provider === 'claude') ? "recovered" : "opened in VS Code"}.`}${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not recover; recovery was kept. ${failures[0]}` : ""}` } };
 }
 
 async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload) {

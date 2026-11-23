@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0-pre.88",
+  "version": "3.0.0-pre.93",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -94,7 +94,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -364,7 +364,7 @@
             "postgres"
           ],
           "default": "sqlite",
-          "markdownDescription": "Office data store. SQLite is the default; PostgreSQL is used only when a valid connection is configured."
+          "markdownDescription": "Office user data store. PostgreSQL automatically migrates users, conversations, logs and workspace records once. Master data stays local; connection failures do not fall back to SQLite."
         },
         "codexManager.officePostgresUrl": {
           "type": "string",
@@ -402,6 +402,36 @@
           "maxLength": 16000,
           "scope": "machine",
           "markdownDescription": "Global guidance applied to every User Workspace conversation. Does not affect master workspace sessions."
+        },
+        "codexManager.officeDefaultSkills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "project-planning",
+            "document-drafting",
+            "spreadsheet-analysis",
+            "meeting-follow-up",
+            "research-briefs",
+            "operations-tracking"
+          ],
+          "scope": "machine",
+          "markdownDescription": "Corporate skills enabled by default for User Workspace conversations."
+        },
+        "codexManager.officeAutoPresentation": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Allow the assistant to show relevant permitted project panels in User Workspace."
+        },
+        "codexManager.officeSessionRetentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 365,
+          "scope": "machine",
+          "markdownDescription": "Number of days to retain deleted User Workspace conversations and session files for support before permanent cleanup."
         },
         "codexManager.officeDefaultModel": {
           "type": "string",
@@ -444,41 +474,24 @@
           "default": true,
           "markdownDescription": "Allow User Workspace users to choose Auto, Regular, Professional or Expert. Turn off to lock Auto."
         },
-        "codexManager.officeDefaultSkills": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "project-planning",
-            "document-drafting",
-            "spreadsheet-analysis",
-            "meeting-follow-up",
-            "research-briefs",
-            "operations-tracking"
-          ],
-          "scope": "machine",
-          "markdownDescription": "Corporate skills enabled by default for User Workspace conversations."
-        },
-        "codexManager.officeAutoPresentation": {
-          "type": "boolean",
-          "default": true,
-          "scope": "machine",
-          "markdownDescription": "Allow the assistant to show relevant permitted project panels in User Workspace."
-        },
-        "codexManager.officeSessionRetentionDays": {
-          "type": "number",
-          "default": 30,
-          "minimum": 1,
-          "maximum": 365,
-          "scope": "machine",
-          "markdownDescription": "Number of days to retain deleted User Workspace conversations and session files for support before permanent cleanup."
-        },
         "codexManager.officePresentation": {
           "type": "object",
           "default": {},
           "scope": "machine",
           "markdownDescription": "User Workspace assistant identity, welcome text, mode labels and contextual card catalog. Edit from Master workspace settings."
+        },
+        "codexManager.officeServices": {
+          "type": "object",
+          "default": {
+            "rendererUrl": "",
+            "rendererToken": "",
+            "runtimeUrl": "",
+            "runtimeToken": "",
+            "searchToken": "",
+            "searchDomains": []
+          },
+          "scope": "machine",
+          "markdownDescription": "Optional User Workspace renderer, isolated execution service and web-search credentials. Configure in master workspace settings. Keys stay on this host."
         }
       }
     },
@@ -580,18 +593,18 @@
     "@xterm/headless": "6.0.0",
     "docx": "9.16.0",
     "exceljs": "4.4.0",
+    "jszip": "3.10.1",
     "mammoth": "^1.12.2",
     "node-pty": "1.1.0",
     "pdf-lib": "1.17.1",
     "pdf-parse": "2.4.5",
     "pg": "8.23.1",
     "playwright-core": "1.63.0",
+    "pptxgenjs": "4.0.1",
     "regenerator-runtime": "0.14.1",
     "undici": "6.29.1",
     "web-push": "^3.6.7",
-    "ws": "^8.18.3",
-    "jszip": "3.10.1",
-    "pptxgenjs": "4.0.1"
+    "ws": "^8.18.3"
   },
   "overrides": {
     "qs": "^6.16.1",

@@ -36,3 +36,20 @@ describe('Claude native protocol', () => {
     expect(claudeUsage({ input_tokens: 1, output_tokens: 1 }, { main: { inputTokens: 10, cacheReadInputTokens: 20, outputTokens: 5, contextWindow: 200000 }, agent: { inputTokens: 3, cacheCreationInputTokens: 4, outputTokens: 2 } }, 50)).toEqual({ input: 37, cachedInput: 20, output: 7, total: 44, contextWindow: 200000, contextTokens: 50 });
   });
 });
+
+import { isCliSubmissionEcho } from '../webview-src/dashboard/cliSessionComposerState';
+it('image replay must acknowledge the original queued message', () => {
+  const draft = {text:'Inspect this', attachments:[{id:'img',name:'tiny.png',kind:'image' as const,mimeType:'image/png',size:68,data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/VxoAAAAASUVORK5CYII='}]};
+  const replay = {...claudeUserMessage('session',draft.text,draft.attachments),uuid:'user'};
+  expect(claudeMessage(replay).some(message => isCliSubmissionEcho(message,draft,new Set()))).toBe(true);
+});
+it('long native user replay must retain queue acknowledgement content', () => {
+  const draft={text:'a'.repeat(13000),attachments:[]};
+  const replay={...claudeUserMessage('session',draft.text),uuid:'user'};
+  expect(claudeMessage(replay).some(message=>isCliSubmissionEcho(message,draft,new Set()))).toBe(true);
+});
+it('text attachment replay must acknowledge the original queued message',()=>{
+ const draft={text:'Read this',attachments:[{id:'txt',name:'note.txt',kind:'text' as const,mimeType:'text/plain',size:4,data:'test'}]};
+ const replay={...claudeUserMessage('session',draft.text,draft.attachments),uuid:'user'};
+ expect(claudeMessage(replay).some(message=>isCliSubmissionEcho(message,draft,new Set()))).toBe(true);
+});

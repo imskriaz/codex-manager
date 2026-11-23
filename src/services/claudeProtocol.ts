@@ -1,5 +1,5 @@
 import type { DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardCodexSessionLiveState } from '../domain/dashboard/types';
-import { prepareChatInput, type ChatAttachment } from '../domain/chatAttachments';
+import { prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from '../domain/chatAttachments';
 import type { SDKUserMessage, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 
 export const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -8,10 +8,10 @@ export function claudePermissionMode(mode: string | undefined, autoApprove: bool
   return mode === 'read-only' ? 'plan' : mode === 'danger-full-access' && autoApprove ? 'bypassPermissions' : mode === 'workspace-write' && autoApprove ? 'acceptEdits' : 'default';
 }
 
-export function claudeUserMessage(id: string, prompt: string, attachments?: ChatAttachment[]): SDKUserMessage {
+export function claudeUserMessage(id: string, prompt: string, attachments?: ChatAttachment[], materializedText?: string): SDKUserMessage {
   const prepared = prepareChatInput(prompt, attachments);
   if (!prepared.text?.trim()) throw new Error('Write a message before sending it to Claude.');
-  const content: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } }> = [{ type: 'text', text: prepared.text }];
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } }> = [{ type: 'text', text: materializedText ?? prepared.text }];
   for (const image of prepared.attachments?.filter(file => file.kind === 'image') ?? []) {
     const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)$/.exec(image.data);
     if (!match) throw new Error('Claude requires PNG, JPEG, GIF or WebP image attachments.');
@@ -26,9 +26,9 @@ export function claudeMessage(raw: unknown): DashboardCliSessionMessage[] {
   const id = text(message['id'] ?? wire['uuid']);
   const parts = typeof message['content'] === 'string' ? [{ type: 'text', text: message['content'] }] : message['content'];
   if (!id || !Array.isArray(parts)) return [];
-  return parts.flatMap((part, index): DashboardCliSessionMessage[] => {
+  const messages = parts.flatMap((part, index): DashboardCliSessionMessage[] => {
     const block = object(part), type = block['type'];
-    if (type === 'text') return [{ id: `${id}-${index}`, role, kind: 'message', text: text(block['text']) }];
+    if (type === 'text') return [{ id: `${id}-${index}`, role, kind: 'message', text: typeof block['text'] === 'string' ? block['text'].slice(0, role === 'user' ? 64_000 : 12_000) : '' }];
     if (type === 'thinking') return [{ id: `${id}-${index}`, kind: 'reasoning', text: text(block['thinking']) }];
     if (type === 'tool_use') return [{ id: `tool-${text(block['id'])}`, kind: 'tool-call', text: '', title: text(block['name']), arguments: JSON.stringify(block['input'] ?? {}).slice(0, 12_000), status: 'inProgress' }];
     if (type === 'tool_result') return [{ id: `tool-${text(block['tool_use_id'])}`, kind: 'tool-call', text: '', result: (typeof block['content'] === 'string' ? block['content'] : JSON.stringify(block['content'] ?? '')).slice(0, 12_000), status: block['is_error'] ? 'failed' : 'completed' }];
@@ -38,6 +38,14 @@ export function claudeMessage(raw: unknown): DashboardCliSessionMessage[] {
     }
     return [];
   });
+  if (role !== 'user') return messages;
+  const content = messages.filter(item => item.role === 'user');
+  if (!content.length) return messages;
+  const fullText = content.map(item => item.text).filter(Boolean).join('\n\n');
+  const textAttachments = readChatTextAttachments(fullText), images = content.flatMap(item => item.images ?? []);
+  return [{ id: `${id}-0`, role, kind: 'message', text: withoutChatTextAttachments(fullText),
+    ...(textAttachments.length ? { textAttachments } : {}), ...(images.length ? { images, imageCount: images.length } : {}) },
+    ...messages.filter(item => item.role !== 'user')];
 }
 
 export function claudeQuota(previous: DashboardCliSessionSummary['nativeQuota'], raw: unknown): DashboardCliSessionSummary['nativeQuota'] {

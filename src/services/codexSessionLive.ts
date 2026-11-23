@@ -1,3 +1,4 @@
+import { routedSessionId, presentProviderLive, providerRoutingSuppressed } from './sessionProviders';
 import { randomUUID } from "node:crypto";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { CodexSessionLiveReducer, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
@@ -15,7 +16,7 @@ const activeSlots = new Set<string>();
 const slotReleased = new Set<() => void>();
 const streams = new Map<string, { reducer: CodexSessionLiveReducer; timer?: NodeJS.Timeout; finishedAt?: number }>();
 
-export function getCodexSessionLiveState(sessionId: string): DashboardCodexSessionLiveState | undefined {
+function getCodexSessionLiveStateNative(sessionId: string): DashboardCodexSessionLiveState | undefined {
   prune();
   const deletionStore = getSqliteStateStore();
   if (deletionStore && isConfirmedSessionDeleted(deletionStore,getCodexHome(),sessionId)) return undefined;
@@ -34,7 +35,7 @@ export function listCodexSessionLiveStates(): DashboardCodexSessionLiveState[] {
     const current = stream.reducer.snapshot();
     if (isNewerCodexSessionLiveState(current,states.get(id))) states.set(id,current);
   }
-  return [...states.values()].filter(state => state.deviceId || !store || !isConfirmedSessionDeleted(store,getCodexHome(),state.sessionId));
+  return [...states.values()].filter(state => state.deviceId || !store || !isConfirmedSessionDeleted(store,getCodexHome(),state.sessionId)).flatMap(state => presentProviderLive(state) ?? []);
 }
 
 export function onDidReleaseCodexSessionLiveSlot(listener: () => void): () => void {
@@ -137,4 +138,9 @@ function prune(): void {
     if (stream.timer) clearTimeout(stream.timer);
     streams.delete(id);
   }
+}
+
+export function getCodexSessionLiveState(id: string): DashboardCodexSessionLiveState | undefined {
+  const state = getCodexSessionLiveStateNative(routedSessionId(id));
+  return state && !providerRoutingSuppressed() ? presentProviderLive(state) : state;
 }

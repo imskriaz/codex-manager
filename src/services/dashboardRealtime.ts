@@ -1,3 +1,4 @@
+import { presentProviderLive, presentProviderRequest } from './sessionProviders';
 import type { DashboardHostMessage } from "../domain/dashboard/types";
 import { randomUUID } from "node:crypto";
 import { emptyWorkspaceTerminalActivity, reduceWorkspaceTerminalActivity } from "../domain/workspaceTerminalActivity";
@@ -24,6 +25,13 @@ export function subscribeDashboardRealtime(listener: DashboardRealtimeListener):
 }
 
 export function publishDashboardRealtime(message: DashboardHostMessage): void {
+  if (message.type === 'dashboard:codex-session-live') {
+    const state = presentProviderLive(message.state);
+    if (!state) return;
+    message = { ...message, state };
+  }
+  if (message.type === 'dashboard:codex-request') message = { ...message, request: presentProviderRequest(message.request) };
+  if (message.type === 'dashboard:codex-requests') message = { ...message, requests: message.requests.map(presentProviderRequest) };
   if (message.type === "dashboard:terminal-output") terminalActivity = reduceWorkspaceTerminalActivity(terminalActivity, { output: message.output });
   if (message.type === "dashboard:terminal-complete") terminalActivity = reduceWorkspaceTerminalActivity(terminalActivity, { result: message.result });
   for (const listener of listeners) {

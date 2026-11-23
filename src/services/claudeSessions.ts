@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'crypto';
+import { hasApiAccountRuntime, withApiAccountRuntime } from './apiAccounts';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Options, Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -14,10 +15,12 @@ import { runCrossWindowExclusive } from '../utils/crossWindowOperations';
 import { waitWithin } from '../utils/concurrency';
 import type { ChatAttachment } from '../domain/chatAttachments';
 import { publishDashboardRealtime } from './dashboardRealtime';
+import { materializeChatAttachments } from './codexChatAttachments';
+import { prepareChatInput } from '../domain/chatAttachments';
 
 type SavedClaudeSession = { summary: DashboardCliSessionSummary; firstPrompt: string; ownerPid?: number; failure?: string; recentMessages?: DashboardCliSessionMessage[] };
 export class ClaudeTurnCancelledError extends Error { constructor() { super('Claude turn was cancelled.'); } }
-type Active = { query: Query; controller: AbortController; turnId: string; stopped: boolean; messages: Map<string, DashboardCliSessionMessage>; acknowledgements: Map<string, { resolve: () => void; reject: (error: Error) => void }>; notify: (method: string, params: unknown) => void; push: (value: SDKUserMessage) => void };
+type Active = { query: Query; controller: AbortController; turnId: string; stopped: boolean; pendingInputs: Set<string>; stopOutcome?: Promise<boolean>; messages: Map<string, DashboardCliSessionMessage>; acknowledgements: Map<string, { resolve: () => void; reject: (error: Error) => void }>; notify: (method: string, params: unknown) => void; push: (value: SDKUserMessage) => void };
 const active = new Map<string, Active>();
 const nativeText = (value: unknown): string => typeof value === 'string' ? value : '';
 const namespace = () => 'claude-sessions:' + createHash('sha256').update(claudeConfigHome()).digest('hex');
@@ -61,7 +64,7 @@ export async function readClaudeHistory(id: string, before?: string): Promise<{ 
   return { messages: [...messages.values()], ...(start ? { olderThan: String(start) } : {}), warnings: [] };
 }
 
-export type ClaudeTurnOptions = { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string; signal?: AbortSignal; onStarted?: () => void };
+export type ClaudeTurnOptions = { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string; signal?: AbortSignal; onCreated?: (id: string) => void; onStarted?: () => void };
 export async function startClaudeSession(options: ClaudeTurnOptions): Promise<string> {
   const id = randomUUID();
   claudeUserMessage(id, options.text, options.attachments);
@@ -70,6 +73,8 @@ export async function startClaudeSession(options: ClaudeTurnOptions): Promise<st
   const access: CodexSessionAccess = { mode: options.sandboxMode ?? 'danger-full-access', approvalPolicy: options.autoApprove === true ? 'never' : 'on-request', updatedAt: Date.now() };
   write(id, { firstPrompt: options.text, summary: { id, provider: 'claude', title: options.text.trim().slice(0, 160) || 'New Claude chat',
     model: options.model, reasoningEffort: options.reasoningEffort, projectPath: cwd, status: 'idle', archived: false, access, sandboxMode: access.mode, goal: null, updatedAt: new Date().toISOString() } });
+  try { options.onCreated?.(id); }
+  catch (error) { storage().set(namespace(), id, undefined); throw error; }
   return new Promise((resolve, reject) => {
     let accepted = false;
     void runTurn(id, options, false, () => { accepted = true; resolve(id); }).catch(error => { if (!accepted) reject(error instanceof Error ? error : new Error('Claude could not start.')); });
@@ -82,11 +87,13 @@ export async function sendClaudeMessage(id: string, options: ClaudeTurnOptions):
   if (options.model && !isClaudeModel(options.model)) throw new Error('This is a Claude conversation. Start a new conversation to use an OpenAI model.');
   if (active.has(id) && options.model && options.model !== entry.summary.model) throw new Error('Stop the active Claude turn before changing model. Your message was not sent.');
   if (options.projectPath && await fs.realpath(options.projectPath) !== await fs.realpath(entry.summary.projectPath!)) throw new Error('This Claude session belongs to another project. Your message was kept.');
+  if (active.has(id) && options.reasoningEffort && options.reasoningEffort !== entry.summary.reasoningEffort) throw new Error('The selected reasoning level will apply to the next turn. Your follow-up was not sent.');
   if (active.has(id)) { await steerClaudeSession(id, options, active.get(id)!.turnId); options.onStarted?.(); return 'steered'; }
   await runTurn(id, options, true, options.onStarted ?? (() => undefined));
 }
 
 async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, accepted: () => void): Promise<void> {
+  if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => runTurn(id, options, resume, accepted));
   return runCrossWindowExclusive(leaseKey(id), 'Claude session', async leaseSignal => {
     let entry = requireSession(id);
     if (entry.summary.archived) throw new Error('Restore this Claude session before sending.');
@@ -102,8 +109,11 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
     signal.throwIfAborted();
     const model = options.model ?? entry.summary.model;
     if (!model || !isClaudeModel(model)) throw new Error('Choose a discovered Claude model.');
-    if (options.reasoningEffort && !['low','medium','high','xhigh','max'].includes(options.reasoningEffort)) throw new Error('This reasoning level is not supported by Claude.');
-    const input = claudeUserMessage(id, options.text, options.attachments);
+    const effort = options.reasoningEffort ?? (model === entry.summary.model ? entry.summary.reasoningEffort : undefined);
+    if (effort && !['low','medium','high','xhigh','max'].includes(effort)) throw new Error('This reasoning level is not supported by Claude.');
+    const prepared = prepareChatInput(options.text, options.attachments);
+    const completeText = await materializeChatAttachments(prepared.text, prepared.attachments, cwd, signal, { home: path.resolve(claudeConfigHome()), sessionId: id });
+    const input = claudeUserMessage(id, options.text, options.attachments, completeText);
     input.uuid = randomUUID();
     const queue: SDKUserMessage[] = []; let wake: (() => void) | undefined;
     async function* prompts(): AsyncGenerator<SDKUserMessage> {
@@ -118,8 +128,8 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
       ...(resume ? { resume: id } : { sessionId: id }), env: claudeEnvironment(),
       settingSources: ['user','project','local'], systemPrompt: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true, permissionMode: nativeMode, allowDangerouslySkipPermissions: nativeMode === 'bypassPermissions',
-      ...(options.reasoningEffort ? { effort: options.reasoningEffort as Options['effort'] } : {}),
-      canUseTool: claudeToolApproval(id, cwd, () => requireSession(id).summary.access?.mode === 'read-only'),
+      ...(effort ? { effort: effort as Options['effort'] } : {}),
+      canUseTool: claudeToolApproval(id, cwd, () => access.mode === 'read-only'),
       onElicitation: (request, context) => claudeElicitation(id, request, context.signal),
       extraArgs: { 'replay-user-messages': null },
       abortController: controller,
@@ -131,25 +141,26 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
     const blocks = new Map<number, DashboardCliSessionMessage>();
     try {
       connection = sdk.query({ prompt: prompts(), options: queryOptions });
-      const running: Active = { query: connection, controller, turnId, stopped: false, messages: new Map(), acknowledgements: new Map(), notify: emit,
-        push: value => { queue.push(value); wake?.(); wake = undefined; } };
+      const running: Active = { query: connection, controller, turnId, stopped: false, pendingInputs: new Set(), messages: new Map(), acknowledgements: new Map(), notify: emit,
+        push: value => { if (value.uuid) running.pendingInputs.add(value.uuid); queue.push(value); wake?.(); wake = undefined; } };
       active.set(id, running);
       live.attach(id, { onNotification: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, onDisconnect: () => () => undefined }, raw => {
         const turns = object(object(raw)['thread'])['turns'] as Array<{ items?: Array<{ message?: DashboardCliSessionMessage }> }> | undefined;
         return turns?.[0]?.items?.flatMap(item => item.message ?? []) ?? [];
       }, () => running.stopped);
       entry = { ...entry, failure: undefined, ownerPid: process.pid, summary: { ...entry.summary, access, sandboxMode: access.mode, model,
-        reasoningEffort: options.reasoningEffort ?? entry.summary.reasoningEffort, status: 'running', interrupted: false, stopped: false, updatedAt: new Date().toISOString() } };
+        reasoningEffort: effort, status: 'running', interrupted: false, stopped: false, updatedAt: new Date().toISOString() } };
       write(id, entry);
       const info = await waitWithin(connection.initializationResult(), 12_000, 'Claude did not initialize. The outcome is unconfirmed; refresh before retrying.', signal);
       accountKey = claudeAccountKey(info.account);
       if (!accountKey || entry.summary.nativeQuota?.accountKey !== accountKey) entry.summary.nativeQuota = undefined;
       const available = createClaudeModelOptions(info.models).find(option => option.id === model);
       if (!available) throw new Error('This Claude model is no longer available. Refresh the model list before sending.');
-      if (options.reasoningEffort && available && !available.reasoningEfforts.includes(options.reasoningEffort)) throw new Error('The selected reasoning level is not supported by this Claude model.');
+      if (effort && !available.reasoningEfforts.includes(effort)) throw new Error('The selected reasoning level is not supported by this Claude model.');
       running.push(input);
       timer = setTimeout(() => controller.abort(new Error('Claude did not confirm the message. Its outcome is unconfirmed; refresh history before retrying.')), 15_000);
       const publish = (message: DashboardCliSessionMessage) => {
+        if (message.images) message = { ...message, imageCount: message.imageCount ?? message.images.length, images: message.images.filter(image => image.src.length <= 12_000) };
         const previous = running.messages.get(message.id);
         const merged = { ...previous, ...message, turnId };
         running.messages.set(message.id, merged);
@@ -164,7 +175,7 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
           live.started(turnId); accepted();
           timer = setTimeout(() => controller.abort(new Error('The Claude connection did not complete within 30 minutes. Its outcome is unconfirmed; refresh before retrying.')), 30 * 60_000);
         }
-        if (raw.type === 'user' && raw.uuid) { running.acknowledgements.get(raw.uuid)?.resolve(); running.acknowledgements.delete(raw.uuid); }
+        if (raw.type === 'user' && raw.uuid) { running.pendingInputs.delete(raw.uuid); running.acknowledgements.get(raw.uuid)?.resolve(); running.acknowledgements.delete(raw.uuid); }
         if (raw.type === 'assistant' || raw.type === 'user') for (const message of claudeMessage(raw)) publish(message);
         if (raw.type === 'stream_event') {
           const event = object(raw.event);
@@ -190,25 +201,26 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
         }
         if (raw.type === 'system' && raw.subtype === 'session_writes_lost') throw new Error('Claude could not save the conversation. Refresh history before resending or resuming.');
         if (raw.type === 'result') {
-          resultReceived = true;
-          stopped = running.stopped;
+          if (running.stopOutcome) await running.stopOutcome;
+          stopped = running.stopped && raw.is_error;
+          resultReceived = stopped || (raw.queued_turn_count ?? 0) === 0 && running.pendingInputs.size === 0;
           entry.summary.tokenUsage = claudeUsage(raw.usage, raw.modelUsage, contextTokens);
           const usage = entry.summary.tokenUsage;
           emit('thread/tokenUsage/updated', { tokenUsage: { total: { totalTokens: usage?.total, inputTokens: usage?.input, outputTokens: usage?.output, cachedInputTokens: usage?.cachedInput }, last: { totalTokens: contextTokens }, modelContextWindow: usage?.contextWindow } });
           if (raw.is_error && !stopped) throw new Error('errors' in raw ? raw.errors.join('\n') : raw.result || 'Claude failed to complete the turn.');
-          if ((raw.queued_turn_count ?? 0) > 0 && !stopped) continue;
+          if (!resultReceived) continue;
           break;
         }
       }
       if (!inputAccepted) throw new Error('Claude ended before confirming the message. Refresh history before retrying.');
       if (!resultReceived) throw new Error(`Claude disconnected before completion was confirmed.${stderr ? ' ' + stderr : ''}`);
     } catch (error) {
-      stopped = active.get(id)?.stopped === true;
       const message = error instanceof Error ? error.message : String(error);
       entry.failure = stopped ? undefined : message;
       entry.summary.interrupted = true;
       if (!stopped) throw error;
     } finally {
+      const failureStatus = signal.aborted ? 'disconnected' as const : 'failed' as const;
       clearTimeout(timer); signal.removeEventListener('abort', abort);
       options.signal?.removeEventListener('abort', abortStartup);
       const running = active.get(id);
@@ -221,7 +233,7 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
       entry.summary = { ...entry.summary, access: requireSession(id).summary.access, status: 'idle', canStop: false, stopped, interrupted: stopped || !!entry.failure, updatedAt: new Date().toISOString() };
       try {
         write(id, entry);
-        live.finish(stopped ? 'cancelled' : entry.failure ? signal.aborted ? 'disconnected' : 'failed' : 'completed', entry.failure);
+        live.finish(stopped ? 'cancelled' : entry.failure ? failureStatus : 'completed', entry.failure);
       } finally { live.dispose(); }
       publishDashboardRealtime({ type: 'dashboard:notice', level: stopped ? 'warning' : entry.failure ? 'error' : 'info', message: stopped ? 'Claude turn stopped.' : entry.failure ? `Claude failed: ${entry.failure}` : 'Claude completed the turn.' });
     }
@@ -232,8 +244,11 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
 export async function steerClaudeSession(id: string, options: Pick<ClaudeTurnOptions, 'text' | 'attachments'>, expectedTurnId: string): Promise<void> {
   id = id.toLowerCase();
   const running = active.get(id);
-  if (!running || running.stopped || running.turnId !== expectedTurnId) throw new Error('The Claude turn changed. Your follow-up was not sent.');
-  const input = claudeUserMessage(id, options.text, options.attachments); input.uuid = randomUUID();
+  if (!running || running.stopped || running.stopOutcome || running.turnId !== expectedTurnId) throw new Error('The Claude turn changed. Your follow-up was not sent.');
+  const prepared = prepareChatInput(options.text, options.attachments);
+  const completeText = await materializeChatAttachments(prepared.text, prepared.attachments, requireSession(id).summary.projectPath!, running.controller.signal, { home: path.resolve(claudeConfigHome()), sessionId: id });
+  if (active.get(id) !== running || running.stopOutcome || running.stopped) throw new Error('The Claude turn changed. Your follow-up was not sent.');
+  const input = claudeUserMessage(id, options.text, options.attachments, completeText); input.uuid = randomUUID();
   const acknowledged = new Promise<void>((resolve, reject) => running.acknowledgements.set(input.uuid!, { resolve, reject }));
   running.push(input);
   try { await waitWithin(acknowledged, 15_000, 'Claude has not confirmed the follow-up. It may still be queued; refresh history before retrying.'); }
@@ -244,19 +259,20 @@ export async function stopClaudeSession(id: string, expectedTurnId?: string): Pr
   id = id.toLowerCase();
   const running = active.get(id);
   if (!running || expectedTurnId && expectedTurnId !== running.turnId) throw new Error('The Claude turn owner is unavailable or changed. Stop was not confirmed.');
-  running.stopped = true;
-  await waitWithin(running.query.interrupt(), 5_000, 'Claude did not confirm Stop. Refresh before retrying.');
-  return true;
+  if (running.stopOutcome) throw new Error('Stop is already awaiting confirmation. Refresh before retrying.');
+  const interruption = waitWithin(Promise.resolve().then(() => running.query.interrupt()), 5_000, 'Claude did not confirm Stop. Refresh before retrying.');
+  running.stopOutcome = interruption.then(() => { running.stopped = true; return true; }, () => false);
+  try { await interruption; return true; }
+  finally { if (!running.stopped) running.stopOutcome = undefined; }
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Keep validation failures asynchronous for existing callers.
 export async function setClaudeAccess(id: string, mode?: DashboardCliSandboxMode, autoApprove?: boolean): Promise<CodexSessionAccess> {
   id = id.toLowerCase();
   if (mode && !['read-only','workspace-write','danger-full-access'].includes(mode) || autoApprove !== undefined && typeof autoApprove !== 'boolean') throw new Error('Choose a valid Claude permission setting.');
   const entry = requireSession(id), summary = readClaudeSession(id)!;
   if (summary.locked || summary.archived) throw new Error('Claude access cannot change while another process owns this session or it is archived.');
   const access: CodexSessionAccess = { ...entry.summary.access, ...(mode ? { mode } : {}), ...(autoApprove !== undefined ? { approvalPolicy: autoApprove ? 'never' : 'on-request' } : {}), updatedAt: Date.now() };
-  const running = active.get(id);
-  if (running) await waitWithin(running.query.setPermissionMode(claudePermissionMode(access.mode, access.approvalPolicy === 'never')), 5_000, 'Claude permission change was not confirmed. Refresh before retrying.');
   entry.summary = { ...entry.summary, access, sandboxMode: access.mode }; write(id, entry); return access;
 }
 
@@ -286,3 +302,16 @@ export async function mutateClaudeSession(id: string, operation: 'rename' | 'arc
 export function claudeInitialPrompt(id: string): string { return requireSession(id).firstPrompt; }
 export function rejectClaudeAutomation(id: string, feature: string): void { if (isClaudeSession(id)) throw new Error(`${feature} is a Codex-specific control. Use Claude's native tools and manual Resume for this conversation.`); }
 export function claudeLive(id: string) { return getCodexSessionLiveState(id); }
+
+export function withIdleClaudeSession<T>(id: string, work: () => Promise<T>): Promise<T> {
+  return runCrossWindowExclusive(leaseKey(id), 'Switch conversation provider', async () => {
+    const summary = readClaudeSession(id);
+    if (!summary || summary.status !== 'idle' || summary.locked || summary.archived) throw new Error('The conversation must be idle and available before switching provider.');
+    return work();
+  });
+}
+
+export async function readClaudeNativeContext(id: string): Promise<unknown[]> {
+  const entry = requireSession(id), sdk = await claudeSdk();
+  return waitWithin(sdk.getSessionMessages(id, { dir: entry.summary.projectPath }), 5_000, 'The native Claude history could not be read. The provider was kept.');
+}

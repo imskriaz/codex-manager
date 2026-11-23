@@ -7,6 +7,7 @@ import type * as SDK from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeModelOptions } from '../domain/dashboard/claudeModels';
 import type { DashboardCliModelOption } from '../domain/dashboard/types';
 import { waitWithin } from '../utils/concurrency';
+import { apiAccountEnvironment, apiAccountIdentity } from './apiAccounts';
 
 // The supported Node 22.13+ host can load the native SDK's synchronous ESM graph.
 const nativeRequire = createRequire(__filename);
@@ -42,11 +43,11 @@ export async function resolveClaudeCliExecutable(): Promise<string | undefined> 
 export function claudeEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
   delete env['CLAUDECODE'];
-  return env;
+  return apiAccountEnvironment('anthropic', env);
 }
 
 type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'subscriptionType' | 'apiProvider'> };
-const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH']]);
+const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], apiAccountIdentity('anthropic')]);
 let cached: ClaudeConnection & { key: string; at: number } | undefined;
 let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
 export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.key === connectionKey() ? cached : undefined; }

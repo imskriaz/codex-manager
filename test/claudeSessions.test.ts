@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -109,7 +109,8 @@ describe('Claude native sessions',()=>{
   });
   it('applies native access settings and rejects invalid reasoning before prompt delivery',async()=>{
     const id=await start();await sessions.setClaudeAccess(id,'read-only',false);
-    expect(await nativeOptions.canUseTool('Bash',{command:'write'},{signal:new AbortController().signal})).toMatchObject({behavior:'deny'});
+    expect(mocks.query.mock.results[0]!.value.setPermissionMode).not.toHaveBeenCalled();
+    expect(nativeOptions.permissionMode).toBe('default');
     finish();await until(()=>sessions.readClaudeSession(id)?.status==='idle');
     const before=received.length;
     await expect(sessions.sendClaudeMessage(id,{text:'Unsafe effort',model:'claude-code/opus',reasoningEffort:'xhigh'})).rejects.toThrow('not supported');
@@ -124,4 +125,39 @@ describe('Claude native sessions',()=>{
     expect(mocks[method]).toHaveBeenCalled();
     if(operation==='delete')expect(sessions.isClaudeSession(id)).toBe(false);
   });
+});
+
+it('queued-turn disconnection must not report completed',async()=>{
+  mocks.query.mockImplementation(({prompt,options})=>({
+    initializationResult:async()=>({models:[{value:'opus',displayName:'Opus',supportedEffortLevels:['high']}]}),
+    close:vi.fn(),
+    async *[Symbol.asyncIterator](){const user=await prompt[Symbol.asyncIterator]().next();yield {...user.value,session_id:options.sessionId};yield {type:'result',session_id:options.sessionId,is_error:false,usage:{},modelUsage:{},queued_turn_count:1};}
+  }));
+  const id=await start();await until(()=>sessions.readClaudeSession(id)?.status==='idle');
+  expect(getCodexSessionLiveState(id)?.status).toBe('failed');
+});
+it('failed Stop must not mark a normally completed turn cancelled',async()=>{
+  const id=await start();
+  mocks.query.mock.results[0]!.value.interrupt.mockRejectedValue(new Error('interrupt rejected'));
+  await expect(sessions.stopClaudeSession(id)).rejects.toThrow('interrupt rejected');
+  finish();await until(()=>sessions.readClaudeSession(id)?.status==='idle');
+  expect(getCodexSessionLiveState(id)?.status).toBe('completed');
+});
+it('permission changes during a turn should wait until the next turn',async()=>{
+  const id=await start();await sessions.setClaudeAccess(id,'read-only',false);
+  expect(mocks.query.mock.results[0]!.value.setPermissionMode).not.toHaveBeenCalled();
+});
+
+it('materializes binary and large text uploads before native delivery and preserves the original echo', async () => {
+  const large = 'complete-text-'.repeat(3000);
+  const files = [{ id: 'pdf', name: 'doc.pdf', kind: 'file' as const, mimeType: 'application/pdf', size: 4, data: 'data:application/pdf;base64,JVBERg==' },
+    { id: 'txt', name: 'large.txt', kind: 'text' as const, mimeType: 'text/plain', size: large.length, data: large }];
+  const id = await sessions.startClaudeSession({ text: 'Read both', attachments: files, projectPath: root, model: 'claude-code/opus' });
+  const prompt = (received[0] as any).message.content[0].text as string;
+  const paths = [...prompt.matchAll(/"(?:doc.pdf|large.txt)": ("[^\n]+")/g)].map(match => JSON.parse(match[1]!));
+  expect(paths).toHaveLength(2);
+  expect(await readFile(paths[0], 'utf8')).toBe('%PDF');
+  expect(await readFile(paths[1], 'utf8')).toBe(large);
+  expect(getCodexSessionLiveState(id)?.messages).toContainEqual(expect.objectContaining({ role: 'user', text: 'Read both', textAttachments: expect.arrayContaining([expect.objectContaining({ name: 'doc.pdf' })]) }));
+  finish();
 });

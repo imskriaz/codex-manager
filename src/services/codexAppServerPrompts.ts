@@ -1,3 +1,4 @@
+import { presentProviderRequest } from './sessionProviders';
 import { randomUUID } from "crypto";
 import type { DashboardCodexServerRequest } from "../domain/dashboard/types";
 import { publishDashboardRealtime } from "./dashboardRealtime";
@@ -31,7 +32,7 @@ export function listPendingCodexAppServerPrompts(): DashboardCodexServerRequest[
     try { pending.rpc?.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
     finishPrompt(id, pending);
   }
-  return [...pendingPrompts.values()].map((pending) => pending.request);
+  return [...pendingPrompts.values()].map((pending) => presentProviderRequest(pending.request));
 }
 
 /** Route app-server approval and question requests through the dashboard.

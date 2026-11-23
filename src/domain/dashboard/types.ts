@@ -125,7 +125,7 @@ export interface DashboardSettings {
   alwaysActiveStartWithSystem?: boolean;
   /** Optional public HTTPS origin used when the dashboard is exposed by Cloudflared. */
   cloudflaredDomain?: string;
-  /** Root folder for per-user office workspaces. SQLite remains the fallback store. */
+  /** Root folder for per-user office workspaces. Master data stays local. */
   officeWorkspaceRoot?: string;
   teamWorkspaceEnabled?: boolean;
   officeDatabaseProvider?: "sqlite" | "postgres";
@@ -432,7 +432,8 @@ export interface DashboardAccountViewModel {
   updatedAt?: number;
   displayName: string;
   email: string;
-  authMode?: "chatgpt" | "oauth";
+  authMode?: "chatgpt" | "oauth" | "apiKey";
+  apiBaseUrl?: string;
   accountName?: string;
   authProviderLabel: string;
   accountStructureLabel: string;
@@ -558,6 +559,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "saveApiAccount"
   | "enableSystemStartup"
   | "workspaceBrowser"
   | "workspacePanel"
@@ -701,6 +703,7 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  apiAccount?: import('../apiAccounts').ApiAccountInput;
   coordinationRequest?: import('../sessionCoordination').SessionCoordinationRequest;
   masterUsername?: string;
   teamSettingsRequest?: { path: string; method: string; body?: unknown };
@@ -822,9 +825,9 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  recommendedSkills?:string[];
   provider?: 'codex' | 'claude';
   nativeQuota?: { checkedAt: number; accountKey?: string; limits: Array<{ kind: string; status: string; usedPercent?: number; resetsAt?: number }> };
-  recommendedSkills?:string[];
   modelProfile?: import('../officeModels').OfficeProfile;
   modelSelection?: 'auto' | import('../officeModels').OfficeProfile;
   startedBy?: import("../../services/officeAudit").OfficeActor;
@@ -917,6 +920,8 @@ export interface DashboardCliSessionMessage {
     kind: string;
     diff?: string;
   }>;
+  /** Original image count survives bounded live preview storage. */
+  imageCount?: number;
   images?: Array<{
     src: string;
     alt?: string;
@@ -951,9 +956,9 @@ export interface DashboardCodexSessionLiveState {
 }
 
 export interface DashboardCliModelOption {
-  provider?: "codex" | "claude";
   id: string;
   label: string;
+  provider?: "codex" | "claude";
   description?: string;
   defaultReasoningEffort?: string;
   reasoningEfforts: string[];
@@ -1208,6 +1213,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  apiAccountSaved?: { id: string };
   teamSettingsResponse?: unknown;
   masterUsername?: string;
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;

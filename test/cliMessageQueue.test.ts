@@ -556,3 +556,15 @@ it('always steers question answers ahead of ordinary Queue messages when the act
  const answer=draft(sessionQuestionReply({id:'ask',text:'',questions:[{title:'Which profile?'}]},{'0':'Auto'}));queue.enqueue(answer);await flush();
  expect(steer).toHaveBeenCalledExactlyOnceWith(answer);expect(send).not.toHaveBeenCalled();expect(queue.items.find(item=>item.id===ordinary)?.state).toBe('queued');
 });
+
+it('recheck next-turn settings after the asynchronous storage fence', async()=>{
+  render({canDispatch:false,canDispatchDraft:()=>true}); await flush();
+  queue.enqueue({...draft('Next settings'),model:'next'}); await flush();
+  let finishWrite!: (value:boolean)=>void;
+  harness.writes.mockImplementationOnce(()=>new Promise<boolean>(resolve=>{finishWrite=resolve;}));
+  render({canDispatch:true}); await flush();
+  expect(queue.items[0]?.state).toBe('sending');
+  render({canDispatchDraft:()=>false,turnId:'new-active-turn'}); await flush();
+  finishWrite(true); await flush();
+  expect(send).not.toHaveBeenCalled();
+});

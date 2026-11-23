@@ -77,6 +77,7 @@ export function isNewerCodexSessionLiveState(next: LiveRevision, previous: LiveR
 
 export function validMessage(value: unknown, maxText = MAX_TEXT): boolean {
   const message = record(value);
+  if (message?.["role"] === "user") maxText = Math.max(maxText, 64_000);
   if (!message || typeof message["id"] !== "string" || !message["id"] || message["id"].length > 256 || typeof message["text"] !== "string" || message["text"].length > maxText) return false;
   for (const [key, value] of Object.entries(message)) {
     if (value === undefined) continue;
@@ -85,6 +86,7 @@ export function validMessage(value: unknown, maxText = MAX_TEXT): boolean {
     else if (key === "role") { if (value !== "user" && value !== "assistant") return false; }
     else if (key === "status") { if (typeof value !== "string" || !["inProgress", "completed", "failed", "declined", "interrupted", "unknown"].includes(value)) return false; }
     else if (key === "exitCode" || key === "durationMs") { if (typeof value !== "number" || !Number.isFinite(value) || (key === "durationMs" && value < 0)) return false; }
+    else if (key === 'imageCount') { if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > MAX_CHAT_ATTACHMENTS) return false; }
     else if (key === 'questions') {
       if (!Array.isArray(value) || value.length > 10 || value.some(value => {
         const question = record(value);
@@ -313,7 +315,7 @@ function bounded(value: unknown, depth = 0, onTruncated: () => void = () => unde
   }
   const item = record(value);
   if (item && Object.keys(item).length > 64) onTruncated();
-  return item ? Object.fromEntries(Object.entries(item).slice(0, 64).map(([key, value]) => [key, bounded(value, depth + 1, onTruncated, item['type'] === 'userMessage' && key === 'content' ? 64_000 : textLimit)])) : undefined;
+  return item ? Object.fromEntries(Object.entries(item).slice(0, 64).map(([key, value]) => [key, bounded(value, depth + 1, onTruncated, (item['type'] === 'userMessage' && key === 'content' || item['role'] === 'user' && key === 'text') ? 64_000 : textLimit)])) : undefined;
 }
 
 /** Replace the current turn suffix instead of accumulating duplicate streamed/transcript items. */

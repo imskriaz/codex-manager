@@ -198,7 +198,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       if (!saved) throw new Error('Browser storage could not save the send state. Your message was kept and was not sent. Free storage before retrying.');
       const currentOptions = options.current;
       const steer = (next.steerRequested && (currentOptions.turnId || !answeredSessionQuestionIds([queuedMessageView(next)]).size) || currentOptions.turnId && answeredSessionQuestionIds([queuedMessageView(next)]).size > 0) && (currentOptions.canSteer ?? currentOptions.canDispatch) ? currentOptions.steer : undefined;
-      if (currentOptions.connected === false || !currentOptions.canDispatch && !steer) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
+      if (currentOptions.canDispatchDraft?.(next.draft) === false || currentOptions.connected === false || !currentOptions.canDispatch && !steer) { const paused = current.current.map(item => item.id === next.id ? { ...item, state: 'queued' as const } : item); update(paused); void save(paused); return; }
       const turnId = currentOptions.turnId;
       const requestId = steer ? steer(next.draft) : currentOptions.send(next.draft);
       if (!requestId) throw new Error('The message was not sent. It is kept in the conversation. Reconnect before resending.');
