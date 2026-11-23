@@ -227,6 +227,12 @@ function toDashboardRequest(serverRequest: AppServerRequest, fallbackThreadId: s
   const params = serverRequest.params && typeof serverRequest.params === "object"
     ? serverRequest.params as Record<string, unknown> : {};
   const method = serverRequest.method;
+  if (params['provider'] === 'claude') {
+    const nativeParams = { ...params };
+    delete nativeParams['provider'];
+    const request = toDashboardRequest({ ...serverRequest, params: nativeParams }, fallbackThreadId);
+    return request ? { ...request, title: request.title.replace(/Codex/g, 'Claude') } : undefined;
+  }
   const threadId = typeof params["threadId"] === "string" ? params["threadId"] : typeof params["conversationId"] === "string" ? params["conversationId"] : fallbackThreadId;
   const id = randomUUID();
   if (method === "mcpServer/elicitation/request") return { id, threadId, ...mcpElicitationRequest(params) };

@@ -47,11 +47,11 @@ export function availableCodexSessionLiveSlots(): number {
 }
 
 /** Reserve capacity before thread/start or turn/start can mutate the provider. */
-export function reserveCodexSessionLive() {
+export function reserveCodexSessionLive(provider: 'codex' | 'claude' = 'codex') {
   prune();
   if (activeSlots.size >= MAX_STREAMS) throw new Error("Codex Manager is already managing 30 turns. Stop a turn or wait for it to finish before starting another.");
   const streamId = randomUUID();
-  const accountId = captureSessionAccount();
+  const accountId = provider === 'claude' ? undefined : captureSessionAccount();
   activeSlots.add(streamId);
   let sessionId: string | undefined;
   let entry: ReturnType<typeof streams.get>;
@@ -84,7 +84,7 @@ export function reserveCodexSessionLive() {
     }
   };
   return {
-    attach(id: string, rpc: CodexAppServerRpc, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancelled = () => false) {
+    attach(id: string, rpc: Pick<CodexAppServerRpc, 'onNotification' | 'onDisconnect'>, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancelled = () => false) {
       if (entry) throw new Error("The live Codex stream is already attached.");
       if (disposed) throw new Error("The live Codex stream reservation has expired.");
       sessionId = id.toLowerCase();
@@ -94,7 +94,7 @@ export function reserveCodexSessionLive() {
         streams.delete(oldestTerminal[0]);
       }
       const previousAt = streams.get(sessionId)?.reducer.snapshot().updatedAt ?? 0;
-      entry = { reducer: new CodexSessionLiveReducer(sessionId, streamId, value => parseItems(value).map(message => message.images?.length ? { ...message, images: message.images.map(image => imageSources.has(image.src) ? { ...image, src: imageSources.get(image.src)! } : image) } : message), previousAt) };
+      entry = { reducer: new CodexSessionLiveReducer(sessionId, streamId, value => parseItems(value).map(message => message.images?.length ? { ...message, images: message.images.map(image => imageSources.has(image.src) ? { ...image, src: imageSources.get(image.src)! } : image) } : message), previousAt, provider) };
       streams.set(sessionId, entry);
       off = rpc.onNotification((method, params) => {
         if (!entry?.reducer.accept(method, params)) return;

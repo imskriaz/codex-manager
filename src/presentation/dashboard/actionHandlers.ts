@@ -1,3 +1,5 @@
+import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
+import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
 import { AlwaysOnlineServer } from '../../services/alwaysOnlineServer';
@@ -385,6 +387,12 @@ async function executeDashboardActionMessageCore(
     if (ACCOUNT_REQUIRED_ACTIONS.has(message.action) && !message.accountId) {
       throw new Error("This action requires an account. Refresh the dashboard and try again.");
     }
+    if (message.accountId && isClaudeAccount(message.accountId)) {
+      if (message.action !== 'refresh') throw new Error('This login is managed by Claude Code. Choose a Claude model to use it.');
+      const notice = await refreshClaudeDashboardAccount();
+      ctx.schedulePublishState();
+      return { status: 'completed', payload: { notice } };
+    }
     const account = message.accountId ? await ctx.repo.getAccount(message.accountId) : undefined;
     if (message.accountId && !account) {
       throw new Error("That account no longer exists. Refresh the dashboard and try again.");
@@ -407,7 +415,7 @@ async function executeDashboardActionMessageCore(
       COMMAND_ROUTED_ACTIONS.has(message.action) && !browserDirectMutation ? await execute() : await executeAndFlush();
   } catch (error) {
     status =
-      error instanceof CodexCliTurnCancelledError ||
+      error instanceof CodexCliTurnCancelledError || error instanceof ClaudeTurnCancelledError ||
       (error instanceof WorkspaceTerminalCommandError && error.result.status === "cancelled")
         ? "cancelled"
         : "failed";
@@ -506,14 +514,14 @@ async function runDashboardAction(
       return { ...(action === 'generateApiToken' ? { apiToken: created.token, apiTokenId: created.record.id } : {}), apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
     }
     case 'saveApiProxyModelMapping': {
-      const catalogue = await waitWithin(readCodexCliComposerConfig(), 8_000, 'Codex model discovery timed out. Refresh models to retry.');
+      const catalogue = await waitWithin(readCodexCliComposerConfig(undefined, false), 8_000, 'Codex model discovery timed out. Refresh models to retry.');
       const claudeMapping = await saveClaudeProxyMapping(ctx.context, payload?.claudeMapping, payload?.expectedClaudeMapping, catalogue.models.map(model => model.id));
       return { apiTokens: await listDashboardApiTokens(ctx.context), apiProxy: { ...readApiProxyHistory(), models: catalogue.models.map(model => ({ id: model.id, name: model.label })), modelDiscoveryWarning: catalogue.modelDiscoveryWarning, claudeMapping } };
     }
     case 'listApiTokens': {
       const [apiTokens, catalogue] = await Promise.all([
         listDashboardApiTokens(ctx.context),
-        waitWithin(readCodexCliComposerConfig(), 8_000, 'Codex model discovery timed out. Refresh models to retry.')
+        waitWithin(readCodexCliComposerConfig(undefined, false), 8_000, 'Codex model discovery timed out. Refresh models to retry.')
           .catch((error: unknown) => ({ models: [], modelDiscoveryWarning: error instanceof Error ? error.message : 'Codex models could not be loaded. Refresh models to retry.' }))
       ]);
       return { apiTokens, apiProxy: { ...readApiProxyHistory(), models: catalogue.models.map(model => ({ id: model.id, name: model.label })), modelDiscoveryWarning: catalogue.modelDiscoveryWarning, claudeMapping: readClaudeProxyMapping(ctx.context) }, apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
@@ -2110,7 +2118,7 @@ async function handleStartCodexCliSession(
     cliSessionMessages: [{ id: `initial-${sessionId}`, kind: 'message' as const, role: 'user' as const, text: payload?.text?.trim() || 'Please review the attached files.',
       images: input.attachments?.filter(file => file.kind === 'image').map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(input.attachments ?? []) }],
     cliSessionLive: getCodexSessionLiveState(sessionId),
-    notice: { level: "info" as const, message: "New Codex chat is ready." }
+    notice: { level: "info" as const, message: existingSession?.provider === "claude" ? "New Claude chat is ready." : "New Codex chat is ready." }
   };
 }
 
@@ -2127,7 +2135,7 @@ async function handleGetCodexCliSessionMessages(sessionId: string | undefined, r
     throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
   }
   if (cliSession.archived) throw new Error("Archived sessions cannot be opened. Restore the session first.");
-  void readNativeCodexSessionRunning(resolveCodexHome(), sessionId).catch(error => console.warn('[codexManager] live session settings are unavailable', error));
+  if (cliSession.provider !== 'claude') void readNativeCodexSessionRunning(resolveCodexHome(), sessionId).catch(error => console.warn('[codexManager] live session settings are unavailable', error));
   const cliSessionMessages = await readCodexCliSessionMessages(sessionId);
   return { cliSession, cliSessionMessages, cliSessionLive: getCodexSessionLiveState(sessionId), notice: getCodexSessionReadNotice([cliSession]) };
 }
@@ -2146,6 +2154,8 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   const settling = live?.status === "cancelled" || currentSession.runningBy === "Codex Manager" && live &&
     ["completed", "failed"].includes(live.status) && (!currentSession.steerTurnId || currentSession.steerTurnId === live.turnId);
   if (currentSession.status === "running" && !settling) {
+    if (payload.model && currentSession.model && payload.model !== currentSession.model)
+      throw new Error('Stop the active turn before changing model or provider. Your message was not sent.');
     if (!currentSession.steerTurnId)
       throw new Error(`This session has an active writer${currentSession.runningBy ? ` in ${currentSession.runningBy}` : ""}. The active turn cannot accept a follow-up yet.`);
     return handleSteerCodexCliSessionTurn({ ...payload, expectedTurnId: currentSession.steerTurnId });
@@ -2174,7 +2184,7 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     notice: { level: 'info' as const, message: 'Follow-up sent to the active Codex turn.' }
   };
   let cliSessionMessages;
-  let notice: DashboardNotice = { level: "info", message: "Codex completed the turn." };
+  let notice: DashboardNotice = { level: "info", message: currentSession.provider === "claude" ? "Claude completed the turn." : "Codex completed the turn." };
   try {
     cliSessionMessages = await waitWithin(readCodexCliSessionMessages(payload.sessionId), 500, "Conversation history is still loading");
   } catch (error) {
@@ -2185,6 +2195,7 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     status: "idle" as const,
     locked: false,
     canStop: false,
+    ...(currentSession.provider === "claude" ? { ...await readCodexCliSessionSummary(payload.sessionId) } : {}),
     ...(sessionProjectPath?.trim() ? { projectPath: sessionProjectPath.trim() } : {})
   };
   return {
@@ -2201,13 +2212,15 @@ async function handleSteerCodexCliSessionTurn(payload: DashboardActionPayload | 
   if (typeof payload.expectedTurnId !== "string" || !payload.expectedTurnId.trim() || payload.expectedTurnId.length > 256)
     throw new Error("The active turn changed. Refresh this session before sending a follow-up.");
   const session = await ensureCliSessionIsActive(payload.sessionId);
+  if (payload.model && session.model && payload.model !== session.model)
+    throw new Error('Stop the active turn before changing model or provider. Your follow-up was not sent.');
   if (payload.projectPath?.trim() && session.projectPath?.trim() &&
     await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath))
     throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
   await steerCodexCliSessionTurn({ sessionId: payload.sessionId, expectedTurnId: payload.expectedTurnId,
     text: payload.text ?? "", attachments: payload.attachments, projectPath: session.projectPath });
   return { cliSessionLive: getCodexSessionLiveState(payload.sessionId),
-    notice: { level: "info" as const, message: "Follow-up sent to the active Codex turn." } };
+    notice: { level: "info" as const, message: "Follow-up sent to the active session." } };
 }
 
 async function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {

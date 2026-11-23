@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.88
+
+- Preserve supplied Codex model names, including GPT prefixes.
+- Add native Claude Code models and supported reasoning to the existing picker, with native approvals, conversations, account display and reported usage limits.
+- Keep active-turn model changes available for the next turn and confirm native message receipt and completion before reporting success.
+
 ## 3.0.0-pre.89
 
 - Keep connected data integrations in their own services and use configured read-only HTTP MCP sources.

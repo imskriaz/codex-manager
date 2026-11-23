@@ -57,6 +57,14 @@ it('keeps pending messages visible and dispatches after a turn finishes in the b
   expect(queue.items).toEqual([]); expect(queue.ready).toBe(false);
 });
 
+it('waits for a changed model until the active turn is idle, then dispatches the captured draft', async () => {
+  render({ canDispatch: true, canDispatchDraft: draft => draft.model !== 'changed' }); await flush();
+  const id = queue.enqueue({ ...draft('Use the next model'), model: 'changed', reasoningEffort: 'high' }); await flush();
+  expect(id).toBeTruthy(); expect(send).not.toHaveBeenCalled(); expect(queue.items[0]?.state).toBe('queued');
+  render({ canDispatch: true, canDispatchDraft: () => true }); await flush();
+  expect(send).toHaveBeenCalledExactlyOnceWith({ ...draft('Use the next model'), model: 'changed', reasoningEffort: 'high' });
+});
+
 it('never removes an unsent storage failure because an old message has the same text', async () => {
   const old = { id: 'old', role: 'user' as const, text: 'First' };
   expect(queuedMessageEchoes([entry({ state: 'failed', durable: false })], [old]).items).toHaveLength(1);

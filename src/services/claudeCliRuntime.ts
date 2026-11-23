@@ -1,0 +1,78 @@
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import type * as SDK from '@anthropic-ai/claude-agent-sdk';
+import { createClaudeModelOptions } from '../domain/dashboard/claudeModels';
+import type { DashboardCliModelOption } from '../domain/dashboard/types';
+import { waitWithin } from '../utils/concurrency';
+
+// The supported Node 22.13+ host can load the native SDK's synchronous ESM graph.
+const nativeRequire = createRequire(__filename);
+let sdk: Promise<typeof SDK> | undefined;
+export function claudeSdk(): Promise<typeof SDK> {
+  return sdk ??= Promise.resolve().then(() => nativeRequire('@anthropic-ai/claude-agent-sdk') as typeof SDK);
+}
+export function claudeConfigHome(): string { return path.resolve(process.env['CLAUDE_CONFIG_DIR'] || path.join(os.homedir(), '.claude')); }
+export function claudeAccountKey(account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'apiProvider'>): string | undefined {
+  return account?.email ? createHash('sha256').update(JSON.stringify([claudeConfigHome(), account.email, account.organization, account.apiProvider])).digest('hex') : undefined;
+}
+
+export function getClaudeCliPathCandidates(platform = process.platform, env = process.env): string[] {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const roots = [...(env['PATH'] ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean)];
+  if (platform === 'win32') roots.unshift(p.join(env['APPDATA'] || p.join(os.homedir(), 'AppData', 'Roaming'), 'npm'));
+  const candidates = [env['CLAUDE_CLI_PATH'], p.join(os.homedir(), '.local', 'bin', platform === 'win32' ? 'claude.exe' : 'claude')];
+  for (const root of roots) {
+    // Resolve npm shims to the native executable; never invoke a shell with user prompts.
+    candidates.push(p.join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', platform === 'win32' ? 'claude.exe' : 'claude'), p.join(root, platform === 'win32' ? 'claude.exe' : 'claude'));
+  }
+  return [...new Set(candidates.filter((candidate): candidate is string => !!candidate))];
+}
+
+export async function resolveClaudeCliExecutable(): Promise<string | undefined> {
+  for (const candidate of getClaudeCliPathCandidates()) {
+    if (/\.(?:cmd|bat|ps1)$/i.test(candidate)) continue;
+    if (await fs.stat(candidate).then(stat => stat.isFile()).catch(() => false)) return candidate;
+  }
+  return undefined;
+}
+
+export function claudeEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  delete env['CLAUDECODE'];
+  return env;
+}
+
+type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'subscriptionType' | 'apiProvider'> };
+const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH']]);
+let cached: ClaudeConnection & { key: string; at: number } | undefined;
+let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
+export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.key === connectionKey() ? cached : undefined; }
+export async function discoverClaudeModels(refresh = false): Promise<ClaudeConnection> {
+  const key = connectionKey();
+  if (refresh) cached = undefined;
+  if (cached?.key === key && Date.now() - cached.at < (cached.models.length ? 60_000 : 5_000)) return cached;
+  if (discovery?.key === key) return discovery.pending;
+  const pending = (async () => {
+    const controller = new AbortController();
+    let connection: SDK.Query | undefined;
+    try {
+      const executable = await waitWithin(resolveClaudeCliExecutable(), 1_000, 'Claude detection timed out.');
+      if (!executable) return { models: [] };
+      const native = await claudeSdk();
+      async function* idle(): AsyncGenerator<SDK.SDKUserMessage> {
+        await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      connection = native.query({ prompt: idle(), options: { pathToClaudeCodeExecutable: executable, cwd: process.cwd(),
+        env: claudeEnvironment(), abortController: controller, persistSession: false, settingSources: ['user','project','local'] } });
+      const info = await waitWithin(connection.initializationResult(), 5_000, 'Claude model discovery timed out. Refresh to retry.');
+      return { models: createClaudeModelOptions(info.models), account: { email: info.account?.email, organization: info.account?.organization, subscriptionType: info.account?.subscriptionType, apiProvider: info.account?.apiProvider } };
+    } catch (error) { return { models: [], warning: `Claude models unavailable: ${error instanceof Error ? error.message : String(error)}` }; }
+    finally { controller.abort(); connection?.close(); }
+  })();
+  discovery = { key, pending };
+  try { const result = await pending; cached = { ...result, key, at: Date.now() }; return result; }
+  finally { if (discovery?.key === key) discovery = undefined; }
+}

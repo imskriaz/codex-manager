@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliContextUsage, isCliSubmissionEcho, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
+import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliDraftChangesActiveTurnSettings, cliContextUsage, isCliSubmissionEcho, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
   it('keeps floating drafts and queues separate without changing existing keys or system ownership', () => {
@@ -27,6 +27,13 @@ describe("durable Codex composer state", () => {
     expect(cliContextUsage({ total: 0, contextWindow: 1000 })?.percent).toBe(0);
     expect(cliContextUsage({ total: 2000, contextWindow: 1000 })?.percent).toBe(100);
     for (const usage of [undefined, {}, { total: 1 }, { total: -1, contextWindow: 100 }, { total: 1, contextWindow: 0 }, { total: NaN, contextWindow: 10 }]) expect(cliContextUsage(usage)).toBeUndefined();
+  });
+  it('detects settings that must wait for the next turn', () => {
+    const session = { model: 'session-model', reasoningEffort: 'medium' };
+    expect(cliDraftChangesActiveTurnSettings({ text: 'x', attachments: [], model: 'session-model', reasoningEffort: 'medium' }, session)).toBe(false);
+    expect(cliDraftChangesActiveTurnSettings({ text: 'x', attachments: [], model: 'claude-code/sonnet', reasoningEffort: 'medium' }, session)).toBe(true);
+    expect(cliDraftChangesActiveTurnSettings({ text: 'x', attachments: [], model: 'session-model', reasoningEffort: 'high' }, session)).toBe(true);
+    expect(cliDraftChangesActiveTurnSettings({ text: 'x', attachments: [] }, session)).toBe(false);
   });
   it('uses existing-session model and effort until the user overrides them, including before the catalog arrives', () => {
     const session = { model: 'session-model', reasoningEffort: 'high' };

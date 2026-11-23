@@ -46,7 +46,8 @@ export function parseCodexTokenUsage(value: unknown): DashboardCodexSessionLiveS
 export function isCodexSessionLiveState(value: unknown): value is DashboardCodexSessionLiveState {
   const state = record(value);
   if (!state || typeof state["sessionId"] !== "string" || !UUID.test(state["sessionId"]) || typeof state["streamId"] !== "string" || !UUID.test(state["streamId"]) || !Number.isSafeInteger(state["sequence"]) || (state["sequence"] as number) < 0 || number(state["updatedAt"]) === undefined || !["starting", "running", "completed", "cancelled", "failed", "disconnected"].includes(String(state["status"]))) return false;
-  if (Object.keys(state).some((key) => !["sessionId", "deviceId", "streamId", "sequence", "turnId", "status", "updatedAt", "messages", "plan", "diff", "tokenUsage", "rateLimits", "error", "truncated"].includes(key))) return false;
+  if (Object.keys(state).some((key) => !["provider", "sessionId", "deviceId", "streamId", "sequence", "turnId", "status", "updatedAt", "messages", "plan", "diff", "tokenUsage", "rateLimits", "error", "truncated"].includes(key))) return false;
+  if (state['provider'] !== undefined && state['provider'] !== 'codex' && state['provider'] !== 'claude') return false;
   if (state["deviceId"] !== undefined && (typeof state["deviceId"] !== "string" || state["deviceId"].length > 256)) return false;
   if (state["turnId"] !== undefined && (typeof state["turnId"] !== "string" || state["turnId"].length > 256)) return false;
   if (!Array.isArray(state["messages"]) || state["messages"].length > MAX_CODEX_LIVE_ITEMS || state["messages"].some((value) => !validMessage(value))) return false;
@@ -117,8 +118,8 @@ export class CodexSessionLiveReducer {
   private readonly earlyCompletions = new Map<string, unknown>();
   private state: DashboardCodexSessionLiveState;
 
-  constructor(sessionId: string, streamId: string, private readonly parseItems: (value: unknown) => DashboardCliSessionMessage[], previousUpdatedAt = 0) {
-    this.state = { sessionId, streamId, sequence: 0, status: "starting", updatedAt: Math.max(Date.now(), previousUpdatedAt + 1), messages: [] };
+  constructor(sessionId: string, streamId: string, private readonly parseItems: (value: unknown) => DashboardCliSessionMessage[], previousUpdatedAt = 0, provider: 'codex' | 'claude' = 'codex') {
+    this.state = { ...(provider === 'claude' ? {provider} : {}), sessionId, streamId, sequence: 0, status: "starting", updatedAt: Math.max(Date.now(), previousUpdatedAt + 1), messages: [] };
   }
 
   accept(method: string, raw: unknown): boolean {

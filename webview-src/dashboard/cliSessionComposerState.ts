@@ -66,6 +66,13 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
 }
 
 /** Clear only the submitted content, preserving edits made while it was in flight. */
+/** A queued message keeps the model settings captured when the current turn began. */
+export function cliDraftChangesActiveTurnSettings(draft: CliComposerDraft, session?: Pick<DashboardCliSessionSummary, "model" | "reasoningEffort">): boolean {
+  if (!session) return false;
+  return (draft.model !== undefined && session.model !== undefined && draft.model !== session.model)
+    || (draft.reasoningEffort !== undefined && session.reasoningEffort !== undefined && draft.reasoningEffort !== session.reasoningEffort);
+}
+
 export function acknowledgeCliComposerDraft(current: CliComposerDraft, submitted: CliComposerDraft): CliComposerDraft {
   return { ...current,
     text: current.text === submitted.text ? "" : current.text,

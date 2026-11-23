@@ -1171,7 +1171,7 @@ it('discovers live models over stale cache, reads all pages and refreshes after 
   const request = vi.fn(async (_method: string, params: any) => params.cursor ? { data: [{ id: 'live-two', displayName: 'Live two', defaultReasoningEffort: 'high', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], nextCursor: null } : { data: [null, { id: 'live-one' }, { id: 'hidden', hidden: true }], nextCursor: 'next' });
   mocks.open.mockResolvedValue({ request, close: vi.fn() });
   const config = await readCodexCliComposerConfig(root);
-  expect(config.models.map(model => model.id)).toEqual(['live-one', 'live-two']);
+  expect(config.models.filter(model => model.provider !== 'claude').map(model => model.id)).toEqual(['live-one', 'live-two']);
   expect(config.defaultModel).toBe('live-two'); expect(config.defaultReasoningEffort).toBe('high');
   expect(request).toHaveBeenCalledWith('model/list', expect.objectContaining({ cursor: 'next' }), expect.any(Number));
   await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(2);

@@ -98,7 +98,7 @@ export function withAcceptedQueuedMessages(messages: DashboardCliSessionMessage[
 }
 
 /** Save the dispatch fence first; reopened in-flight messages require review. */
-export function useCliMessageQueue(props: { webview?: boolean; scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string, cancel?: () => Promise<boolean>) => void }) {
+export function useCliMessageQueue(props: { webview?: boolean; scope?: string; messages: DashboardCliSessionMessage[]; results: CliSubmissionResult[]; canDispatch: boolean; canDispatchDraft?: (draft: CliComposerDraft) => boolean; canSteer?: boolean; dispatchReason?: string; connected?: boolean; turnId?: string; send: (draft: CliComposerDraft) => string | undefined; steer?: (draft: CliComposerDraft) => string | undefined; restore: (draft: CliComposerDraft) => boolean; feedback: (message: string, cancel?: () => Promise<boolean>) => void }) {
   const [items, setItems] = useState<CliQueuedMessage[]>([]), [ready, setReady] = useState(false), [error, setError] = useState<string>(), [loadAttempt, setLoadAttempt] = useState(0);
   const [notice, setNotice] = useState<string>();
   const current = useRef(items), options = useRef(props), noticeVersion = useRef(0); options.current = props;
@@ -185,7 +185,8 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     if (!props.canDispatch && !steerAnswer) return;
     if (current.current.some(item => item.state === 'sending' || item.state === 'uncertain')) return;
     // A waiting turn needs its answer before ordinary queued follow-ups can run.
-    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && (item.steerRequested && (props.turnId || !answeredSessionQuestionIds([queuedMessageView(item)]).size) || props.turnId && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0)) : current.current.find(item => item.state === 'queued' && item.steerRequested) ?? current.current.find(item => item.state !== 'sent');
+    const canDispatchDraft = (item: CliQueuedMessage) => options.current.canDispatchDraft?.(item.draft) !== false;
+    const next = steerAnswer ? current.current.find(item => item.state === 'queued' && canDispatchDraft(item) && (item.steerRequested && (props.turnId || !answeredSessionQuestionIds([queuedMessageView(item)]).size) || props.turnId && answeredSessionQuestionIds([queuedMessageView(item)]).size > 0)) : current.current.find(item => item.state === 'queued' && item.steerRequested && canDispatchDraft(item)) ?? current.current.find(item => item.state !== 'sent' && canDispatchDraft(item));
     if (!next || next.state !== 'queued' || !next.durable) return;
     draining.current = true;
     const epoch = generation.current;
@@ -208,7 +209,7 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
       const failed = current.current.map(item => item.id === next.id ? { ...item, state: 'failed' as const, error: message } : item);
       update(failed); void save(failed);
     }).finally(() => { if (epoch === generation.current) { draining.current = false; setItems([...current.current]); releaseInBackground.current(); } });
-  }, [items, ready, props.canDispatch, props.canSteer, props.turnId, props.connected]);
+  }, [items, ready, props.canDispatch, props.canDispatchDraft, props.canSteer, props.turnId, props.connected]);
   useEffect(() => {
     const pending = items.find(item => item.state === 'sending');
     if (!pending) return;

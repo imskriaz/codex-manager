@@ -183,7 +183,7 @@ export function registerQuotaRecoveryAutoResume(
   });
   const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
   const stopLive = subscribeDashboardRealtime(message => {
-    if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId ||
+    if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId || message.state.provider === 'claude' ||
         !['failed', 'disconnected'].includes(message.state.status) || (!isAutoResumeAvailable() && !selectAfterRejection)) return;
     const detail = JSON.stringify([message.state.error, message.state.messages?.filter(item => item.kind === 'error')]);
     if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;

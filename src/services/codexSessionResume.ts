@@ -51,6 +51,9 @@ import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings"
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { sendCodexQuestionReply } from './codexQuestionReply';
 import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli } from './codexCliRuntime';
+import { discoverClaudeModels } from './claudeCliRuntime';
+import { isClaudeModel } from '../domain/dashboard/claudeModels';
+import * as claude from './claudeSessions';
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -260,7 +263,12 @@ export type TrackedCliTurn = {
 type CliSessionIndexEntry = { id: string; thread_name?: string; updated_at?: string };
 
 /** Read local Codex session metadata without resuming or subscribing to a thread. */
-export async function readCodexCliSessions(
+export async function readCodexCliSessions(codexHome = resolveCodexHome(), limit = MAX_VISIBLE_CLI_SESSIONS, force = false): Promise<DashboardCliSessionSummary[]> {
+  const native = path.resolve(codexHome) === path.resolve(resolveCodexHome()) ? claude.listClaudeSessions() : [];
+  return [...await readCodexOnlySessions(codexHome, limit, force), ...native];
+}
+
+async function readCodexOnlySessions(
   codexHome = resolveCodexHome(),
   limit = MAX_VISIBLE_CLI_SESSIONS,
   force = false
@@ -491,6 +499,7 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
 
 export async function clearCodexSessionGoal(sessionId: string, completedObjective?: string): Promise<void> {
   validateSessionId(sessionId);
+  claude.rejectClaudeAutomation(sessionId, 'clearCodexSessionGoal');
   const details = { sessionRef: toSessionLogRef(sessionId), actor: "manager", origin: completedObjective === undefined ? "user" : "completed-goal-cleanup", method: "thread/goal/clear" };
   recordPersistentEvent("info", "session-goal", "Goal clear requested", details);
   try {
@@ -512,6 +521,7 @@ export async function clearCodexSessionGoal(sessionId: string, completedObjectiv
 /** Explicit goal controls can pause a running owner without waiting for its turn lease. */
 export async function setCodexSessionGoalStatus(sessionId: string, status: "active" | "paused"): Promise<void> {
   validateSessionId(sessionId);
+  claude.rejectClaudeAutomation(sessionId, 'setCodexSessionGoalStatus');
   if (status !== "active" && status !== "paused") throw new Error("Choose Pause or Resume for this goal.");
   const details = { sessionRef: toSessionLogRef(sessionId), requestedStatus: status, actor: "manager", origin: "user", method: "thread/goal/set" };
   recordPersistentEvent("info", "session-goal", "Goal status change requested", details);
@@ -566,6 +576,7 @@ export async function readCodexCliSessionSummary(
   requireNativeRuntime: boolean | "display" = false
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) return claude.readClaudeSession(sessionId);
   const deletionStore = getSqliteStateStore();
   if (deletionStore && isConfirmedSessionDeleted(deletionStore,codexHome,sessionId)) return undefined;
   const recent = getRecentNewSession(sessionId, codexHome)?.summary;
@@ -951,10 +962,12 @@ async function readKnownProjectRoots(home: string, force = false): Promise<strin
   });
 }
 
-export function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
+export function readCodexCliComposerConfig(codexHome = resolveCodexHome(), includeClaude = true): Promise<DashboardCliComposerConfig> {
   const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
   return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome))
-    .then(config => ({ ...config, projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }));
+    .then(async config => {
+      const native = includeClaude && path.resolve(codexHome) === path.resolve(resolveCodexHome()) ? await discoverClaudeModels() : { models: [] };
+      return { ...config, models: [...config.models, ...native.models], ...((config.modelDiscoveryWarning || native.warning) ? { modelDiscoveryWarning: [config.modelDiscoveryWarning, native.warning].filter(Boolean).join(' ') } : {}), projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }; });
 }
 
 async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {
@@ -1047,6 +1060,8 @@ export async function sendCodexCliSessionMessage(options: {
 }): Promise<'steered' | void> {
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
+  if (claude.isClaudeSession(options.sessionId)) return claude.sendClaudeMessage(options.sessionId, options);
+  if (isClaudeModel(options.model)) throw new Error('This is an OpenAI conversation. Start a new conversation to use Claude.');
   newSessionFailures.delete(options.sessionId);
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
@@ -1117,6 +1132,7 @@ async function readLiveCliModels(codexHome: string, identity: string): Promise<D
 
 export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSession>[0]): Promise<string> {
   const home = path.resolve(resolveCodexHome());
+  if (isClaudeModel(options.model)) return claude.startClaudeSession({ ...options, projectPath: resolveCliProjectPath(options.projectPath) });
   return new Promise((resolve, reject) => {
     let createdId: string | undefined;
     void runNewCodexCliSession(options, (id) => {
@@ -1137,6 +1153,8 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
 }
 
 export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSessionSummary | undefined {
+
+  if (claude.isClaudeSession(sessionId)) return claude.readClaudeSession(sessionId);
   const summary = getRecentNewSession(sessionId)?.summary;
   if (!summary) return undefined;
   const home = resolveCodexHome();
@@ -1629,6 +1647,7 @@ async function observedNativeTurn(home: string, sessionId: string): Promise<stri
 
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
 export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
+  if (claude.isClaudeSession(options.sessionId)) return claude.steerClaudeSession(options.sessionId, options, options.expectedTurnId);
   return sendCodexQuestionReply(resolveCodexHome(), options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId), onAttempt => steerCodexCliSessionTurnOnce(options, onAttempt));
 }
 
@@ -1700,6 +1719,7 @@ function attachSessionSettingsAndPrompts(rpc: CodexAppServerRpc, home: string, i
 /** Change the owner's thread defaults; an in-flight turn keeps its captured policy. */
 export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandboxMode, autoApprove?: boolean): Promise<CodexSessionAccess> {
   validateSessionId(id);
+  if (claude.isClaudeSession(id)) return claude.setClaudeAccess(id, mode, autoApprove);
   id = id.toLowerCase();
   if (mode !== undefined && !isCliSandboxMode(mode)) throw new Error('Choose Read only, Workspace write, or Full access.');
   if (autoApprove !== undefined && typeof autoApprove !== 'boolean' || mode === undefined && autoApprove === undefined) throw new Error('Choose permissions or an approval policy.');
@@ -1745,6 +1765,7 @@ export async function setCodexSessionAccess(id: string, mode?: DashboardCliSandb
 
 export async function cancelCodexCliSessionTurn(sessionId: string, expectedTurnId?: string): Promise<boolean> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) return claude.stopClaudeSession(sessionId, expectedTurnId);
   sessionId = sessionId.toLowerCase();
   const home = resolveCodexHome();
   const stopped = (turnId: string) => {
@@ -1823,6 +1844,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string, expectedTurnI
 const AUTO_RESUME_EDITOR_SETTLE_MS = 1_000;
 
 export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false, readinessTimeoutMs = 40_000, automaticRecovery = false): Promise<void> {
+  claude.rejectClaudeAutomation(sessionId, 'Open in Codex');
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
@@ -1989,6 +2011,7 @@ async function activateOfficialCodexExtension(): Promise<vscode.Extension<unknow
 
 export async function renameCodexCliSession(sessionId: string, name: string): Promise<void> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'rename', name); return; }
   const normalized = name.trim().replace(/\s+/g, " ");
   if (!normalized) throw new Error("Enter a session name before saving.");
   if (normalized.length > 160) throw new Error("Keep the session name under 160 characters.");
@@ -2014,6 +2037,7 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
 /** Resume with a new cwd without starting a turn; native storage must confirm it. */
 export async function moveCodexCliSession(sessionId: string, destination: string, source: string): Promise<DashboardCliSessionSummary> {
   validateSessionId(sessionId);
+  claude.rejectClaudeAutomation(sessionId, 'moveCodexCliSession');
   if (typeof destination !== 'string' || destination.length > 4096 || destination.includes('\0') || !path.isAbsolute(normalizeNativePath(destination))) throw new Error('Choose an absolute destination project folder.');
   const home = resolveCodexHome();
   return runCliSessionMutation(sessionId, 'Move Codex session', async () => {
@@ -2038,6 +2062,7 @@ export async function moveCodexCliSession(sessionId: string, destination: string
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
   validateSessionId(sessionId);
+  claude.rejectClaudeAutomation(sessionId, 'setCodexSessionAutoResume');
   if (typeof enabled !== 'boolean') throw new Error('Choose an Auto Resume state.');
   const store = getSqliteStateStore(), home = resolveCodexHome();
   if (!store) throw new Error('Session preference storage is unavailable. The change was not saved.');
@@ -2053,6 +2078,7 @@ export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): 
 
 export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority = 3): void {
   validateSessionId(sessionId);
+  claude.rejectClaudeAutomation(sessionId, 'setCodexSessionQueue');
   if (typeof enabled !== 'boolean' || !isSessionQueuePriority(priority)) throw new Error('Choose a positive whole number for queue priority.');
   const store = getSqliteStateStore(), home = resolveCodexHome();
   if (!store) throw new Error('Session preference storage is unavailable. The queue was not changed.');
@@ -2066,6 +2092,7 @@ export function setCodexSessionQueue(sessionId: string, enabled: boolean, priori
 
 export async function forkCodexCliSession(sessionId: string): Promise<string> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) return await claude.mutateClaudeSession(sessionId, 'fork') as string;
   const result = await runCliSessionMutation(sessionId, "Codex session fork", () =>
     runCodexAppServerRequest<{ thread?: { id?: unknown } }>("thread/fork", {
       threadId: sessionId,
@@ -2081,6 +2108,7 @@ export async function forkCodexCliSession(sessionId: string): Promise<string> {
 
 export async function archiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'archive'); return; }
   const home = resolveCodexHome();
   await runCliSessionMutation(sessionId, "Codex session archive", async () => {
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before archiving this session.');
@@ -2094,6 +2122,7 @@ export async function archiveCodexCliSession(sessionId: string): Promise<void> {
 
 export async function unarchiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'restore'); return; }
   await runCliSessionMutation(sessionId, "Codex session restore", () =>
     runCodexAppServerRequest("thread/unarchive", { threadId: sessionId }).then(() => undefined)
   );
@@ -2103,6 +2132,7 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
 
 export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean; directStorage?: boolean } = {}): Promise<void> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) { await claude.mutateClaudeSession(sessionId, 'delete'); return; }
   const home = resolveCodexHome();
   if (ownsSessionTurn(home, sessionId) && !isAppServerTurnSettling(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
@@ -2132,6 +2162,7 @@ export async function deleteCodexCliSession(sessionId: string, options: { archiv
 /** The initial prompt is immutable: read a bounded transcript head on demand. */
 export async function readCodexCliSessionInitialPrompt(sessionId: string, home = resolveCodexHome()): Promise<string | undefined> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) return claude.claudeInitialPrompt(sessionId);
   const value = await runCrossWindowSharedRead(sharedResourceKey('session-initial-prompt', [getCodexHomeStateKey(home), sessionId.toLowerCase()]), 'Initial session prompt', async signal => {
     const recent = home === resolveCodexHome() ? getRecentNewSession(sessionId)?.text : undefined;
     if (recent) return withoutChatTextAttachments(recent).slice(0,32000);
@@ -2156,6 +2187,7 @@ export async function readCodexCliSessionInitialPrompt(sessionId: string, home =
 }
 
 export async function readCodexCliSessionMessagePage(sessionId: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
+  if (claude.isClaudeSession(sessionId)) return claude.readClaudeHistory(sessionId, before);
   if (!SESSION_ID_PATTERN.test(sessionId) || (before !== undefined && !/^\d{1,16}$/.test(before))) throw new Error('The session history cursor is invalid.');
   const transcript = await findCliSessionTranscript(home, sessionId);
   if (!transcript) return { messages: await readCodexCliSessionMessages(sessionId, home), warnings: [] };
@@ -2193,6 +2225,7 @@ export async function readCodexCliSessionMessages(
   sessionId: string,
   codexHome = resolveCodexHome()
 ): Promise<DashboardCliSessionMessage[]> {
+  if (claude.isClaudeSession(sessionId)) return (await claude.readClaudeHistory(sessionId)).messages;
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error("The session identifier is invalid.");
   }
@@ -2884,6 +2917,12 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
 
 export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string, requireAvailable = true): Promise<string> {
   validateSessionId(sessionId);
+  if (claude.isClaudeSession(sessionId)) {
+    const cwd = claude.readClaudeSession(sessionId)!.projectPath!;
+    if (requestedProject && await fs.realpath(cwd) !== await fs.realpath(requestedProject)) throw new Error('This Claude session belongs to another project.');
+    if (requireAvailable) await assertUsableCliProjectPath(cwd);
+    return cwd;
+  }
   const home = resolveCodexHome();
   const recorded = (await readStateSessionRecords(home, sessionId))[0]?.cwd
     ?? (await readCliSessionMetadata(home, sessionId)).projectPath

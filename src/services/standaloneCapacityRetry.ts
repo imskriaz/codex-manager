@@ -48,7 +48,7 @@ export function registerStandaloneCapacityRetry(
     recordPersistentEvent(level, 'standalone-recovery', message);
   const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id}`;
   const stop = subscribeDashboardRealtime((message) => {
-    if (disposed || message.type !== "dashboard:codex-session-live" || message.state.deviceId) return;
+    if (disposed || message.type !== "dashboard:codex-session-live" || message.state.deviceId || message.state.provider === 'claude') return;
     const state = message.state,
       store = getSqliteStateStore();
     if (!store) return;

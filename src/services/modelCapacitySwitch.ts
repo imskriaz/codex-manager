@@ -77,7 +77,7 @@ export function registerModelCapacitySwitch(repo: AccountsRepository, view: Refr
     return config.get<boolean>('autoSwitchEnabled', true) && config.get<boolean>('modelCapacityAutoSwitchEnabled', true);
   };
   const stop = subscribeDashboardRealtime(message => {
-    if (disposed || message.type !== 'dashboard:codex-session-live' || message.state.deviceId) return;
+    if (disposed || message.type !== 'dashboard:codex-session-live' || message.state.deviceId || message.state.provider === 'claude') return;
     const state = message.state, home = resolveCodexHome(), accountId = captureSessionAccount();
     if (!accountId || state.updatedAt < startedAt) return;
     if (!sources.has(state.streamId)) {

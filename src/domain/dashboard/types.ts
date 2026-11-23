@@ -425,6 +425,7 @@ export interface DashboardUsageSummary {
 }
 
 export interface DashboardAccountViewModel {
+  provider?: 'codex' | 'claude';
   tags?: string[];
   id: string;
   /** Last durable account-record change, used to order authenticated peer events. */
@@ -821,6 +822,8 @@ export interface DashboardCodexSessionGoal {
 }
 
 export interface DashboardCliSessionSummary {
+  provider?: 'codex' | 'claude';
+  nativeQuota?: { checkedAt: number; accountKey?: string; limits: Array<{ kind: string; status: string; usedPercent?: number; resetsAt?: number }> };
   recommendedSkills?:string[];
   modelProfile?: import('../officeModels').OfficeProfile;
   modelSelection?: 'auto' | import('../officeModels').OfficeProfile;
@@ -927,6 +930,7 @@ export type DashboardCliSandboxMode = "read-only" | "workspace-write" | "danger-
 
 /** Bounded current-turn snapshot shared by both dashboard hosts. */
 export interface DashboardCodexSessionLiveState {
+  provider?: 'codex' | 'claude';
   sessionId: string;
   deviceId?: string;
   streamId: string;
@@ -947,6 +951,7 @@ export interface DashboardCodexSessionLiveState {
 }
 
 export interface DashboardCliModelOption {
+  provider?: "codex" | "claude";
   id: string;
   label: string;
   description?: string;

@@ -426,6 +426,14 @@ export function SavedAccountCard(props: {
       </div>
     );
 
+  if (account.provider === 'claude') {
+    const identity = <div class="saved-table-name-block"><div class="saved-table-name-line"><strong title={emailDisplay}>{emailDisplay}</strong></div><div class="saved-table-meta"><span class="pill">Claude</span><span title={account.subscriptionTitle}>{account.subscriptionText}</span></div></div>;
+    const metrics = account.metrics.length ? account.metrics.map(metric => <MetricRow key={metric.key} metric={metric} lang={props.lang} settings={settings} copy={copy} now={now} />) : <span role="status">Quota not reported by Claude</span>;
+    const refresh = <ActionButton icon={renderRefreshIcon()} iconOnly label="Refresh Claude connection" pending={props.refreshPending} disabled={props.busy || props.connected === false} onClick={() => onAction('refresh', account.id)} />;
+    return props.compactRow ? <article class="saved-table-row" aria-label={emailDisplay}><div class="saved-table-identity">{identity}</div><div class="saved-table-metrics">{metrics}</div><div class="saved-table-actions">{refresh}</div></article>
+      : <article class="saved-card-container"><section class="saved-card saved-card-front" aria-label={emailDisplay}><div class="saved-head">{identity}{refresh}</div><div class="saved-progress">{metrics}</div><small>Choose a Claude model to use this native login.</small></section></article>;
+  }
+
   if (props.compactRow) {
     return (
       <>

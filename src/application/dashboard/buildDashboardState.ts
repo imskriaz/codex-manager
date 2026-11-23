@@ -48,6 +48,7 @@ import {
   isEncryptedSyncRegistryOverrideEnabled
 } from "../../services/encryptedSync";
 import { waitWithin } from "../../utils/concurrency";
+import { claudeDashboardAccount } from './claudeAccount';
 
 // A dashboard snapshot can be rebuilt several times while an expired account
 // remains on screen. Suppress duplicate attempts briefly, but do not let a
@@ -150,6 +151,7 @@ export async function buildDashboardState(
   );
   const sortedAccounts = sortDashboardAccounts(accounts, currentWindowAccountId, accountViewStateById);
   const extraSelectedCount = sortedAccounts.filter((account) => !account.isActive && account.showInStatusBar).length;
+  const claudeAccount = claudeDashboardAccount();
 
   return {
     lang,
@@ -173,7 +175,7 @@ export async function buildDashboardState(
     },
     indexHealth,
     terminalNotice: resolveTerminalNotice(autoSwitchRuntime.dashboardNotice, activeAccount, copy),
-    accounts: sortedAccounts.map((account) =>
+    accounts: [...sortedAccounts.map((account) =>
       mapAccount(
         account,
         accountViewStateById.get(account.id),
@@ -186,7 +188,7 @@ export async function buildDashboardState(
         queuedSwitch,
         pendingEnablementAccountIds.has(account.id)
       )
-    ),
+    ), ...(claudeAccount ? [claudeAccount] : [])],
     connectedPeers
   };
 }

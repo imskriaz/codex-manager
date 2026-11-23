@@ -61,7 +61,7 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
 
-const SESSION_METADATA = ["model","reasoningEffort","sandboxMode","access","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
+const SESSION_METADATA = ["provider","nativeQuota","model","reasoningEffort","sandboxMode","access","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
 
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
@@ -98,6 +98,7 @@ export function mergeCachedCliSession(
   if (!previous || !sameCliSessionTarget(incoming,previous) ||
       !(previous.projectPath && !incoming.projectPath || SESSION_METADATA.some(key=>incoming[key]===undefined && previous[key]!==undefined))) return incoming;
   return { ...incoming,projectPath:incoming.projectPath || previous.projectPath,
+    provider: incoming.provider ?? previous.provider, nativeQuota: incoming.nativeQuota ?? previous.nativeQuota,
     access: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.access : previous.access, sandboxMode: incoming.access ? incoming.access.mode : incoming.sandboxMode ?? previous.sandboxMode,
     model:incoming.model ?? previous.model,reasoningEffort:incoming.reasoningEffort ?? previous.reasoningEffort,
     goal:incoming.goal === undefined ? previous.goal : incoming.goal,

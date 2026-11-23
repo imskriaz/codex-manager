@@ -954,6 +954,14 @@ describe("executeDashboardActionMessage", () => {
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
   });
 
+  it.each(['sendCodexCliSessionMessage', 'steerCodexCliSessionTurn'] as const)('rejects a provider/model change through %s while a turn is active', async action => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = '11111111-1111-4111-8111-111111111111';
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id: sessionId, title: 'Running native turn', model: 'gpt-6.1-sol', status: 'running', locked: true, steerTurnId: 'turn-1', archived: false });
+    const result = await executeDashboardActionMessage(createContext(), { type: 'dashboard:action', action, requestId: `provider-lock-${action}`, payload: { sessionId, text: 'Keep this draft', model: 'claude-code/opus', expectedTurnId: 'turn-1' } });
+    expect(result).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('Stop the active turn before changing model or provider') });
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled(); expect(steerCodexCliSessionTurnMock).not.toHaveBeenCalled();
+  });
   it("routes a send from a truly running session to steer", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
       get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)

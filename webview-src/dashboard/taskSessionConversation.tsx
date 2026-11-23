@@ -12,7 +12,7 @@ import { prepareChatInput, validateChatAttachments } from '../../src/domain/chat
 import { combineCliLiveMessages } from '../../src/domain/codexSessionLive';
 import { Composer, LiveTurnDetails, QueuedMessages, SessionTranscript, summarizeChangedFiles, TurnUsageStrip } from './cliSessionsModal';
 import { readChatAttachmentFiles } from './attachmentUploads';
-import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from './cliSessionComposerState';
+import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliDraftChangesActiveTurnSettings, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from './cliSessionComposerState';
 import { readCliComposerDraft, writeCliComposerDraft } from './cliSessionCache';
 import { useCliMessageQueue, queuedMessageView } from './cliMessageQueue';
 import { useCodexSessionPrompts } from './codexSessionPromptHook';
@@ -77,6 +77,7 @@ export function TaskSessionConversation(props: {
   }, [draft, ready, scope]);
   const queue = useCliMessageQueue({ scope, messages, results, connected: props.connected,
     canDispatch: props.connected && !access.pending && !resume.pending && !props.session.archived && !stopping && (!running || followUpMode === 'steer'),
+    canDispatchDraft: draft => !running || !cliDraftChangesActiveTurnSettings(draft, session),
     canSteer: props.connected && !access.pending && !resume.pending && !props.session.archived && !stopping,
     dispatchReason: !props.connected ? 'Reconnecting… your message is saved and will continue automatically.' : followUpMode === 'queue' && running ? 'Waiting for the current turn to finish. Use Steer to send this message now.' : undefined,
     turnId: running ? steerTurnId : undefined,
