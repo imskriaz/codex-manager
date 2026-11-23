@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-pre.97
+
+- Rename the project picker action to Create new.
+- Show changed-file totals above the User Workspace composer, with access to Files.
+- Remove the leading status dot from connection banners.
+
 ## 3.0.0-pre.95
 
 - Use the native account-card structure for OpenAI and Anthropic API accounts, with masked key identity, provider endpoint details, token-usage status, and API-specific actions.

@@ -71,6 +71,31 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await context.route('**/api/workspace/image?*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64')}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.locator('.cli-workspace').waitFor();
+ if(process.argv.includes('--composer-changes')){
+  await page.getByRole('combobox',{name:'Project',exact:true}).click();
+  await page.getByRole('button',{name:'Create new',exact:true}).click();
+  await page.getByRole('textbox',{name:'Project name',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  const id='12345678-1234-1234-1234-123456789abc';
+  await page.evaluate(({id,activities})=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id,title:'Changed files',status:'idle',projectPath:'C:/team/alex'},messages:activities})),{id,activities});
+  await context.route('**/api/workspace/preferences',route=>route.fulfill({json:{limits:{storageMb:100},usage:{storageBytes:0}}}));
+  await page.goto(origin+'/workspace/'+id);
+  const changes=page.getByRole('button',{name:'View 2 changed files',exact:true});
+  await changes.waitFor();
+  assert.match(await changes.innerText(),/2 files changed/);
+  assert.match(await changes.innerText(),/\+2/);
+  await page.evaluate(()=>window.__setAvailability({status:'offline',availableAt:Math.floor(Date.now()/1000)+3660}));
+  const strip=page.locator('.cli-turn-usage-strip').filter({has:changes});
+  await strip.getByRole('status').filter({hasText:/We're offline/}).waitFor();
+  const layout=await strip.evaluate(node=>{const status=node.querySelector('[role=status]').getBoundingClientRect(),button=node.querySelector('button').getBoundingClientRect();return {overlap:status.right>button.left,overflow:node.scrollWidth>node.clientWidth+1};});
+  assert.deepEqual(layout,{overlap:false,overflow:false});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+  await page.screenshot({path:path.join(output,`composer-changes-${width}.png`),fullPage:true,animations:'disabled'});
+  await changes.click();await page.locator('.cli-file-tree').waitFor();
+  assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,createNew:true,changedFiles:true,offlineStatus:true,opensFiles:true,errors:0}));
+  await context.close();continue;
+ }
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 3660 }));
  await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1h/ }).waitFor();
  await assertPlainUserInterface(page);
@@ -169,7 +194,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.getByRole('listbox',{name:'Commands and skills'}).count(),0);
  await page.locator('.cli-composer textarea').fill('');
  await page.getByRole('button',{name:'Close message settings',exact:true}).click();
- await page.getByRole('combobox',{name:'Project',exact:true}).click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+ await page.getByRole('combobox',{name:'Project',exact:true}).click(); await page.getByRole('button', { name: 'Create new', exact: true }).click();
  await page.getByRole('textbox',{name:'Project name',exact:true}).waitFor();
  assert.equal(await page.getByRole('textbox',{name:'Project folder',exact:true}).count(),0);
  await assertPlainUserInterface(page);
@@ -346,6 +371,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.locator('.cli-session-messages').count(),0,'A new general chat has no older transcript');assert.equal(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count(),0);assert.equal(await page.locator('.corporate-home-card').count(),0);await page.screenshot({path:path.join(output,`home-${width}.png`),fullPage:true,animations:'disabled'});
  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,privateProfile:true,queue:true,reloadPreserved:true,technicalDetailsHidden:true,errors:0}));await context.close();
 }
+ if(!process.argv.includes('--composer-changes')){
  const context=await browser.newContext({viewport:{width:1440,height:960},serviceWorkers:'block'}),page=await context.newPage();
  const master={...state,office:{...office,id:'master',role:'unrestricted-admin'},connectedPeers:[{id:'local',name:'This PC',connected:true,local:true}],settings:{...raw.settings,cliIntegrationEnabled:true,systemInfoEnabled:false}};
  const masterHost=mockHost.replace("document.documentElement.dataset.dashboardUser='fixture-alex';",'delete document.documentElement.dataset.dashboardUser;').replace(JSON.stringify(state),JSON.stringify(master)).replace("else if(message.action==='getCodexSkills')", "else if(message.action==='listWorkspaceTerminals')payload={workspaceTerminals:[]};else if(message.action==='getCodexSkills')");
@@ -364,5 +390,6 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const masterSend=await masterQuestion.getByRole('button',{name:'Send answer',exact:true}).boundingBox();assert.ok(masterSend&&masterSend.y>=0&&masterSend.y+masterSend.height<=640);
  await page.screenshot({path:path.join(output,'master-question-mobile.png'),fullPage:true,animations:'disabled'});await masterQuestion.getByRole('button',{name:'Cancel',exact:true}).click();
  console.log(JSON.stringify({masterDashboardControlsPreserved:true,masterQuestionMobile:true}));await context.close();
+ }
 }finally{await browser.close();}
 console.log('Screenshots: '+output);

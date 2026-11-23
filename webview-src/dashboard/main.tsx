@@ -3540,7 +3540,6 @@ function WorkspaceConnectionBanner(props: { stage: ConnectionStage; onReload: ()
     : props.stage === 'system-offline' ? 'System offline'
     : props.stage === 'reloading' ? 'Reloading…' : 'Connection interrupted';
   return <aside class={`dashboard-connection-banner is-${props.stage}`} role="alert" aria-live="polite">
-    <span class="dashboard-connection-indicator" aria-hidden="true" />
     <span class="dashboard-connection-copy"><strong>{title}</strong></span>
     {props.stage === 'reloading' ? <span class="dashboard-connection-progress" aria-label="Reload in progress" /> : <button type="button" onClick={props.onReload}>Reload</button>}
   </aside>;

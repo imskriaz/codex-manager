@@ -81,7 +81,7 @@ export function ProjectPicker(props: {
       </div>
       {!matches.length ? <p class="project-picker-empty">{query ? 'No matching folders' : 'No recent folders'}</p> : null}
       {failed && notice ? <p class="project-picker-error" role="alert">{notice}</p> : null}
-      {props.onAdd ? <button type="button" class="project-picker-add" onClick={() => { close(); props.onAdd?.(); }}>Open folder…</button> : null}
+      {props.onAdd ? <button type="button" class="project-picker-add" onClick={() => { close(); props.onAdd?.(); }}>Create new</button> : null}
     </div> : null}
     {!pending && !failed && notice ? <span class="sr-only" role="status">{notice}</span> : null}
     {pending ? <RemoveProjectConfirmation project={pending} error={failed ? notice : undefined} onCancel={() => { setPending(undefined); setNotice('Project removal cancelled.'); setFailed(false); }} onConfirm={() => remove(pending)} /> : null}

@@ -11,6 +11,7 @@ export async function checkConnectionBannerUi(page, { origin, parentId, width, o
     })), stage);
     const banner = page.locator('.dashboard-connection-banner');
     await banner.waitFor();
+    assert.equal(await banner.locator(".dashboard-connection-indicator").count(), 0);
     const box = await banner.boundingBox();
     assert.ok(box.width <= 300, `Connection warning uses content width: ${box.width}px`);
     assert.ok(box.x >= 0 && box.x + box.width <= width, 'Connection warning fits the viewport');
@@ -27,6 +28,8 @@ export async function checkConnectionBannerUi(page, { origin, parentId, width, o
   })));
   const reload = page.locator('.dashboard-connection-banner');
   await reload.getByText('Reloading…', { exact: true }).waitFor();
+  assert.equal(await reload.locator('.dashboard-connection-indicator').count(), 0);
+  assert.equal(await reload.getByLabel('Reload in progress').count(), 1);
   assert.ok((await reload.boundingBox()).width <= 300, 'Reload progress also uses content width');
   await page.screenshot({ path: path.join(output, `connection-reloading-${width}.png`) });
   console.log(JSON.stringify({ width, connectionCheckMs: Math.round(performance.now() - started) }));

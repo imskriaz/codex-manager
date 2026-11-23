@@ -29,7 +29,7 @@ try {
   if (await hideSidebar.isVisible()) await hideSidebar.click();
   const picker = page.getByRole('combobox', { name: 'Task project', exact: true });
   await picker.waitFor({ timeout: 45000 });
-  await picker.click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+  await picker.click(); await page.getByRole('button', { name: 'Create new', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Add Project', exact: true });
   await modal.waitFor();
   assert.equal(await modal.getByRole('textbox').count(), 1);
@@ -56,7 +56,7 @@ try {
   await modal.waitFor({ state: 'hidden' });
   assert.equal(await picker.getAttribute('data-value'), existingPath);
   assert.equal(await readFile(path.join(existingPath, 'keep.txt'), 'utf8'), 'kept');
-  await picker.click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+  await picker.click(); await page.getByRole('button', { name: 'Create new', exact: true }).click();
   await projectFolder.fill(existingPath);
   await modal.getByRole('button', { name: 'Add project', exact: true }).click();
   await modal.waitFor({ state: 'hidden' });

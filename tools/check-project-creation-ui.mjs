@@ -56,7 +56,7 @@ export async function checkProjectCreationUi(page, { origin, width, output }) {
   assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1, 'Picker stays inside the viewport');
   await page.screenshot({ path: path.join(output, `project-picker-${width}.png`) });
   await page.keyboard.press('Escape');
-  await page.getByRole('combobox', { name: 'Project', exact: true }).click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Project', exact: true }).click(); await page.getByRole('button', { name: 'Create new', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Add Project', exact: true });
   await modal.waitFor();
   assert.equal(await modal.getByRole('textbox').count(), 1, 'Only the project folder field is shown');
@@ -142,7 +142,7 @@ export async function checkProjectCreationUi(page, { origin, width, output }) {
   await taskSearch.fill('empty-project');
   await page.locator('.project-picker-popover').getByRole('option').filter({ hasText: 'empty-project-with-a-long-name' }).waitFor();
   await page.keyboard.press('Escape');
-  await taskPicker.click(); await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+  await taskPicker.click(); await page.getByRole('button', { name: 'Create new', exact: true }).click();
   await modal.waitFor();
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
   console.log(JSON.stringify({ width, durationMs: Date.now() - started, checks: 'Empty project and zero-session picker, separate folder modal, focus, Escape preserves draft, Home/Up/path navigation, folder creation/collision/cancellation, selection, no real writes' }));
