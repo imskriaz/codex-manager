@@ -119,6 +119,14 @@ describe.skipIf(!adminUrl)('PostgreSQL Office storage (isolated test database)',
     expect(store.prepare('SELECT value FROM state WHERE namespace=? AND key=?').get('office-memory','alex')).toBeDefined();
     expect(await remote('office-memory','alex')).toEqual({revision:'original'});
   });
+  it('refuses a recreated PostgreSQL database after local migration completed', async () => {
+    store.set('office-memory','alex',{revision:'original'}); await start();
+    await inspect.query('DELETE FROM codex_manager_office_state');
+    await inspect.query('DELETE FROM codex_manager_office_migrations');
+    service.dispose();
+    await expect(start()).rejects.toMatchObject({cause:{code:'MIGRATION_MARKER_MISSING'}});
+    expect(store.get('migrations','office-postgres-v1')).toBeDefined();
+  });
   it('rejects database outages without local writes while master authentication and audit stay available', async () => {
     await start();
     await inspect.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=current_database() AND application_name='codex-manager-office'");

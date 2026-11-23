@@ -32,7 +32,7 @@ export class OfficePostgresStore {
     return result.value as T;
   }
 
-  async migrateAsync(source: string, rows: OfficeStateRow[]): Promise<void> {
+  async migrateAsync(source: string, rows: OfficeStateRow[], requireExisting = false): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const finish = (failed: boolean, code?: string) => {
         clearTimeout(timer);
@@ -44,7 +44,7 @@ export class OfficePostgresStore {
       const timer = setTimeout(fail, 30_000);
       this.worker.once('error', fail); this.worker.once('exit', fail);
       this.channel.port1.once('message', (result: {failed?: boolean; code?: string}) => finish(result.failed === true, result.code));
-      this.channel.port1.postMessage({operation: 'migrate', args: [source, rows], signal: new Int32Array(new SharedArrayBuffer(4))});
+      this.channel.port1.postMessage({operation: 'migrate', args: [source, rows, requireExisting], signal: new Int32Array(new SharedArrayBuffer(4))});
     });
   }
   get<T>(namespace: string, key: string): T | undefined { return this.request<T | undefined>('get', [namespace, key]); }

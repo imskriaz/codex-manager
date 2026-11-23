@@ -20,11 +20,13 @@ async function database(): Promise<Client> {
   } catch (error) { await candidate.end().catch(() => undefined); throw error; }
 }
 
-async function migrate(db: Client, source: string, rows: OfficeStateRow[]): Promise<void> {
+async function migrate(db: Client, source: string, rows: OfficeStateRow[], requireExisting: boolean): Promise<void> {
   await db.query('BEGIN');
   try {
     await db.query(`SELECT pg_advisory_xact_lock(${lock})`);
-    if (!(await db.query('SELECT 1 FROM codex_manager_office_migrations WHERE source=$1', [source])).rowCount) {
+    const existing = Boolean((await db.query('SELECT 1 FROM codex_manager_office_migrations WHERE source=$1', [source])).rowCount);
+    if (requireExisting && !existing) throw new Error('The PostgreSQL migration marker is missing; restore the original database before retrying.');
+    if (!existing) {
       // These tables were authoritative in the earlier users-only backend.
       for (const [table, key] of [['codex_manager_office_users', 'users'], ['codex_manager_office_mcp', 'mcp-servers']]) {
         if ((await db.query<{name: string | null}>('SELECT to_regclass($1) AS name', [table])).rows[0]?.name) {
@@ -54,7 +56,7 @@ async function execute(operation: string, args: unknown[]): Promise<unknown> {
   const db = await database();
   const [namespace, key, serialized] = args as [string, string, string | undefined];
   switch (operation) {
-    case 'migrate': await migrate(db, namespace, args[1] as OfficeStateRow[]); return;
+    case 'migrate': await migrate(db, namespace, args[1] as OfficeStateRow[], args[2] === true); return;
     case 'get': return (await db.query<{value:unknown}>('SELECT value FROM codex_manager_office_state WHERE namespace=$1 AND key=$2', [namespace,key])).rows[0]?.value;
     case 'set':
       if (serialized === undefined) await db.query('DELETE FROM codex_manager_office_state WHERE namespace=$1 AND key=$2', [namespace,key]);
@@ -94,6 +96,7 @@ port.on('message', (request: {operation: string; args: unknown[]; signal: Int32A
       const code = (error as {code?: unknown})?.code;
       const diagnostic = typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code
         : error instanceof Error && error.message.startsWith('Migration conflict') ? 'MIGRATION_CONFLICT'
+        : error instanceof Error && error.message.startsWith('The PostgreSQL migration marker is missing') ? 'MIGRATION_MARKER_MISSING'
         : error instanceof Error && /timeout/i.test(error.message) ? 'TIMEOUT' : 'DATABASE_ERROR';
       port.postMessage({failed: true, code: diagnostic});
     } finally { Atomics.store(request.signal, 0, 1); Atomics.notify(request.signal, 0); }

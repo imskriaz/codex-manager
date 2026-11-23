@@ -61,7 +61,7 @@ export function configureOfficeStorage(store: SqliteStateStore, settings: () => 
         const backup = path.join(path.dirname(store.file), `office-before-postgres-${randomUUID()}.json`);
         fs.writeFileSync(backup, JSON.stringify({source, rows}), {mode: 0o600, flag: 'wx'});
       }
-      await candidate.migrateAsync(source, rows);
+      await candidate.migrateAsync(source, rows, Boolean(mark));
       if (disposed) throw new Error('The host stopped during storage migration.');
       // An older host writing during migration must never lose its newer records.
       const current = [...officeMigrationRows(localRows()), ...authRows(), ...pushRows(), ...logRows()];

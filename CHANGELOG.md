@@ -1,3 +1,7 @@
+## 3.0.0-pre.92
+
+- Refuse a recreated PostgreSQL database after Office migration instead of silently accepting missing workspace data.
+
 # Changelog
 
 ## 3.0.0-pre.91
