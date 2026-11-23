@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.99
+
+- Open an initialized shared database without schema writes so VS Code can start while standalone holds a write transaction.
+
 ## 3.0.0-pre.98
 
 - Accept verified VS Code wrapper messages when the runtime masks the parent window, while rejecting embedded preview messages.

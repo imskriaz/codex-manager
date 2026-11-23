@@ -31,6 +31,17 @@ async function open() {
   return store;
 }
 
+it('opens an initialized database while the standalone host holds a write transaction', async () => {
+  const writer = await open();
+  writer.set('handover', 'account', 'saved');
+  writer.database.exec('BEGIN IMMEDIATE');
+  try {
+    writer.database.prepare('UPDATE state SET value=? WHERE namespace=? AND key=?').run(JSON.stringify('pending'), 'handover', 'account');
+    const vscodeHost = await open();
+    expect(vscodeHost.get('handover', 'account')).toBe('saved');
+  } finally { writer.database.exec('ROLLBACK'); }
+});
+
 it('retains compact account tags through SQLite reopen and clearing', async () => {
   const store = await open();
   saveAccountIndex(store, { accounts: [{ id: 'tagged', email: 'tags@example.test', createdAt: 1, updatedAt: 2, tags: ['Work', 'Team'] }] });

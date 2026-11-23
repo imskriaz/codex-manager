@@ -154,8 +154,12 @@ export class SqliteStateStore {
       database.exec("PRAGMA busy_timeout = 100;");
       const version = database.prepare("PRAGMA user_version").get()?.["user_version"];
       if (typeof version !== "number" || version > 1) throw new Error("This storage database requires a newer Codex Manager version.");
-      database.exec("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA cache_size = -1024; PRAGMA temp_store = FILE;");
-      database.exec("CREATE TABLE IF NOT EXISTS state (namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (namespace, key)); PRAGMA user_version = 1;");
+      // Existing WAL readers must open while the other host still owns a write transaction.
+      if (version === 0) {
+        database.exec("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL;");
+        database.exec("CREATE TABLE IF NOT EXISTS state (namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (namespace, key)); PRAGMA user_version = 1;");
+      }
+      database.exec("PRAGMA synchronous = FULL; PRAGMA cache_size = -1024; PRAGMA temp_store = FILE;");
       if (process.platform !== "win32") fs.chmodSync(file, 0o600);
       return new SqliteStateStore(file, database);
     } catch (error) { database.close(); throw error; }
