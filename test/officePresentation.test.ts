@@ -13,3 +13,7 @@ it('keeps new users card-free and stores only permitted LLM tags for each user',
  expect(readOfficeRecommendations('alex',presentation)).toEqual([]);saveOfficeRecommendations('alex',['document-drafting','project-planning'],presentation);expect(readOfficeRecommendations('alex',presentation)).toEqual(['document-drafting','project-planning']);expect(readOfficeRecommendations('sam',presentation)).toEqual([]);
  expect(()=>saveOfficeRecommendations('alex',['terminal'],presentation)).toThrow('configured');expect(readOfficeRecommendations('alex',{...presentation,contextualCards:false})).toEqual([]);expect(readOfficeRecommendations('alex',{...presentation,catalog:[]})).toEqual([]);
 });
+it('merges successive recommendation writes and recovers malformed optional history',()=>{
+ state.clear();const presentation=structuredClone(DEFAULT_OFFICE_PRESENTATION);state.set('office-recommendations:alex',{invalid:true});expect(readOfficeRecommendations('alex',presentation)).toEqual([]);
+ saveOfficeRecommendations('alex',['document-drafting'],presentation);saveOfficeRecommendations('alex',['data-analysis'],presentation);expect(readOfficeRecommendations('alex',presentation)).toEqual(['data-analysis','document-drafting']);
+});

@@ -19,7 +19,7 @@ export async function writeOfficeBinary(user:OfficeUser,project:string,file:stri
  if(previous&&(!revision||hash(previous)!==revision))throw new Error('This file exists or changed. Read its latest revision before saving.');
  if(user.limits?.storageMb&&(await officeStorageBytes(root,user.id))+data.length>user.limits.storageMb*1048576)throw new Error('Your storage allowance is full. Clear files or Trash before saving.');
  let parent=root;for(const part of path.relative(root,path.dirname(target)).split(path.sep).filter(Boolean)){parent=path.join(parent,part);await fs.mkdir(parent,{recursive:true});await resolveOfficePath(root,root,path.relative(root,parent));}
- if(previous)await preserveOfficeFile(user,project,file);
+  if(previous)await preserveOfficeFile(user,project,file,'version',{replacementBytes:data.length});
  const temporary=path.join(path.dirname(target),'.'+randomUUID()+'.codex-manager.tmp');
  try{await fs.writeFile(temporary,data,{flag:'wx'});if(previous){const current=await fs.readFile(target);if(hash(current)!==revision)throw new Error('The file changed while saving. Refresh before retrying.');await fs.rename(temporary,target);}else await fs.link(temporary,target);}finally{await fs.rm(temporary,{force:true});}
  return {path:file,revision:hash(data),size:data.length,message:'File saved.'};
@@ -37,7 +37,13 @@ export async function importOfficeAttachment(user:OfficeUser,file:ChatAttachment
  if(!exists)await writeOfficeBinary(user,root,relative,data);
  return {path:relative,name:file.name,text:text.length>30000?text.slice(0,30000)+'\n[Excerpt. Read the saved file for more.]':text,...(file.kind==='image'?{image:file.data,mimeType:file.mimeType}:{}),extension};
 }
-export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text'){const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>10*1048576)throw new Error('Keep each Office document under 10 MB.');return extractOfficeDocument(file,await fs.readFile(target),format);}
+export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text'){
+ const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>10*1048576)throw new Error('Keep each Office document under 10 MB.');const data=await fs.readFile(target);
+ if(format==='html'&&/\.(docx|pptx)$/i.test(file)){
+  const {readOfficeIntegrations}=await import('./officeIntegrations');if(readOfficeIntegrations().rendererUrl){try{return await (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal);}catch{return '<p role="status">Rendered pages are temporarily unavailable. Showing the content preview; the original file is kept.</p>'+await extractOfficeDocument(file,data,format);}}
+ }
+ return extractOfficeDocument(file,data,format);
+}
 
 export async function readOfficeImage(user:OfficeUser,file:string,mimeType:string){
  if(!user.enabled||!user.features.includes('files')||!['image/png','image/jpeg','image/webp'].includes(mimeType))throw new Error('This image is unavailable.');

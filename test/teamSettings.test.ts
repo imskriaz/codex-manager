@@ -16,7 +16,13 @@ import { DEFAULT_USER_WORKSPACE_PROMPT } from '../src/domain/teamWorkspacePresen
 
 beforeEach(() => {
   config.values.clear();
-  config.update.mockClear();
+  config.update.mockReset().mockImplementation(async(key:string,value:unknown)=>{config.values.set(key,value);});
+});
+it('rolls back a failed settings form instead of leaving a partial save',async()=>{
+ config.values.set('officeGlobalPrompt','Original');config.update.mockRejectedValueOnce(new Error('disk full'));
+ await expect(saveTeamSettings({globalPrompt:'Changed',maxActiveRequests:5})).rejects.toThrow('disk full');expect(readTeamSettings().globalPrompt).toBe('Original');expect(readTeamSettings().maxActiveRequests).toBe(2);
+ config.update.mockImplementation(async(key:string,value:unknown)=>{if(key==='officeMaxActiveRequests')throw new Error('quota busy');config.values.set(key,value);});
+ await expect(saveTeamSettings({globalPrompt:'Changed',maxActiveRequests:5})).rejects.toThrow('quota busy');expect(readTeamSettings().globalPrompt).toBe('Original');
 });
 describe("Team storage settings", () => {
   it("keeps saved PostgreSQL credentials out of settings responses", async () => {
@@ -41,7 +47,8 @@ describe("Team storage settings", () => {
     await saveTeamSettings({ databaseProvider: "postgres", postgresUrl: "postgresql://host/team" });
     expect(readTeamSettings().workspaceRoot).toBe("C:/existing");
     await saveTeamSettings({ workspaceRoot: "C:/new-users" });
-    expect(readTeamSettings()).toEqual({
+    expect(readTeamSettings()).toMatchObject({
+      services:{rendererUrl:"",runtimeUrl:"",searchDomains:[],rendererConfigured:false,runtimeConfigured:false,searchConfigured:false,rendererKeyConfigured:false,runtimeKeyConfigured:false},
       globalPrompt: DEFAULT_USER_WORKSPACE_PROMPT,
       defaultModel: "gpt-6-luna",
       modelMode:'manual',profilePicker:true,routerModel:'gpt-6-luna',regularModel:'gpt-6-luna',professionalModel:'gpt-6.1-sol',expertModel:'gpt-6.1-terra',

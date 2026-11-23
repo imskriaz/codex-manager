@@ -24,6 +24,6 @@ export async function officeQuestionPreviews(user:OfficeUser,project:string,raw:
       const filePath=path.relative(root,target).split(path.sep).join('/');await readOfficeImage(user,filePath,mimeType);
       verified.push({option:preview.option,image:'/api/workspace/image?filePath='+encodeURIComponent(filePath)+'&mimeType='+encodeURIComponent(mimeType),...(preview.description?{description:preview.description as string}:{})});
     }
-    question.previews=verified;
+    question.previews=verified;question.view=(raw[index] as {view?:unknown}).view==='list'?'list':'grid';
   }
 }

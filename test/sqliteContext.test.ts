@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ root: "" }));
 vi.mock("../src/utils/storageRoot", () => ({ getCodexManagerStorageRoot: () => fixture.root }));
-import { disposeSqliteContext, initializeSqliteContext, initializeSqliteContextWithRetry } from "../src/storage/sqliteContext";
+import { disposeSqliteContext, initializeSqliteContext, initializeSqliteContextWithRetry,updateConfigurationBatch } from "../src/storage/sqliteContext";
 import { configureSqliteStateStore, getSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../src/infrastructure/config/extensionSettings";
 import { removeTestDirectory } from "./testFilesystem";
@@ -67,6 +67,15 @@ afterEach(async () => {
 });
 
 describe("SQLite extension context and settings migration", () => {
+  it('commits a complete settings form atomically and rolls back a failed write',async()=>{
+    await initializeSqliteContext(context());const config=getCodexManagerConfiguration(),store=getSqliteStateStore()!,seen:unknown[]=[];
+    subscriptions.push(onDidChangeConfiguration(()=>seen.push([config.get('officeGlobalPrompt'),config.get('officeMaxActiveRequests')])));
+    await updateConfigurationBatch(config,[['officeGlobalPrompt','Committed'],['officeMaxActiveRequests',5]]);expect(seen.at(-1)).toEqual(['Committed',5]);
+    await updateConfigurationBatch(config,[['officeDefaultSkills',['data-analysis']]]);expect(config.get('officeDefaultSkills')).toEqual(['data-analysis']);
+    await expect(updateConfigurationBatch(config,[['officeServices',[]]])).rejects.toThrow('Invalid value');
+    const set=vi.spyOn(store,'set');set.mockImplementationOnce(()=>{throw new Error('disk full');});
+    await expect(updateConfigurationBatch(config,[['officeGlobalPrompt','Partial'],['officeMaxActiveRequests',7]])).rejects.toThrow('disk full');expect(config.get('officeGlobalPrompt')).toBe('Committed');expect(config.get('officeMaxActiveRequests')).toBe(5);
+  });
   it("retires the editor preference across saved scopes without changing recovery or Auto Resume", async () => {
     const original = context();
     await initializeSqliteContext(original);

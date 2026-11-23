@@ -21,6 +21,12 @@ afterEach(async()=>{vi.useRealTimers();vi.restoreAllMocks();services.forEach(ser
 function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
 }
+it('keeps the host alive while workspace storage is still becoming ready', () => {
+  storage.routeOfficeState(() => { throw new Error('Workspace storage is being migrated.'); });
+  const { service } = setup();
+  expect(() => service.start()).not.toThrow();
+  service.stop();
+});
 const start=(requestId="request-1",text="Hello")=>({type:"dashboard:action" as const,action:"startCodexCliSession" as const,requestId,payload:{text}});
 it('delivers every follow-up live turn even with identical timestamps and across service instances',async()=>{
  const {service,changed}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));

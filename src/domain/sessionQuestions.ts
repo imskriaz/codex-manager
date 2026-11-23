@@ -15,8 +15,10 @@ export function readSessionQuestions(value: unknown): NonNullable<DashboardCliSe
     const title = question.title ?? question.question;
     if(typeof title!=='string'||!title.trim())return [];
     const options=Array.isArray(question.options)?question.options.flatMap((option:unknown)=>typeof option==='string'?[option.slice(0,8000)]:option&&typeof option==='object'&&'label' in option&&typeof option.label==='string'?[option.label.slice(0,8000)]:[]).slice(0,20):undefined;
-    const previews=Array.isArray(question.previews)?question.previews.filter(validQuestionPreview).filter(item=>options?.includes(item.option)).slice(0,10):[];
-    return [{title:title.slice(0,8000),...(options?{options}:{}),...(previews.length?{previews}: {}),...(question.view==='grid'||question.view==='list'?{view:question.view}:{})}];
+    const seen=new Set<string>();
+    const previews=Array.isArray(question.previews)?question.previews.filter(validQuestionPreview).filter(item=>{if(!options?.includes(item.option)||seen.has(item.option))return false;seen.add(item.option);return true;}).slice(0,10):[];
+    const view=question.view==='grid'?(previews.length>=2?'grid':'list'):question.view==='list'?'list':undefined;
+    return [{title:title.slice(0,8000),...(options?{options}:{}),...(previews.length?{previews}: {}),...(view?{view}:{})}];
   });
 }
 

@@ -11,6 +11,7 @@ import { BrowserPushService, BrowserPushRegistrationConflictError, validateBrows
 import { WebDashboardServer, fingerprintWebDashboardSession } from '../src/services/webDashboardServer';
 import * as vscode from 'vscode';
 import { publishDashboardRealtime } from "../src/services/dashboardRealtime";
+import * as sqliteState from "../src/storage/sqliteState";
 
 const subscription = (name = "one") => {
   const key = createECDH("prime256v1");
@@ -233,6 +234,14 @@ describe("persistent browser push", () => {
     expect(await service.isSubscribed(item.endpoint, "owner", "https://dashboard.example")).toBe(false);
     await service.revokeOwner("owner");
     expect(await service.isSubscribed(item.endpoint, "owner", "https://dashboard.example")).toBe(false);
+  });
+  it('keeps local master notifications readable when PostgreSQL is unavailable', async () => {
+    const item = subscription('master');
+    stored.set('codexManager.browserPush.v1', JSON.stringify({ keys: { publicKey: 'key', privateKey: 'private' }, subscriptions: [{ ...item, owner: 'master', origin: 'local', expiresAt: Date.now() + 60_000 }] }));
+    vi.spyOn(sqliteState, 'getSqliteStateStore').mockReturnValue({
+      get: (namespace: string, key: string) => namespace === 'migrations' && key === 'office-postgres-v1' ? true : (() => { throw new Error('database unavailable'); })()
+    } as never);
+    expect(await service.hasSubscriptions()).toBe(true);
   });
   it("sends an error to all subscribed devices in parallel and exposes a completion barrier", async () => {
     await service.subscribe(subscription(), "one", "https://dashboard.example", password);

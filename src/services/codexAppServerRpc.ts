@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import * as path from "node:path";
 import { WebSocket } from "ws";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { activeApiAccount, apiAccountCodexArgs, apiAccountEnvironment } from './apiAccounts';
 
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
 export type AppServerTransport = "stdio" | "proxy" | "websocket";
@@ -62,12 +63,16 @@ export class CodexAppServerRpc {
 
   static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal, transport: AppServerTransport = "stdio"): Promise<CodexAppServerRpc> {
     signal?.throwIfAborted();
+    if (activeApiAccount('openai')) {
+      transport = 'stdio';
+      executable = { ...executable, prefixArgs: [...executable.prefixArgs, ...apiAccountCodexArgs()] };
+    }
     if (transport === "websocket") return CodexAppServerRpc.openWebSocket(executable, cwd, signal);
     const args = transport === "proxy" ? ["app-server", "proxy"] : ["app-server", "--stdio"];
     const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
       cwd,
-      env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+      env: apiAccountEnvironment('openai', { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) }),
       windowsHide: true,
       shell: executable.shell,
       detached: process.platform !== "win32",

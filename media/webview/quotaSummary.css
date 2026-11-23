@@ -19407,4 +19407,33 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .visual-review-modal { width:min(1100px,calc(100vw - 24px)); }
 .visual-review-image { display:block; width:100%; max-height:75dvh; object-fit:contain; }
 @media(max-width:359px){.cli-visual-options{grid-template-columns:1fr;}}
-.voice-dictation{display:grid;gap:12px}.voice-dictation label{display:grid;gap:6px}.voice-dictation textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:120px}.voice-dictation small,.voice-interim{color:var(--vscode-descriptionForeground)}.voice-dictation .workspace-dialog-footer{flex-wrap:wrap}
+/* Match the compact composer controls while keeping the transcript readable. */
+.voice-dictation-modal.dashboard-modal-compact.settings-modal.dashboard-modal { width: min(432px, calc(100vw - 28px)); }
+.voice-dictation { display: grid; gap: 12px; }
+.voice-dictation-intro { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 10px; padding: 2px 0 3px; }
+.voice-dictation-intro > div { display: grid; gap: 2px; min-width: 0; }
+.voice-dictation-intro strong { color: var(--text-primary); font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 600; }
+.voice-dictation-intro small { color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.35; }
+.voice-dictation-indicator { display: inline-grid; grid-template-columns: repeat(3, 3px); align-items: center; justify-content: center; gap: 3px; width: 32px; height: 32px; border: 1px solid var(--border-default); border-radius: 10px; color: var(--text-muted); background: var(--bg-elevated); }
+.voice-dictation-indicator i { display: block; width: 3px; height: 9px; border-radius: 3px; background: currentColor; opacity: .7; }
+.voice-dictation-indicator i:nth-child(2) { height: 14px; }
+.voice-dictation-indicator.is-active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-default)); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated)); }
+.voice-dictation-indicator.is-active i { animation: voice-dictation-wave 900ms ease-in-out infinite alternate; }
+.voice-dictation-indicator.is-active i:nth-child(2) { animation-delay: 120ms; }
+.voice-dictation-indicator.is-active i:nth-child(3) { animation-delay: 240ms; }
+@keyframes voice-dictation-wave { from { transform: scaleY(.65); } to { transform: scaleY(1.25); } }
+.voice-dictation label { display: grid; gap: 5px; color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); font-weight: 600; }
+.voice-dictation select, .voice-dictation textarea { width: 100%; box-sizing: border-box; }
+.voice-dictation select { min-height: 30px; }
+.voice-dictation textarea { min-height: 124px; padding: 9px 10px; resize: vertical; line-height: 1.45; }
+.voice-dictation textarea::placeholder { color: var(--text-muted); }
+.voice-dictation-privacy { color: var(--text-muted); font-size: calc(10px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
+.voice-interim { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; margin: -3px 0 0; padding: 7px 9px; border-left: 2px solid var(--accent); color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
+.voice-interim span { color: var(--accent); font-weight: 600; }
+.voice-dictation-notice { margin: -2px 0 0; color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
+.voice-dictation-notice.is-warning { color: var(--warning); }
+.voice-dictation .workspace-dialog-footer { flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.voice-dictation .workspace-dialog-footer button { min-height: 30px; }
+.voice-dictation .workspace-dialog-footer button:first-child { margin-right: auto; }
+@media (prefers-reduced-motion: reduce) { .voice-dictation-indicator.is-active i { animation: none; } }
+@media (max-width: 420px) { .voice-dictation .workspace-dialog-footer button:first-child { margin-right: 0; } }

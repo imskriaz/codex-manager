@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import type { DashboardAccountViewModel } from '../../domain/dashboard/types';
 import { cachedClaudeConnection, claudeConfigHome, claudeAccountKey, discoverClaudeModels } from '../../services/claudeCliRuntime';
 import { listClaudeSessions } from '../../services/claudeSessions';
+import { activeApiAccount } from '../../services/apiAccounts';
 
 const accountId = () => 'claude:' + createHash('sha256').update(claudeConfigHome()).digest('hex');
 export function isClaudeAccount(id: string): boolean { return id === accountId(); }
@@ -10,17 +11,19 @@ export function isClaudeAccount(id: string): boolean { return id === accountId()
 export function claudeDashboardAccount(): DashboardAccountViewModel | undefined {
   void discoverClaudeModels();
   const connection = cachedClaudeConnection();
-  if (!connection?.models.length) return undefined;
-  const key = claudeAccountKey(connection.account);
+  const apiSelected = !!activeApiAccount('anthropic');
+  if (!connection?.models.length && !apiSelected) return undefined;
+  const nativeAccount = apiSelected ? undefined : connection?.account;
+  const key = claudeAccountKey(nativeAccount);
   const quota = listClaudeSessions().map(session => session.nativeQuota).filter((value): value is NonNullable<typeof value> => value !== undefined && key !== undefined && value.accountKey === key)
     .sort((a, b) => b.checkedAt - a.checkedAt)[0];
   const metrics = (quota?.limits ?? []).map(limit => ({ key: limit.kind, label: limit.kind === 'five_hour' ? '5h' : limit.kind === 'seven_day' ? 'Weekly' : limit.kind.replace(/_/g, ' '),
     percentage: limit.resetsAt && limit.resetsAt * 1000 <= Date.now() || limit.usedPercent === undefined ? undefined : Math.max(0, 100 - limit.usedPercent),
     resetAt: limit.resetsAt === undefined ? undefined : limit.resetsAt * 1000, visible: true }));
-  return { id: accountId(), provider: 'claude', displayName: 'Claude Code', email: connection.account?.email ?? 'Claude Code',
+  return { id: accountId(), provider: 'claude', displayName: 'Claude Code', email: nativeAccount?.email ?? 'Claude Code native login',
     authProviderLabel: 'Claude', accountStructureLabel: 'Native Claude Code login', workspaceLabel: '', isTeamWorkspace: false,
-    subscriptionText: connection.account?.subscriptionType ?? 'Native login', subscriptionTitle: 'Managed by Claude Code',
-    addMethodLabel: 'Native Claude Code', addedAtLabel: '', planTypeLabel: connection.account?.subscriptionType ?? 'Claude',
+    subscriptionText: nativeAccount?.subscriptionType ?? 'Native login', subscriptionTitle: 'Managed by Claude Code',
+    addMethodLabel: 'Native Claude Code', addedAtLabel: '', planTypeLabel: nativeAccount?.subscriptionType ?? 'Claude',
     isActive: false, switchQueued: false, isCurrentWindowAccount: false, enabled: false, queuePriority: false,
     tokenRefreshEnabled: false, canRefreshToken: false, showInStatusBar: false, canToggleStatusBar: false,
     statusToggleTitle: 'Choose a Claude model to use this native login', hasQuota402: false, healthKind: 'healthy',

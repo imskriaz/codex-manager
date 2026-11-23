@@ -11,5 +11,5 @@ export function normalizeApiAccount(input: ApiAccountInput): Required<ApiAccount
   try { url = new URL(input.baseUrl?.trim() || (input.provider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com')); }
   catch { throw new Error('Enter a valid API base URL.'); }
   if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error('Use HTTPS, or HTTP on localhost, without credentials, query parameters or fragments.');
-  return { provider: input.provider, name: input.name.trim(), apiKey: input.apiKey.trim(), baseUrl: url.toString().replace(/\/$/, '') };
+  return { provider: input.provider, name: input.name.trim(), apiKey: input.apiKey.trim(), baseUrl: url.toString().replace(/\/+$/, '') };
 }

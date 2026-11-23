@@ -26,11 +26,13 @@ export default defineConfig({
         manualChunks(id) {
           const file = id.replace(/\\/g, "/");
           if (file.includes("node_modules")) {
+            const language=file.match(/\/@codemirror\/lang-([a-z]+)\//)?.[1];if(language)return `editor-language-${language}`;
+            const grammar=file.match(/\/@lezer\/([a-z]+)\//)?.[1];if(grammar&&!['common','highlight','lr'].includes(grammar))return `editor-language-${grammar}`;
             if (/\/(?:@codemirror|@lezer|codemirror)\//.test(file)) return "editor-vendor";
             if (file.includes("/@xterm/")) return "terminal-vendor";
             return "vendor";
           }
-          if (file.includes("vite/preload-helper") || (file.startsWith(rootDir.replace(/\\/g, "/")) && !/\/(?:main|workspaceCodeEditor|workspaceTerminal|workspaceBrowser)\.tsx$/.test(file))) return "dashboard-core";
+          if (file.includes("vite/preload-helper") || (file.startsWith(rootDir.replace(/\\/g, "/")) && !/\/(?:main|workspaceCodeEditor|workspaceTerminal|workspaceBrowser|settingsOverlay|apiWorkspace|taskBoard)\.tsx$/.test(file))) return "dashboard-core";
         }
       }
     }

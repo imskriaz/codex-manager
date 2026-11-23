@@ -373,6 +373,12 @@ export class DashboardPanelController {
       void this.publishState().catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error);
         console.error("[codexManager] scheduled dashboard publish failed", error);
+        void Promise.resolve(this.panel?.webview.postMessage({
+          type: "dashboard:host-status",
+          stage: "unreachable",
+          detail: `The dashboard could not load. ${detail}`,
+          retrying: false
+        } satisfies DashboardHostMessage)).catch(() => undefined);
         void this.postNotice("error", `Dashboard refresh failed: ${detail}`).catch(() => undefined);
       });
     }, delayMs);

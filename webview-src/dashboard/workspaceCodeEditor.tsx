@@ -1,27 +1,17 @@
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { basicSetup } from "codemirror";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { markdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
-import { java } from "@codemirror/lang-java";
-import { cpp } from "@codemirror/lang-cpp";
-import { rust } from "@codemirror/lang-rust";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
 
 export default function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; wrap?: boolean; onChange: (value: string) => void; onSave: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
   const editable = useRef(new Compartment());
   const wrapping = useRef(new Compartment());
+  const syntax = useRef(new Compartment());
+  const [syntaxWarning,setSyntaxWarning]=useState('');
   const onChangeRef = useRef(props.onChange);
   const onSaveRef = useRef(props.onSave);
   onChangeRef.current = props.onChange;
@@ -36,7 +26,7 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
           basicSetup,
           wrapping.current.of(props.wrap === false ? [] : EditorView.lineWrapping),
           indentUnit.of("  "),
-          editorLanguage(props.language),
+          syntax.current.of([]),
           editable.current.of(EditorView.editable.of(!props.disabled)),
           keymap.of([indentWithTab, { key: "Mod-s", preventDefault: true, run: () => { onSaveRef.current(); return true; } }]),
           EditorView.updateListener.of((update) => {
@@ -54,7 +44,11 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
       })
     });
     viewRef.current = view;
-    return () => { view.destroy(); viewRef.current = undefined; };
+    let active=true;setSyntaxWarning('');
+    const warning='Syntax colours are unavailable. You can continue editing and saving.';
+    const timer=setTimeout(()=>{if(active)setSyntaxWarning(warning);},12000);
+    void editorLanguage(props.language).then(language=>{if(active){view.dispatch({effects:syntax.current.reconfigure(language)});setSyntaxWarning('');}},()=>{if(active)setSyntaxWarning(warning);}).finally(()=>clearTimeout(timer));
+    return () => { active=false;clearTimeout(timer);view.destroy(); viewRef.current = undefined; };
   }, [props.path, props.language]);
   useEffect(() => {
     viewRef.current?.dispatch({ effects: editable.current.reconfigure(EditorView.editable.of(!props.disabled)) });
@@ -67,26 +61,26 @@ export default function WorkspaceCodeEditor(props: { path: string; language: str
     if (!view || view.state.doc.toString() === props.value) return;
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: props.value } });
   }, [props.value]);
-  return <div class="cli-code-editor" ref={containerRef} aria-label={`Edit ${props.path}`} />;
+  return <>{syntaxWarning?<p role="status">{syntaxWarning}</p>:null}<div class="cli-code-editor" ref={containerRef} aria-label={`Edit ${props.path}`} /></>;
 }
 
-function editorLanguage(language: string): Extension {
+async function editorLanguage(language: string): Promise<Extension> {
   switch (language) {
-    case "ts": case "typescript": return javascript({ typescript: true });
-    case "tsx": case "typescriptreact": return javascript({ typescript: true, jsx: true });
-    case "js": case "javascript": return javascript();
-    case "jsx": case "javascriptreact": return javascript({ jsx: true });
-    case "json": return json();
-    case "css": case "scss": case "less": return css();
-    case "html": case "htm": return html();
-    case "md": case "markdown": return markdown();
-    case "py": case "python": return python();
-    case "java": return java();
-    case "c": case "cc": case "cpp": case "cxx": case "h": case "hpp": return cpp();
-    case "rs": case "rust": return rust();
-    case "sql": return sql();
-    case "xml": case "svg": return xml();
-    case "yaml": case "yml": return yaml();
+    case "ts": case "typescript": return (await import('@codemirror/lang-javascript')).javascript({ typescript: true });
+    case "tsx": case "typescriptreact": return (await import('@codemirror/lang-javascript')).javascript({ typescript: true, jsx: true });
+    case "js": case "javascript": return (await import('@codemirror/lang-javascript')).javascript();
+    case "jsx": case "javascriptreact": return (await import('@codemirror/lang-javascript')).javascript({ jsx: true });
+    case "json": return (await import('@codemirror/lang-json')).json();
+    case "css": case "scss": case "less": return (await import('@codemirror/lang-css')).css();
+    case "html": case "htm": return (await import('@codemirror/lang-html')).html();
+    case "md": case "markdown": return (await import('@codemirror/lang-markdown')).markdown();
+    case "py": case "python": return (await import('@codemirror/lang-python')).python();
+    case "java": return (await import('@codemirror/lang-java')).java();
+    case "c": case "cc": case "cpp": case "cxx": case "h": case "hpp": return (await import('@codemirror/lang-cpp')).cpp();
+    case "rs": case "rust": return (await import('@codemirror/lang-rust')).rust();
+    case "sql": return (await import('@codemirror/lang-sql')).sql();
+    case "xml": case "svg": return (await import('@codemirror/lang-xml')).xml();
+    case "yaml": case "yml": return (await import('@codemirror/lang-yaml')).yaml();
     default: return [];
   }
 }

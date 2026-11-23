@@ -1,20 +1,27 @@
+# Changelog
+
+## 3.0.0-pre.95
+
+- Use the native account-card structure for OpenAI and Anthropic API accounts, with masked key identity, provider endpoint details, token-usage status, and API-specific actions.
+
+## 3.0.0-pre.94
+
+- Add compact browser voice dictation to the message composer with language selection, editable transcripts, microphone recovery messages and visible draft feedback.
+
+## 3.0.0-pre.93
+
+- Show one notification at a time: action errors replace the connection banner until dismissed or timed out, preserving failure details and restoring connection recovery afterward.
+
 ## 3.0.0-pre.92
 
-- Refuse a recreated PostgreSQL database after Office migration instead of silently accepting missing workspace data.
-
-# Changelog
+- Add OpenAI and Anthropic API-key accounts through the existing Add Account dialog, with provider details, saved account rows, selection, verification and removal.
+- Import current API credentials from Codex auth/configuration, inherited environment variables and Claude settings, preserving native logins and deduplicating saved accounts.
+- Keep provider keys out of dashboard snapshots and process arguments, and bind each new turn to its selected credentials across account switches.
 
 ## 3.0.0-pre.91
 
 - Use PostgreSQL as the only active store for non-master Office records, including conversations, sign-ins, audit and request logs, usage, memory, schedules, preferences, projects and file-history metadata.
 - Automatically migrate existing records once, verify them before retiring local copies, and retain a recovery export. Keep master data local and report database failures without falling back to SQLite.
-
-
-## 3.0.0-pre.88
-
-- Preserve supplied Codex model names, including GPT prefixes.
-- Add native Claude Code models and supported reasoning to the existing picker, with native approvals, conversations, account display and reported usage limits.
-- Keep active-turn model changes available for the next turn and confirm native message receipt and completion before reporting success.
 
 ## 3.0.0-pre.89
 
@@ -23,11 +30,9 @@
 
 ## 3.0.0-pre.88
 
-- Add configurable generic workspace identity, mode labels, on-demand corporate, Office, RMG, textile and research guidance, and per-user contextual suggestions with no default cards.
-- Add PPTX creation and text previews, visual review thumbnails with separate enlargement, browser dictation, generated-file cards and verified ZIP bundles.
-- Keep projectless chats away from file tools, remove subscriber archive controls and focus user Environment on permitted project information.
-- Use separate destructive confirmations and retain deleted conversations and owned session uploads for the configured support period; count all storage toward quota.
-- Add current documented Codex fallback models, including GPT-6.2 Sol and Astra, without overriding live discovery or custom providers.
+- Preserve supplied Codex model names, including GPT prefixes.
+- Add native Claude Code models and supported reasoning to the existing picker, with native approvals, conversations, account display and reported usage limits.
+- Lock model changes during active turns and confirm native message receipt and completion before reporting success.
 
 ## 3.0.0-pre.87
 
@@ -43,11 +48,20 @@
 - Fix duplicate workspace tab controls by restoring desktop and mobile picker styles to their correct scope.
 - Keep Browser and AI-opened tabs within their owning conversation, restoring them when that conversation is shown.
 
+## 3.0.0-pre.83
+
+- Focus User Workspace on corporate work with configurable planning, document, spreadsheet, meeting, research and operations skills, session retention, and no user archive controls.
+- Add confirmed ZIP downloads, generated-file cards, corporate home shortcuts, automatic permitted panel selection and a compact user environment.
+- Keep separate confirmations for destructive actions and preserve owner, revision and failure feedback.
+- Count active and retained conversation data, uploads, generated files and recovery storage against user allowances.
+- Keep chat-only sessions out of project tools; retain deleted conversations and session uploads for the configured support period, then purge only their owned storage while preserving saved projects.
+
+
 ## 3.0.0-pre.80
 
 - Open Team users directly in the editor, add a top Delete action, and organize settings with left-side tabs on desktop and a section dropdown on mobile.
 - Use mobile section dropdowns across subscriber Settings, API, workspace tools, agents, Git/GitHub, tasks and browser inspector panels.
-- Discover the local SmartOffice data connection and allow administrators to assign read-only business queries to selected users.
+- Allow administrators to assign configured read-only data sources to selected users.
 
 ## 3.0.0-pre.79
 

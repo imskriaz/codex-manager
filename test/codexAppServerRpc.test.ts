@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mocks.spawn }));
 import { CodexAppServerRpc } from "../src/services/codexAppServerRpc";
+import { mkdtemp, rm } from 'fs/promises';
+import * as os from 'os';
+import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
+import { saveApiAccount, selectApiAccount } from '../src/services/apiAccounts';
 
 function child() {
   const process = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
@@ -16,6 +20,24 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it('uses a private API-key process with the provider override and no key in arguments', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'manager-api-rpc-'));
+    const store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+    vi.stubEnv('CODEX_HOME', root);
+    try {
+      const account = saveApiAccount({ provider: 'openai', name: 'API', apiKey: 'fixture-private-api-key' }); selectApiAccount(account.id);
+      const processChild = child(); processChild.stdin.resume();
+      const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd(), undefined, 'proxy');
+      processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n');
+      const rpc = await opening;
+      const [, args, options] = mocks.spawn.mock.calls[0]!;
+      expect(args).toContain('--stdio'); expect(args).not.toContain('proxy');
+      expect(args.join(' ')).toContain('model_provider="manager_api"');
+      expect(args.join(' ')).not.toContain('fixture-private-api-key');
+      expect(options.env.CODEX_MANAGER_OPENAI_API_KEY).toBe('fixture-private-api-key');
+      await rpc.close();
+    } finally { configureSqliteStateStore(undefined); store.close(); await rm(root, { recursive: true, force: true }); }
+  });
   it('checks an idle stream and keeps a confirmed long turn alive without replaying it', async () => {
     vi.useFakeTimers();
     const processChild = child(); processChild.stdin.resume();

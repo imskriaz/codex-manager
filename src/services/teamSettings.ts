@@ -1,10 +1,12 @@
 import * as path from "node:path";
-import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { DEFAULT_USER_WORKSPACE_PROMPT } from '../domain/teamWorkspacePresentation';
 import { DEFAULT_OFFICE_SKILLS, type OfficeSkillId } from '../domain/officeSkills';
 import {DEFAULT_OFFICE_PRESENTATION,validateOfficePresentation,type OfficePresentation} from '../domain/officePresentation';
+import {updateConfigurationBatch} from '../storage/sqliteContext';
+import {runCrossWindowExclusive} from '../utils/crossWindowOperations';
+import {readOfficeIntegrations,publicOfficeIntegrations,validateOfficeIntegrations,type OfficeIntegrations} from './officeIntegrations';
 import { ensureOfficeStorageReady } from '../storage/sqliteContext';
 import { getSqliteStateStore } from '../storage/sqliteState';
 
@@ -13,6 +15,7 @@ export function readTeamSettings() {
   let presentation:OfficePresentation;
   try{presentation=validateOfficePresentation(config.get<unknown>('officePresentation',DEFAULT_OFFICE_PRESENTATION));}catch{presentation=structuredClone(DEFAULT_OFFICE_PRESENTATION);}
   return {
+    services:publicOfficeIntegrations(),
     presentation,
     maxActiveRequests: config.get<number>("officeMaxActiveRequests", 2),
     globalPrompt: config.get<string>("officeGlobalPrompt", DEFAULT_USER_WORKSPACE_PROMPT),
@@ -35,8 +38,13 @@ export function readTeamSettings() {
 }
 
 export async function saveTeamSettings(input: Record<string, unknown>): Promise<ReturnType<typeof readTeamSettings>> {
+ return runCrossWindowExclusive('state:office-settings','Save workspace settings',()=>saveSettings(input),{waitMs:2000});
+}
+async function saveSettings(input:Record<string,unknown>):Promise<ReturnType<typeof readTeamSettings>>{
+  if(input['expectedSettings']!==undefined){const expected=input['expectedSettings'];if(!expected||typeof expected!=='object'||Array.isArray(expected))throw new Error('Reload workspace settings before saving.');const current=readTeamSettings() as unknown as Record<string,unknown>;for(const [key,value] of Object.entries(expected))if(JSON.stringify(current[key])!==JSON.stringify(value))throw new Error('Workspace settings changed in another window. Reload settings before saving.');}
   const config = getCodexManagerConfiguration();
-  const updates: Array<[string, string | number | boolean | string[] | OfficePresentation]> = [];
+  const updates: Array<[string, string | number | boolean | string[] | OfficePresentation | OfficeIntegrations]> = [];
+  if(input['services']!==undefined)updates.push(['officeServices',validateOfficeIntegrations(input['services'],readOfficeIntegrations())]);
   const presentation=input['presentation']!==undefined?validateOfficePresentation(input['presentation']):readTeamSettings().presentation;
   if(input['presentation']!==undefined&&input['expectedPresentation']!==undefined&&JSON.stringify(input['expectedPresentation'])!==JSON.stringify(readTeamSettings().presentation))throw new Error('Workspace presentation changed in another window. Reopen the editor before saving.');
   if(input['presentation']!==undefined)updates.push(['officePresentation',presentation]);
@@ -97,7 +105,7 @@ export async function saveTeamSettings(input: Record<string, unknown>): Promise<
     throw new Error("Enter a PostgreSQL connection URL before enabling PostgreSQL.");
   if (!updates.length) throw new Error("Choose a Team setting to save.");
   // Validate the whole form before changing any setting.
-  for (const [key, value] of updates) await config.update(key, value, vscode.ConfigurationTarget.Global);
+  await updateConfigurationBatch(config,updates);
   if (input['databaseProvider'] === 'postgres' || input['postgresUrl'] !== undefined) await ensureOfficeStorageReady();
   return readTeamSettings();
 }

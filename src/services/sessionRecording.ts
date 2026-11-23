@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { activeApiAccount } from './apiAccounts';
 import * as fs from "node:fs";
 import { getCodexHome } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
@@ -42,6 +43,8 @@ function warn(error: unknown): void {
 }
 
 export function captureSessionAccount(): string | undefined {
+  const api = activeApiAccount('openai');
+  if (api) return api.id;
   const store = getSqliteStateStore();
   try { return store ? currentSessionAccountId(store,getCodexHome()) : undefined; }
   catch (error) { warn(error); return undefined; }

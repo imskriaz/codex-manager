@@ -126,7 +126,8 @@ import {
   writeCliSessionMessagesCache
 } from "./cliSessionCache";
 import { clampWebviewZoom, nextWebviewZoom, readWebviewZoom, WEBVIEW_ZOOM_STORAGE_KEY } from "./webviewZoom";
-import { TaskBoard } from "./taskBoard";
+import {deferredPanel} from './deferredPanel';
+const TaskBoard=deferredPanel<Parameters<typeof import('./taskBoard').TaskBoard>[0]>(()=>import('./taskBoard').then(module=>({default:module.TaskBoard})),'task board',props=>props.active!==false);
 import { scheduleDashboardReopen } from "./reopenView";
 import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
@@ -1944,7 +1945,7 @@ function App() {
         id="dashboard-main"
       >
         <section class="section loading-section">
-          {connectionFailed ? hasBrowserWorkspaceShell(browserPath) ? <WorkspaceConnectionBanner stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} onReload={() => window.location.reload()} /> : <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
+          {connectionFailed ? isBrowserDashboard && hasBrowserWorkspaceShell(browserPath) ? <WorkspaceConnectionBanner stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} onReload={() => window.location.reload()} /> : <ConnectionRecovery stage={reloadStatus ?? (browserHostStage === 'offline' ? 'offline' : 'unreachable')} transition={transition} status={browserHostStatus} onRetry={() => postMessageToHost({ type: 'dashboard:retry-connection' })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
@@ -2526,6 +2527,7 @@ function App() {
 
   const renderAddAccount = (inline: boolean, open: boolean) => (
     <AddAccountModal
+      sendAction={sendAction}
       open={open}
       inline={inline}
       title={resolveAccountModalTitle(

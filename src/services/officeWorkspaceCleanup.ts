@@ -11,21 +11,22 @@ export function officeSessionFolder(id: string): string {
 }
 
 /** Only expired, explicitly deleted session folders are eligible. Saved projects never enter this tree. */
-export async function cleanupOfficeDeletedSessions(user: OfficeUser, retentionDays: number, now = Date.now()): Promise<void> {
+export async function cleanupOfficeDeletedSessions(user: OfficeUser, retentionDays: number, now = Date.now()): Promise<{removed:number;remaining:number}> {
   const store = getSqliteStateStore();
-  if (!store) return;
+  if (!store) return {removed:0,remaining:0};
   const namespace = `office-sessions:${user.id}`;
-  const cutoff = now - Math.max(1, retentionDays) * 86_400_000;
+  const cutoff = now - (Number.isFinite(retentionDays)?Math.max(1,Math.min(365,retentionDays)):30) * 86_400_000;
   const expired = store.keys(namespace).filter(id => {
     const session = store.get<{deletedAt?: number; owner: string}>(namespace, id);
     return session?.owner === user.id && session.deletedAt !== undefined && session.deletedAt <= cutoff;
-  }).slice(0, 50);
-  if (!expired.length) return;
+  });
+  if (!expired.length) return {removed:0,remaining:0};
+  let removed=0;
   await runCrossWindowExclusive(`office-storage:${user.id}`, 'Clean deleted conversation storage', async () => {
     let root: string | undefined;
     try { root = await fs.realpath(user.workspacePath); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    for (const id of expired) {
+    for (const id of expired.slice(0,50)) {
       const session = store.get<{deletedAt?: number; owner: string}>(namespace, id);
       if (session?.owner !== user.id || session.deletedAt === undefined || session.deletedAt > cutoff) continue;
       if (root) {
@@ -51,6 +52,8 @@ export async function cleanupOfficeDeletedSessions(user: OfficeUser, retentionDa
           if (store.get<string>(`office-session-requests:${user.id}`, key) === id) store.set(`office-session-requests:${user.id}`, key, undefined);
         }
       });
+      removed++;
     }
   }, {waitMs: 100});
+  return {removed,remaining:expired.length-removed};
 }

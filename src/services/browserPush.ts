@@ -84,7 +84,10 @@ export class BrowserPushService {
     state.delivered = Array.isArray(state.delivered) ? state.delivered.filter(entry => Array.isArray(entry) &&
       typeof entry[0] === "string" && /^[a-f0-9]{64}$/.test(entry[0]) && Number.isFinite(entry[1]) && entry[1] > Date.now()).slice(-MAX_DELIVERIES) : [];
     const store = getSqliteStateStore();
-    if (store?.get('migrations','office-postgres-v1')) state.subscriptions.push(...(store.get<Subscription[]>('office-push','subscriptions') ?? []));
+    if (store?.get('migrations','office-postgres-v1')) {
+      try { state.subscriptions.push(...(store.get<Subscription[]>('office-push','subscriptions') ?? [])); }
+      catch (error) { console.warn('[codexManager] User workspace notification storage unavailable; local notifications remain available', error); }
+    }
     return state;
   }
 

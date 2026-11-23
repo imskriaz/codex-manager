@@ -457,6 +457,7 @@ export function WorkspaceGit(props: {
             <section class="workspace-history">
               <header>
                 <strong>Project history</strong>
+
               </header>
               {history?.commits.map((commit) => (
                 <button

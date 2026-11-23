@@ -1,4 +1,5 @@
 import {WorkspacePresentationSetting} from './workspacePresentationSetting';
+import {WorkspaceServicesSetting} from './workspaceServicesSetting';
 import {DEFAULT_OFFICE_PRESENTATION,type OfficePresentation} from '../../src/domain/officePresentation';
 import {UserUsageReview} from './userUsageReview';
 import type { OfficeLimits } from "../../src/services/officeQuota";
@@ -14,7 +15,7 @@ import { DEFAULT_OFFICE_SKILLS, type OfficeSkillId } from '../../src/domain/offi
 export { request } from "./teamSettingsRequest";
 
 export type TeamSettingsSection = "users" | "workspace" | "mcp" | "database" | "logs" | "proxy";
-type TeamSettings = { autoPresentation:boolean; presentation:OfficePresentation; modelMode:'manual'|'auto';profilePicker:boolean; routerModel:string;regularModel:string;professionalModel:string;expertModel:string; defaultModel: string; globalPrompt: string; defaultSkills: OfficeSkillId[]; sessionRetentionDays:number; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
+type TeamSettings = { services?:ReturnType<typeof import('../../src/services/officeIntegrations').publicOfficeIntegrations>; autoPresentation:boolean; presentation:OfficePresentation; modelMode:'manual'|'auto';profilePicker:boolean; routerModel:string;regularModel:string;professionalModel:string;expertModel:string; defaultModel: string; globalPrompt: string; defaultSkills: OfficeSkillId[]; sessionRetentionDays:number; maxActiveRequests: number; workspaceRoot: string; databaseProvider: "sqlite" | "postgres"; postgresConfigured: boolean };
 type UserDraft = {
   plan?:import('../../src/services/officeUsers').OfficePlan;
   limits?: OfficeLimits;
@@ -43,7 +44,7 @@ const FEATURES: { id: OfficeFeature; title: string; description: string }[] = [
   { id: "files", title: "Files", description: "Browse and edit workspace files." },
   { id: "browser", title: "Browser", description: "Open pages in the workspace browser." },
   { id: "env", title: "Environment", description: "View development environment details." },
-  { id: "terminal", title: "Terminal", description: "Access workspace terminals." },
+  { id: "terminal", title: "Terminal (isolated scripts)", description: "Run bounded scripts through the configured isolated runtime; no host shell." },
   { id: "git", title: "Git", description: "Use repository and review tools." },
   { id: "github", title: "GitHub", description: "Access GitHub features." }
 ];
@@ -208,7 +209,8 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
   };
   const saveSettings = (fields: Record<string, unknown>): void => {
     void mutate(async () => {
-      const result = await request<TeamSettings>("/api/office/settings", "PUT", fields);
+      const expectedSettings=Object.fromEntries(Object.keys(fields).filter(key=>key in (settings??{})).map(key=>[key,(settings as unknown as Record<string,unknown>)[key]]));
+      const result = await request<TeamSettings>("/api/office/settings", "PUT", {...fields,expectedSettings});
       setProfilePicker(result.profilePicker!==false);setModelMode(result.modelMode??'manual');setAutomaticModels({routerModel:result.routerModel??'gpt-6-luna',regularModel:result.regularModel??'gpt-6-luna',professionalModel:result.professionalModel??'gpt-6.1-sol',expertModel:result.expertModel??'gpt-6.1-terra'});setSettings(result); setDefaultModel(result.defaultModel ?? ""); setGlobalPrompt(result.globalPrompt ?? "");
       setPresentation(result.presentation??structuredClone(DEFAULT_OFFICE_PRESENTATION)); setAutoPresentation(result.autoPresentation??true); setWorkspaceRoot(result.workspaceRoot); setDefaultSkills(result.defaultSkills ?? DEFAULT_OFFICE_SKILLS); setSessionRetentionDays(result.sessionRetentionDays ?? 30); setMaxActiveRequests(result.maxActiveRequests ?? 2);
       setDatabaseProvider(result.databaseProvider);
@@ -290,7 +292,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                 saveSettings({ autoPresentation, workspaceRoot, maxActiveRequests, globalPrompt, defaultSkills, sessionRetentionDays, defaultModel, modelMode, profilePicker, ...automaticModels });
               }}
             >
-              <label>Model selection<select aria-label="User Workspace model selection" value={modelMode} disabled={pending} onChange={event=>setModelMode(event.currentTarget.value as 'manual'|'auto')}><option value="manual">Manual</option><option value="auto">Auto</option></select></label>
+              <WorkspaceServicesSetting value={settings?.services} disabled={pending} onSaved={services=>setSettings(current=>current?{...current,services}:current)}/><label>Model selection<select aria-label="User Workspace model selection" value={modelMode} disabled={pending} onChange={event=>setModelMode(event.currentTarget.value as 'manual'|'auto')}><option value="manual">Manual</option><option value="auto">Auto</option></select></label>
               {modelMode==='auto'?<div class="team-auto-models"><label><span>Allow profile selection</span><input type="checkbox" aria-label="Allow users to select assistant profile" checked={profilePicker} disabled={pending} onChange={event=>setProfilePicker(event.currentTarget.checked)}/><small>Auto, Regular, Professional, Expert. Turn off to lock Auto.</small></label>{(['routerModel','regularModel','professionalModel','expertModel'] as const).map(key=><label key={key}>{({routerModel:'Lightweight router',regularModel:'Regular',professionalModel:'Professional',expertModel:'Expert'})[key]}<select aria-label={key==='routerModel'?'Automatic routing model':`${key.replace('Model','')} profile model`} value={automaticModels[key]} disabled={pending||modelsLoading} onChange={event=>setAutomaticModels(current=>({...current,[key]:event.currentTarget.value}))}>{!modelOptions.some(model=>model.id===automaticModels[key])?<option value={automaticModels[key]}>{automaticModels[key]}</option>:null}{modelOptions.map(model=><option key={model.id} value={model.id}>{model.label}</option>)}</select></label>)}<small>Regular handles everyday work, Professional handles multi-step tasks, and Expert handles complex analysis. Plan permissions always apply.</small></div>:null}
               <label>
                 {modelMode==='auto'?'Fallback model':'Default User Workspace model'}
@@ -551,7 +553,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                   id="team-editor-panel-permissions" role="tabpanel" aria-labelledby="team-user-tab-permissions" hidden={userTab !== "permissions"}
                   aria-label="Permissions"
                   class="team-settings-form"
-                ><p class="settings-note">User Workspace has no host terminal, Git, or GitHub execution. Browser navigation and execution require an isolated runtime. These restrictions protect the host even when a feature was previously enabled.</p>
+                ><p class="settings-note">User Workspace scripts require a configured isolated runtime and Files permission. Host terminals, Git and GitHub execution are unavailable.</p>
                   <label>
                     Role
                     <select
@@ -572,7 +574,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                         <input
                           type="checkbox"
                           checked={draft.features.includes(feature.id)}
-                          disabled={draft.role === "user" && ["terminal","git","github"].includes(feature.id)}
+                          disabled={draft.role === "user" && (["git","github"].includes(feature.id)||feature.id==='terminal'&&!settings?.services?.runtimeConfigured)}
                           onChange={(event) =>
                             setDraft({
                               ...draft,

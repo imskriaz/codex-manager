@@ -14,6 +14,12 @@ it('keeps authenticated visual choices while rejecting external images and malfo
  expect(readSessionQuestions([{...question,previews:[{option:'Minimal',image:'https://external.invalid/tracker.png'}]}])[0]).not.toHaveProperty('previews');
  expect(validMessage({id:'bad',text:'Choose',questions:[{...question,previews:[{option:'Minimal',image:'data:image/png;base64,AA'}]}]})).toBe(false);
 });
+it('falls back to list choices when grid previews are missing or invalid and removes duplicates',()=>{
+ const image='/api/workspace/image?filePath=project%2Fpreview.png&mimeType=image%2Fpng',base={title:'Choose',view:'grid',options:['One','Two']};
+ expect(readSessionQuestions([base])[0].view).toBe('list');
+ const value=readSessionQuestions([{...base,previews:[{option:'One',image},{option:'One',image},{option:'Two',image:'https://outside.test/image.png'}]}])[0];
+ expect(value.view).toBe('list');expect(value.previews).toHaveLength(1);
+});
 
 it('shows a question once and coalesces exact answer mirrors even across command activity and turns', () => {
   const question = { id: 'ask', turnId: 'one', role: 'assistant' as const, text: 'Open which view?\n- Details\n- Table', questions: [{ title: 'Open which view?', options: ['Details', 'Table'] }] };

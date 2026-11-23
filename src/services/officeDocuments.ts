@@ -8,7 +8,7 @@ import {Workbook} from 'exceljs';
 import {Document,Packer,Paragraph,HeadingLevel} from 'docx';
 import PptxGenJS from 'pptxgenjs';
 
-export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'='text'):Promise<string>{
+export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text'):Promise<string>{
  const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
  if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
  if(data.length<8)throw new Error('The document is empty or incomplete.');
@@ -17,7 +17,9 @@ export async function extractOfficeDocument(name:string,data:Buffer,format:'text
   // Parser crashes and oversized archives must never take down the dashboard process.
   const worker=fork(path.join(__dirname,'officeDocumentWorker'+path.extname(__filename)),[],{execArgv:['--max-old-space-size=192'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},...{windowsHide:true},stdio:['ignore','ignore','ignore','ipc'],serialization:'advanced'});let done=false;
   const finish=(error?:Error,text?:string)=>{if(done)return;done=true;clearTimeout(timer);worker.kill();if(error)reject(error);else resolve(text!);};
-  const timer=setTimeout(()=>finish(new Error('Document reading timed out. Try a smaller document.')),12000);
+  // ZIP validation and Office parsers load large runtimes on first use; keep a
+  // bounded deadline without rejecting valid workbooks on slower hosts.
+  const timer=setTimeout(()=>finish(new Error('Document reading timed out. Try a smaller document.')),30000);
   worker.once('message',(value:{text?:string;error?:string})=>finish(value.error?new Error(value.error):typeof value.text!=='string'?new Error('Document reading did not finish.'):undefined,value.text));
   worker.once('error',()=>finish(new Error('This document is too complex to read. Try a smaller document.')));
   worker.once('exit',()=>{if(!done)finish(new Error('Document reading stopped. Try a smaller document.'));});

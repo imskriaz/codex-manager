@@ -149,6 +149,10 @@ The header eye icon controls masking. **More → Tags** manages the selected sys
 
 Every user-started action ends with a visible success, warning, cancellation, or failure message. If an action fails, open **Codex Manager: Open Persistent Logs** and include the operation ID when reporting it.
 
+In **Add Account → Add API key**, choose OpenAI or Anthropic/Claude and enter an account name, API key and optional base URL. The entry appears in Saved Accounts with **Select account**, **Verify API key** and **Remove account**. Selection applies to new Manager turns for that provider; running turns retain their credentials. Native logins remain available. API accounts show provider-managed billing and limits instead of subscription quota bars.
+
+**Import Current** also recognizes API-only Codex `auth.json`, API keys inherited by the Manager host, the selected Codex provider's `env_key`/`base_url`, and API keys in Claude user/project settings. Reimporting the same key and endpoint updates the existing entry. Import does not run credential helpers, read another terminal's environment, or overwrite native login files. Keys are stored locally in the credential namespace and are excluded from dashboard snapshots and account sharing. Use **Verify API key** after saving or importing to check provider access.
+
 ## Behavior and recovery
 
 Session cards offer **Hide from boards** without stopping or archiving the conversation. Use the board menu → **Hidden sessions** to search and restore them. This choice is saved per project on its system and applies to all board views and public project links. Existing downloaded copies cannot be recalled.

@@ -39,7 +39,15 @@ export function saveApiAccount(input: ApiAccountInput): ApiAccount {
   const id = `api:${normalized.provider}:` + createHash('sha256').update(JSON.stringify([normalized.apiKey, normalized.baseUrl])).digest('hex');
   const previous = store.get<ApiAccount>(namespace, id), now = Date.now();
   const account: ApiAccount = { id, provider: normalized.provider, name: normalized.name, baseUrl: normalized.baseUrl, createdAt: previous?.createdAt ?? now, updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1) };
-  store.transaction(() => { store.set('secrets', id, normalized.apiKey); store.set(namespace, id, account); });
+  store.transaction(() => {
+    store.set('secrets', id, normalized.apiKey);
+    store.set(namespace, id, account);
+    // Treat the first account for a provider like the first native login:
+    // it becomes the current account immediately. Existing selections are
+    // preserved when adding another account.
+    if (!store.get<string>('api-account-selection', activeKey(normalized.provider)))
+      store.set('api-account-selection', activeKey(normalized.provider), id);
+  });
   return account;
 }
 export function selectApiAccount(id: string): ApiAccount {
@@ -54,15 +62,20 @@ export function removeApiAccount(id: string): void {
   const store = storage();
   store.transaction(() => {
     for (const key of store.keys('api-account-selection')) if (store.get('api-account-selection', key) === id) store.set('api-account-selection', key, undefined);
-    store.set('secrets', id, undefined); store.set(namespace, id, undefined);
+    // Keep the secret tombstone so a retained legacy SecretStorage value cannot
+    // reappear during a later migration pass.
+    store.set('secrets', id, null); store.set(namespace, id, undefined);
   });
 }
 
 /** Validation never follows redirects or includes upstream text that could echo a key. */
 export async function validateApiAccount(account: ApiAccount, signal = AbortSignal.timeout(10_000)): Promise<void> {
   const key = apiAccountCredential(account);
+  const modelsPath = account.provider === 'openai'
+    ? '/models'
+    : account.baseUrl.toLowerCase().endsWith('/v1') ? '/models' : '/v1/models';
   let response: Response;
-  try { response = await fetch(`${account.baseUrl}${account.provider === 'openai' ? '/models' : '/v1/models'}?limit=1`, { signal, redirect: 'error', headers: account.provider === 'openai' ? { Authorization: `Bearer ${key}` } : { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }); }
+  try { response = await fetch(`${account.baseUrl}${modelsPath}`, { signal, redirect: 'error', headers: account.provider === 'openai' ? { Authorization: `Bearer ${key}` } : { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }); }
   catch { throw new Error('API validation could not connect or timed out. The saved account was kept; check the endpoint and retry.'); }
   await response.body?.cancel();
   if (!response.ok) throw new Error(`API validation failed (HTTP ${response.status}). Check the key, endpoint and provider permissions. The saved account was kept.`);
@@ -97,8 +110,13 @@ async function codexApiConfig(): Promise<{ envKey?: string; baseUrl?: string }> 
 }
 export async function importCurrentApiAccounts(project?: string): Promise<ApiAccount[]> {
   const found: ApiAccountInput[] = [];
-  const [auth, config] = await Promise.all([waitWithin(readAuthFile(), 2_000, 'Current Codex credentials could not be read within 2 seconds. Retry.'), waitWithin(codexApiConfig(), 2_000, 'Current Codex configuration could not be read within 2 seconds. Retry.')]);
   const selectedOpenai = activeApiAccount('openai');
+  // A selected Manager API account is already the authoritative Codex source;
+  // do not let an unrelated broken auth/config file block importing it.
+  const [auth, config] = await Promise.all([
+    selectedOpenai ? Promise.resolve(undefined) : waitWithin(readAuthFile(), 2_000, 'Current Codex credentials could not be read within 2 seconds. Retry.'),
+    selectedOpenai ? Promise.resolve({} as { envKey?: string; baseUrl?: string }) : waitWithin(codexApiConfig(), 2_000, 'Current Codex configuration could not be read within 2 seconds. Retry.')
+  ]);
   const openai = selectedOpenai ? apiAccountCredential(selectedOpenai) : config.envKey ? string(process.env[config.envKey]) : string(process.env['CODEX_API_KEY']) ?? string(process.env['OPENAI_API_KEY']) ?? string(auth?.OPENAI_API_KEY);
   if (config.envKey && !openai) throw new Error('The configured Codex API key variable is unavailable to this host. Start Manager from the same environment, or add the key manually.');
   if (openai) found.push({ provider: 'openai', name: selectedOpenai?.name ?? 'OpenAI API (imported)', apiKey: openai, baseUrl: selectedOpenai?.baseUrl ?? config.baseUrl ?? string(process.env['OPENAI_BASE_URL']) ?? auth?.api_base_url ?? auth?.base_url });
@@ -120,7 +138,12 @@ export function apiAccountEnvironment(provider: ApiAccountProvider, source: Node
   const account = activeApiAccount(provider);
   if (!account) return { ...source };
   const env = { ...source };
-  if (provider === 'openai') env['CODEX_MANAGER_OPENAI_API_KEY'] = apiAccountCredential(account);
+  if (provider === 'openai') {
+    // The inline Codex provider is the authority for this turn. Do not let a
+    // process-level key silently win over the selected account.
+    for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY']) delete env[key];
+    env['CODEX_MANAGER_OPENAI_API_KEY'] = apiAccountCredential(account);
+  }
   else {
     for (const key of ['ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete env[key];
     env['ANTHROPIC_API_KEY'] = apiAccountCredential(account); env['ANTHROPIC_BASE_URL'] = account.baseUrl;

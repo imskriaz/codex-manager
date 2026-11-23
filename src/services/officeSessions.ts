@@ -57,6 +57,7 @@ export class OfficeSessionService {
   private readonly modelCatalogues = new Map<string, import('../domain/dashboard/types').DashboardCliModelOption[]>();
   private readonly modelDiscovery = new Map<string, Promise<import('../domain/dashboard/types').DashboardCliModelOption[]>>();
   private timer?: NodeJS.Timeout;
+  private cleanupTimer?:NodeJS.Timeout;
   private running = new Map<string, AbortController>();
   private stopped = false;
   private nextCleanup = 0;
@@ -70,18 +71,28 @@ export class OfficeSessionService {
     generate: (user: OfficeUser, model: string | undefined, messages: OfficeChatMessage[], signal: AbortSignal, projectPath: string, report: (message: DashboardCliSessionMessage) => void, scheduled?: boolean, sessionId?: string, reasoningEffort?:string) => Promise<string>;
     changed: (owner: string, messages: DashboardHostMessage[]) => void;
   }) {}
-  start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.(); void this.pump(); }
-  stop(): void { this.stopped = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; for (const controller of this.running.values()) controller.abort(); }
+  start(): void { this.stopped = false; this.timer ??= setInterval(() => void this.pump(), 2_000); this.timer.unref?.();this.cleanupTimer??=setInterval(()=>this.pruneExpired(),60_000);this.cleanupTimer.unref?.();this.pruneExpired();void this.pump(); }
+  stop(): void { this.stopped = true; if (this.timer) clearInterval(this.timer);this.timer = undefined;clearInterval(this.cleanupTimer);this.cleanupTimer=undefined; for (const controller of this.running.values()) controller.abort(); }
   private pruneExpired(): void {
     if (this.cleanupRunning || Date.now() < this.nextCleanup) return;
     this.nextCleanup = Date.now() + 60_000;
     this.cleanupRunning = true;
-    const owners = store().keys('office-session-owners');
+    let owners: string[];
+    try { owners = store().keys('office-session-owners'); }
+    catch (error) {
+      // Workspace migration/connection setup is intentionally asynchronous.
+      // Cleanup must never make the standalone dashboard fail before it can
+      // report that storage is still becoming ready.
+      this.cleanupRunning = false;
+      console.warn('[codexManager] Conversation cleanup deferred while workspace storage initializes', error);
+      return;
+    }
     void (async () => {
       for (const owner of owners) {
         if (this.stopped) break;
-        const user = await this.options.readUser(owner);
-        if (user) await cleanupOfficeDeletedSessions(user, readTeamSettings().sessionRetentionDays);
+        try{const user = await this.options.readUser(owner);
+          if(user){const started=Date.now();let removed=0,remaining=0;do{const result=await cleanupOfficeDeletedSessions(user,readTeamSettings().sessionRetentionDays);removed+=result.removed;remaining=result.remaining;if(!result.removed)break;}while(remaining&&!this.stopped&&Date.now()-started<5000);store().set('office-cleanup',owner,{at:Date.now(),removed,remaining});}
+        }catch(error){store().set('office-cleanup',owner,{at:Date.now(),error:'Conversation cleanup was deferred. Retained data was preserved.'});console.warn('[codexManager] Conversation cleanup deferred for one workspace',error);}
       }
     })().catch(error => console.warn('[codexManager] Deleted conversation cleanup deferred', error)).finally(() => { this.cleanupRunning = false; });
   }
@@ -271,7 +282,6 @@ export class OfficeSessionService {
   pump(): void {
     if (this.stopped) return;
     try {
-      this.pruneExpired();
       const oldest = (owner: string) => Math.min(...this.active(owner).flatMap(session => session.turns.filter(turn => turn.state === "queued" || turn.state === "waiting").map(turn => turnOrder(turn))));
       for (const owner of store().keys("office-session-owners").sort((a,b) => oldest(a) - oldest(b))) {
         if (this.stopped) break;

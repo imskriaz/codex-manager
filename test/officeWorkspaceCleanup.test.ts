@@ -29,4 +29,8 @@ describe('deleted User Workspace session cleanup',()=>{
  it('never removes a registered project inside the managed session tree',async()=>{
    const expired=await session(Date.now()-31*86400000);store.set(`office-projects:${user.id}`,'protected',{id:'protected',label:'Protected',path:expired.folder});await expect(cleanupOfficeDeletedSessions(user,30)).rejects.toThrow('saved project');expect(await fs.stat(expired.folder)).toBeDefined();
  });
+ it('reports bounded batch progress until every expired session is removed',async()=>{
+   for(let index=0;index<52;index++)await session(Date.now()-31*86400000);
+   expect(await cleanupOfficeDeletedSessions(user,30)).toEqual({removed:50,remaining:2});expect(await cleanupOfficeDeletedSessions(user,30)).toEqual({removed:2,remaining:0});expect(await cleanupOfficeDeletedSessions(user,30)).toEqual({removed:0,remaining:0});expect(await fs.stat(project)).toBeDefined();
+ });
 });

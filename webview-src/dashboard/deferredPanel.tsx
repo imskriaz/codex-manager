@@ -2,7 +2,7 @@ import type { ComponentType } from "preact";
 import { useEffect, useState } from "preact/hooks";
 
 /** Shared loading never delays other panels or sends an action on retry. */
-export function deferredPanel<P extends object>(load: () => Promise<{ default: ComponentType<P> }>, name: string): ComponentType<P> {
+export function deferredPanel<P extends object>(load: () => Promise<{ default: ComponentType<P> }>, name: string,enabled:(props:P)=>boolean=()=>true): ComponentType<P> {
   let loaded: ComponentType<P> | undefined, pending: Promise<ComponentType<P>> | undefined;
   const resolve = (): Promise<ComponentType<P>> => {
     if (loaded) return Promise.resolve(loaded);
@@ -19,17 +19,20 @@ export function deferredPanel<P extends object>(load: () => Promise<{ default: C
     return work;
   };
   return function DeferredPanel(props: P) {
+    const loadEnabled=enabled(props);
     const [component, setComponent] = useState<ComponentType<P> | undefined>(() => loaded);
     const [error, setError] = useState("");
     const [attempt, setAttempt] = useState(0);
     useEffect(() => {
+      if(!loadEnabled)return;
       let active = true;
       void resolve().then(value => { if (active) setComponent(() => value); }, reason => {
         if (active) setError(reason instanceof Error ? reason.message : String(reason || `The ${name} module could not be loaded.`));
       });
       return () => { active = false; };
-    }, [attempt]);
+    }, [attempt,loadEnabled]);
     const Panel = component;
+    if(!Panel&&!loadEnabled)return null;
     return Panel ? <Panel {...props} /> : <div class="cli-context-empty cli-deferred-panel" role={error ? "alert" : "status"} aria-busy={!error}>
       {error ? <>
         <strong>Could not load {name}</strong>

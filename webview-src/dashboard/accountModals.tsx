@@ -5,6 +5,7 @@ import type {
   DashboardState
 } from "../../src/domain/dashboard/types";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { ApiAccountForm } from './apiAccountForm';
 import { normalizeAccountTags, MAX_ACCOUNT_TAGS } from '../../src/domain/accountTags';
 import type { CliSubmissionResult } from './cliSessionComposerState';
 import type { CodexImportResultSummary } from "../../src/core/types";
@@ -217,6 +218,7 @@ function InfoRow(props: { label: string; value: string; title?: string; mono?: b
 }
 
 export function AddAccountModal(props: {
+  sendAction: import('./hookTypes').SendAction;
   open: boolean;
   inline?: boolean;
   title: string;
@@ -248,7 +250,7 @@ export function AddAccountModal(props: {
   onSubmitImport: () => void;
 }) {
   const oauthLinkReady = Boolean(props.oauthSession?.authUrl);
-  const [layer, setLayer] = useState<"oauth" | "callback" | "import">("oauth");
+  const [layer, setLayer] = useState<"oauth" | "callback" | "import" | "api">("oauth");
 
   useEffect(() => {
     if (!props.open && !props.inline) setLayer("oauth");
@@ -327,6 +329,7 @@ export function AddAccountModal(props: {
             <span>{props.lang === "zh" ? "或" : "OR"}</span>
           </div>
           <div class="account-add-layer-actions" aria-label="Other ways to add an account">
+            <button class="account-add-layer-action" type="button" onClick={() => setLayer('api')}><span class="modal-btn-icon" aria-hidden="true"><ImportIcon /></span><span>Add API key</span></button>
             <label class="account-add-layer-action">
               <span class="modal-btn-icon" aria-hidden="true">
                 <ImportIcon />
@@ -363,6 +366,7 @@ export function AddAccountModal(props: {
           </button>
         </>
       ) : null}
+      {layer === 'api' ? <ApiAccountForm sendAction={props.sendAction} onBack={() => setLayer('oauth')} onSaved={() => { setLayer('oauth'); props.onClose(); }} /> : null}
       {layer === "callback" ? (
         <div class="account-add-layer-card account-add-callback-layer">
           <div class="account-add-layer-head">
@@ -452,16 +456,16 @@ export function AddAccountModal(props: {
     </div>
   );
 
-  if (props.inline) return controls;
+  if (props.inline && layer !== 'api') return controls;
 
   return (
     <ModalShell
       open={props.open}
-      title={props.title}
+      title={layer === 'api' ? 'API account details' : props.title}
       closeLabel={props.copy.closeModal}
       className="dashboard-modal-compact account-add-popover"
       closeOnBackdrop={false}
-      onClose={props.onClose}
+      onClose={() => { if (props.inline) setLayer('oauth'); else props.onClose(); }}
     >
       {controls}
     </ModalShell>

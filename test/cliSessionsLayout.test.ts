@@ -1141,6 +1141,7 @@ it('keeps startup visible in workspace routes and removes the remote transport b
   const startup=source.slice(source.indexOf('  const selectedPeerOffline ='),source.indexOf('  const cliListLoading'));
   expect(startup).not.toContain('workspace-route-dashboard-hidden');
   expect(startup).toContain('if (!snapshot)');
+  expect(startup).toContain('isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)');
   expect(startup).toContain('"Starting…"');
   expect(source).not.toContain('actions are relayed over the secure connection');
 });

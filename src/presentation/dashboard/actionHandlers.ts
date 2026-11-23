@@ -477,7 +477,7 @@ async function runDashboardAction(
       if (!payload?.apiAccount) throw new Error('Enter the API account details.');
       const saved = saveApiAccount(payload.apiAccount);
       ctx.schedulePublishState();
-      return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Saved ${saved.name}. Select the account to use it; Refresh verifies its key.` } };
+      return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Saved ${saved.name}. The first account for this provider is selected automatically; use Select to switch accounts. Refresh verifies its key.` } };
     }
     case "teamSettingsRequest": {
       if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
@@ -629,7 +629,7 @@ async function runDashboardAction(
       const apiAccounts = await importCurrentApiAccounts(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
       if (apiAccounts.length) {
         ctx.schedulePublishState();
-        return { notice: { level: 'info', message: `Imported ${apiAccounts.length} API account${apiAccounts.length === 1 ? '' : 's'}: ${apiAccounts.map(account => account.name).join(', ')}. Select an account to use it; Refresh verifies the key.` } };
+        return { notice: { level: 'info', message: `Imported ${apiAccounts.length} API account${apiAccounts.length === 1 ? '' : 's'}: ${apiAccounts.map(account => account.name).join(', ')}. The first account for each provider is selected automatically; use Select to switch accounts. Refresh verifies the key.` } };
       }
       if (ctx.hostKind === "browser") {
         const imported = await ctx.repo.importCurrentAuth();

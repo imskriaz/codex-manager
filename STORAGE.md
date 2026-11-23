@@ -14,6 +14,8 @@ Manager-owned JSON, JSONL, PID, lock-owner, copied relay-script, and startup-lau
 
 Codex itself owns its configuration, session transcripts, attachments, caches, and databases. Those files are not manager storage and are left intact. Explicit user exports, edited workspace files, and temporary CLI image inputs are also outside managed persistence.
 
+Provider API accounts use `api-accounts` for non-secret metadata and `secrets` for keys in the local `manager.sqlite`. Provider selections use `api-account-selection`, scoped to the current Codex home. Saving metadata and credentials is transactional; removal also deletes the stored key and selections. These records are not included in account export or encrypted account synchronization. Runtime keys are passed through private child environments, while account lists contain only names, providers, endpoints and timestamps.
+
 ## Account and session rows
 
 Accounts use one primary-keyed row per account, with indexes for enabled queue order and update time. Account changes, scoped active-account selections, and rotating recovery snapshots commit together. Concurrent windows merge independent changes before saving; single-account lookups read directly by ID. Quota history uses `(account_id, at)` rows and daily usage uses one row per account, preventing duplicate samples and stale daily responses from replacing newer data. Existing aggregate records convert automatically on first use.

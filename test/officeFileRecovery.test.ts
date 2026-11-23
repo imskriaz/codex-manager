@@ -1,4 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest';
+import JSZip from 'jszip';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -20,6 +21,11 @@ it('versions an edit and restores it only with the current revision, without los
  await expect(restoreOfficeFile(user,old.id,'wrong')).rejects.toThrow('changed');await restoreOfficeFile(user,old.id,second.revision);
  expect(await fs.readFile(path.join(user.workspacePath,old.path),'utf8')).toBe('First draft');expect(listOfficeFileHistory(user)).toHaveLength(2);
  await expect(restoreOfficeFile({...user,id:'sam'},old.id,second.revision)).rejects.toThrow('unavailable');
+});
+it('allows a shrinking replacement when the retained version still fits the storage allowance',async()=>{
+ const limited={...user,limits:{storageMb:1,dailyTokens:0,dailyRequests:0}},old=await writeOfficeBinary(limited,limited.workspacePath,'reports/large.txt',Buffer.alloc(600*1024,7));
+ const next=await writeOfficeBinary(limited,limited.workspacePath,'reports/large.txt',Buffer.from('small'),old.revision);
+ expect(next.size).toBe(5);expect(await fs.readFile(path.join(limited.workspacePath,'reports/large.txt'),'utf8')).toBe('small');expect(listOfficeFileHistory(limited)).toHaveLength(1);
 });
 it('moves a complete project to Trash, protects the root and restores without overwriting a new file',async()=>{
  await writeOfficeBinary(user,user.workspacePath,'project/a.txt',Buffer.from('Original'));let inspected=await manageOfficeWorkspacePaths(user,user.workspacePath,{operation:'inspect',path:'project'});
@@ -51,8 +57,13 @@ it('rejects invalid document headers, external spreadsheet formulas and unsuppor
  await expect(createOfficeDocument({path:'bad.pptx',slides:[{title:'Test',bullets:[]}],theme:{accent:'url(external)'}})).rejects.toThrow('hexadecimal');
 });
 
+it('rejects compressed Office archives whose expanded contents exceed the parser budget',async()=>{
+ const zip=new JSZip();zip.file('word/document.xml','x'.repeat(21*1048576));const data=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
+ expect(data.length).toBeLessThan(10*1048576);await expect(extractOfficeDocument('oversized.docx',data)).rejects.toThrow('too large');
+},60000);
+
 it('renders spreadsheet tables and PDF pages as sandboxable document previews, including Bengali text',async()=>{
- const pdf=await createOfficeDocument({path:'buyer.pdf',text:'Buyer follow-up: নমুনা অনুমোদন প্রয়োজন'});expect(await extractOfficeDocument('buyer.pdf',pdf,'html')).toMatch(/data:image\/png;base64,/);
+ const pdf=await createOfficeDocument({path:'buyer.pdf',text:'Buyer follow-up: ????? ??????? ???????'});expect(await extractOfficeDocument('buyer.pdf',pdf,'html')).toMatch(/data:image\/png;base64,/);
  const xlsx=await createOfficeDocument({path:'buyer.xlsx',sheets:[{name:'Buyer',rows:[['<script>unsafe</script>',2400]]}]});const html=await extractOfficeDocument('buyer.xlsx',xlsx,'html');expect(html).toContain('<table>');expect(html).toContain('&lt;script&gt;');expect(html).not.toContain('<script>');
  const pptx=await createOfficeDocument({path:'buyer.pptx',slides:[{title:'<script>Buyer</script>',bullets:['Approval pending']}]});const outline=await extractOfficeDocument('buyer.pptx',pptx,'html');expect(outline).toContain('Text content only');expect(outline).toContain('&lt;script&gt;Buyer');expect(outline).not.toContain('<script>');
 },30000);

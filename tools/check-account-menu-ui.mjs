@@ -60,13 +60,25 @@ try {
     const menu = page.getByRole('menu', { name: 'Account menu', exact: true });
     await menu.waitFor();
     const menuMs = Date.now() - start;
-    for (const name of ['Dashboard', 'Open account center', 'Settings', 'Sign out']) {
+    for (const name of ['Dashboard', 'Open account center', 'Settings', 'Tools', 'Sign out']) {
       await menu.getByRole('menuitem', { name, exact: true }).waitFor();
     }
     const logout = menu.locator('form');
     assert.equal(await logout.getAttribute('method'), 'post');
     assert.equal(await logout.getAttribute('action'), '/logout');
     const bounds = await menu.boundingBox();
+    const rows = await menu.getByRole('menuitem').evaluateAll(items => items.map(item => {
+      const icon = item.querySelector('svg')?.getBoundingClientRect(), row = item.getBoundingClientRect();
+      const text = [...item.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+      const range = document.createRange(); range.selectNodeContents(text);
+      return { icon, textX: range.getBoundingClientRect().x, centerY: row.y + row.height / 2 };
+    }));
+    for (const row of rows) {
+      assert.ok(row.icon && row.icon.width === 16 && row.icon.height === 16, 'Every menu item has a consistent icon');
+      assert.ok(Math.abs(row.icon.y + row.icon.height / 2 - row.centerY) <= 1, 'Icons are vertically centered');
+      assert.ok(Math.abs(row.textX - rows[0].textX) <= 1, 'Menu labels share one aligned column');
+      assert.ok(Math.abs(row.textX - row.icon.right - 10) <= 1, 'Icons and labels have consistent spacing');
+    }
     const card = await trigger.boundingBox();
     assert.ok(Math.abs(bounds.width - card.width) <= 1, 'Expanded menu matches the card width');
     assert.ok(Math.abs(bounds.x - card.x) <= 1, `Expanded menu aligns with the card: ${JSON.stringify({ bounds, card })}`);

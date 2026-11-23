@@ -1,4 +1,5 @@
 import { isAutoSwitchLocked } from "../../presentation/workbench/autoSwitchState";
+import { clearApiAccountSelection, importCurrentApiAccounts } from '../../services/apiAccounts';
 import { runAccountBatch } from "./batch";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -120,9 +121,16 @@ export class AccountsCommandService {
   }
 
   async importCurrentAuth(): Promise<void> {
+    const apiAccounts = await importCurrentApiAccounts(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+    if (apiAccounts.length) {
+      this.view.refresh();
+      void vscode.window.showInformationMessage(`Imported ${apiAccounts.length} API account${apiAccounts.length === 1 ? '' : 's'}. The first account for each provider is selected automatically; use the account controls to switch. Refresh verifies the key.`);
+      return;
+    }
     const copy = getCommandCopy();
     await this.withProgress(copy.progressImportCurrent, async () => {
       const account = await this.repo.importCurrentAuth();
+      clearApiAccountSelection('openai');
       this.view.markObservedAuthIdentity?.(account.id);
       const result = await refreshImportedAccountQuota(this.repo, account.id);
       this.view.refresh();
@@ -239,6 +247,8 @@ export class AccountsCommandService {
     }
     if (account.isActive && !needsWindowReloadForAccount(account.id)) {
       void vscode.window.showInformationMessage(copy.alreadyActive(formatAccountToastLabel(account)));
+      clearApiAccountSelection('openai');
+      this.view.refresh();
       return { status: "already-active", account };
     }
 
@@ -271,6 +281,7 @@ export class AccountsCommandService {
     this.view.markObservedAuthIdentity?.(account.id);
 
     void handleCodexAppRestartPreference({ allowManualPrompt: true });
+    clearApiAccountSelection('openai');
     const reloadNeeded = needsWindowReloadForAccount(account.id);
     this.view.refresh();
     let reloaded = false;

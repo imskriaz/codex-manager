@@ -17,6 +17,16 @@ let configurationKeys: string[] = [];
 type SettingSchema = { type: string; enum?: unknown[]; minimum?: number; maximum?: number; multipleOf?: number };
 let configurationSchema: Record<string, SettingSchema> = {};
 let configurationSnapshot = new Map<string, string | undefined>();
+const configurationBatches=new WeakMap<vscode.WorkspaceConfiguration,(updates:ReadonlyArray<readonly [string,unknown]>)=>void>();
+
+/** Dashboard forms commit all SQLite settings together, before change listeners run. */
+export async function updateConfigurationBatch(config:vscode.WorkspaceConfiguration,updates:ReadonlyArray<readonly [string,unknown]>):Promise<void>{
+  const write=configurationBatches.get(config);if(write){write(updates);return;}
+  const saved=updates.map(([key])=>[key,config.inspect?config.inspect(key)?.globalValue:config.get(key)] as const),written:string[]=[];
+  try{for(const [key,value] of updates){written.push(key);await config.update(key,value,vscode.ConfigurationTarget.Global);}}
+  catch(error){let incomplete=false;for(const [key,value] of saved.reverse())if(written.includes(key))try{await config.update(key,value,vscode.ConfigurationTarget.Global);}catch{incomplete=true;}
+    if(incomplete)throw new Error(`${error instanceof Error?error.message:'Settings could not be saved.'} Settings could not be rolled back completely; reload settings and review the saved values.`);throw error;}
+}
 
 export async function initializeSqliteContextWithRetry(context: vscode.ExtensionContext): Promise<vscode.ExtensionContext> {
   for (let attempt = 0; ; attempt++) {
@@ -126,19 +136,19 @@ export function sqliteConfiguration(config: vscode.WorkspaceConfiguration): vsco
   const namespace = configurationNamespace;
   if (!store || !namespace) return config;
   // VS Code freezes configuration methods; a separate target permits delegation.
-  return new Proxy({ ...config }, {
+  const validate=(key:string,value:unknown)=>{
+    const schema=configurationSchema[`codexManager.${key}`];if(!schema)throw new Error(`Unknown Codex Manager setting: ${key}`);
+    const type=Array.isArray(value)?'array':value===null?'null':typeof value;
+    if(value!==undefined&&(type!==schema.type||(schema.enum&&!schema.enum.includes(value))||(typeof value==='number'&&(!Number.isFinite(value)||(schema.minimum!==undefined&&value<schema.minimum)||(schema.maximum!==undefined&&value>schema.maximum)||(schema.multipleOf!==undefined&&value%schema.multipleOf!==0)))))throw new Error(`Invalid value for Codex Manager setting: ${key}`);
+  };
+  const result=new Proxy({ ...config }, {
     get: (_target, property) => {
       if (property === "get") return <T>(key: string, fallback?: T): T | undefined => {
         const value = readConfigurationValue<T>(store, namespace, key);
         return value === undefined ? config.get<T>(key, fallback as T) : value;
       };
       if (property === "update") return (key: string, value: unknown, target?: vscode.ConfigurationTarget | boolean | null): Promise<void> => Promise.resolve().then(() => {
-        const schema = configurationSchema[`codexManager.${key}`];
-        if (!schema) throw new Error(`Unknown Codex Manager setting: ${key}`);
-        if (value !== undefined && (typeof value !== schema.type || (schema.enum && !schema.enum.includes(value)) ||
-          (typeof value === "number" && (!Number.isFinite(value) || (schema.minimum !== undefined && value < schema.minimum) ||
-            (schema.maximum !== undefined && value > schema.maximum) || (schema.multipleOf !== undefined && value % schema.multipleOf !== 0)))))
-          throw new Error(`Invalid value for Codex Manager setting: ${key}`);
+        validate(key,value);
         const local = target === false || target === vscode.ConfigurationTarget.Workspace || target === vscode.ConfigurationTarget.WorkspaceFolder;
         store.set(local ? `settings-overrides:${namespace}` : "settings-overrides:global", key, value);
         publishConfigurationChanges();
@@ -153,6 +163,8 @@ export function sqliteConfiguration(config: vscode.WorkspaceConfiguration): vsco
       return typeof value === "function" ? value.bind(config) as unknown : value;
     }
   });
+  configurationBatches.set(result,updates=>{for(const [key,value] of updates)validate(key,value);store.transaction(()=>{for(const [key,value] of updates)store.set('settings-overrides:global',key,value);});publishConfigurationChanges();});
+  return result;
 }
 
 export function disposeSqliteContext(): void {
