@@ -49,8 +49,8 @@ async function removeBootTask(): Promise<void> {
   await command("schtasks.exe", ["/Delete", "/TN", TASK, "/F"], 3_000);
 }
 
-async function writeBootLauncher(configPath: string, scriptPath: string, executable: string): Promise<string> {
-  const file = launcherPath(configPath);
+async function writeBootLauncher(configPath: string, scriptPath: string, executable: string, destination = launcherPath(configPath)): Promise<string> {
+  const file = destination;
   const log = path.join(path.dirname(configPath), "always-online-relay-startup.log");
   const content = [
     "@echo off",
@@ -99,12 +99,34 @@ export async function installRelayStartup(configPath: string, scriptPath: string
   }
   const launcher = await writeBootLauncher(configPath, scriptPath, executable);
   const taskAction = `cmd.exe /d /s /c ""${launcher}""`;
-  await command("schtasks.exe", ["/Create", "/TN", TASK, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", taskAction, "/F"]);
+  let schedulerRegistered = true;
+  let usingLegacyLauncher = false;
+  try {
+    await command("schtasks.exe", ["/Create", "/TN", TASK, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", taskAction, "/F"]);
+  } catch (error) {
+    // A non-admin desktop can still keep the host alive across login. Use the
+    // current user's logon task when Windows refuses the pre-login SYSTEM task.
+    try {
+      await command("schtasks.exe", ["/Create", "/TN", TASK, "/SC", "ONLOGON", "/RL", "LIMITED", "/TR", taskAction, "/F"]);
+    } catch {
+      // Some managed Windows profiles disallow task creation entirely. The
+      // user's Startup folder is the last verified, non-admin fallback.
+      const loginLauncher = legacyLauncher();
+      if (!loginLauncher) throw error;
+      await writeBootLauncher(configPath, scriptPath, executable, loginLauncher).catch(() => { throw error; });
+      schedulerRegistered = false;
+            usingLegacyLauncher = true;
+    }
+  }
   // Confirm the scheduler accepted the task before removing older login-only
   // registrations. This also leaves a useful failure in the persistent log.
-  await command("schtasks.exe", ["/Query", "/TN", TASK], 3_000);
+  if (schedulerRegistered) await command("schtasks.exe", ["/Query", "/TN", TASK], 3_000);
+  else {
+    const loginLauncher = legacyLauncher();
+    if (!loginLauncher || !(await fs.stat(loginLauncher).catch(() => undefined))) throw new Error("The per-user Windows startup launcher could not be verified.");
+  }
   await removeLegacyRegistryEntry();
-  await removeLegacyLauncher();
+  if (!usingLegacyLauncher) await removeLegacyLauncher();
 }
 
 export async function removeRelayStartup(): Promise<void> {

@@ -22,12 +22,14 @@ describe("relay startup without generated files", () => {
     expect(args[args.indexOf('/TR') + 1]).toBe('cmd.exe /d /s /c ""C:\\test home\\.codex\\always-online-relay-start.cmd""');
     expect(fixture.writeFile).toHaveBeenCalledWith(expect.stringContaining("always-online-relay-start.cmd"), expect.stringContaining("Windows boot task triggered"), expect.any(Object));
     expect(fixture.unlink).toHaveBeenCalledOnce();
-    fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("task scheduler unavailable")));
+    fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("Access is denied")));
+    fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("Task creation disabled")));
     fixture.unlink.mockClear();
     fixture.writeFile.mockClear();
-    await expect(installRelayStartup("config", "script")).rejects.toThrow("task scheduler unavailable");
+    await installRelayStartup("config", "script");
+    expect(fixture.writeFile).toHaveBeenCalledTimes(2);
+    expect(fixture.writeFile.mock.calls[1]![0]).toContain('Startup');
     expect(fixture.unlink).not.toHaveBeenCalled();
-    expect(fixture.writeFile).toHaveBeenCalledOnce();
     expect(fixture.writeFile.mock.calls[0]![0]).not.toContain('Startup');
   });
   it("handles missing entries and reports inconclusive removal", async () => {

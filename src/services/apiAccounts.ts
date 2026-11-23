@@ -38,7 +38,7 @@ export function saveApiAccount(input: ApiAccountInput): ApiAccount {
   const normalized = normalizeApiAccount(input), store = storage();
   const id = `api:${normalized.provider}:` + createHash('sha256').update(JSON.stringify([normalized.apiKey, normalized.baseUrl])).digest('hex');
   const previous = store.get<ApiAccount>(namespace, id), now = Date.now();
-  const account: ApiAccount = { id, provider: normalized.provider, name: normalized.name, baseUrl: normalized.baseUrl, createdAt: previous?.createdAt ?? now, updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1) };
+  const account: ApiAccount = { id, provider: normalized.provider, name: normalized.name, baseUrl: normalized.baseUrl, createdAt: previous?.createdAt ?? now, updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1), enabled: previous?.enabled !== false };
   store.transaction(() => {
     store.set('secrets', id, normalized.apiKey);
     store.set(namespace, id, account);
@@ -53,9 +53,21 @@ export function saveApiAccount(input: ApiAccountInput): ApiAccount {
 export function selectApiAccount(id: string): ApiAccount {
   const account = storage().get<ApiAccount>(namespace, id);
   if (!account) throw new Error('That API account no longer exists. Refresh and retry.');
+  if (account.enabled === false) throw new Error('That API account is disabled. Enable it before selecting it.');
   apiAccountCredential(account);
   storage().set('api-account-selection', activeKey(account.provider), id);
   return account;
+}
+export function setApiAccountEnabled(id: string, enabled: boolean): ApiAccount {
+  const store = storage();
+  const account = store.get<ApiAccount>(namespace, id);
+  if (!account) throw new Error('That API account no longer exists. Refresh and retry.');
+  const updated = { ...account, enabled, updatedAt: Math.max(Date.now(), account.updatedAt + 1) };
+  store.transaction(() => {
+    store.set(namespace, id, updated);
+    if (!enabled && store.get<string>('api-account-selection', activeKey(account.provider)) === id) store.set('api-account-selection', activeKey(account.provider), undefined);
+  });
+  return updated;
 }
 export function clearApiAccountSelection(provider: ApiAccountProvider): void { getSqliteStateStore()?.set('api-account-selection', activeKey(provider), undefined); }
 export function removeApiAccount(id: string): void {

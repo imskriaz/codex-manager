@@ -1,5 +1,5 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
-import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, validateApiAccount } from '../../services/apiAccounts';
+import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, validateApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
@@ -396,6 +396,10 @@ async function executeDashboardActionMessageCore(
       if (message.action === 'switch') {
         selectApiAccount(account.id);
         notice = { level: 'info', message: `Selected ${account.name} for new ${account.provider === 'openai' ? 'OpenAI' : 'Claude'} turns. Running turns keep their credentials.` };
+      } else if (message.action === 'toggleAccountEnabled') {
+        const enabled = typeof message.payload?.enabled === 'boolean' ? message.payload.enabled : account.enabled === false;
+        setApiAccountEnabled(account.id, enabled);
+        notice = { level: 'info', message: `${account.name} was ${enabled ? 'enabled' : 'disabled'}.` };
       } else if (message.action === 'remove') {
         if (message.payload?.confirmed !== true) throw new Error('Confirm removal in the account list before retrying.');
         removeApiAccount(account.id);

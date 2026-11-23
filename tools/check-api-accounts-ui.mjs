@@ -52,7 +52,7 @@ try {
     const started = Date.now();
     await page.goto(origin);
     const card = page.locator('article').filter({ hasText: 'sk-••••1234' }).first(); await card.waitFor();
-    await card.getByRole('button', { name: 'Select account', exact: true }).waitFor();
+    await card.locator('.saved-top-actions').getByRole('button', { name: 'Select account', exact: true }).waitFor();
     await card.getByRole('button', { name: 'Verify API key', exact: true }).waitFor();
     await page.getByRole('button', { name: state.copy.addAccount, exact: true }).first().click();
     await page.getByRole('button', { name: 'Add API key', exact: true }).click();
@@ -79,7 +79,7 @@ try {
     await page.getByRole('button', { name: 'Save API account', exact: true }).click();
     await page.clock.runFor(50);
     await dialog.waitFor({ state: 'hidden' });
-    const saved = page.locator('article').filter({ hasText: 'Claude Work API' }).first(); await saved.waitFor(); await saved.scrollIntoViewIfNeeded();
+    const saved = page.locator('article').filter({ hasText: 'sk-••••1234' }).first(); await saved.waitFor(); await saved.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `output/playwright/api-account-list-${width}.png` });
     assert.equal(await page.evaluate(() => window.__apiFixture.saves), 3);
     await page.getByRole('button', { name: state.copy.addAccount, exact: true }).first().click();

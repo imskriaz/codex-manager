@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { normalizeApiAccount } from '../src/domain/apiAccounts';
-import { activeApiAccount, apiAccountCodexArgs, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity, clearApiAccountSelection, importCurrentApiAccounts, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, validateApiAccount } from '../src/services/apiAccounts';
+import { activeApiAccount, apiAccountCodexArgs, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity, clearApiAccountSelection, importCurrentApiAccounts, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, validateApiAccount } from '../src/services/apiAccounts';
 import { apiDashboardAccounts } from '../src/application/dashboard/apiAccounts';
 import { withApiAccountRuntime } from '../src/services/apiAccounts';
 
@@ -50,6 +50,16 @@ it('selects each provider independently, scopes selections to Codex home and cle
   expect(store.get('secrets', account.id)).toBeNull();
   expect(() => selectApiAccount(account.id)).toThrow('no longer exists');
   clearApiAccountSelection('anthropic'); expect(apiAccountIdentity('anthropic')).toBe('native');
+});
+it('supports disabling an API account and clears its active selection', () => {
+  const account = saveApiAccount(input);
+  expect(activeApiAccount('openai')?.id).toBe(account.id);
+  setApiAccountEnabled(account.id, false);
+  expect(listApiAccounts()[0]?.enabled).toBe(false);
+  expect(activeApiAccount('openai')).toBeUndefined();
+  expect(() => selectApiAccount(account.id)).toThrow('disabled');
+  setApiAccountEnabled(account.id, true);
+  expect(listApiAccounts()[0]?.enabled).toBe(true);
 });
 it('passes keys in child environments only and removes conflicting Claude credentials', () => {
   const account = saveApiAccount(input), claude = saveApiAccount({ ...input, provider: 'anthropic' });

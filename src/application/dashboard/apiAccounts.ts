@@ -12,7 +12,7 @@ function apiKeyHint(account: Parameters<typeof apiAccountCredential>[0]): string
 
 export function apiDashboardAccounts(): DashboardAccountViewModel[] {
   return listApiAccounts().map((account) => {
-    const isCurrent = activeApiAccount(account.provider)?.id === account.id;
+    const isCurrent = account.enabled !== false && activeApiAccount(account.provider)?.id === account.id;
     return {
       id: account.id,
       provider: account.provider === "anthropic" ? "claude" : "codex",
@@ -35,7 +35,7 @@ export function apiDashboardAccounts(): DashboardAccountViewModel[] {
       isActive: isCurrent,
       switchQueued: false,
       isCurrentWindowAccount: isCurrent,
-      enabled: true,
+      enabled: account.enabled !== false,
       queuePriority: false,
       tokenRefreshEnabled: false,
       canRefreshToken: false,

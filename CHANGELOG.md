@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.100
+
+- Keep standalone startup available for non-admin Windows users with a verified per-user logon or Startup-folder fallback when the pre-login SYSTEM task is denied.
+
 ## 3.0.0-pre.99
 
 - Open an initialized shared database without schema writes so VS Code can start while standalone holds a write transaction.
