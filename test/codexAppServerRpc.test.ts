@@ -165,6 +165,9 @@ describe("app-server initialization recovery", () => {
     const rpc = await opening;
     processChild.emit("exit", 0); processChild.emit("close", 0);
     await rpc.close(); expect(mocks.spawn).toHaveBeenCalledOnce(); expect(processChild.kill).not.toHaveBeenCalled();
+    expect(processChild.stdin.destroyed).toBe(true);
+    expect(processChild.stdout.destroyed).toBe(true);
+    expect(processChild.stderr.destroyed).toBe(true);
   });
   it("initializes the WebSocket transport and rejects pending reads on disconnect", async () => {
     const processChild = child();

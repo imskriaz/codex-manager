@@ -144,14 +144,29 @@ describe("publishDashboardSnapshot", () => {
     } finally { write.mockRestore(); vi.useRealTimers(); }
   });
 
-  it("joins concurrent refreshes and publishes only the newest requested snapshot",async()=>{
+  it("publishes completed snapshots while joining a newer requested refresh",async()=>{
     const {instance,postMessage}=controller();let release!:(state:DashboardState)=>void;
     const newest={...createState(),brandSub:"latest"};
     buildDashboardStateMock.mockImplementationOnce(()=>new Promise<DashboardState>(resolve=>{release=resolve;})).mockResolvedValue(newest);
     backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
     const first=instance.publishState();await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
     const second=instance.publishState(true);release(createState());await Promise.all([first,second]);
-    expect(postMessage).toHaveBeenCalledOnce();expect(postMessage.mock.calls[0]?.[0].state.brandSub).toBe("latest");
+    expect(postMessage).toHaveBeenCalledTimes(2);expect(postMessage.mock.calls[1]?.[0].state.brandSub).toBe("latest");
+  });
+
+  it("does not starve initial rendering while background updates keep arriving",async()=>{
+    const {instance,postMessage}=controller();
+    let finishFirst!:(state:DashboardState)=>void, finishSecond!:(state:DashboardState)=>void;
+    buildDashboardStateMock.mockImplementationOnce(()=>new Promise<DashboardState>(resolve=>{finishFirst=resolve;}))
+      .mockImplementationOnce(()=>new Promise<DashboardState>(resolve=>{finishSecond=resolve;}));
+    backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+    const publishing=instance.publishState();
+    await vi.waitFor(()=>expect(finishFirst).toBeTypeOf('function'));
+    void instance.publishState(true);
+    finishFirst(createState());
+    await vi.waitFor(()=>expect(finishSecond).toBeTypeOf('function'));
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({type:'dashboard:snapshot'}));
+    finishSecond(createState());await publishing;
   });
 
   it("does not send a completed old read into a replacement panel",async()=>{

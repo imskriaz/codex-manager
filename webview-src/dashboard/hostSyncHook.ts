@@ -12,7 +12,11 @@ export function useDashboardHostSync(params: {
   useEffect(() => {
     // Embedded previews may run scripts, but cannot impersonate host events.
     const blockEmbeddedMessage = (event: MessageEvent) => {
-      if (event.source && event.source !== window && event.source !== window.parent) event.stopImmediatePropagation();
+      if (!event.source || event.source === window || event.source === window.parent) return;
+      // VS Code masks window.parent; its wrapper sends trusted same-origin events.
+      const webviewHost = window.location.protocol === 'vscode-webview:' && event.isTrusted && event.origin === window.location.origin &&
+        !Array.from(document.querySelectorAll('iframe')).some(frame => frame.contentWindow === event.source);
+      if (!webviewHost) event.stopImmediatePropagation();
     };
     const onMessage = (event: MessageEvent<DashboardHostMessage>) => {
       if (event.data) {

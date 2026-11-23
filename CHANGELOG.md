@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-pre.98
+
+- Accept verified VS Code wrapper messages when the runtime masks the parent window, while rejecting embedded preview messages.
+- Load document creation libraries on demand so they do not block dashboard startup.
+- Resolve Node.js from system PATH, including custom locations, with a bounded startup probe.
+- Publish completed VS Code dashboard snapshots even when another refresh is queued.
+- Launch the native Codex npm executable hidden on Windows and dispose completed-call pipes.
+- Keep direct standalone launches distinct from handoff waits and report supervisor startup failures to the caller.
+
 ## 3.0.0-pre.97
 
 - Rename the project picker action to Create new.

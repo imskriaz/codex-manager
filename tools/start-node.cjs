@@ -67,6 +67,7 @@ for (let index = 0; index < args.length; index += 1) {
   else if (value === "--config" && args[index + 1]) configPath = path.resolve(args[++index]);
 }
 if (!configPath && args[0] && !args[0].startsWith("--")) configPath = path.resolve(args[0]);
+const handoffRequested = Boolean(configPath);
 
 // Direct launches retain credentials for later authenticated standalone restarts.
 if (!configPath && !process.env.CODEX_MANAGER_ADMIN_TOKEN) {
@@ -91,7 +92,7 @@ if (configPath) {
     if (!process.env.CODEX_MANAGER_ADMIN_TOKEN && config.adminToken) process.env.CODEX_MANAGER_ADMIN_TOKEN = String(config.adminToken);
     if (!process.env.CODEX_MANAGER_PID_FILE && config.pidPath) process.env.CODEX_MANAGER_PID_FILE = path.resolve(String(config.pidPath));
     if (config.workspaceStoragePath) process.env.CODEX_MANAGER_WORKSPACE_STORAGE = String(config.workspaceStoragePath);
-    if (config.mode === "node") process.env.CODEX_MANAGER_HANDOFF = "1";
+    if (config.mode === "node" && handoffRequested) process.env.CODEX_MANAGER_HANDOFF = "1";
     startupLog("Node host configuration loaded");
   } catch (error) {
     startupLog("Node host configuration could not be read", error);

@@ -20,6 +20,7 @@ exports.supervise = function supervise(args, log) {
     child = spawn(process.execPath, [path.join(__dirname, 'start-node.cjs'), ...args, '--host-worker'], {
       windowsHide: true, stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: process.env
     });
+    log(`Standalone worker process started (PID ${child.pid ?? 'unavailable'}).`);
     deadline = setTimeout(() => {
       startupError = 'Standalone startup timed out after 15 seconds.';
       log(startupError);
@@ -46,7 +47,9 @@ exports.supervise = function supervise(args, log) {
       if (stopping || intentional) { log('Standalone supervisor stopped after requested shutdown'); return; }
       // Startup failures and competing owners must remain visible to the caller.
       if (!wasReady || /already owned by another host/.test(startupError ?? '')) {
-        send({ type: 'codex-manager-startup-error', error: startupError ?? `Standalone exited before ready (${code ?? signal}).` });
+        const error = startupError ?? `Standalone exited before ready (${code ?? signal}).`;
+        console.error(error);
+        send({ type: 'codex-manager-startup-error', error });
         process.exitCode = 1;
         return;
       }

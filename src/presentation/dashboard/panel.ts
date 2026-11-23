@@ -399,12 +399,12 @@ export class DashboardPanelController {
           const signature = await publishDashboardSnapshot({
             peerHost: dashboardPeerHost, localPeer: dashboardLocalPeer?.(),
             context: this.context, repo: this.repo, settingsStore: this.settingsStore, logoUri,
-            setPanelTitle: title => { if (this.panel === panel && this.panelRevision === revision && !this.publishAgain) panel.title = title; },
-            postMessage: message => this.panel === panel && this.panelRevision === revision && !this.publishAgain ? panel.webview.postMessage(message) : Promise.resolve(false),
+            setPanelTitle: title => { if (this.panel === panel && this.panelRevision === revision) panel.title = title; },
+            postMessage: message => this.panel === panel && this.panelRevision === revision ? panel.webview.postMessage(message) : Promise.resolve(false),
             schedulePublishState: () => this.schedulePublishState(),
             lastPublishedStateSignature: this.lastPublishedStateSignature, force: forced
           });
-          if (this.panel === panel && this.panelRevision === revision && !this.publishAgain && signature) this.lastPublishedStateSignature = signature;
+          if (this.panel === panel && this.panelRevision === revision && signature) this.lastPublishedStateSignature = signature;
         } while (this.publishAgain);
       } finally { this.statePublish = undefined; }
     });

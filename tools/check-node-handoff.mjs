@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -64,7 +64,7 @@ function launch(args, script = 'start-node.cjs') {
     child.once("error", reject);
     child.once("exit", code => { children.delete(child); resolve({ code, output }); });
   });
-  return { child, done };
+  return { child, done, get output() { return output; } };
 }
 async function ready() {
   const deadline = Date.now() + 15_000;
@@ -90,9 +90,10 @@ async function stop() {
   throw new Error("Standalone did not release its SQLite PID.");
 }
 const timings = {};
+let first;
 try {
   const started = performance.now();
-  const first = launch(["--config", configPath]);
+  first = launch(["--config", configPath]);
   await new Promise(resolve => setTimeout(resolve, 600));
   assert.equal(first.child.exitCode, null, "handoff must wait while the old owner holds the port");
   await new Promise(resolve => placeholder.close(resolve));
@@ -161,6 +162,10 @@ try {
     assert.ok(records.some(record => record.message === 'Authenticated standalone shutdown requested' && record.details?.reason === 'standalone-restart'), 'System log identifies a standalone restart request');
   } finally { logs.close(); }
   console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "independent-standalone-restart", "shutdown-reason", "shared-logout", "shared-diagnostics"], timings }));
+} catch (error) {
+  console.error(first?.output ?? 'Worker output unavailable.');
+  console.error(await readFile(path.join(root, 'always-online-relay-startup.log'), 'utf8').catch(() => 'Startup log unavailable.'));
+  throw error;
 } finally {
   if (placeholder.listening) await new Promise(resolve => placeholder.close(resolve));
   try { await stop(); } catch { /* The host may already be stopped or not yet started. */ }

@@ -60,13 +60,27 @@ describe("relay startup without generated files", () => {
     vi.stubEnv("NODE", "missing-node"); vi.stubEnv("NODE_EXE", "old-node");
     fixture.exec.mockImplementation((executable, _args, options, callback) => {
       expect(options.windowsHide).toBe(true);
-      if (executable === 'missing-node') callback(new Error('ENOENT'));
+      if (executable === 'where.exe') callback(new Error('ENOENT'));
+      else if (executable === 'missing-node') callback(new Error('ENOENT'));
       else callback(null, JSON.stringify({ version: executable === 'old-node' ? '20.19.0' : '22.13.0', executable: process.execPath }));
     });
     await expect(resolveNodeExecutable()).resolves.toBe(process.execPath);
-    expect(fixture.exec.mock.calls.map(call => call[0])).toEqual(['missing-node', 'old-node', 'node']);
+    expect(fixture.exec.mock.calls.map(call => call[0])).toEqual(['where.exe', 'missing-node', 'old-node', 'node']);
     fixture.exec.mockImplementation((_executable, _args, _options, callback) => callback(new Error('missing or unsupported')));
     await expect(resolveNodeExecutable()).rejects.toThrow('22.13');
+  });
+  it("uses a custom Node location discovered through the system PATH with a bounded startup probe", async () => {
+    vi.stubEnv('NODE', undefined); vi.stubEnv('NODE_EXE', undefined);
+    const custom = 'D:\\Custom Tools\\nodejs\\node.exe';
+    fixture.exec.mockImplementation((executable, _args, options, callback) => {
+      expect(options.timeout).toBe(5000);
+      if (executable === 'where.exe') callback(null, `${custom}\r\n`);
+      else {
+        expect(executable).toBe(custom);
+        callback(null, JSON.stringify({ version: '24.18.0', executable: custom }));
+      }
+    });
+    await expect(resolveNodeExecutable()).resolves.toBe(custom);
   });
   it("quotes spaces and preserves the startup log in the boot launcher", async () => {
     await installRelayStartup("C:\\user's home\\config.json", "C:\\extension\\start-node.cjs", "C:\\node path\\node.exe");

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardHostMessage } from "../src/domain/dashboard/types";
 
 const { effectMock, postMessageToHostMock, sharedRef } = vi.hoisted(() => ({
@@ -22,6 +22,7 @@ vi.mock("../webview-src/dashboard/host", () => ({
 import { useDashboardHostSync } from "../webview-src/dashboard/hostSyncHook";
 
 describe("useDashboardHostSync", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     effectMock.mockReset();
     postMessageToHostMock.mockReset();
@@ -57,7 +58,27 @@ describe("useDashboardHostSync", () => {
     expect(postMessageToHostMock).toHaveBeenCalledTimes(1);
     expect(postMessageToHostMock).toHaveBeenCalledWith({ type: "dashboard:ready" });
     dispose?.();
-    expect(fakeWindow.removeEventListener).toHaveBeenCalledTimes(2);
+    expect(fakeWindow.removeEventListener).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
+  });
+
+  it.each(['host', 'preview', 'browser-preview', 'foreign-origin', 'synthetic'] as const)('validates %s messages when VS Code hides the parent window', mode => {
+    let guard!: (event: MessageEvent) => void;
+    const source = {};
+    const origin = 'vscode-webview://dashboard';
+    const fakeWindow = {
+      parent: undefined as unknown,
+      location: {protocol: mode === 'browser-preview' ? 'http:' : 'vscode-webview:', origin},
+      addEventListener: vi.fn((type, listener, capture) => { if (type === 'message' && capture) guard = listener; }),
+      removeEventListener: vi.fn()
+    };
+    fakeWindow.parent = fakeWindow;
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('document', {querySelectorAll: () => mode === 'preview' ? [{contentWindow: source}] : []});
+    effectMock.mockImplementationOnce(callback => callback());
+    useDashboardHostSync({handleHostMessage: vi.fn(), handleEscape: () => false});
+    const stopImmediatePropagation = vi.fn();
+    guard({source, origin: mode === 'foreign-origin' ? 'https://preview.example' : origin, isTrusted: mode !== 'synthetic', stopImmediatePropagation} as unknown as MessageEvent);
+    expect(stopImmediatePropagation).toHaveBeenCalledTimes(mode === 'host' ? 0 : 1);
   });
 });

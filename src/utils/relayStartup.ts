@@ -66,11 +66,17 @@ async function writeBootLauncher(configPath: string, scriptPath: string, executa
 }
 
 export async function resolveNodeExecutable(): Promise<string> {
-  for (const candidate of [...new Set([process.env["NODE"], process.env["NODE_EXE"], "node", process.execPath].filter((value): value is string => !!value))]) {
+  const systemNodes = process.platform === "win32" ? await new Promise<string[]>(resolve => {
+    execFile("where.exe", ["node"], { windowsHide: true, timeout: 5_000 }, (error, stdout) => {
+      resolve(error ? [] : String(stdout).split(/\r?\n/).map(value => value.trim()).filter(value => path.isAbsolute(value)));
+    });
+  }) : [];
+  const failures: string[] = [];
+  for (const candidate of [...new Set([process.env["NODE"], process.env["NODE_EXE"], ...systemNodes, "node", process.execPath].filter((value): value is string => !!value))]) {
     const executable = await new Promise<string | undefined>(resolve => execFile(candidate, ["-p", "JSON.stringify({version:process.versions.node,executable:process.execPath})"], {
-      windowsHide: true, timeout: 1_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
+      windowsHide: true, timeout: 5_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
     }, (error, stdout) => {
-      if (error) { resolve(undefined); return; }
+      if (error) { failures.push(`${candidate}: ${error.killed ? "probe timed out" : error.code ?? error.message}`); resolve(undefined); return; }
       try {
         const result = JSON.parse(String(stdout)) as { version: string; executable: string };
         const version = /^(\d+)\.(\d+)\./.exec(result.version);
@@ -80,7 +86,7 @@ export async function resolveNodeExecutable(): Promise<string> {
     }));
     if (executable) return executable;
   }
-  throw new Error("Always Active requires Node.js 22.13 or newer, or a compatible VS Code runtime.");
+  throw new Error(`Always Active could not verify Node.js 22.13 or newer from PATH or the VS Code runtime. ${failures.join("; ")}`);
 }
 
 /** Register a pre-login Windows boot task. The task runs as SYSTEM so it does

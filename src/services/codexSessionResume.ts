@@ -52,7 +52,7 @@ import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCod
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { sendCodexQuestionReply } from './codexQuestionReply';
-import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli } from './codexCliRuntime';
+import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli, resolveCodexNpmBinary } from './codexCliRuntime';
 import { discoverClaudeModels } from './claudeCliRuntime';
 import { isClaudeModel } from '../domain/dashboard/claudeModels';
 import * as claude from './claudeSessions';
@@ -3186,11 +3186,12 @@ async function resolveCodexCliExecutable(allowInstall = false): Promise<CodexCli
           const npmScript = path.join(path.dirname(candidate), "node_modules", "@openai", "codex", "bin", "codex.js");
           if (await fs.stat(npmScript).then(stat => stat.isFile()).catch(() => false)) resolvedCandidate = npmScript;
         }
+        resolvedCandidate = await resolveCodexNpmBinary(resolvedCandidate);
         const resolvedExtension = path.extname(resolvedCandidate).toLowerCase();
         const executable =
           resolvedExtension === ".js" || resolvedExtension === ".cjs" || resolvedExtension === ".mjs"
             ? { command: process.execPath, prefixArgs: [resolvedCandidate] }
-            : { command: candidate, prefixArgs: [], shell: extension === ".cmd" || extension === ".bat" };
+            : { command: resolvedCandidate, prefixArgs: [], shell: resolvedExtension === ".cmd" || resolvedExtension === ".bat" };
         cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
         return executable;
       }
@@ -3198,7 +3199,8 @@ async function resolveCodexCliExecutable(allowInstall = false): Promise<CodexCli
   }
   if (allowInstall) {
     const script = await installManagedCodexCli();
-    const executable = { command: process.execPath, prefixArgs: [script] };
+    const native = await resolveCodexNpmBinary(script);
+    const executable = native === script ? { command: process.execPath, prefixArgs: [script] } : { command: native, prefixArgs: [] };
     cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
     return executable;
   }

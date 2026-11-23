@@ -9,9 +9,27 @@ vi.mock("../src/utils/relayStartup", () => ({ resolveNodeExecutable: async () =>
 vi.mock("../src/utils/crossWindowOperations", () => ({ runCrossWindowExclusive: (_key: string, _label: string, task: (signal: AbortSignal) => unknown) => task(fixture.controller.signal) }));
 vi.mock("../src/storage/sqliteState", () => ({ getSqliteStateStore: () => ({ get: (_namespace: string, key: string) => fixture.values.get(key), set: (_namespace: string, key: string, value: unknown) => fixture.values.set(key, value) }) }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: vi.fn() }));
-import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli } from "../src/services/codexCliRuntime";
+import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli, resolveCodexNpmBinary } from "../src/services/codexCliRuntime";
 
 const roots: string[] = [];
+
+it('launches the native Windows npm binary directly instead of its visible child-spawning wrapper', async () => {
+  if (process.platform !== 'win32') return;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'manager-native-cli-')); roots.push(root);
+  const script = path.join(root, 'bin', 'codex.js');
+  await mkdir(path.dirname(script), {recursive:true}); await writeFile(script, '');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({name:'@openai/codex'}));
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const pkg = path.join(root, 'node_modules', '@openai', `codex-win32-${arch}`);
+  const binary = path.join(pkg, 'vendor', `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-pc-windows-msvc`, 'bin', 'codex.exe');
+  await mkdir(path.dirname(binary), {recursive:true}); await writeFile(binary, '');
+  await writeFile(path.join(pkg, 'package.json'), JSON.stringify({name:`@openai/codex-win32-${arch}`}));
+  expect(await resolveCodexNpmBinary(script)).toBe(binary);
+  await rm(binary);
+  await expect(resolveCodexNpmBinary(script)).rejects.toThrow('no native Windows executable');
+  const custom = path.join(root, 'custom.cjs');
+  expect(await resolveCodexNpmBinary(custom)).toBe(custom);
+});
 afterEach(async () => {
   vi.unstubAllEnvs(); fixture.values.clear(); fixture.exec.mockReset(); fixture.controller = new AbortController();
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));

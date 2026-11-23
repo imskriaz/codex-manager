@@ -1,12 +1,8 @@
 import 'regenerator-runtime/runtime';
 import * as path from 'node:path';
 import {fork} from 'node:child_process';
-import {PDFDocument,type PDFFont} from 'pdf-lib';
+import type {PDFFont} from 'pdf-lib';
 import * as fs from 'node:fs/promises';
-import fontkit from '@pdf-lib/fontkit';
-import {Workbook} from 'exceljs';
-import {Document,Packer,Paragraph,HeadingLevel} from 'docx';
-import PptxGenJS from 'pptxgenjs';
 
 export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text'):Promise<string>{
  const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
@@ -30,6 +26,7 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
  const name=input['path'];if(typeof name!=='string')throw new Error('Choose a document name.');const extension=path.extname(name).toLowerCase();
  const text=input['text'];if(text!==undefined&&(typeof text!=='string'||text.length>120000))throw new Error('Use up to 120,000 characters for this document.');
  if(extension==='.xlsx'){
+  const {Workbook}=await import('exceljs');
   if(!Array.isArray(input['sheets'])||!input['sheets'].length||input['sheets'].length>20)throw new Error('Add one to twenty worksheets.');const book=new Workbook();book.calcProperties.fullCalcOnLoad=true;let cells=0;
   for(const value of input['sheets'] as Array<Record<string,unknown>>){if(!value||typeof value['name']!=='string'||!Array.isArray(value['rows'])||value['rows'].length>5000)throw new Error('Use named worksheets with at most 5,000 rows.');const sheet=book.addWorksheet(value['name'].slice(0,31));
    for(const values of value['rows'] as unknown[]){if(!Array.isArray(values)||values.length>50)throw new Error('Use up to fifty columns.');const row=values.map((cell:unknown)=>{if(++cells>50000)throw new Error('Keep the workbook under 50,000 cells.');if(typeof cell==='number'&&Number.isFinite(cell)||typeof cell==='string'&&cell.length<=8000)return cell;if(cell===null)return null;if(cell&&typeof cell==='object'&&'formula' in cell&&typeof cell.formula==='string'&&cell.formula.length<=1000&&!/[\[\]|]|https?:|WEBSERVICE|HYPERLINK|DDE|RTD|CALL|EXEC|IMAGE\s*\(|IMPORT(?:XML|DATA|HTML|RANGE|FEED)\s*\(/i.test(cell.formula))return {formula:cell.formula.replace(/^=/,'')};throw new Error('Use text, numbers, or a local worksheet formula.');});sheet.addRow(row as never);}
@@ -37,6 +34,7 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
   }return Buffer.from(await book.xlsx.writeBuffer());
  }
  if(extension==='.pptx'){
+  const {default:PptxGenJS}=await import('pptxgenjs');
   if(!Array.isArray(input['slides'])||!input['slides'].length||input['slides'].length>60)throw new Error('Add one to sixty presentation slides.');
   const deck=new PptxGenJS();deck.layout='LAYOUT_WIDE';deck.author='';deck.subject='';deck.title=typeof input['title']==='string'?input['title'].slice(0,160):'';
   const theme=input['theme'] as Record<string,unknown>|undefined;
@@ -53,8 +51,9 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
   return Buffer.from(await deck.write({outputType:'nodebuffer'}) as Buffer);
  }
  if(typeof text!=='string'||!text.trim())throw new Error('Provide document text.');
- if(extension==='.docx'){const paragraphs=text.split(/\r?\n/).map(line=>new Paragraph({text:line.replace(/^#+\s*/,''),...(line.startsWith('# ')?{heading:HeadingLevel.HEADING_1}:{})}));return Packer.toBuffer(new Document({sections:[{children:paragraphs}]}));}
+ if(extension==='.docx'){const {Document,Packer,Paragraph,HeadingLevel}=await import('docx');const paragraphs=text.split(/\r?\n/).map(line=>new Paragraph({text:line.replace(/^#+\s*/,''),...(line.startsWith('# ')?{heading:HeadingLevel.HEADING_1}:{})}));return Packer.toBuffer(new Document({sections:[{children:paragraphs}]}));}
  if(extension==='.pdf'){
+  const [{PDFDocument},{default:fontkit}]=await Promise.all([import('pdf-lib'),import('@pdf-lib/fontkit')]);
   const document=await PDFDocument.create();document.registerFontkit(fontkit);
   const fonts=await Promise.all(['NotoSans-Regular.ttf','NotoSansBengali-Regular.ttf'].map(async name=>document.embedFont(await fs.readFile(path.join(__dirname,'../../media/fonts',name)),{subset:true})));
   const supported=fonts.map(font=>new Set(font.getCharacterSet()));

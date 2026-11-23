@@ -384,7 +384,10 @@ export class CodexAppServerRpc {
 
   private terminateOwnedChild(): Promise<void> {
     const child = this.child;
-    if (this.childExited || child.exitCode != null || child.signalCode != null) return Promise.resolve();
+    if (this.childExited || child.exitCode != null || child.signalCode != null) {
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+      return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
       let treeStopped = process.platform !== "win32" || !child.pid;
       let failure: Error | undefined;

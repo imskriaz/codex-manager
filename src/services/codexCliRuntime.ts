@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import { createRequire } from "node:module";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { resolveNodeExecutable } from "../utils/relayStartup";
@@ -41,7 +42,31 @@ export function managedCodexCli(): string | undefined {
     ? path.join(root, "runtime", "codex-cli", "node_modules", "@openai", "codex", "bin", "codex.js") : undefined;
 }
 
-function run(executable: string, args: string[], timeout: number, cwd: string, signal?: AbortSignal): Promise<void> {
+/** The npm wrapper spawns its native child without windowsHide on Windows. */
+export async function resolveCodexNpmBinary(script: string): Promise<string> {
+  if (process.platform !== 'win32' || path.basename(script).toLowerCase() !== 'codex.js') return script;
+  const root = path.dirname(path.dirname(script));
+  const manifest = await fs.readFile(path.join(root, 'package.json'), 'utf8').then(text => JSON.parse(text) as {name?: string}).catch(() => undefined);
+  if (manifest?.name !== '@openai/codex') return script;
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const target = `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-pc-windows-msvc`;
+  const vendorRoots = [path.join(root, 'vendor')];
+  try { vendorRoots.unshift(path.join(path.dirname(createRequire(path.resolve(script)).resolve(`@openai/codex-win32-${arch}/package.json`)), 'vendor')); }
+  catch { /* Older CLI packages bundle vendor files directly. */ }
+  for (const vendor of vendorRoots) {
+    for (const directory of ['bin', 'codex']) {
+      const binary = path.join(vendor, target, directory, 'codex.exe');
+      if (await fs.stat(binary).then(stat => stat.isFile()).catch(() => false)) return binary;
+    }
+  }
+  throw new Error('The installed Codex npm package has no native Windows executable. Reinstall @openai/codex before retrying.');
+}
+
+async function run(executable: string, args: string[], timeout: number, cwd: string, signal?: AbortSignal): Promise<void> {
+  if (args[0]?.endsWith('codex.js')) {
+    const native = await resolveCodexNpmBinary(args[0]);
+    if (native !== args[0]) { executable = native; args = args.slice(1); }
+  }
   return new Promise((resolve, reject) => execFile(executable, args, {
     cwd, windowsHide: true, timeout, signal, maxBuffer: 128 * 1024,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
