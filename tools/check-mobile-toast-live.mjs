@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 
 // Real host reads only. Disconnect only this disposable browser context.
-// The extra notice is injected to check stacking without failing a real action.
+// The extra notice checks single-notification priority without failing a real action.
 const origin = 'http://127.0.0.1:39875';
 await mkdir('output/live-audit', { recursive: true });
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -39,27 +39,37 @@ try {
         data: { type: 'dashboard:notice', level: 'error', message: 'Dashboard action failed (502): a longer message that must fit within two compact lines.' }
       })));
       await page.locator('.dashboard-notice-stack .dashboard-notice').waitFor();
-      const bounds = await banner.evaluate(element => {
+      const toast = page.locator('.dashboard-notice-stack .dashboard-notice');
+      assert.equal(await banner.count(), 0, 'An action error replaces the connection banner');
+      assert.equal(await page.locator('.dashboard-notice-stack > *').count(), 1, 'Only one notification is visible');
+      const bounds = await toast.evaluate(element => {
         const rect = element.getBoundingClientRect();
-        const notice = element.parentElement.querySelector('.dashboard-notice').getBoundingClientRect();
         const button = element.querySelector('button').getBoundingClientRect();
         return {
           top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
-          right: innerWidth - rect.right, noticeTop: notice.top, noticeHeight: notice.height,
+          right: innerWidth - rect.right,
           first: element.parentElement.firstElementChild === element,
           onTop: element.contains(document.elementFromPoint(button.x + button.width / 2, button.y + button.height / 2))
         };
       });
-      assert.ok(bounds.first, 'The connection banner is the first notification');
-      assert.ok(bounds.top >= 8 && bounds.top <= 20, 'The banner stays at the viewport top');
-      assert.ok(bounds.noticeTop >= bounds.bottom, 'Other notices follow below without overlapping');
-      assert.ok(bounds.onTop, 'Reload remains clickable above the open Account Center');
-      assert.ok(bounds.right >= 8 && bounds.width < width, 'The banner fits the viewport');
+      assert.ok(bounds.first, 'The action error is the only notification');
+      assert.ok(bounds.top >= 8 && bounds.top <= 20, 'The error stays at the viewport top');
+      assert.ok(bounds.onTop, 'Dismiss remains clickable above the open Account Center');
+      assert.ok(bounds.right >= 8 && bounds.width < width, 'The error fits the viewport');
       if (width <= 600) {
-        assert.ok(bounds.width <= 300 && bounds.height <= 52, 'Mobile banner stays compact');
-        assert.ok(bounds.noticeHeight <= 52, 'Mobile errors fit within two lines');
+        assert.ok(bounds.width <= 300 && bounds.height <= 52, 'Mobile errors fit within two lines');
       }
       await page.screenshot({ path: `output/live-audit/top-banner-${width}.png` });
+      await toast.getByRole('button', { name: 'Dismiss notification', exact: true }).click();
+      await banner.waitFor();
+      assert.equal(await page.locator('.dashboard-notice-stack > *').count(), 1, 'Dismissal restores only the connection banner');
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'dashboard:notice', level: 'error', message: 'Dashboard action failed (530)' }
+      })));
+      await toast.waitFor();
+      assert.equal(await banner.count(), 0, 'A later error also replaces the banner');
+      await banner.waitFor({ timeout: 15000 });
+      assert.equal(await toast.count(), 0, 'Timeout restores the connection banner');
       await context.setOffline(false);
       await banner.waitFor({ state: 'detached', timeout: 45000 });
       assert.deepEqual(errors, [], 'No browser runtime errors during disconnect and reconnect');

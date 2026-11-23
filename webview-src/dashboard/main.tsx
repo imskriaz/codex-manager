@@ -2993,7 +2993,7 @@ function App() {
       {(notice && notice.level !== 'info') || (hasBrowserWorkspaceShell(browserPath) && connectionBannerStage)
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
-              {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage ? <WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} /> : null}
+              {hasBrowserWorkspaceShell(browserPath) && connectionBannerStage && (!notice || notice.level === 'info') ? <WorkspaceConnectionBanner stage={connectionBannerStage} onReload={() => window.location.reload()} /> : null}
               {notice && notice.level !== 'info' ? <div
                 key={notice.id}
                 class={`dashboard-notice is-${notice.level}`}

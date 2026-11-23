@@ -9,6 +9,10 @@ import {
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
+  it('gives action errors priority over the connection banner in the notification stack', () => {
+    const main = readFileSync('webview-src/dashboard/main.tsx', 'utf8');
+    expect(main).toContain("connectionBannerStage && (!notice || notice.level === 'info') ? <WorkspaceConnectionBanner");
+  });
   it('keeps generic disconnected-action notices out of toasts without hiding other failures or action prompts', () => {
     const changed = vi.fn(), controller = createDashboardToastController(changed);
     for (const state of ['closed', 'failed']) controller.show({ level: 'error', message: `The connection ${state} before this action was confirmed. Its outcome is unknown; reconnect and verify before retrying.` });
