@@ -24,7 +24,7 @@ try { for(const [width,mode] of [[1440,'browser'],[768,'browser'],[390,'browser'
   await context.route('**/api/office/**',async route=>{
     const request=route.request(),url=new URL(request.url());
     if(url.pathname==='/api/office/users')return route.fulfill({json:{users:deleted?[]:[user]}});
-    if(url.pathname==='/api/office/mcp')return route.fulfill({json:{servers:[{id:'smartoffice',label:'SmartOffice',endpoint:'http://127.0.0.1:3004/',transport:'smartoffice',enabled:true,allowedRoles:['user']}]}});
+    if(url.pathname==='/api/office/mcp')return route.fulfill({json:{servers:[{id:'orders',label:'Company data',endpoint:'http://127.0.0.1:4321/api/mcp',enabled:true,allowedRoles:['user']}]}});
     if(url.pathname==='/api/office/settings')return route.fulfill({json:{workspaceRoot:'C:/team',databaseProvider:'sqlite',postgresConfigured:false}});
     if(url.pathname==='/api/office/usage/fixture-user')return route.fulfill({json:{revision:'fixture',usage:{tokens:123}}});
     if(url.pathname==='/api/office/users/fixture-user'&&request.method()==='PATCH'){
@@ -59,7 +59,7 @@ try { for(const [width,mode] of [[1440,'browser'],[768,'browser'],[390,'browser'
   await selectTab('Profile');await editor.getByRole('button',{name:'Save changes',exact:true}).click();
   await editor.getByRole('alert').waitFor();assert.equal(patches,0);assert.ok(await selectedTab('Plan & limits'));
   await editor.getByRole('spinbutton',{name:'Requests per day',exact:true}).fill('15');
-  await selectTab('Data access');await editor.getByRole('checkbox',{name:/SmartOffice/}).check();
+  await selectTab('Data access');await editor.getByRole('checkbox',{name:/Company data/}).check();
   await fits();await page.screenshot({path:path.join(output,`data-${width}-${mode}.png`)});
   await selectTab('Permissions');assert.ok(await editor.getByRole('checkbox',{name:/Terminal/}).isDisabled());
   await editor.getByRole('checkbox',{name:/Environment/}).check();
@@ -68,17 +68,17 @@ try { for(const [width,mode] of [[1440,'browser'],[768,'browser'],[390,'browser'
   await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();await editor.getByRole('status').filter({hasText:'User deletion cancelled.'}).waitFor();
   assert.equal(deletes,0);assert.equal(await editor.getByRole('textbox',{name:'Display name',exact:true}).inputValue(),'Alex Updated');
   await editor.getByRole('button',{name:'Save changes',exact:true}).click();await editor.getByRole('alert').filter({hasText:'User changed in another window'}).waitFor();
-  assert.deepEqual(saved.mcpServers,['smartoffice']);assert.ok(saved.features.includes('env'));assert.equal(saved.limits.dailyRequests,15);
+  assert.deepEqual(saved.mcpServers,['orders']);assert.ok(saved.features.includes('env'));assert.equal(saved.limits.dailyRequests,15);
   assert.equal(await editor.getByRole('textbox',{name:'Display name',exact:true}).inputValue(),'Alex Updated');
   await editor.getByRole('button',{name:'Save changes',exact:true}).click();await settings.getByRole('status').filter({hasText:'User settings saved.'}).waitFor();assert.equal(patches,2);
   await settings.getByRole('button',{name:'Edit Alex Updated',exact:true}).click();
-  await selectTab('Data access');assert.ok(await editor.getByRole('checkbox',{name:/SmartOffice/}).isChecked());
+  await selectTab('Data access');assert.ok(await editor.getByRole('checkbox',{name:/Company data/}).isChecked());
   await selectTab('Usage');await editor.getByText('123 verified tokens today.',{exact:true}).waitFor();
   await deleteButton.click();await confirmation.getByRole('button',{name:'Delete user',exact:true}).click();await confirmation.getByRole('alert').filter({hasText:'Keep at least one enabled admin.'}).waitFor();
   await page.screenshot({path:path.join(output,`delete-${width}-${mode}.png`)});
   await confirmation.getByRole('button',{name:'Delete user',exact:true}).click();await settings.getByRole('status').filter({hasText:'User deleted. Workspace files kept.'}).waitFor();assert.equal(deletes,2);assert.equal(await settings.getByRole('button',{name:'Edit Alex Updated',exact:true}).count(),0);
   await settings.getByRole('button',{name:'Add user',exact:true}).click();const adding=settings.getByRole('region',{name:'Add Team user',exact:true});await adding.waitFor();assert.equal(await adding.getByRole('button',{name:'Delete user',exact:true}).count(),0);assert.equal(await adding.getByRole('tab',{name:'Usage',exact:true}).count(),0);
-  if(width<=760)await adding.getByRole('combobox',{name:'User settings section',exact:true}).selectOption('data');else await adding.getByRole('tab',{name:'Data access',exact:true}).click();assert.equal(await adding.getByRole('checkbox',{name:/SmartOffice/}).isChecked(),false,'New users have no SmartOffice access');
+  if(width<=760)await adding.getByRole('combobox',{name:'User settings section',exact:true}).selectOption('data');else await adding.getByRole('tab',{name:'Data access',exact:true}).click();assert.equal(await adding.getByRole('checkbox',{name:/Company data/}).isChecked(),false,'New users have no source access');
   await fits();await adding.getByRole('button',{name:'Back to users',exact:true}).click();await settings.getByRole('status').filter({hasText:'User editing cancelled.'}).waitFor();
   assert.deepEqual(errors,[]);console.log(JSON.stringify({width,mode,loadMs,directEdit:true,desktopLeftTabs:width>760,mobileDropdown:width<=760,selectiveDataAccess:true,saveAndDeleteFailuresRetained:true,consoleErrors:0}));await context.close();
 }}finally{await browser.close();}

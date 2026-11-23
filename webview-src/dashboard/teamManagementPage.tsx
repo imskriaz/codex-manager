@@ -612,7 +612,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                       />
                       <span>
                         <strong>{server.label}</strong>
-                        <small>{!server.enabled ? "Disabled globally" : server.transport === 'smartoffice' ? "Read-only business data" : "Enabled"}</small>
+                        <small>{!server.enabled ? "Disabled globally" : "Enabled"}</small>
                       </span>
                     </label>
                   ))}

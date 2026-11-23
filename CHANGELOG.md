@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.89
+
+- Keep connected data integrations in their own services and use configured read-only HTTP MCP sources.
+- Discover assigned data for related requests and follow-ups without requiring the source name.
+
 ## 3.0.0-pre.88
 
 - Add configurable generic workspace identity, mode labels, on-demand corporate, Office, RMG, textile and research guidance, and per-user contextual suggestions with no default cards.

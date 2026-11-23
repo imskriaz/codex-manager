@@ -2,15 +2,14 @@
 import * as http from 'node:http';
 import {once} from 'node:events';
 import * as users from '../src/services/officeUsers';
-import * as smartoffice from '../src/services/smartOfficeMcp';
 import {isPublicOfficeAddress,readOfficeWebPage,listOfficeConnections,readOfficeConnection} from '../src/services/officeSources';
-let server:http.Server,endpoint:string,calls:string[];const user={id:'alex',role:'user',enabled:true,mcpServers:['orders']} as users.OfficeUser;
-beforeEach(async()=>{calls=[];vi.spyOn(users,'getOfficeUser').mockResolvedValue(user);server=http.createServer(async(req,res)=>{
+let server:http.Server,endpoint:string,calls:string[],toolResult:unknown;const user={id:'alex',role:'user',enabled:true,mcpServers:['orders']} as users.OfficeUser;
+beforeEach(async()=>{calls=[];toolResult={content:[{type:'text',text:'Order ST100: 2400 pieces'}]};vi.spyOn(users,'getOfficeUser').mockResolvedValue(user);server=http.createServer(async(req,res)=>{
  if(req.method==='DELETE'){res.end();return;}let data='';for await(const chunk of req)data+=chunk;const body=JSON.parse(data);calls.push(body.method);res.setHeader('Content-Type','application/json');
  if(body.method==='initialize'){res.setHeader('Mcp-Session-Id','private-session');res.end(JSON.stringify({jsonrpc:'2.0',id:body.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}}}}));}
  else if(body.method==='notifications/initialized'){res.statusCode=202;res.end();}
  else if(body.method==='tools/list')res.end(JSON.stringify({jsonrpc:'2.0',id:body.id,result:{tools:[{name:'read_orders',description:'Read orders',inputSchema:{type:'object'},annotations:{readOnlyHint:true}},{name:'send_email',annotations:{readOnlyHint:false}}]}}));
- else if(body.method==='tools/call'){expect(req.headers['mcp-session-id']).toBe('private-session');res.setHeader('Content-Type','text/event-stream');res.write('event: message\ndata: '+JSON.stringify({jsonrpc:'2.0',id:body.id,result:{content:[{type:'text',text:'Order ST100: 2400 pieces'}]}})+'\n\n');res.end();}
+ else if(body.method==='tools/call'){expect(req.headers['mcp-session-id']).toBe('private-session');res.setHeader('Content-Type','text/event-stream');res.write('event: message\ndata: '+JSON.stringify({jsonrpc:'2.0',id:body.id,result:toolResult})+'\n\n');res.end();}
  });server.listen(0,'127.0.0.1');await once(server,'listening');endpoint='http://127.0.0.1:'+(server.address() as {port:number}).port;vi.spyOn(users,'listOfficeMcpServers').mockResolvedValue([{id:'orders',label:'Orders',endpoint,enabled:true,allowedRoles:['user']}]);});
 afterEach(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));vi.restoreAllMocks();});
 it('rejects all private, documentation, mapped and special address ranges while retaining public DNS targets',()=>{
@@ -42,16 +41,9 @@ it('denies unassigned, disabled and revoked connections before further network c
  await expect(readOfficeConnection(user,'orders',undefined,undefined,new AbortController().signal)).rejects.toThrow('unavailable');
  expect(calls).toEqual(['initialize']);
 });
-it('routes only an assigned SmartOffice connection through its local read-only MCP adapter',async()=>{
- vi.mocked(users.getOfficeUser).mockResolvedValue({...user,mcpServers:['smartoffice']});
- vi.mocked(users.listOfficeMcpServers).mockResolvedValue([{id:'smartoffice',label:'SmartOffice',endpoint:'http://127.0.0.1:3004/',transport:'smartoffice',enabled:true,allowedRoles:['user']}]);
- const rpc=vi.spyOn(smartoffice,'smartOfficeMcpRpc').mockImplementation(async method=>method==='tools/list'?{tools:[{name:'smartoffice_query',annotations:{readOnlyHint:true}}]}:method==='tools/call'?{content:[{type:'text',text:'Verified source result'}]}:{});
- expect(await listOfficeConnections(user)).toEqual([{id:'smartoffice',label:'SmartOffice'}]);
- const value=await readOfficeConnection(user,'smartoffice','smartoffice_query',{plan:{op:'read',entity:'purchase_orders',limit:1}},new AbortController().signal);
- expect(value).toMatchObject({content:[{text:'Verified source result'}]});
- expect(rpc.mock.calls.map(call=>call[0])).toEqual(['initialize','notifications/initialized','tools/list','tools/call']);
- expect(calls).toEqual([]);
- vi.mocked(users.getOfficeUser).mockResolvedValue({...user,mcpServers:[]});
- await expect(readOfficeConnection(user,'smartoffice','smartoffice_query',{},new AbortController().signal)).rejects.toThrow('unavailable');
- expect(rpc).toHaveBeenCalledTimes(4);
+it('preserves source tool errors and rejects oversized chat results without silently truncating data',async()=>{
+ toolResult={isError:true,content:[{type:'text',text:'Query requires a validated grouping field.'}]};
+ await expect(readOfficeConnection(user,'orders','read_orders',{},new AbortController().signal)).rejects.toThrow('Query requires a validated grouping field.');
+ toolResult={content:[{type:'text',text:'x'.repeat(96000)}]};
+ await expect(readOfficeConnection(user,'orders','read_orders',{},new AbortController().signal)).rejects.toThrow('smaller result or an aggregate');
 });

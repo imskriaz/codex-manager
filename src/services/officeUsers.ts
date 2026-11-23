@@ -7,7 +7,6 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
-import { SMARTOFFICE_ENDPOINT } from './smartOfficeMcp';
 
 export type OfficeRole = "admin" | "user" | "unrestricted-admin";
 export type OfficeFeature = "generalChat" | "tasks" | "files" | "browser" | "env" | "terminal" | "git" | "github";
@@ -202,7 +201,7 @@ export async function listOfficeUsers(): Promise<OfficeUser[]> {
   return (await readUsersBackend()).users.map(publicUser);
 }
 
-export type OfficeMcpServer = { id: string; label: string; endpoint: string; enabled: boolean; allowedRoles: OfficeRole[]; transport?: 'smartoffice' };
+export type OfficeMcpServer = { id: string; label: string; endpoint: string; enabled: boolean; allowedRoles: OfficeRole[] };
 function normalizeMcpServer(value: unknown): OfficeMcpServer | undefined {
   if (!value || typeof value !== "object") return undefined;
   const row = value as Partial<OfficeMcpServer>;
@@ -210,9 +209,9 @@ function normalizeMcpServer(value: unknown): OfficeMcpServer | undefined {
   let endpoint: URL;
   try { endpoint = new URL(row.endpoint); } catch { return undefined; }
   if (!['http:', 'https:'].includes(endpoint.protocol)) return undefined;
-  if (row.transport !== undefined && (row.transport !== 'smartoffice' || endpoint.origin !== SMARTOFFICE_ENDPOINT || endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password)) return undefined;
+  if ('transport' in row && row.transport !== undefined) return undefined;
   const allowedRoles: OfficeRole[] = Array.isArray(row.allowedRoles) ? [...new Set(row.allowedRoles.filter((role): role is OfficeRole => role === 'admin' || role === 'user' || role === 'unrestricted-admin'))] : ['user'];
-  return { id: row.id, label: typeof row.label === 'string' ? row.label.trim().slice(0, 120) || row.id : row.id, endpoint: endpoint.toString(), enabled: row.enabled !== false, allowedRoles, ...(row.transport ? {transport:row.transport} : {}) };
+  return { id: row.id, label: typeof row.label === 'string' ? row.label.trim().slice(0, 120) || row.id : row.id, endpoint: endpoint.toString(), enabled: row.enabled !== false, allowedRoles };
 }
 export async function listOfficeMcpServers(): Promise<OfficeMcpServer[]> {
   const pool = await postgresPool();
@@ -222,12 +221,6 @@ export async function listOfficeMcpServers(): Promise<OfficeMcpServer[]> {
     catch { postgresPoolPromise = undefined; value = store()?.get<unknown>(NAMESPACE, MCP_KEY); }
   } else value = store()?.get<unknown>(NAMESPACE, MCP_KEY);
   const servers = Array.isArray(value) ? value.flatMap(item => { const normalized = normalizeMcpServer(item); return normalized ? [normalized] : []; }) : [];
-  if (process.platform === 'win32' && !servers.some(server => server.id === 'smartoffice')) {
-    try {
-      await fs.access('C:/SmartOffice/app/package.json');
-      servers.push({id:'smartoffice',label:'SmartOffice',endpoint:SMARTOFFICE_ENDPOINT+'/',transport:'smartoffice',enabled:true,allowedRoles:['user']});
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  }
   return servers;
 }
 export async function saveOfficeMcpServers(servers: OfficeMcpServer[]): Promise<void> {
