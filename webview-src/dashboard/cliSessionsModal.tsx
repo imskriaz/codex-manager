@@ -2461,7 +2461,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
     if (file) {
       event.preventDefault();
       const path = file.dataset['workspaceFile']!;
-      if (file.hasAttribute('data-workspace-download') || isWorkspaceDownloadPath(path)) links.downloadFile(path);
+      if (file.hasAttribute?.('data-workspace-download') || isWorkspaceDownloadPath(path)) links.downloadFile(path);
       else if (onOpenFile) onOpenFile(path);
       else feedback?.({ level: 'warning', message: 'Open this conversation in its workspace to view this file.' });
       return;

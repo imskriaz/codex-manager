@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0-pre.102
+
+- Keep Claude account actions independent from unrelated work and avoid blocking them during background activity.
+
+## 3.0.0-pre.101
+
+- Keep account-card actions available independently and report malformed workspace links without throwing.
+
 ## 3.0.0-pre.100
 
 - Keep standalone startup available for non-admin Windows users with a verified per-user logon or Startup-folder fallback when the pre-login SYSTEM task is denied.
