@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
+import { promises as nativeFs } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as teamSettings from "../src/services/teamSettings";
@@ -16,7 +17,7 @@ import type { DashboardCodexSessionLiveState } from '../src/domain/dashboard/typ
 let root:string,storage:SqliteStateStore;
 const services:OfficeSessionService[]=[];
 const user:OfficeUser={id:"alex",username:"alex",displayName:"Alex",role:"user",enabled:true,features:["generalChat","files"],workspacePath:"C:/team/alex",mcpServers:[],defaultPrompt:"Help with office work.",createdAt:0};
-beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:"configured-model"});});
+beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),"team-sessions-"));user.workspacePath=path.join(root,'alex');await fs.mkdir(user.workspacePath);storage=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(storage);vi.spyOn(teamSettings,"readTeamSettings").mockReturnValue({...teamSettings.readTeamSettings(),defaultModel:"configured-model"});});
 afterEach(async()=>{vi.useRealTimers();vi.restoreAllMocks();services.forEach(service=>service.stop());services.length=0;configureSqliteStateStore(undefined);storage.close();await removeTestDirectory(root);});
 function setup(generate=vi.fn(async()=>"Hello")){
  const changed=vi.fn();const service=new OfficeSessionService({readUser:async()=>user,generate,changed});services.push(service);return {service,generate,changed};
@@ -28,6 +29,59 @@ it('keeps the host alive while workspace storage is still becoming ready', () =>
   service.stop();
 });
 const start=(requestId="request-1",text="Hello")=>({type:"dashboard:action" as const,action:"startCodexCliSession" as const,requestId,payload:{text}});
+it('creates a private workspace without a folder selection and reuses its files after restart', async () => {
+ const {service,generate}=setup();
+ const first=await service.handle(user,start('no-folder','Create a presentation'));
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ const project=service.project(user.id,first.cliSession!.id);
+ expect(project).toBe(path.join(user.workspacePath,`Chat-${first.cliSession!.id}`));
+ expect(generate.mock.calls[0][4]).toBe(project);
+ await fs.writeFile(path.join(project,'keep.txt'),'Saved deliverable');
+ service.stop();
+ const next=setup();
+ await next.service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'continue-work',payload:{sessionId:first.cliSession!.id,text:'Continue'}});
+ await vi.waitFor(()=>expect(next.service.list(user.id)[0]?.status).toBe('idle'));
+ expect(next.generate.mock.calls[0][4]).toBe(project);
+ expect(await fs.readFile(path.join(project,'keep.txt'),'utf8')).toBe('Saved deliverable');
+ await next.service.handle(user,{type:'dashboard:action',action:'deleteCodexCliSession',requestId:'delete-chat',payload:{sessionId:first.cliSession!.id,confirmed:true}});
+ expect(await fs.readFile(path.join(project,'keep.txt'),'utf8')).toBe('Saved deliverable');
+ const listing=await next.service.handle(user,{type:'dashboard:action',action:'listCodexCliSessions',requestId:'projects'});
+ expect(listing.cliComposerConfig?.projects.some(item=>item.path===project)).toBe(true);
+});
+it('gives an existing projectless conversation a workspace on its next request', async () => {
+ const {service,generate}=setup();
+ const id=crypto.randomUUID();storage.set(`office-sessions:${user.id}`,id,{id,owner:user.id,title:'Earlier chat',projectPath:'',updatedAt:new Date().toISOString(),turns:[]});
+ await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'retry-file-work',payload:{sessionId:id,text:'Please continue creating the file'}});
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ expect(generate.mock.calls[0][4]).toBe(path.join(user.workspacePath,`Chat-${id}`));
+});
+it('reports workspace creation failure without generating or accessing a linked destination', async () => {
+ const {service,generate}=setup();service.stop();const startService=vi.spyOn(service,'start').mockImplementation(()=>{});
+ const first=await service.handle(user,start('blocked-workspace','Save a document'));
+ const outside=path.join(root,'outside');await fs.mkdir(outside);
+ await fs.symlink(outside,path.join(user.workspacePath,`Chat-${first.cliSession!.id}`),'junction');
+ startService.mockRestore();service.start();
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ expect(generate).not.toHaveBeenCalled();expect(service.project(user.id,first.cliSession!.id)).toBe('');
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-error',payload:{sessionId:first.cliSession!.id}});
+ expect(read.cliSessionMessages?.some(item=>item.kind==='error'&&item.text.includes('Linked'))).toBe(true);
+ expect(await fs.readdir(outside)).toEqual([]);
+});
+it('keeps chat available without creating folders when file access is disabled', async () => {
+ const actor={...user,features:['generalChat'] as OfficeUser['features']};
+ const {service,generate}=setup();(service as any).options.readUser=async()=>actor;
+ await service.handle(actor,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
+ expect(generate.mock.calls[0][4]).toBe('');expect(await fs.readdir(user.workspacePath)).toEqual([]);
+});
+it('bounds workspace preparation and preserves a visible timeout without running the request', async () => {
+ vi.useFakeTimers();vi.spyOn(nativeFs,'realpath').mockImplementationOnce(()=>new Promise(()=>{}));
+ const {service,generate}=setup();const first=await service.handle(user,start('slow-folder','Create a document'));
+ await vi.advanceTimersByTimeAsync(5001);
+ expect(service.list(user.id)[0]?.status).toBe('idle');expect(generate).not.toHaveBeenCalled();
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'timeout-result',payload:{sessionId:first.cliSession!.id}});
+ expect(read.cliSessionMessages?.some(item=>item.kind==='error'&&item.text.includes('Workspace creation was not confirmed'))).toBe(true);
+ expect(service.project(user.id,first.cliSession!.id)).toBe('');
+});
 it('delivers every follow-up live turn even with identical timestamps and across service instances',async()=>{
  const {service,changed}=setup();const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'second',payload:{sessionId:first.cliSession!.id,text:'Second'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
@@ -93,12 +147,12 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",expect.arrayContaining([{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}]),expect.any(AbortSignal),"",expect.any(Function),undefined,expect.any(String),undefined);
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",expect.arrayContaining([{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}]),expect.any(AbortSignal),path.join(user.workspacePath,`Chat-${id}`),expect.any(Function),undefined,id,undefined);
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
  const read=await next.handle(user,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:id}});
- expect(read.cliSession?.id).toBe(id);expect(read.cliSessionMessages?.map(message=>message.text)).toEqual(["Hello","Hello"]);
+ expect(read.cliSession?.id).toBe(id);expect(read.cliSessionMessages?.filter(message=>message.role).map(message=>message.text)).toEqual(["Hello","Hello"]);
  await next.handle(user,{type:"dashboard:action",action:"sendCodexCliSessionMessage",requestId:"followup",payload:{sessionId:id,text:"Continue"}});
  await vi.waitFor(()=>expect(next.list(user.id)[0]?.status).toBe("idle"));
  expect(next.list(user.id)).toHaveLength(1);
@@ -117,7 +171,7 @@ it("retains a capacity rejection in the queue and resumes the original message w
  session.turns[0].retryAt=0;storage.set(namespace,session.id,session);await service.pump();
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));expect(generate).toHaveBeenCalledTimes(2);
  const result=await service.handle(user,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:session.id}});
- expect(result.cliSessionMessages?.map(message=>message.text)).toEqual(["Hello","Ready"]);
+ expect(result.cliSessionMessages?.filter(message=>message.role).map(message=>message.text)).toEqual(["Hello","Ready"]);
  expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==="dashboard:notice"&&message.message==="Your response is ready.")).toBe(true);
 });
 it("does not replay ambiguous model failures and cancels pending work without deleting history",async()=>{
@@ -137,19 +191,19 @@ it("does not announce a completed response after the user cancels the turn",asyn
  finish("Late response");await vi.waitFor(()=>expect((service as any).running.size).toBe(0));
  expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==="dashboard:notice"&&message.message==="Your response is ready.")).toBe(false);
  const read=await service.handle(user,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:first.cliSession!.id}});
- expect(read.cliSessionMessages?.map(message=>message.text)).toEqual(["Hello","Reading the document"]);expect(read.cliSessionMessages?.[1]?.status).toBe('interrupted');
+ expect(read.cliSessionMessages?.filter(message=>message.id==='active-call'||message.role).map(message=>message.text)).toEqual(["Hello","Reading the document"]);expect(read.cliSessionMessages?.find(message=>message.id==='active-call')?.status).toBe('interrupted');
 });
 it("retains every activity and command output in order across reload, with host paths masked",async()=>{
  const generate=vi.fn(async(_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,report:(message:any)=>void)=>{
    report({id:'read',kind:'tool-call',title:'Read file',text:'Reading the document',status:'inProgress'});
    report({id:'read',kind:'tool-call',title:'Read file',text:'Read the document',status:'completed',result:'All document text remains here.'});
-   report({id:'command',kind:'command',command:'cd "C:/team/alex" && npm test',cwd:'C:/team/alex',text:'Checking your changes',output:'83 checks passed.',status:'completed'});
+   report({id:'command',kind:'command',command:`cd "${user.workspacePath}" && npm test`,cwd:user.workspacePath,text:'Checking your changes',output:'83 checks passed.',status:'completed'});
    return 'Finished';
  });
  const {service,changed}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
  service.stop();const next=setup().service;const read=await next.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});
- expect(read.cliSessionMessages?.map(message=>message.id)).toEqual([expect.any(String),'read','command',expect.any(String)]);
- expect(read.cliSessionMessages?.[1]?.result).toBe('All document text remains here.');expect(read.cliSessionMessages?.[2]?.command).toBe('cd "alex" && npm test');expect(read.cliSessionMessages?.[2]?.output).toBe('83 checks passed.');
+ expect(read.cliSessionMessages?.map(message=>message.id)).toEqual([expect.any(String),expect.any(String),'read','command',expect.any(String)]);
+ expect(read.cliSessionMessages?.find(message=>message.id==='read')?.result).toBe('All document text remains here.');expect(read.cliSessionMessages?.find(message=>message.id==='command')?.command).toBe('cd "alex" && npm test');expect(read.cliSessionMessages?.find(message=>message.id==='command')?.output).toBe('83 checks passed.');
  const sequences=changed.mock.calls.flatMap(call=>call[1]).filter(message=>message.type==='dashboard:codex-session-live').map(message=>(message as any).state.sequence);
  expect(new Set(sequences).size).toBe(sequences.length);
 });
@@ -293,7 +347,7 @@ it('starts another chat without inheriting project messages or pending recovery 
  const {service,generate}=setup();await service.handle(user,{...start('old-project','Edit index.html for Earlier project'),payload:{text:'Edit index.html for Earlier project',projectPath:'C:/team/alex/earlier'}});await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
  const first=storage.get<any>(`office-sessions:${user.id}`,service.list(user.id)[0].id);first.turns[0].state='uncertain';storage.set(`office-sessions:${user.id}`,first.id,first);
  await service.handle(user,start('fresh-chat','Hi, how are you?'));await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
- expect(JSON.stringify(generate.mock.calls[1][2])).not.toMatch(/Earlier project|index.html|earlier reply/i);expect(generate.mock.calls[1][4]).toBe("");
+ expect(JSON.stringify(generate.mock.calls[1][2])).not.toMatch(/Earlier project|index.html|earlier reply/i);expect(generate.mock.calls[1][4]).toBe(path.join(user.workspacePath,`Chat-${service.list(user.id)[0].id}`));
 });
 
 it('soft deletes only on explicit deletion, hides retained chats, and never expires an active old chat',async()=>{

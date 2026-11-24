@@ -8,7 +8,9 @@ import { prepareChatInput, validateChatAttachments, chatAttachmentPreviews, need
 import type { DashboardActionResultPayload, DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardHostMessage } from "../domain/dashboard/types";
 import type { OfficeUser } from "./officeUsers";
 import { readOfficeInstructions } from "./officePreferences";
-import { readWorkspaceProjects } from "./workspaceProjects";
+import { createWorkspaceProject, readWorkspaceProjects } from "./workspaceProjects";
+import { resolveOfficePath } from "./officeWorkspacePaths";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { userSessionActivity } from '../domain/teamWorkspacePresentation';
 import { messageSessionPlan } from '../domain/sessionPlan';
@@ -350,6 +352,32 @@ export class OfficeSessionService {
         });
         if(updated)this.publish(updated);
       };
+      if (!session.projectPath && user.features.includes('files')) {
+        const activityId = randomUUID();
+        report({id:activityId,kind:'tool-call',title:'Prepare workspace',text:'Creating a workspace for this conversation.',status:'inProgress'});
+        try {
+          const project = await waitWithin(runCrossWindowExclusive(`office-storage:${user.id}`, 'Prepare conversation workspace', async () => {
+            controller.signal.throwIfAborted();
+            const root = await fs.realpath(user.workspacePath), name = `Chat-${session.id}`;
+            await resolveOfficePath(root, root, name, true);
+            controller.signal.throwIfAborted();
+            return createWorkspaceProject(name, root, `office-projects:${user.id}`);
+          }, {waitMs:2000}), 5000, 'Workspace creation was not confirmed. Your message is saved. Retry to continue.', controller.signal);
+          controller.signal.throwIfAborted();
+          store().transaction(() => {
+            const saved = this.read(session.owner, session.id), current = saved.turns.find(value => value.id === turn.id);
+            if (current?.state !== 'working' || current.lease !== turn.lease || saved.projectPath) throw new OfficeActionError('The conversation changed while preparing its workspace. Review it before retrying.');
+            saved.projectPath = project.path;
+            this.save(saved);
+          });
+          session.projectPath = project.path;
+          report({id:activityId,kind:'tool-call',title:'Prepare workspace',text:'Workspace ready. Files stay saved until you delete them.',status:'completed'});
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'The workspace could not be created. Your message is saved.';
+          report({id:activityId,kind:'tool-call',title:'Prepare workspace',text:message,status:'failed'});
+          throw new OfficeActionError(message);
+        }
+      }
       this.publish(session);
       const instructions = readOfficeInstructions(user.id);
       const teamSettings = readTeamSettings(), globalPrompt = teamSettings.globalPrompt, skillsPrompt = officeSkillPrompt(teamSettings.defaultSkills,teamSettings.presentation.catalog);

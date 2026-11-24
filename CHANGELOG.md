@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-pre.111
+
+- Automatically give conversations without a selected project a private saved workspace, reuse it on follow-ups, and retain files until explicitly deleted.
+- Continue file requests in existing projectless chats and show workspace preparation failures in the conversation.
+
 ## 3.0.0-pre.110
 
 - Match API accounts to the shared grid and list layout with an API Key title, API badge, persistent stars, icon actions, and recorded input/output token bars with fresh/cached input colors.

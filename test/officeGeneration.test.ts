@@ -27,6 +27,32 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('uses the prepared workspace for file requests instead of asking for a project',async()=>{
+ const actor={...user,features:['generalChat','files'] as OfficeUser['features']};
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Ready'}}]})) as never);
+ await (server as any).teamSessions().options.generate(actor,'fast',[{role:'assistant',content:'Choose or create a project first.'},{role:'user',content:'Continue making the presentation'}],new AbortController().signal,path.join(root,'Chat-example'),vi.fn());
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string);
+ expect(sent.tools.some((tool:any)=>tool.function.name==='create_document')).toBe(true);
+ expect(sent.messages[0].content).toContain('without asking the user to choose or create a project');
+ expect(sent.messages[0].content).not.toContain('Keep it chat-only');
+});
+it('completes a no-folder file request through the conversation and file tools',async()=>{
+ const actor={...user,workspacePath:path.join(root,'private'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
+ await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true})};
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('create_document',{path:'brief.pptx',slides:[{title:'Wage brief',bullets:['Requested overview']}]}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The presentation is ready.'}}]})) as never);
+ const sessions=(server as any).teamSessions();
+ const accepted=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'startCodexCliSession',requestId:'no-folder-presentation',payload:{text:'Create a presentation',model:'fast'}});
+ expect(accepted.messages[0].status).toBe('completed');const id=accepted.messages[0].payload.cliSession.id;
+ await vi.waitFor(()=>expect(sessions.result(actor.id,id).status).toBe('completed'),{timeout:15000});
+ const project=sessions.project(actor.id,id),file=await fs.readFile(path.join(project,'brief.pptx'));
+ expect(file.readUInt32LE(0)).toBe(0x04034b50);
+ const read=await sessions.handle(actor,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-created',payload:{sessionId:id}});
+ expect(read.cliSessionMessages.at(-1).text).toContain('brief.pptx?download=1');
+ expect(vi.mocked(upstream)).toHaveBeenCalledTimes(2);
+});
 it('guides related business requests to assigned sources without requiring a source name or project',async()=>{
  const actor={...user,mcpServers:['orders'],limits:{dailyTokens:0}};
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
