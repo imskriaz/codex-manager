@@ -2048,7 +2048,7 @@ export class WebDashboardServer implements vscode.Disposable {
           report({id:activityId,kind:"tool-call",title,text:title,status:value?.type==="dashboard:action-result"&&value.status==="completed"?"completed":"failed",arguments:call.function.arguments,result:JSON.stringify(value)});
           const actionKey=`${call.function.name==='save_file'?'write_file':call.function.name}:${args.path??''}`;
           if(value?.type==='dashboard:action-result'&&value.status==='completed')failedActions.delete(actionKey);
-          else failedActions.set(actionKey,value?.type==='dashboard:action-result'&&value.error?userWorkspaceNotice(value.error):'This action could not be completed. Your work is saved. Please try again.');
+          else failedActions.set(actionKey,value?.type==='dashboard:action-result'&&value.error?userWorkspaceNotice(value.error):'This action could not be completed. Please try again.');
           if(call.function.name==='save_file'&&value?.type==='dashboard:action-result'&&value.status==='completed')report({id:crypto.randomUUID(),kind:'file-change',title:'Updated files',text:'File saved.',status:'completed',changes:[{path:args.path??'',kind:args.revision?'update':'add'}]});
           if (['save_file','open_preview'].includes(call.function.name) && args.path && value?.type==='dashboard:action-result' && value.status==='completed') deliverables.set(pathLib.relative(projectPath,pathLib.resolve(projectPath,args.path)).split(pathLib.sep).join('/'),/\.html?$/i.test(args.path) && current.features.includes('browser'));
           let toolResult:unknown=value;
@@ -2065,7 +2065,7 @@ export class WebDashboardServer implements vscode.Disposable {
             }else toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. No single active viewer is available for confirmation. Provide its Open preview link.'};
           }
           conversation.push({role:"tool",tool_call_id:call.id,content:JSON.stringify(toolResult).slice(0,160_000)});
-          } catch(error){report({id:activityId,kind:"tool-call",title,text:"This action could not be completed. Your work is saved.",status:"failed",arguments:call.function.arguments});throw error;}
+          } catch(error){report({id:activityId,kind:"tool-call",title,text:"This action could not be completed.",status:"failed",arguments:call.function.arguments});throw error;}
         }
         }
         throw new Error("The workspace task reached its action limit.");

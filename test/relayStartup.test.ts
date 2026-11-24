@@ -81,7 +81,7 @@ describe("relay startup without generated files", () => {
     const custom = 'D:\\Custom Tools\\nodejs\\node.exe';
     fixture.exec.mockImplementation((executable, _args, options, callback) => {
       expect(options.timeout).toBeGreaterThan(0);
-      expect(options.timeout).toBeLessThanOrEqual(1000);
+      expect(options.timeout).toBeLessThanOrEqual(executable === 'where.exe' ? 1000 : 2000);
       if (executable === 'where.exe') callback(null, `${custom}\r\n`);
       else {
         expect(executable).toBe(custom);
@@ -101,7 +101,27 @@ describe("relay startup without generated files", () => {
     try {
       await expect(resolveNodeExecutable()).rejects.toThrow('5 second deadline');
       expect(now).toBeLessThanOrEqual(5000);
-      expect(fixture.exec).toHaveBeenCalledTimes(5);
+      expect(fixture.exec).toHaveBeenCalledTimes(3);
+      expect(fixture.exec.mock.calls.at(-1)?.[0]).toBe(process.execPath);
+    } finally { clock.mockRestore(); }
+  });
+  it("reserves a verified VS Code fallback when installed runtime probes use their full timeout", async () => {
+    vi.stubEnv('NODE', 'stalled-node'); vi.stubEnv('NODE_EXE', undefined);
+    let now = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    fixture.exec.mockImplementation((executable, _args, options, callback) => {
+      if (executable === process.execPath) {
+        now += 1500;
+        expect(options.timeout).toBeGreaterThanOrEqual(1500);
+        callback(null, JSON.stringify({version:'24.22.1',executable:process.execPath}));
+      } else {
+        now += options.timeout;
+        callback(executable === 'where.exe' ? null : Object.assign(new Error('stalled'), {killed:true}), executable === 'where.exe' ? 'D:\\Slow Node\\node.exe' : undefined);
+      }
+    });
+    try {
+      await expect(resolveNodeExecutable()).resolves.toBe(process.execPath);
+      expect(now).toBeLessThanOrEqual(5000);
     } finally { clock.mockRestore(); }
   });
   it("quotes spaces and preserves the startup log in the boot launcher", async () => {

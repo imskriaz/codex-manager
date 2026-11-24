@@ -43,7 +43,7 @@ it('uses project labels without displaying physical workspace folders',()=>{
  expect(userProjectLabel('C:/private/internal')).toBe('My workspace');
 });
 it.each(['Cannot read C:\\private\\file.txt','ENOENT /home/service/work','API HTTP 503 token expired','Codex provider disconnected','Postgres error'])('replaces technical UI diagnostics: %s',message=>{
- expect(userWorkspaceNotice(message)).toBe('This request could not be completed. Please try again. Your work is saved.');
+ expect(userWorkspaceNotice(message)).toBe('This request could not be completed. Please try again.');
 });
 it('preserves useful plain-language outcomes',()=>{
  for(const message of ['Project added.','Please wait; your request is queued.','The file changed. Refresh before saving.','File saved.'])expect(userWorkspaceNotice(message)).toBe(message);

@@ -2,6 +2,7 @@ import { UserMessageText } from './userMessageText';
 import {CorporateHome} from './corporateHome';
 import {VoiceDictation} from './voiceDictation';
 import {generatedWorkspaceFiles} from './generatedFiles';
+import {GeneratedFilesCard} from './generatedFilesCard';
 import {DEFAULT_OFFICE_PRESENTATION,type PublicOfficePresentation} from '../../src/domain/officePresentation';
 import {MobileSectionPicker} from './mobileSectionPicker';
 import { ClaudeQuota } from './claudeQuota';
@@ -48,7 +49,7 @@ const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'),
 import { WorkspaceGit } from './workspaceGit';
 import { WorkspaceMenu } from './workspaceMenu';
 import { QueueToolsMenuItem } from './queueTools';
-import { ToolIcon as WorkspaceToolIcon } from './icons';
+import { FileIcon, ToolIcon as WorkspaceToolIcon } from './icons';
 import { readChatAttachmentFiles } from './attachmentUploads';
 import { createPortal } from "preact/compat";
 import { createContext, type JSX } from "preact";
@@ -1210,6 +1211,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const openDeliverable = (filePath: string): void => {
     const relative = workspaceRelativePath(filePath, toolProjectPath);
+    if (props.officeUser && !hasUserProjectContext && officeFeatures?.has('files')) {
+      setUserView('library');
+      setPendingLibraryFile(relative);
+      return;
+    }
     if (props.officeUser && officeFeatures?.has('browser') && /\.html?$/i.test(relative)) {
       setContextTabsByProject(current => {
         const entry = current[contextProjectKey] ?? contextDefaults();
@@ -1342,18 +1348,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     link.remove();
     reportLocalFeedback({ level: "info", message: "Download started." });
   };
-  const downloadWorkspacePath = (filePath: string): void => {
-    void downloadWorkspaceFile(filePath, payload => workspaceDownloadRequest("readWorkspaceFile", payload), (blob, name) => {
+  const downloadWorkspacePath = (filePath: string): Promise<boolean> => {
+    return downloadWorkspaceFile(filePath, payload => workspaceDownloadRequest("readWorkspaceFile", payload), (blob, name) => {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url; link.download = name; link.hidden = true;
       document.body.append(link); link.click(); link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
       reportLocalFeedback({ level: "info", message: "Download started." });
-    }).catch(error => reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : "File download failed." }));
+    }).then(() => true).catch(error => { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : "File download failed." }); return false; });
   };
   const sessionLinkActions = {
     privateWorkspace:!!props.officeUser,
+    connected:props.connected !== false,
     openInternal: openSessionUrl,
     download: downloadSessionUrl,
     downloadFile: downloadWorkspacePath,
@@ -2272,7 +2279,7 @@ const SessionQuotaRecoveryContext = createContext<string | undefined>(undefined)
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
-const SessionLinkContext = createContext<{ privateWorkspace?:boolean; browserNeeded?: (url: string) => boolean; openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
+const SessionLinkContext = createContext<{ privateWorkspace?:boolean; connected?:boolean; browserNeeded?: (url: string) => boolean; openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => Promise<boolean>; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => Promise.resolve(false), external: () => undefined });
 
 function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
   const seen = new Set<string>();
@@ -2475,7 +2482,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
     if (file) {
       event.preventDefault();
       const path = file.dataset['workspaceFile']!;
-      if (file.hasAttribute?.('data-workspace-download') || isWorkspaceDownloadPath(path)) links.downloadFile(path);
+      if (file.hasAttribute?.('data-workspace-download') || isWorkspaceDownloadPath(path)) void links.downloadFile(path);
       else if (onOpenFile) onOpenFile(path);
       else feedback?.({ level: 'warning', message: 'Open this conversation in its workspace to view this file.' });
       return;
@@ -2518,7 +2525,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
       button.disabled = false;
     }
   };
-  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{generatedFiles.length?<section class="generated-files-card" aria-label="Generated files"><header>Generated files <span>{generatedFiles.length}</span></header><div>{generatedFiles.map(file=><button type="button" key={file.path} onClick={()=>links.downloadFile(file.path)}><FileIcon /><span>{file.name}</span><DownloadIcon /></button>)}</div></section>:null}<span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
+  return <><div ref={markdownRoot} class="cli-message-markdown" onClick={(event) => void copyCode(event)} onKeyDown={(event) => { if (event.target instanceof HTMLImageElement && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setPreview({ src: event.target.getAttribute('src') || event.target.src, alt: event.target.alt }); } }} dangerouslySetInnerHTML={{ __html: html }} />{generatedFiles.length ? <GeneratedFilesCard files={generatedFiles} connected={links.connected !== false} onOpen={onOpenFile} onDownload={links.downloadFile} /> : null}<span class="sr-only" role="status">{copyNotice}</span>{preview ? <ImageLightbox image={preview} images={gallery()} initialIndex={Math.max(0, gallery().findIndex(image => image.src === preview.src))} onClose={() => setPreview(undefined)} /> : null}</>;
 }
 
 function isWorkspaceDownloadPath(path: string): boolean {
@@ -3755,7 +3762,6 @@ function ShareIcon() { return <Icon><circle cx="18" cy="5" r="2" fill="none" str
 function TerminalIcon() { return <Icon><path d="m5 7 4 4-4 4m6 1h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function BrowserIcon() { return <Icon><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M5 7h14M5 17h14" stroke="currentColor" stroke-width="1.4"/></Icon>; }
 function PanelIcon() { return <Icon><rect x="3.5" y="4" width="17" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15 4v16M7 9h4M7 12h4M7 15h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></Icon>; }
-function FileIcon() { return <Icon><path d="M6 3h8l4 4v14H6V3Zm8 0v5h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function ToolIcon() { return <Icon><path d="m14 6 4 4 3-3a6 6 0 0 1-8 7l-6 6a2.1 2.1 0 0 1-3-3l6-6a6 6 0 0 1 7-8l-3 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function ImageIcon() { return <Icon><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m4 17 5-4 3 2 3-3 5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></Icon>; }
 function ReviewIcon() { return <Icon><path d="M4 5h16v12H8l-4 4V5Zm4 4h8m-8 4h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
@@ -3790,5 +3796,3 @@ export function QueuedMessages({ queue, onRefresh }: { queue: ReturnType<typeof 
     </details>)}
   </div>;
 }
-
-function DownloadIcon() { return <Icon><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }

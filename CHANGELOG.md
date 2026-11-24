@@ -5,6 +5,15 @@
 - Open session web links in the user browser by default; keep localhost and explicitly AI-marked links in the workspace Browser.
 - Preserve browser-side popup failure feedback without opening links on the session host.
 
+## 3.0.1-pre.1
+
+- Show actual generated filenames and folders with separate Open and Download controls, download progress, duplicate-click protection, and offline guidance.
+- Open files from older general chats through Library when no project workspace is selected.
+- Add direct retry actions for account, instruction, usage, and file-recovery loading failures; avoid showing an empty Library after a failed read.
+- Show numbered task steps and clearer current-step progress in User Workspace.
+- Keep failure messages truthful without claiming unconfirmed work was saved.
+- Reserve time for the verified VS Code runtime during bounded Node.js discovery so slow PATH probes cannot prevent Always Active startup.
+
 ## 3.0.0
 
 - Restore the mobile sidebar toggle when a deferred workspace view finishes loading after the dashboard shell.

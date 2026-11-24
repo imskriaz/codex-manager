@@ -19198,7 +19198,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 .session-plan.is-compact[open] .session-plan-current { display:none; }
 .session-plan.is-compact > ol { gap:2px; margin-top:5px; }
 .session-plan.is-compact li { gap:6px; min-height:20px; line-height:20px; }
-.session-plan.is-compact .session-plan-marker { flex-basis:14px; width:14px; height:14px; margin-top:3px; border:0; border-radius:0; }
+.session-plan.is-compact .session-plan-marker { flex-basis:20px; width:20px; height:20px; margin-top:0; border:1px solid var(--border-default); border-radius:50%; font-variant-numeric:tabular-nums; }
 .session-plan.is-compact .session-plan-marker svg { display:block; width:14px; height:14px; }
 .session-plan.is-compact > p { margin:4px 0; font-size:calc(11px * var(--dashboard-text-scale, 1)); }
 .office-user-theme .cli-composer-plan { padding:0 6px; }
@@ -19459,12 +19459,23 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .corporate-home-symbol { display:grid; place-items:center; width:30px; height:30px; border-radius:8px; background:var(--bg-elevated); font-size:calc(19px * var(--dashboard-text-scale,1)); }
 .generated-files-card { margin:14px 0 4px; border:1px solid var(--border-default); border-radius:12px; overflow:hidden; }
 .generated-files-card header { display:flex; align-items:center; gap:8px; padding:9px 12px; background:var(--bg-elevated); font-size:calc(12px * var(--dashboard-text-scale,1)); }
-.generated-files-card header span { padding:1px 5px; border-radius:4px; background:var(--bg-selected); color:var(--text); }
-.generated-files-card > div { padding:4px; }
-.generated-files-card button { display:flex; align-items:center; gap:10px; width:100%; padding:10px; border:0; border-radius:7px; background:transparent; color:inherit; text-align:left; cursor:pointer; }
-.generated-files-card button:hover { background:var(--bg-elevated); }
-.generated-files-card button span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.generated-files-card header span { padding:1px 5px; border-radius:4px; background:var(--bg-selected); color:var(--text-primary); }
+.generated-files-card ul { list-style:none; padding:4px 8px; margin:0; }
+.generated-files-card li { display:flex; align-items:center; gap:8px; min-width:0; padding:4px 0; }
+.generated-files-card li + li { border-top:1px solid var(--border-default); }
+.generated-files-card button { display:flex; align-items:center; gap:6px; min-height:36px; padding:8px; border:0; border-radius:7px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.generated-files-card button:hover:not(:disabled) { background:var(--bg-elevated); }
+.generated-files-card button:focus-visible { outline:2px solid var(--accent-blue); outline-offset:-2px; }
+.generated-files-card button:disabled { opacity:.55; cursor:default; }
+.generated-file-icon { display:flex; padding:6px; color:var(--text-secondary); }
+.generated-files-card .generated-file-open { flex:1; min-width:0; display:grid; gap:3px; }
+.generated-file-open strong { font-weight:600; overflow-wrap:anywhere; line-height:1.4; }
+.generated-file-open small { color:var(--text-secondary); font-size:calc(11px * var(--dashboard-text-scale,1)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.generated-file-download { flex:none; color:var(--text-secondary); font-size:calc(12px * var(--dashboard-text-scale,1)); }
+.generated-files-card > p { margin:0; padding:6px 12px 10px; font-size:calc(12px * var(--dashboard-text-scale,1)); overflow-wrap:anywhere; }
+.generated-files-card > [role=alert] { color:var(--danger); }
 .generated-files-card svg { width:16px; height:16px; flex-shrink:0; }
+@media(max-width:420px) { .generated-file-icon { padding:2px; }.generated-file-download span { display:none; }.generated-files-card button { min-height:40px; } }
 @media (max-width:560px) { .corporate-home-grid { grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:18px; gap:8px; } .corporate-home-card { padding:12px; gap:6px; } .corporate-home-card small { display:none; } }
 
 .cli-new-chat-copy:has(.corporate-home-grid) { width: min(100%,760px); max-width:760px; box-sizing:border-box; }

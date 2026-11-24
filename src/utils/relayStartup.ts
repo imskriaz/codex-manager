@@ -79,23 +79,34 @@ export async function resolveNodeExecutable(): Promise<string> {
     });
   }) : [];
   const failures: string[] = [];
-  for (const candidate of [...new Set([process.env["NODE"], process.env["NODE_EXE"], ...systemNodes, "node", process.execPath].filter((value): value is string => !!value))]) {
-    const timeout = Math.min(1_000, deadline - Date.now());
-    if (timeout <= 0) { failures.push("Runtime discovery exceeded its 5 second deadline"); break; }
-    const executable = await new Promise<string | undefined>(resolve => execFile(candidate, ["-p", "JSON.stringify({version:process.versions.node,executable:process.execPath})"], {
+  const probe = (candidate: string, timeout: number): Promise<string | undefined> =>
+    new Promise(resolve => execFile(candidate, ["-p", "JSON.stringify({version:process.versions.node,executable:process.execPath})"], {
       windowsHide: true, timeout, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
     }, (error, stdout) => {
       if (error) { failures.push(`${candidate}: ${error.killed ? "probe timed out" : error.code ?? error.message}`); resolve(undefined); return; }
       try {
         const result = JSON.parse(String(stdout)) as { version: string; executable: string };
         const version = /^(\d+)\.(\d+)\./.exec(result.version);
-        resolve(version && typeof result.executable === "string" && path.isAbsolute(result.executable) &&
-          (Number(version[1]) > 22 || Number(version[1]) === 22 && Number(version[2]) >= 13) ? result.executable : undefined);
-      } catch { resolve(undefined); }
+        const compatible = version && typeof result.executable === "string" && path.isAbsolute(result.executable) &&
+          (Number(version[1]) > 22 || Number(version[1]) === 22 && Number(version[2]) >= 13);
+        if (!compatible) failures.push(`${candidate}: unsupported runtime response`);
+        resolve(compatible ? result.executable : undefined);
+      } catch { failures.push(`${candidate}: invalid runtime response`); resolve(undefined); }
     }));
+  for (const candidate of [...new Set([process.env["NODE"], process.env["NODE_EXE"], ...systemNodes, "node"].filter((value): value is string => !!value && value !== process.execPath))]) {
+    // Reserve time for VS Code's runtime even when PATH entries stall.
+    const timeout = Math.min(2_000, deadline - Date.now() - 2_000);
+    if (timeout <= 0) break;
+    const executable = await probe(candidate, timeout);
     if (executable) return executable;
   }
-  throw new Error(`Always Active could not verify Node.js 22.13 or newer from PATH or the VS Code runtime. ${failures.join("; ")}`);
+  const remaining = deadline - Date.now();
+  if (remaining > 0) {
+    const executable = await probe(process.execPath, Math.min(2_000, remaining));
+    if (executable) return executable;
+  }
+  if (Date.now() >= deadline) failures.push("Runtime discovery exceeded its 5 second deadline");
+  throw new Error(`Always Active could not verify Node.js 22.13 or newer. Retry when the system is less busy, or install a compatible Node.js runtime and restart VS Code. ${failures.join("; ")}`);
 }
 
 /** Register a pre-login Windows boot task. The task runs as SYSTEM so it does

@@ -6,11 +6,12 @@ type Account={profile:{displayName:string;username:string};plan:{name:string;sta
 export function UserWorkspaceAccount({open,owner}:{open:boolean;owner:string}){
  const [account,setAccount]=useState<Account>(),[name,setName]=useState(''),[currentPassword,setCurrent]=useState(''),[password,setPassword]=useState(''),[confirmation,setConfirmation]=useState(''),[status,setStatus]=useState(''),[failed,setFailed]=useState(false),[busy,setBusy]=useState(false),[signIn,setSignIn]=useState(false);
  const revision=useRef(0);
+ const [loadAttempt,setLoadAttempt]=useState(0);
  const [dialog,setDialog]=useState<'profile'|'password'|'devices'>(),[revoke,setRevoke]=useState<string>();
  const cancel=()=>{setDialog(undefined);setName(account?.profile.displayName??'');setCurrent('');setPassword('');setConfirmation('');setStatus('Account editing cancelled.');setFailed(false);};
  const cancelRevoke=()=>{setRevoke(undefined);setStatus('Sign-out cancelled.');setFailed(false);};
  const load=()=>request<Account>('/api/workspace/account');
- useEffect(()=>{if(!open)return;let active=true;revision.current++;setBusy(false);setSignIn(false);setAccount(undefined);setDialog(undefined);setRevoke(undefined);setStatus('Loading account...');setFailed(false);setCurrent('');setPassword('');setConfirmation('');void load().then(value=>{if(active){setAccount(value);setName(value.profile.displayName);setStatus('');}},(error:unknown)=>{if(active){setStatus(userWorkspaceNotice((error instanceof Error?error.message:'This request could not be completed. Please try again.')));setFailed(true);}});return()=>{active=false;revision.current++;};},[open,owner]);
+ useEffect(()=>{if(!open)return;let active=true;revision.current++;setBusy(false);setSignIn(false);setAccount(undefined);setDialog(undefined);setRevoke(undefined);setStatus('Loading account...');setFailed(false);setCurrent('');setPassword('');setConfirmation('');void load().then(value=>{if(active){setAccount(value);setName(value.profile.displayName);setStatus('');}},(error:unknown)=>{if(active){setStatus(userWorkspaceNotice((error instanceof Error?error.message:'This request could not be completed. Please try again.')));setFailed(true);}});return()=>{active=false;revision.current++;};},[open,owner,loadAttempt]);
  const save=async(action:'profile'|'password'|'revoke',id?:string)=>{
   if(busy||!account)return;if(action==='password'&&password!==confirmation){setStatus('New passwords do not match.');setFailed(true);return;}
   const version=revision.current;setBusy(true);setFailed(false);setStatus('Saving...');
@@ -19,7 +20,7 @@ export function UserWorkspaceAccount({open,owner}:{open:boolean;owner:string}){
   finally{if(version===revision.current)setBusy(false);}
  };
  const feedback=status?<p role={failed?'alert':'status'}>{status}</p>:null;
- return <section class="settings-block settings-block-wide user-account" aria-label="Account settings"><h3 class="settings-block-title">Account</h3>{!dialog?feedback:null}{signIn?<a href="/login?returnTo=%2Fworkspace">Sign in again</a>:null}{account&&!signIn?<>
+ return <section class="settings-block settings-block-wide user-account" aria-label="Account settings"><h3 class="settings-block-title">Account</h3>{!dialog?feedback:null}{failed&&!account?<button type="button" disabled={busy} onClick={()=>setLoadAttempt(value=>value+1)}>Retry loading account</button>:null}{signIn?<a href="/login?returnTo=%2Fworkspace">Sign in again</a>:null}{account&&!signIn?<>
  <dl><div><dt>Name</dt><dd>{account.profile.displayName}<button type="button" onClick={()=>{setName(account.profile.displayName);setDialog('profile');setStatus('');}}>Edit name</button></dd></div><div><dt>Email</dt><dd>{account.profile.username}</dd></div><div><dt>Plan</dt><dd>{account.plan.name}</dd></div><div><dt>Status</dt><dd>{account.plan.expiresAt&&account.plan.expiresAt<=Date.now()?'Expired':account.plan.status==='active'?'Active':'Paused'}</dd></div>{account.plan.expiresAt?<div><dt>Valid until</dt><dd>{new Date(account.plan.expiresAt).toLocaleString()}</dd></div>:null}</dl>
  <div class="user-memory-manage"><span>Password</span><button type="button" onClick={()=>{setDialog('password');setStatus('');setFailed(false);}}>Change password</button></div><div class="user-memory-manage"><span>{account.sessions.length} signed-in devices</span><button type="button" onClick={()=>{setDialog('devices');setStatus('');}}>Manage devices</button></div>
  </>:null}

@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+
+export async function checkUserWorkspaceRecoveryUi(page, context, { width, output, nav }) {
+  let accountAttempts = 0, preferenceAttempts = 0, historyAttempts = 0;
+  const fail = route => route.fulfill({ status: 503, json: { error: 'This view is temporarily unavailable. Please retry.' } });
+  await context.route('**/api/workspace/account', route => ++accountAttempts === 1 ? fail(route) : route.fulfill({ json: { profile: { displayName: 'Alex Morgan', username: 'alex@example.test' }, plan: { name: 'Workspace', status: 'active', models: [] }, sessions: [] } }));
+  await context.route('**/api/workspace/preferences', route => ++preferenceAttempts === 1 ? fail(route) : route.fulfill({ json: { instructions: 'Keep replies clear.', limits: { dailyTokens: 1000 }, usage: { tokens: 20, requests: 2, resetsAt: Date.now() + 60000 } } }));
+  await nav('Account');
+  const account = page.getByRole('region', { name: 'Account settings', exact: true });
+  await account.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor();
+  await account.getByRole('button', { name: 'Retry loading account', exact: true }).click();
+  await account.getByRole('button', { name: 'Edit name', exact: true }).waitFor();
+  assert.equal(accountAttempts, 2);
+  await nav('Personalization');
+  await page.getByRole('button', { name: 'Retry loading instructions', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit instructions', exact: true }).and(page.locator('button:enabled')).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Edit instructions', exact: true }).isEnabled(), true);
+  await page.locator('.office-user-settings .settings-close').click();
+  await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor({ state: 'hidden' });
+  preferenceAttempts = 0;
+  await nav('Usage');
+  await page.getByRole('button', { name: 'Retry loading usage', exact: true }).click();
+  await page.getByRole('region', { name: 'Your usage', exact: true }).waitFor();
+  assert.equal(preferenceAttempts, 2);
+  await page.evaluate(() => { window.__failLibraryList = true; });
+  await nav('Library');
+  const library = page.getByRole('region', { name: 'Library', exact: true });
+  await library.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor();
+  assert.equal(await library.getByText('Files you create with your assistant will appear here.', { exact: true }).count(), 0, 'Failed reads do not claim the Library is empty');
+  await library.getByRole('button', { name: 'Refresh files', exact: true }).click();
+  await library.getByText('Files you create with your assistant will appear here.', { exact: true }).waitFor();
+  await context.route('**/api/workspace/file-history', route => ++historyAttempts === 1 ? fail(route) : route.fulfill({ json: { records: [] } }));
+  await library.getByRole('button', { name: 'File recovery', exact: true }).click();
+  const recovery = page.getByRole('dialog', { name: 'File recovery', exact: true });
+  await recovery.getByRole('button', { name: 'Retry loading saved files', exact: true }).click();
+  await recovery.getByText('No deleted files yet.', { exact: true }).waitFor();
+  assert.equal(historyAttempts, 2);
+  await page.screenshot({ path: path.join(output, `loading-recovery-${width}.png`), fullPage: true });
+  await recovery.getByRole('button', { name: 'Close file recovery', exact: true }).click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+  console.log(JSON.stringify({ width, accountRetry: true, instructionRetry: true, usageRetry: true, libraryFailurePreserved: true, recoveryRetry: true }));
+}
