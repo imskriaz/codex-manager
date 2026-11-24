@@ -1067,14 +1067,16 @@ export class WebDashboardServer implements vscode.Disposable {
       setImmediate(() => process.emit("SIGTERM"));
       return;
     }
-    const frameAncestors = isWebDashboardPagePath(path) || path === '/login' || path === '/logout' ? "'self'" : "'none'";
+    const isDashboardPage = isWebDashboardPagePath(path) || path === '/login' || path === '/logout';
+    const frameAncestors = isDashboardPage ? "'self'" : "'none'";
     const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
       this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""
     );
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", frameAncestors === "'self'" ? "SAMEORIGIN" : "DENY");
-    response.setHeader("Referrer-Policy", "no-referrer");
+    // Keep same-origin form POSTs from becoming Origin: null in Chromium.
+    response.setHeader("Referrer-Policy", isDashboardPage ? "same-origin" : "no-referrer");
     response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     response.setHeader("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
     response.setHeader(

@@ -40,7 +40,7 @@ it('permits only same-origin dashboard frames and retains authentication and pri
   }) as { handle(request: unknown, response: unknown): Promise<void> };
   for (const authenticated of [true, false]) {
     authorized = authenticated;
-    for (const path of ['/', '/tasks', '/workspace', '/workspace/11111111-1111-4111-8111-111111111111?device=remote', '/login', '/api/state', '/missing']) {
+    for (const path of ['/', '/tasks', '/workspace', '/workspace/11111111-1111-4111-8111-111111111111?device=remote', '/login', '/logout', '/api/state', '/missing']) {
       const headers = new Map<string, string>(); let body = '';
       const response = { statusCode: 200, setHeader: (key: string, value: string) => headers.set(key.toLowerCase(), value), end: (value?: string) => { body = value ?? ''; } };
       // API response bodies are covered elsewhere; inspect their denied frame policy before authorization.
@@ -53,6 +53,7 @@ it('permits only same-origin dashboard frames and retains authentication and pri
       expect(headers.get('content-security-policy')).toContain("form-action 'self'");
       expect(headers.get('content-security-policy')).toContain("manifest-src 'self'");
       expect(headers.get('cache-control')).toBe('no-store');
+      expect(headers.get('referrer-policy')).toBe(dashboard ? 'same-origin' : 'no-referrer');
       if (!authenticated && dashboard) { expect(body).toContain('password'); expect(body).not.toContain('id="app"'); }
       if (path === '/api/state') expect(response.statusCode).toBe(401);
     }
@@ -467,6 +468,24 @@ describe("isLocalWebDashboardRequest", () => {
 });
 
 describe("browser dashboard request boundaries", () => {
+  it.each(["null", "https://malicious.example"])("rejects logout from origin %s without revoking the session", async origin => {
+    const forgetSession = vi.fn();
+    const revokeOwner = vi.fn();
+    const server = Object.assign(Object.create(WebDashboardServer.prototype), {
+      settingsStore: { getDashboardSettings: () => ({}) },
+      forgetSession,
+      browserPush: { revokeOwner }
+    }) as { handle(request: unknown, response: unknown): Promise<void> };
+    const response = { statusCode: 200, setHeader: vi.fn(), end: vi.fn() };
+    await server.handle({ method: "POST", url: "/logout", headers: {
+      host: "dashboard.example", origin, "x-forwarded-proto": "https", cookie: "codex_dashboard_session=existing-session"
+    } }, response);
+    expect(response.statusCode).toBe(403);
+    expect(response.end).toHaveBeenCalledWith("Forbidden");
+    expect(forgetSession).not.toHaveBeenCalled();
+    expect(revokeOwner).not.toHaveBeenCalled();
+  });
+
   it("accepts same-origin browser traffic and non-browser heartbeat clients", () => {
     expect(
       isTrustedWebDashboardOrigin({ headers: { host: "127.0.0.1:39875", origin: "http://127.0.0.1:39875" } })

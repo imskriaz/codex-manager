@@ -94,6 +94,7 @@ it("remembers remote login across time and host restarts until logout", async ()
       expect(headers.get("Location")).toBe("/");
       remote.method = "POST";
       remote.url = "/logout";
+      Object.assign(remote.headers, { origin: "https://dashboard.example" });
       await (nextHost as any).handle(remote, response);
       expect(response.statusCode).toBe(303);
       expect(headers.get("Set-Cookie")).toContain("Max-Age=0");
