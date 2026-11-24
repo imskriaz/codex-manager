@@ -3,6 +3,11 @@ import { requestLocalTeamSettings } from "../src/services/teamSettingsRequest";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it.each([['/api/email/smtp','GET'],['/api/email/smtp','PUT'],['/api/email/preferences','POST'],['/api/email/test','POST']])('allows the local email settings bridge: %s %s', async (path, method) => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Saved.' }))); vi.stubGlobal('fetch', fetch);
+  await expect(requestLocalTeamSettings({ path, method })).resolves.toEqual({ message: 'Saved.' }); expect(fetch).toHaveBeenCalledOnce();
+});
+
 it.each([
   { path: "https://external.example/api/office/users", method: "GET" },
   { path: "/api/office/../state", method: "GET" },

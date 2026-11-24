@@ -28,6 +28,7 @@ import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 import { clampWebviewZoom } from "./webviewZoom";
 
 import { BrowserNotifications } from "./browserNotifications";
+import { EmailSettings } from './emailSettings';
 import { MaintenanceTools } from "./maintenanceTools";
 import { SystemStartupSetting } from './systemStartupSetup';
 import { MasterUsernameField } from './masterUsernameField';
@@ -228,6 +229,7 @@ export function SettingsOverlay(props: {
           }}>{['General','Personalization','Account','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label => { const id = label.toLowerCase(); return <button type="button" role="tab" id={`user-settings-tab-${id}`} aria-selected={userTab === id} aria-controls="user-settings-panel" tabIndex={userTab === id ? 0 : -1} onClick={() => setUserTab(id)}>{label}</button>; })}</nav>
           <div class="settings-modal-body" id="user-settings-panel" role="tabpanel" aria-labelledby={`user-settings-tab-${userTab}`} tabIndex={0}>
             <div hidden={userTab !== 'general'}><section class="settings-block user-appearance"><label class="settings-block-title" for="user-theme">Appearance</label><select id="user-theme" value={props.settings.dashboardTheme} onChange={event => { const value = event.currentTarget.value as DashboardSettings['dashboardTheme']; props.onPatchSettings({dashboardTheme:value});props.onSendSetting('dashboardTheme',value); }}><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></section>{props.open ? <BrowserNotifications workspace /> : null}</div>
+            {props.open && userTab === 'general' ? <EmailSettings /> : null}
             <div hidden={userTab !== 'account'}><UserWorkspaceAccount open={props.open} owner={props.office.id} /></div>
             <UserWorkspaceInstructions open={props.open} owner={props.office.id} view={userTab} />
             <div hidden={userTab !== 'personalization'}><UserWorkspaceMemory open={props.open} owner={props.office.id} /></div>
@@ -235,6 +237,7 @@ export function SettingsOverlay(props: {
             {props.open&&userTab==='library'&&props.office.features.includes('files')?<UserWorkspaceLibrary root={props.userWorkspaceRoot||props.office.workspacePath||undefined} connected={props.connected!==false} onFeedback={notice=>props.onUserFeedback?.(notice)} onOpen={path=>props.onUserWorkspaceNavigate?.({id:crypto.randomUUID(),kind:'file',path})}/>:null}
           </div>
         </div>
+        <footer class="user-settings-footer"><span title={props.office.username}>{props.office.displayName || props.office.username}</span><form method="post" action="/logout"><button type="submit">Sign out</button></form></footer>
       </div>
     </div>, document.body);
   }
@@ -330,6 +333,7 @@ export function SettingsOverlay(props: {
           <SettingsPanelIntro tab={allTabs[0]!} />
           <div class="settings-local-preferences settings-layout">
             {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
+            {props.open && activeTab === 'general' && !searching ? <EmailSettings master /> : null}
               <div class="settings-block settings-block-wide settings-zoom-block" data-setting="webview-zoom">
                 <div class="settings-block-head">
                   <div class="settings-block-title">Dashboard zoom</div>

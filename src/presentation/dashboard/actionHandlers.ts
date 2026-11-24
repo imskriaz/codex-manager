@@ -489,7 +489,7 @@ async function runDashboardAction(
     }
     case "teamSettingsRequest": {
       if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
-      if (getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Modules settings first.");
+      if (!payload?.teamSettingsRequest?.path.startsWith('/api/email/') && getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Modules settings first.");
       return { teamSettingsResponse: await requestLocalTeamSettings(payload?.teamSettingsRequest) };
     }
     case "getMasterUsername":

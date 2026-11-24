@@ -35,6 +35,7 @@ import { activeSessionQuestion, answeredSessionQuestionIds } from '../../src/dom
 import { useCliMessageQueue, queuedMessageView, withAcceptedQueuedMessages } from './cliMessageQueue';
 import { SessionQuestionPrompt } from './sessionQuestions';
 import { useAnchoredPopover } from './anchoredPopover';
+import { SessionEmailWatch } from './emailSettings';
 import { BrowserWorkWindow } from './browserWorkWindow';
 import { ScrollMore } from './scrollMore';
 import { AccountQuota, getAccountQuotaMetrics, isSessionQuotaWarning } from './accountQuota';
@@ -1740,11 +1741,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         >
           {(!props.selectedSession && !pendingNewChat) ? <header class="cli-content-toolbar"><span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /></header> : null}
           {props.connectionStatus ? <div class="workspace-connection-status">{props.connectionStatus}</div> : null}
-          {props.officeUser && officeOffline && !props.selectedSession && !pendingNewChat ? <div class="cli-turn-usage-strip team-request-state" role="status">{quotaOfflineMessage(props.officeUser.availability!)}</div> : null}
           {props.selectedSession || pendingNewChat ? (
             <>
               {props.selectedSession ? <ConversationHeader projectLabel={props.officeUser ? userProjectLabel(props.selectedSession?.projectPath,composerProjects) : undefined} privateWorkspace={!!props.officeUser}
-                workWindow={props.browser && window.self === window.top ? <span class="cli-work-window-slot" ref={setWorkWindowButtonTarget} /> : undefined}
+                workWindow={<>{props.browser && window.self === window.top ? <span class="cli-work-window-slot" ref={setWorkWindowButtonTarget} /> : null}<SessionEmailWatch key={`${props.selectedSession.deviceId ?? "local"}:${props.selectedSession.id}`} sessionKey={`${props.selectedSession.deviceId ?? "local"}:${props.selectedSession.id}`} /></>}
                 session={props.selectedSession}
                 archived={selectedArchived}
                 busy={props.mutating}
@@ -1854,7 +1854,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             </>
           ) : (
             <>
-              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.officeUser?<AssistantMark/>:props.logoUri?<img src={props.logoUri} alt="" aria-hidden="true"/>:<CodexSessionIcon/>}</span><h2>{props.officeUser?presentation.welcomeTitle:<>What should we build in {composerProjects.find(project=>project.path===(newChatProject ?? projectPath))?.label??'your workspace'}?</>}</h2>{!props.officeUser||presentation.welcomeSubtitle?<p>{props.officeUser?presentation.welcomeSubtitle:'Describe the task and Codex will work directly in this project.'}</p>:null}{props.officeUser?<CorporateHome cards={presentation.catalog} skills={recommendedSkills} onChoose={text=>{setDraft(text);requestAnimationFrame(()=>document.querySelector<HTMLTextAreaElement>('.cli-composer textarea')?.focus());}}/>:null}</div></section>
+              <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.officeUser?<AssistantMark/>:props.logoUri?<img src={props.logoUri} alt="" aria-hidden="true"/>:<CodexSessionIcon/>}</span><h2>{props.officeUser?presentation.welcomeTitle:<>What should we build in {composerProjects.find(project=>project.path===(newChatProject ?? projectPath))?.label??'your workspace'}?</>}</h2>{!props.officeUser||presentation.welcomeSubtitle?<p>{props.officeUser?presentation.welcomeSubtitle:'Describe the task and Codex will work directly in this project.'}</p>:null}{props.officeUser && officeOffline ? <p class="team-request-state user-welcome-availability" role="status">{quotaOfflineMessage(props.officeUser.availability!)}</p> : null}{props.officeUser?<CorporateHome cards={presentation.catalog} skills={recommendedSkills} onChoose={text=>{setDraft(text);requestAnimationFrame(()=>document.querySelector<HTMLTextAreaElement>('.cli-composer textarea')?.focus());}}/>:null}</div></section>
 
               {legacyDraftWarning}
               <Composer dictationScope={draftKey} presentation={presentation} automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false}  simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject ?? projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
@@ -3348,16 +3348,12 @@ function PanelResizeHandle(props: {
 }
 
 function UserWorkspaceFooter(props: { user: import('../../src/domain/dashboard/types').DashboardOfficeView; onSettings: () => void }) {
-  const [open,setOpen]=useState(false);
-  const menu=useRef<HTMLDivElement>(null);
-  useEffect(()=>{if(!open)return;const close=(event:PointerEvent)=>{if(!menu.current?.contains(event.target as Node))setOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setOpen(false);};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[open]);
   const name=props.user.displayName || props.user.username;
-  return <footer class="team-user-footer" ref={menu}>
-    <button type="button" class="team-user-account" aria-label="Account menu" aria-expanded={open} aria-haspopup="menu" onClick={()=>setOpen(value=>!value)}>
+  return <footer class="team-user-footer">
+    <button type="button" class="team-user-account" aria-label="Open settings" aria-haspopup="dialog" onClick={props.onSettings}>
       <span class="team-user-avatar" aria-hidden="true">{name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()}</span>
       <span class="team-user-footer-copy"><strong>{name}</strong><small>{props.user.username}</small></span><ChevronIcon />
     </button>
-    {open?<div class="cli-session-menu" role="menu" aria-label="Account"><button type="button" role="menuitem" onClick={()=>{setOpen(false);props.onSettings();}}>Settings</button><form method="post" action="/logout"><button type="submit" role="menuitem">Sign out</button></form></div>:null}
   </footer>;
 }
 

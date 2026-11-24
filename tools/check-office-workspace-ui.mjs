@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {chromium} from 'playwright';
 import {useWorkspaceDashboardAssets} from './workspace-dashboard-assets.mjs';
+import {emailUiFixture} from './email-ui-fixture.mjs';
 const origin='http://127.0.0.1:39875';
 const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
@@ -67,6 +68,8 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const errors=[];page.on('pageerror',error=>errors.push(error.stack||error.message));
  page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
+ const emailFixture=await emailUiFixture(context);
+ await context.route('**/assets/codex.svg',route=>route.fulfill({contentType:'image/svg+xml',path:path.resolve('media/product-icons/codex-openai.svg')}));
  await page.addInitScript(()=>{window.SpeechRecognition=class{start(){window.__dictation=this;}stop(){this.onend?.();}abort(){}};});
  await context.route('**/api/workspace/image?*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64')}));
  const start=Date.now();await page.goto(origin+'/workspace');
@@ -86,7 +89,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
   assert.match(await changes.innerText(),/\+2/);
   await page.evaluate(()=>window.__setAvailability({status:'offline',availableAt:Math.floor(Date.now()/1000)+3660}));
   const strip=page.locator('.cli-turn-usage-strip').filter({has:changes});
-  await strip.getByRole('status').filter({hasText:/We're offline/}).waitFor();
+  await strip.getByRole('status').filter({hasText:/Temporarily unavailable/}).waitFor();
   const layout=await strip.evaluate(node=>{const status=node.querySelector('[role=status]').getBoundingClientRect(),button=node.querySelector('button').getBoundingClientRect();return {overlap:status.right>button.left,overflow:node.scrollWidth>node.clientWidth+1};});
   assert.deepEqual(layout,{overlap:false,overflow:false});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
@@ -97,8 +100,10 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
   await context.close();continue;
  }
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 3660 }));
- await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1h/ }).waitFor();
+ await page.locator('.team-request-state').filter({ hasText: /Temporarily unavailable\. Expected back at.*1h/ }).waitFor();
  await assertPlainUserInterface(page);
+ const welcomeLayout=await page.locator('.cli-new-chat-copy').evaluate(node=>{const title=node.querySelector('h2').getBoundingClientRect(),status=node.querySelector('[role=status]').getBoundingClientRect();return {below:status.top>=title.bottom,centered:Math.abs((status.left+status.right-title.left-title.right)/2)<2,overflow:node.scrollWidth>node.clientWidth+1};});
+ assert.deepEqual(welcomeLayout,{below:true,centered:true,overflow:false});
  await page.screenshot({path:path.join(output,`offline-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').waitFor({ state: 'detached' });
@@ -134,8 +139,38 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
   }
   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  });
- const openSettings=async()=>{if(await page.locator('.overlay.open .office-user-settings').count())return;const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.getByRole('button',{name:'Account menu',exact:true}).click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();};
+ const openSettings=async()=>{if(await page.locator('.overlay.open .office-user-settings').count())return;const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.getByRole('button',{name:'Open settings',exact:true}).click();await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();assert.equal(await page.locator('.user-settings-footer form[action="/logout"]').count(),1);};
  const nav=async(name)=>{if(name==='Chats'){if(await page.locator('.overlay.open .office-user-settings').count())await page.locator('.overlay.open .office-user-settings .settings-close').click();return;}await openSettings();if(width<=760)await page.getByRole('combobox',{name:'Settings section',exact:true}).selectOption({label:name});else await page.getByRole('tab',{name,exact:true}).click();};
+ if(process.argv.includes('--email')){
+  await openSettings();const email=page.getByRole('region',{name:'Email notifications',exact:true});
+  await email.getByLabel('Email address',{exact:true}).fill('alex@example.test');
+  await email.getByRole('checkbox',{name:'Notify me when ready',exact:true}).check();
+  await email.getByRole('button',{name:'Save email preferences',exact:true}).click();await email.getByRole('status').filter({hasText:'Email preferences saved.'}).waitFor();
+  assert.equal(emailFixture.state.preferences.address,'alex@example.test');assert.equal(emailFixture.state.preferences.includeResult,false);
+  await email.getByRole('button',{name:'Send test email',exact:true}).click();await email.getByRole('alert').filter({hasText:'SMTP authentication failed.'}).waitFor();
+  assert.equal(await email.getByLabel('Email address',{exact:true}).inputValue(),'alex@example.test');
+  await email.getByRole('button',{name:'Send test email',exact:true}).click();await email.getByRole('status').filter({hasText:'Test email accepted'}).waitFor();
+  await page.screenshot({path:path.join(output,'email-settings-'+width+'.png'),fullPage:true});
+  await page.getByRole('dialog',{name:'Settings',exact:true}).press('Escape');
+  const id='12345678-1234-1234-1234-123456789abc';await page.evaluate(id=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id,title:'Email check',status:'idle'},messages:[{id:'answer',role:'assistant',text:'Done.'}]})),id);await page.goto(origin+'/workspace/'+id);
+  const watch=page.getByRole('button',{name:'Email me when ready',exact:true});await watch.waitFor();
+  const header=page.locator('.cli-conversation-header');const before=await header.boundingBox();await watch.click();await page.getByRole('status').filter({hasText:'You’ll receive an email'}).waitFor();
+  const after=await header.boundingBox();assert.equal(after.height,before.height,'Email feedback adds no header height');
+  const geometry=await watch.boundingBox();assert.ok(geometry.width<=32&&geometry.height<=32,'Email control stays compact');assert.equal(await watch.getAttribute('aria-pressed'),'true');assert.ok(emailFixture.state.watches.includes('local:'+id));
+  await page.screenshot({path:path.join(output,'email-session-'+width+'.png'),fullPage:true});await page.getByRole('button',{name:'Dismiss email notice',exact:true}).click();await watch.click();await page.getByRole('status').filter({hasText:'Session email turned off.'}).waitFor();
+  assert.equal(emailFixture.state.watches.length,0);assert.deepEqual(errors,[]);console.log(JSON.stringify({width,emailPreferences:true,testFailureVisible:true,compactHeader:true,noExtraHeight:true,errors:0}));await context.close();continue;
+ }
+ if(process.argv.includes('--appearance')){
+  await openSettings();
+  const settings=page.getByRole('dialog',{name:'Settings',exact:true});
+  const logout=settings.getByRole('button',{name:'Sign out',exact:true});await logout.waitFor();
+  assert.equal(await logout.evaluate(node=>node.closest('form').method),'post');
+  await page.screenshot({path:path.join(output,'settings-'+width+'.png'),fullPage:true});
+  await settings.press('Escape');await settings.waitFor({state:'hidden'});
+  const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();
+  await page.getByRole('button',{name:'Open settings',exact:true}).focus();await page.keyboard.press('Enter');await settings.waitFor();await settings.press('Escape');await settings.waitFor({state:'hidden'});
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({width,elapsedMs:Date.now()-start,centeredAvailability:true,directSettings:true,logoutInModal:true,keyboard:true,errors:0}));await context.close();continue;
+ }
  await nav('Scheduled');await page.getByRole('heading',{name:'Scheduled',exact:true}).waitFor();
  assert.equal(await page.locator('.user-scheduled form').count(),0);
  assert.equal(await page.locator('.user-schedule-examples').count(),0);
@@ -223,11 +258,11 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  assert.equal(await page.evaluate(()=>window.__privateActions.find(item=>item.action==='startCodexCliSession').payload.model),'quality');
  await page.locator('.team-request-state').filter({hasText:'All assistants are busy'}).waitFor();
  await page.evaluate(() => window.__setAvailability({ status: 'offline', availableAt: Math.floor(Date.now() / 1000) + 90060 }));
- await page.locator('.team-request-state').filter({ hasText: /We're offline\. Back at.*1d 1h/ }).waitFor();
+ await page.locator('.team-request-state').filter({ hasText: /Temporarily unavailable\. Expected back at.*1d 1h/ }).waitFor();
  await assertPlainUserInterface(page);
  await page.screenshot({path:path.join(output,`offline-queued-${width}.png`),fullPage:true,animations:'disabled'});
  await page.evaluate(() => window.__setAvailability({ status: 'offline' }));
- await page.locator('.team-request-state').filter({ hasText: "We're offline. Checking availability." }).waitFor();
+ await page.locator('.team-request-state').filter({ hasText: "Temporarily unavailable. Checking when you can chat again." }).waitFor();
  await page.evaluate(() => window.__setAvailability({ status: 'available' }));
  await page.locator('.team-request-state').filter({hasText:'All assistants are busy'}).waitFor();
  await assertPlainUserInterface(page);
@@ -376,10 +411,21 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const master={...state,office:{...office,id:'master',role:'unrestricted-admin'},connectedPeers:[{id:'local',name:'This PC',connected:true,local:true}],settings:{...raw.settings,cliIntegrationEnabled:true,systemInfoEnabled:false}};
  const masterHost=mockHost.replace("document.documentElement.dataset.dashboardUser='fixture-alex';",'delete document.documentElement.dataset.dashboardUser;').replace(JSON.stringify(state),JSON.stringify(master)).replace("else if(message.action==='getCodexSkills')", "else if(message.action==='listWorkspaceTerminals')payload={workspaceTerminals:[]};else if(message.action==='getCodexSkills')");
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:masterHost}));
+ await emailUiFixture(context);
  await page.goto(origin+'/workspace');await page.getByRole('button',{name:'Dashboard',exact:true}).waitFor();
  assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),1);assert.equal(await page.locator('.team-user-footer').count(),0);
  assert.equal(await page.locator('.cli-task-nav').count(),1);
  assert.equal(await page.locator('.cli-task-nav').textContent(),'Kanban');
+ if(process.argv.includes('--email')){
+  await page.getByRole('button',{name:'Account menu',exact:true}).click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();
+  const email=page.getByRole('region',{name:'Email notifications',exact:true});await email.locator('summary').filter({hasText:'SMTP configuration'}).click();
+  await email.getByLabel('SMTP host',{exact:true}).fill('smtp.changed.example.test');await email.getByLabel('Sender email',{exact:true}).fill('alerts@example.test');await email.getByRole('button',{name:'Save SMTP settings',exact:true}).click();await email.getByRole('status').filter({hasText:'SMTP settings saved.'}).waitFor();
+  assert.equal(await email.getByLabel('SMTP password or app password',{exact:true}).inputValue(),'');
+  await page.screenshot({path:path.join(output,'email-smtp-master.png'),fullPage:true});
+  await page.setViewportSize({width:360,height:740});await email.getByLabel('SMTP host',{exact:true}).scrollIntoViewIfNeeded();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));await page.screenshot({path:path.join(output,'email-smtp-master-mobile.png'),fullPage:true});
+  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:raw.copy.closeModal,exact:true}).click();await page.setViewportSize({width:1440,height:960});
+  console.log(JSON.stringify({masterSmtpForm:true,savedPasswordMasked:true,mobileSettingsFit:true}));
+ }
  await page.evaluate(activities=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id:'12345678-1234-1234-1234-123456789abc',title:'Master session',status:'idle',projectPath:'C:/team/alex'},messages:[{id:'user',role:'user',text:'Check files'},...activities,{id:'answer',role:'assistant',text:'Master response ready.'}]})),activities);
  await page.reload();await page.getByRole('button',{name:/^Master session/}).click();await page.getByText('Master response ready.',{exact:true}).waitFor();
  const masterTranscript=await page.locator('.cli-session-messages').textContent();

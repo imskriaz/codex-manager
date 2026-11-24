@@ -62,7 +62,7 @@ try {
     await page.goto(`${origin}/workspace/${session.id}`, { waitUntil: 'domcontentloaded' });
     await page.locator('.cli-conversation .cli-error-notice').first().waitFor();
     const loadMs = Date.now() - start;
-    const recovery = page.locator('.cli-conversation .cli-capacity-notice').filter({ hasText: /We're offline\. Back at/ });
+    const recovery = page.locator('.cli-conversation .cli-capacity-notice').filter({ hasText: /Temporarily unavailable\. Expected back at/ });
     await recovery.waitFor();
     assert.match(await recovery.innerText(), /1d 1h(?: 0m)? left/);
     assert.equal(await page.getByText('Account usage limit · saved for recovery', { exact: true }).count(), 0);

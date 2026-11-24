@@ -121,6 +121,7 @@ import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTaskWi
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { LocalMcpServer } from './localMcpServer';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
+import { EmailNotificationService, readEmailPreferences, readEmailWatches, saveEmailPreferences, saveEmailWatch } from './emailNotifications';
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterruption, isCodexCapacityInterruption } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
@@ -546,6 +547,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private peerPresenceLossTimer: NodeJS.Timeout | undefined;
   private peerHeartbeatFailureReported = false;
   private pushWatching = false;
+  private emailWatching = false;
+  private readonly email: EmailNotificationService;
   private questionPushTimer: NodeJS.Timeout | undefined;
   private readonly questionPushSessions = new Set<string>();
   private questionPushRunning = false;
@@ -624,6 +627,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const user=await getOfficeUser(session.officeUserId);return !!user?.enabled&&user.sessionVersion===session.officeSessionVersion&&(notice?.workspaceOwner?notice.workspaceOwner===user.id:!notice||user.role!=='user');
     }, () => this.isUserViewingNotifications());
     this.conversationShares = new ConversationShares(context.secrets);
+    this.email = new EmailNotificationService(context.secrets, async owner => owner === 'master' || !!(await getOfficeUser(owner))?.enabled);
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
     this.oauth = new DashboardOAuthCoordinator(
@@ -818,6 +822,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.notificationDeliverySubscription ??= subscribeToNotificationDelivery(async () => {
       await Promise.allSettled([...this.peerNotificationSends]);
       await this.browserPush.flush();
+      await this.email.flush();
     });
     this.notificationResolutionSubscription ??= subscribeToVscodeNotificationResolutions((notificationId) => {
       this.browserPush.dismiss(notificationId);
@@ -826,6 +831,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.updateOnlineDevicePresence();
     this.connectPeerSocket();
     void this.browserPush.hasSubscriptions().then(enabled => { if (!this.peerStopped) { this.pushWatching = enabled; this.refreshCliSessionRealtimeLifecycle(); } }).catch(error => console.warn('[codexManager] question notification monitoring unavailable', error));
+    try { this.emailWatching = this.email.hasMasterSubscription(); this.refreshCliSessionRealtimeLifecycle(); } catch { /* Storage may still be initializing; retry when email settings open. */ }
   }
 
   prepareForShutdown(): void { this.shuttingDown = true; this.aiProxy?.stop(); this.officeScheduledTasks?.stop(); this.officeConversations?.stop(); for (const timer of this.sessionFailurePushTimers.values()) clearTimeout(timer); this.sessionFailurePushTimers.clear(); }
@@ -1279,8 +1285,33 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (!apiAuthorized) this.renewSessionCookie(request, response);
-    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
+    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/email/preferences","/api/email/test","/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
       response.statusCode=403;this.sendJson(response,{error:"This page is unavailable in your workspace."});return;
+    }
+    if (path.startsWith('/api/email/')) {
+      if (!officeUser || officeUser.id !== 'master' && officeUser.role !== 'user') { response.statusCode = 403; this.sendJson(response, { error: 'Email settings are available in the master or your private workspace.' }); return; }
+      try {
+        const owner = officeUser.id;
+        if (path === '/api/email/smtp') {
+          if (owner !== 'master') { response.statusCode = 403; this.sendJson(response, { error: 'Only the master can configure SMTP.' }); return; }
+          if (method === 'GET') this.sendJson(response, { config: await this.email.publicConfig() });
+          else if (method === 'PUT') this.sendJson(response, { config: await this.email.saveConfig(JSON.parse(await readDashboardRequestBody(request, 16384))), message: 'SMTP settings saved.' });
+          else throw new Error('Choose a valid SMTP settings action.');
+        } else if (path === '/api/email/preferences') {
+          if (method === 'PUT') saveEmailPreferences(owner, JSON.parse(await readDashboardRequestBody(request, 8192)));
+          else if (method === 'POST') saveEmailWatch(owner, JSON.parse(await readDashboardRequestBody(request, 8192)));
+          else if (method !== 'GET') throw new Error('Choose a valid email preferences action.');
+          this.emailWatching = this.email.hasMasterSubscription(); this.refreshCliSessionRealtimeLifecycle();
+          this.sendJson(response, { preferences: readEmailPreferences(owner), watches: readEmailWatches(owner), available: (await this.email.publicConfig()).enabled, status: this.email.status(owner), ...(method !== 'GET' ? { message: 'Email preferences saved.' } : {}) });
+        } else if (path === '/api/email/test' && method === 'POST') {
+          const key = `email-test:${owner}`;
+          const previous = getSqliteStateStore()?.get<number>('email-rate-limit', key) ?? 0;
+          if (Date.now() - previous < 30000) throw new Error('Wait 30 seconds before sending another test email.');
+          getSqliteStateStore()?.set('email-rate-limit', key, Date.now());
+          await this.email.test(owner); this.sendJson(response, { message: 'Test email accepted by the SMTP server. Check your inbox.' });
+        } else { response.statusCode = 404; this.sendJson(response, { error: 'Email settings endpoint not found.' }); }
+      } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : 'Email settings could not be confirmed.' }); }
+      return;
     }
     if (path === "/api/office/logs" || path === "/api/office/proxy") {
       if (method !== "GET" || !officeUser || !officeUser.enabled || officeUser.role === "user") { response.statusCode = 403; this.sendJson(response, { error: "Management logs are restricted to administrators." }); return; }
@@ -1356,7 +1387,7 @@ export class WebDashboardServer implements vscode.Disposable {
         const token=readDashboardSessionToken(request),fingerprint=token?fingerprintWebDashboardSession(token):'';
         if(method==='GET'){
           const sessions=normalizePersistedWebDashboardSessions(await this.auth.readSessions(),Date.now()).filter(value=>value.officeUserId===officeUser.id&&value.officeSessionVersion===officeUser.sessionVersion).map(value=>({id:value.fingerprint,expiresAt:value.expiresAt,current:value.fingerprint===fingerprint}));
-          this.sendJson(response,{profile:{displayName:officeUser.displayName,username:officeUser.username},plan:officeUser.plan??{name:'Workspace',status:'active',models:[]},sessions,paymentsConfigured:false,emailConfigured:false});return;
+          this.sendJson(response,{profile:{displayName:officeUser.displayName,username:officeUser.username},plan:officeUser.plan??{name:'Workspace',status:'active',models:[]},sessions,paymentsConfigured:false,emailConfigured:(await this.email.publicConfig()).enabled});return;
         }
         const input=JSON.parse(await readDashboardRequestBody(request,8192)) as Record<string,unknown>;
         if(method==='PATCH'){
@@ -2043,6 +2074,10 @@ export class WebDashboardServer implements vscode.Disposable {
         const notice=messages.find(value=>value.type==='dashboard:notice');
         const live=messages.find(value=>value.type==='dashboard:codex-session-live');
         if(notice?.type==='dashboard:notice'&&live?.type==='dashboard:codex-session-live'&&live.state.status==='completed')this.browserPush.notify({workspaceOwner:owner,notificationId:`workspace-${owner}-${live.state.turnId}-${notice.message}`,level:notice.level,title:'Response update',message:notice.message,url:`/workspace/${live.state.sessionId}`});
+        if (notice?.type === 'dashboard:notice' && live?.type === 'dashboard:codex-session-live' && live.state.status === 'completed') {
+          const event = notice.message === 'Your response is ready.' ? 'ready' : notice.message === 'Your assistant has a question.' ? 'needsAnswer' : 'failed';
+          this.email.notify({ id: `workspace-${owner}-${live.state.turnId}-${event}`, owner, sessionKey: `local:${live.state.sessionId}`, event, title: event === 'ready' ? 'Your response is ready' : event === 'needsAnswer' ? 'Your assistant needs an answer' : 'Your request needs attention', message: notice.message, result: event === 'ready' ? [...live.state.messages].reverse().find(value => value.role === 'assistant')?.text : undefined, url: `/workspace/${live.state.sessionId}` });
+        }
         for(const socket of this.webSocketClients) if(this.browserSocketOfficeUser?.get(socket)?.id === owner)
           for(const message of messages) sendDashboardSocketMessage(socket,JSON.stringify(message),true);
       }
@@ -2987,6 +3022,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     this.notifyAsyncQuestions(state.sessionId, state.messages, state.deviceId);
     this.scheduleSessionFailurePush(state);
+    this.notifySessionEmail(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       sendDashboardSocketMessage(socket, message);
@@ -3023,7 +3059,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private scheduleQuestionPush(filename: string): void {
-    if (!this.pushWatching || this.peerStopped) return;
+    if ((!this.pushWatching && !this.emailWatching) || this.peerStopped) return;
     const id = filename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
     if (!id || this.questionPushSessions.size >= 128) return;
     this.questionPushSessions.add(id);
@@ -3035,9 +3071,18 @@ export class WebDashboardServer implements vscode.Disposable {
       const home = resolveCodexHome();
       void Promise.allSettled(pending.map(async id => {
         // Observing the official owner also mirrors permission requests while the browser is closed.
-        await waitWithin(readCodexCliSessionSummary(id, home), 5000, 'Native prompt inspection is still pending.').catch(() => undefined);
+        const summary = await waitWithin(readCodexCliSessionSummary(id, home), 5000, 'Native prompt inspection is still pending.').catch(() => undefined);
         const messages = await waitWithin(readCodexCliSessionMessages(id, home), 5000, 'Question history is still loading.');
-        if (!this.peerStopped && this.pushWatching && home === resolveCodexHome()) this.notifyAsyncQuestions(id, messages);
+        if (!this.peerStopped && home === resolveCodexHome()) {
+          this.notifyAsyncQuestions(id, messages);
+          const latest = getCodexSessionLiveState(id);
+          if (latest) this.notifySessionEmail(latest);
+          else if (summary?.status === 'idle' && !summary.interrupted) {
+            const answer = [...messages].reverse().find(message => message.role === 'assistant' && message.text.trim());
+            const time = answer?.timestamp ? Date.parse(answer.timestamp) : NaN;
+            if (answer && time > Date.now() - 120000 && time <= Date.now()) this.email.notify({ id: `session-ready:local:${id}:${answer.id}`, sessionKey: `local:${id}`, event: answer.questions?.length ? 'needsAnswer' : 'ready', title: summary.title || 'Session ready', message: answer.questions?.length ? 'Your assistant needs an answer.' : 'Your session result is ready.', result: answer.text, url: `/workspace/${id}` });
+          }
+        }
       })).then(results => { for (const result of results) if (result.status === 'rejected') console.warn('[codexManager] question notification check deferred', result.reason); }).finally(() => {
         this.questionPushRunning = false;
         const next = this.questionPushSessions.values().next().value;
@@ -3052,6 +3097,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const targetDeviceId = request.deviceId;
     const questionId = request.sourceMessageId ? crypto.createHash('sha256').update(JSON.stringify([request.sourceMessageId, request.questions])).digest('hex').slice(0, 32) : request.id;
     const notificationId = `codex-request:${targetDeviceId ?? this.deviceId}:${request.threadId}:${questionId}`;
+    this.email.notify({ id: notificationId, sessionKey: `${targetDeviceId ?? 'local'}:${request.threadId}`, event: 'needsAnswer', title: request.title || 'Your assistant needs an answer', message: 'Your session is waiting for an answer or approval. Open the conversation to respond.', url: `/workspace/${encodeURIComponent(request.threadId)}${targetDeviceId ? `?device=${encodeURIComponent(targetDeviceId)}` : ''}` });
     const question = request.kind === "question";
     const singleQuestion = question && request.questions?.length === 1 ? request.questions[0] : undefined;
     const options = singleQuestion && !singleQuestion.isSecret ? singleQuestion.options : undefined;
@@ -3072,6 +3118,14 @@ export class WebDashboardServer implements vscode.Disposable {
       replyAction: replyQuestionId ? "Reply" : undefined,
       actions: question ? answers ? Object.keys(answers) : replyQuestionId ? ["Reply", "Answer"] : ["Answer"] : request.kind === "mcp" ? ["Review", "Decline"] : request.kind === "permissions" ? ["Approve", "Reject"] : (request.detail?.length ?? 0) > 180 ? ["Review", "Decline"] : ["Approve", "Decline"]
     });
+  }
+
+  private notifySessionEmail(state: DashboardCodexSessionLiveState): void {
+    if (this.shuttingDown || Date.now() - state.updatedAt > 120000 || state.updatedAt > Date.now() || !['completed', 'failed'].includes(state.status)) return;
+    const answer = [...state.messages].reverse().find(message => message.role === 'assistant' && message.text.trim());
+    const event = state.status === 'failed' ? 'failed' : answer?.questions?.length ? 'needsAnswer' : 'ready';
+    const id = event === 'ready' && answer ? `session-ready:${state.deviceId ?? "local"}:${state.sessionId}:${answer.id}` : `session-${event}:${state.deviceId ?? this.deviceId}:${state.sessionId}:${state.turnId ?? state.streamId}`;
+    this.email.notify({ id, sessionKey: `${state.deviceId ?? 'local'}:${state.sessionId}`, event, title: event === 'ready' ? 'Your session result is ready' : event === 'needsAnswer' ? 'Your assistant needs an answer' : 'Your session failed', message: event === 'ready' ? 'Your session has finished. Open the conversation to review the result.' : event === 'needsAnswer' ? 'Your assistant needs an answer. Open the conversation to continue.' : 'Your session failed. Open the conversation to review the error and retry.', result: event === 'ready' ? answer?.text : undefined, url: `/workspace/${encodeURIComponent(state.sessionId)}${state.deviceId ? `?device=${encodeURIComponent(state.deviceId)}` : ''}` });
   }
 
   private scheduleSessionFailurePush(state: DashboardCodexSessionLiveState): void {
@@ -3168,7 +3222,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private refreshCliSessionRealtimeLifecycle(): void {
-    if ((!this.hasWorkspaceViewer() && !this.pushWatching) || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
+    if ((!this.hasWorkspaceViewer() && !this.pushWatching && !this.emailWatching) || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
       this.stopCliSessionRealtime();
       return;
     }

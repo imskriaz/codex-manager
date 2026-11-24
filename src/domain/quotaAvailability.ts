@@ -27,9 +27,9 @@ export function quotaAvailability(accounts: DashboardAccountViewModel[], now = D
 
 export function quotaOfflineMessage(availability: QuotaAvailability, now = Date.now()): string {
   const reset = availability.availableAt;
-  if (!reset || reset * 1000 <= now) return "We're offline. Checking availability.";
+  if (!reset || reset * 1000 <= now) return "Temporarily unavailable. Checking when you can chat again.";
   const date = new Date(reset * 1000);
   const sameDay = date.toDateString() === new Date(now).toDateString();
   const time = date.toLocaleString(undefined, { ...(sameDay ? {} : { month: 'short', day: 'numeric' } as const), hour: 'numeric', minute: '2-digit' });
-  return `We're offline. Back at ${time} (${formatResetRelativeTime(reset, now, 'en')}).`;
+  return `Temporarily unavailable. Expected back at ${time} (${formatResetRelativeTime(reset, now, 'en')}).`;
 }

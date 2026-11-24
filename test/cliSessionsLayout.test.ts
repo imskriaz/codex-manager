@@ -67,7 +67,7 @@ describe("sessions sidebar layout", () => {
   it('shows quota waiting only for the blocked session and clears it on resume, completion, pause, or opt-out', () => {
     const session = { id: 'quota', status: 'idle' as const, interrupted: true };
     const error = { id: 'error', kind: 'error' as const, text: 'You have hit your usage limit' };
-    const waiting = "We're offline. Checking availability.";
+    const waiting = "Temporarily unavailable. Checking when you can chat again.";
     const status = (s = session, messages = [error], live = undefined, automatic = true, connected = true, running = false) => sessionQuotaWaitingMessage(s, messages, live, [], automatic, connected, running);
     expect(status()).toBe('Checking account quota and automatic recovery.');
     expect(status(session, [error], undefined, true, false)).toContain('Waiting for connection');

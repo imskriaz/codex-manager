@@ -4,6 +4,12 @@
 
 - Show only the selected date in account metadata for Date added, Last refreshed, and Login date sorting in grid and list views.
 
+## 3.0.0-pre.117
+
+- Configure SMTP in master Settings and choose ready, needs-answer, and failed session emails in master and user workspaces.
+- Add a compact envelope action to watch one conversation without adding a toolbar row.
+- Keep SMTP credentials private, make result excerpts optional, avoid duplicate delivery, and surface test and background delivery failures.
+
 ## 3.0.0-pre.114
 
 - Hide unidentified or unavailable Claude native logins from account lists, including placeholder entries created while an API account is selected.
@@ -11,6 +17,12 @@
 ## 3.0.0-pre.113
 
 - Keep browser Sign out form submissions same-origin so Chromium does not reject logout as Forbidden.
+
+## 3.0.0-pre.112
+
+- Place chat availability beneath the welcome heading with clearer return-time text and readable spacing.
+- Open Settings directly from the user profile and keep Sign out in the settings dialog.
+- Use compact circular account action buttons in cards and lists.
 
 ## 3.0.0-pre.111
 

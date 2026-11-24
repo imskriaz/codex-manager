@@ -38,14 +38,14 @@ describe('workspace quota availability', () => {
 
   it.each([[1440, '1d'], [60, '1h'], [1, '1m'], [1501, '1d 1h 1m'], [0.5, '<1m']])('shows a local return time and compact wait for %s minutes', (minutes, duration) => {
     const message = quotaOfflineMessage({ status: 'offline', availableAt: reset(minutes as number) }, now);
-    expect(message).toContain("We're offline. Back at ");
+    expect(message).toContain("Temporarily unavailable. Expected back at ");
     expect(message).toContain(`(${duration} left)`);
     const target = new Date(reset(minutes as number) * 1000);
     expect(message).toContain(target.toLocaleString(undefined, { ...(target.toDateString() === new Date(now).toDateString() ? {} : { month: 'short', day: 'numeric' } as const), hour: 'numeric', minute: '2-digit' }));
   });
 
   it('keeps a visible fallback after the reset until availability is confirmed', () => {
-    expect(quotaOfflineMessage({ status: 'offline' }, now)).toBe("We're offline. Checking availability.");
-    expect(quotaOfflineMessage({ status: 'offline', availableAt: reset(1) }, now + 60_000)).toBe("We're offline. Checking availability.");
+    expect(quotaOfflineMessage({ status: 'offline' }, now)).toBe("Temporarily unavailable. Checking when you can chat again.");
+    expect(quotaOfflineMessage({ status: 'offline', availableAt: reset(1) }, now + 60_000)).toBe("Temporarily unavailable. Checking when you can chat again.");
   });
 });

@@ -298,7 +298,7 @@ describe("persistent browser push", () => {
   });
   it('includes public questions and suggested answers while routing complex or secret questions to review', async () => {
     await service.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
-    const host = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: service, deviceId: 'local', codexPushActions: new Map(), peerSessions: new Map() });
+    const host = Object.assign(Object.create(WebDashboardServer.prototype), { email: { notify: vi.fn() }, browserPush: service, deviceId: 'local', codexPushActions: new Map(), peerSessions: new Map() });
     const question = { id: 'choice', header: 'Choose', question: 'Which approach?', isSecret: false, options: [{ label: 'Small fix', description: '' }, { label: 'Full fix', description: '' }] };
     for (const scenario of ['short', 'long', 'multiple', 'secret', 'duplicates']) {
       send.mockClear();

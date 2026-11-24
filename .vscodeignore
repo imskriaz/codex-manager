@@ -55,9 +55,16 @@ node_modules/node-pty/lib/**/*.test.js
 node_modules/node-pty/lib/**/*.d.ts
 node_modules/node-addon-api/**
 !node_modules/node-addon-api/LICENSE.md
+node_modules/**/*.ts
+node_modules/**/test/**
+node_modules/**/tests/**
+node_modules/**/__tests__/**
+node_modules/**/README*
+node_modules/**/CHANGELOG*
 
 tools/benchmark-sqlite.mjs
 tools/workspace-dashboard-assets.mjs
+tools/email-ui-fixture.mjs
 tools/verify-dashboard-modules.mjs
 tools/check-*.mjs
 tools/capture-docs-ui.mjs

@@ -7,7 +7,8 @@ export async function requestLocalTeamSettings(request: DashboardActionPayload["
   const allowed = path === "/api/office/users" ? ["GET", "POST"]
     : /^\/api\/office\/users\/[a-f0-9-]{36}$/i.test(path) ? ["PATCH", "DELETE"]
     : path === "/api/office/mcp" || path === "/api/office/settings" ? ["GET", "PUT"]
-    : path === "/api/office/models" || path === "/api/office/logs" || path === "/api/office/proxy" ? ["GET"] : [];
+    : path === "/api/office/models" || path === "/api/office/logs" || path === "/api/office/proxy" ? ["GET"]
+    : path === '/api/email/smtp' ? ['GET', 'PUT'] : path === '/api/email/preferences' ? ['GET', 'PUT', 'POST'] : path === '/api/email/test' ? ['POST'] : [];
   if (!allowed.includes(method)) throw new Error("Choose a valid Team settings action.");
   if (body !== undefined && (!body || typeof body !== "object" || Array.isArray(body))) throw new Error("Send a valid Team settings form.");
   const encoded = body === undefined ? undefined : JSON.stringify(body);
