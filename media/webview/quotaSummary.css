@@ -6551,6 +6551,22 @@ html[data-theme="dark"] .cli-terminal-panel {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.cli-user-message-preview {
+  max-height: 8lh;
+  overflow: hidden;
+}
+.cli-user-message-preview.is-expanded { max-height: none; }
+.cli-user-message-toggle {
+  display: block;
+  margin-top: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.cli-user-message-toggle:hover { color: var(--text-primary); }
 .cli-session-message.is-user .cli-session-message-body {
   justify-self: end;
   max-width: min(72%, 620px);

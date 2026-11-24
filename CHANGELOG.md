@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.118
+
+- Collapse long pasted user messages behind Show more, with Show less to restore the preview and full text preserved for copying and editing.
+
 ## 3.0.0-pre.115
 
 - Show only the selected date in account metadata for Date added, Last refreshed, and Login date sorting in grid and list views.
