@@ -9,6 +9,31 @@ import {
   isDashboardAccountOutOfQuota,
   sortWithQueuedAccount
 } from "../webview-src/dashboard/accountSorting";
+import { sortDashboardAutoQueueAccounts } from "../webview-src/dashboard/accountSorting";
+import { createAutoQueuePolicy } from "../src/domain/autoQueuePolicy";
+
+describe("Auto queue reset forecast", () => {
+  const now = 2_000_000_000_000;
+  const policy = createAutoQueuePolicy({ autoSwitchEnabled: true }, now);
+  const account = (id: string, minutes: number, weekly = 50, overrides = {}) => ({
+    id, email: `${id}@example.com`, enabled: true, lastQuotaAt: now - 1_000,
+    metrics: [{ key: "hourly", visible: true, percentage: 0, resetAt: now / 1_000 + minutes * 60 },
+      { key: "weekly", visible: true, percentage: weekly, resetAt: now / 1_000 + 3 * 86400 }], ...overrides
+  }) as any;
+
+  it("orders the screenshot's exhausted accounts by recovery", () => {
+    const accounts = [account("68m", 68), account("84m", 84), account("106m", 106), account("24m", 24), account("3d", 30, 0)];
+    expect(sortDashboardAutoQueueAccounts(accounts, policy).map(row => row.id)).toEqual(["24m", "68m", "84m", "106m", "3d"]);
+    expect(accounts.every(row => !hasDashboardAutoQueueCapability(row, policy))).toBe(true);
+  });
+
+  it("orders verified usable accounts first and keeps current accounts pinned", () => {
+    const ready = account("ready", 60, 50, { metrics: [{ key: "hourly", visible: true, percentage: 70, resetAt: now / 1_000 + 3600 }] });
+    const current = account("current", 20, 0, { isActive: true });
+    const accounts = [account("blocked", 1), ready, current];
+    expect(sortDashboardAutoQueueAccounts(accounts, policy).map(row => row.id)).toEqual(["current", "ready", "blocked"]);
+  });
+});
 
 describe("sortWithQueuedAccount", () => {
   it('sorts by numeric date added newest first, keeps missing dates last, and breaks ties consistently', () => {

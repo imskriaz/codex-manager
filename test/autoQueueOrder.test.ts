@@ -9,6 +9,15 @@ import type { CodexManagerAccountRecord } from "../src/core/types";
 const NOW_MS = 2_000_000_000_000;
 
 describe("auto queue order", () => {
+  it("retains reset times to sort exhausted accounts by when all blocking quotas recover", () => {
+    const now = NOW_MS / 1_000;
+    const hourlySoon = account("hourly-soon", { hourly: 0, hourlyResetAt: now + 24 * 60, weekly: 2, weeklyResetAt: now + 5 * 86400 });
+    const hourlyLater = account("hourly-later", { hourly: 0, hourlyResetAt: now + 68 * 60, weekly: 53, weeklyResetAt: now + 6 * 86400 });
+    const weeklySoon = account("weekly-soon", { hourly: 100, hourlyResetAt: now + 300 * 60, weekly: 0, weeklyResetAt: now + 3 * 86400 });
+    const weeklyLater = account("weekly-later", { hourly: 0, hourlyResetAt: now + 60, weekly: 0, weeklyResetAt: now + 4 * 86400 });
+    expect(sortedIds(weeklyLater, hourlyLater, weeklySoon, hourlySoon)).toEqual(["hourly-soon", "hourly-later", "weekly-soon", "weekly-later"]);
+  });
+
   it("scores quota near reset while protecting scarce weekly capacity", () => {
     const nowMs = 2_000_000_000_000;
     const expiring = account("expiring", {

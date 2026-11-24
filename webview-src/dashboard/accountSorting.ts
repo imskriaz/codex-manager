@@ -109,7 +109,6 @@ export function filterAccounts(accounts: DashboardAccountViewModel[], query: str
 
 export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewModel): AutoQueueCandidate {
   const mainQuota = mainQuotaMetric(account);
-  const mainExhausted = (mainQuota?.percentage ?? 1) <= 0;
   const hourly = (account.metrics ?? []).find((metric) => metric.key === "hourly" && metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage));
   return {
     id: account.id,
@@ -121,7 +120,7 @@ export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewMode
     invalidQuota: (account.metrics ?? []).some((metric) => metric.visible && (metric.key === "hourly" || metric.key === "weekly") && (typeof metric.percentage !== "number" || !Number.isFinite(metric.percentage) || metric.percentage < 0 || metric.percentage > 100)),
     windows: (["hourly", "weekly", "monthly"] as const).map((period) => {
       const metric = period === "hourly" ? hourly : mainQuota && (mainQuota.period ?? "weekly") === period ? mainQuota : undefined;
-      return { percentage: metric ? sortingPercentage(account, metric) : undefined, resetAt: mainExhausted && metric ? undefined : metric?.resetAt };
+      return { percentage: metric?.percentage, resetAt: metric?.resetAt };
     }),
     credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
     subscriptionExpiresAt: account.subscriptionExpiresAt,
@@ -143,6 +142,20 @@ export function compareDashboardAutoQueueAccounts(left: DashboardAccountViewMode
 export function hasDashboardAutoQueueCapability(account: DashboardAccountViewModel, thresholds?: DashboardAutoQueueCapabilityThresholds | AutoQueuePolicy): boolean {
   const value = toDashboardAutoQueueOrderValue(account);
   return thresholds && "nowMs" in thresholds ? isAutoQueueCandidateEligible(value, thresholds) : hasAutoQueueCapability(value, thresholds);
+}
+
+export function sortDashboardAutoQueueAccounts(accounts: readonly DashboardAccountViewModel[], policy: AutoQueuePolicy, registryOverrideEnabled = false): DashboardAccountViewModel[] {
+  const owned = (account: DashboardAccountViewModel) => registryOverrideEnabled || !isAccountClaimedByAnotherDevice(account);
+  return [...accounts].sort((left, right) => {
+    const current = Number(right.isActive === true) - Number(left.isActive === true);
+    if (current) return current;
+    const eligible = (account: DashboardAccountViewModel) => owned(account) && account.healthKind !== "reauthorize" && hasDashboardAutoQueueCapability(account, policy);
+    const readiness = Number(eligible(right)) - Number(eligible(left));
+    if (readiness) return readiness;
+    const ownership = Number(owned(right)) - Number(owned(left));
+    if (ownership) return ownership;
+    return compareDashboardAutoQueueAccounts(left, right, policy);
+  });
 }
 
 /** Keep the current account first, then usable accounts, claims, and exhausted accounts. */

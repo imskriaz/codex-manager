@@ -44,12 +44,12 @@ import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components"
 import { isAutomaticRequest, postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
+  sortDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
   compareDashboardDateAdded,
   filterAccounts,
   hasDashboardQuotaRemaining,
   isDashboardAccountOutOfQuota,
-  hasDashboardAutoQueueCapability,
   sortWithQueuedAccount
 } from "./accountSorting";
 import {
@@ -150,7 +150,7 @@ type MetricPriority = string;
 
 // Reset time is the most useful default for the saved-account cards: accounts
 // whose quota window expires sooner are surfaced first. Users can still choose
-// Auto queue when they want quota-balance prioritisation.
+// Auto queue when they want eligibility and reset-aware prioritisation.
 const DEFAULT_ACCOUNT_SORT: AccountSort = "time-left";
 
 function isCliSessionsPath(pathname: string): boolean {
@@ -3562,18 +3562,8 @@ function sortAccounts(
     account.metrics.find(
       (metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage)
     );
-  const compareAutoQueue = (left: DashboardAccountViewModel, right: DashboardAccountViewModel): number => {
-    const leftOwned = canRunAccountOnThisPc(left, false, registryOverrideEnabled);
-    const rightOwned = canRunAccountOnThisPc(right, false, registryOverrideEnabled);
-    const leftEligible = leftOwned && hasDashboardAutoQueueCapability(left, capabilityThresholds);
-    const rightEligible = rightOwned && hasDashboardAutoQueueCapability(right, capabilityThresholds);
-    if (leftEligible !== rightEligible) return leftEligible ? -1 : 1;
-    if (leftOwned !== rightOwned) return leftOwned ? -1 : 1;
-    return compareDashboardAutoQueueAccounts(left, right, capabilityThresholds);
-  };
-
   if (sort === "auto-queue") {
-    return sortWithQueuedAccount(accounts, compareAutoQueue, false);
+    return sortDashboardAutoQueueAccounts(accounts, capabilityThresholds, registryOverrideEnabled);
   }
   if (sort === "date-added") return sortWithQueuedAccount(accounts, compareDashboardDateAdded);
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.119
+
+- Order Auto queue by reset time before account age and quota score, and forecast exhausted-account recovery from all blocking quota windows.
+
 ## 3.0.0-pre.118
 
 - Collapse long pasted user messages behind Show more, with Show less to restore the preview and full text preserved for copying and editing.

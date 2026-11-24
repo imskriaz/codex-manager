@@ -93,6 +93,19 @@ export function isAutoQueueResetCandidate(value: AutoQueueCandidate, policy: Aut
   return usableAutoQueueResetCount(value, policy) > 0 && typeof long === "number" && Number.isFinite(long) && long <= policy.resetWeeklyThreshold;
 }
 
+/** Exhausted accounts recover only after every blocking window resets. This is a forecast, never eligibility. */
+export function getAutoQueueResetAt(value: AutoQueueOrderValue, policy: AutoQueuePolicy): number | undefined {
+  const windows = value.windows.filter((_, index) => index !== 0 || policy.hourlyEnabled);
+  const blocked = value.windows.filter((window, index) => (index !== 0 || policy.hourlyEnabled) &&
+    typeof window.percentage === "number" && window.percentage <= (index === 0 ? policy.hourlyThreshold : policy.weeklyThreshold));
+  const relevant = blocked.length ? blocked : windows.filter(window => (window.percentage ?? 0) > 0);
+  const resets = relevant.map(window => window.resetAt);
+  const known = resets.filter((reset): reset is number => typeof reset === "number" && Number.isFinite(reset) && reset > 0 &&
+    (blocked.length > 0 || reset >= policy.nowMs / 1_000));
+  if (!known.length || (blocked.length && known.length !== resets.length)) return undefined;
+  return blocked.length ? Math.max(...known) : Math.min(...known);
+}
+
 export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: AutoQueueCandidate, policy: AutoQueuePolicy): number {
   const rank = (value: AutoQueueCandidate) => {
     if (value.disabled) return 5;
@@ -111,6 +124,11 @@ export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: Auto
   const rightStar = right.queuePriority === true && (rightRank === 0 || rightRank === 2);
   if (Boolean(left.capacityTag) !== Boolean(right.capacityTag)) return left.capacityTag ? 1 : -1;
   if (leftStar !== rightStar) return leftStar ? -1 : 1;
+  if (leftRank !== 1) {
+    const leftReset = getAutoQueueResetAt(left, policy);
+    const rightReset = getAutoQueueResetAt(right, policy);
+    if (leftReset !== rightReset) return (leftReset ?? Infinity) < (rightReset ?? Infinity) ? -1 : 1;
+  }
   if (leftRank === 0) {
     const urgency = compareAutoQueueUrgency(left, right, policy.nowMs / 1_000);
     if (urgency) return urgency;

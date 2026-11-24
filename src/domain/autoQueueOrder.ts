@@ -39,7 +39,8 @@ export function calculateAutoQueueEfficiency(
   const ageMs = typeof value.lastQuotaAt === "number" && Number.isFinite(value.lastQuotaAt) && value.lastQuotaAt > 0 && value.lastQuotaAt <= nowMs
     ? nowMs - value.lastQuotaAt : options.staleAfterMs;
   const freshness = clamp(1 - ageMs / Math.max(options.staleAfterMs, 1), 0, 1);
-  const [hourly, weekly, monthly] = value.windows;
+  const [, weekly, monthly] = value.windows;
+  const hourly = (monthly?.percentage ?? weekly?.percentage ?? 1) <= 0 ? undefined : value.windows[0];
   const expiringRisk =
     expiringQuotaRisk(hourly, nowSeconds, 5 * 60 * 60) +
     expiringQuotaRisk(weekly, nowSeconds, 24 * 60 * 60) * 0.35 +

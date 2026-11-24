@@ -75,10 +75,9 @@ export function hasComparableWeeklyWindow(account: CodexManagerAccountRecord): b
 export function toAutoQueueOrderValue(account: CodexManagerAccountRecord): AutoQueueCandidate {
   const quota = account.quotaSummary;
   const hasLongWindow = hasComparableWeeklyWindow(account);
-  const mainExhausted = hasLongWindow && (quota?.weeklyPercentage ?? 1) <= 0;
-  const hourly = hasComparableHourlyWindow(account) ? { percentage: mainExhausted ? 0 : quota?.hourlyPercentage, resetAt: mainExhausted ? undefined : quota?.hourlyResetTime } : {};
+  const hourly = hasComparableHourlyWindow(account) ? { percentage: quota?.hourlyPercentage, resetAt: quota?.hourlyResetTime } : {};
   const isMonthly = hasLongWindow && isMonthlyQuotaWindow(account.planType, quota?.weeklyWindowMinutes);
-  const longWindow = hasLongWindow ? { percentage: quota?.weeklyPercentage, resetAt: mainExhausted ? undefined : quota?.weeklyResetTime } : {};
+  const longWindow = hasLongWindow ? { percentage: quota?.weeklyPercentage, resetAt: quota?.weeklyResetTime } : {};
   return {
     id: account.id,
     autoResetAllowed: account.autoResetAllowed,

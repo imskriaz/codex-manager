@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareAutoQueueCandidates,
   createAutoQueuePolicy,
+  getAutoQueueResetAt,
   hasAutoQueueCapability,
   isAutoQueueCandidateEligible,
   isAutoQueueResetCandidate,
@@ -18,6 +19,31 @@ const policy = createAutoQueuePolicy({ autoSwitchEnabled: true, autoResetEnabled
 const candidate = (id: string, overrides: Partial<AutoQueueCandidate> = {}): AutoQueueCandidate => ({ id, autoResetAllowed: true, windows: [{ percentage: 70 }, { percentage: 70 }, {}], lastQuotaAt: now - 1_000, ...overrides });
 
 describe("shared auto queue policy", () => {
+  it("orders resets outside the old urgency cutoffs before account age and quota score", () => {
+    const earlier = candidate("earlier", { addedAt: now - 1_000, windows: [{ percentage: 10, resetAt: now / 1_000 + 24 * 60 }, { percentage: 2 }] });
+    const later = candidate("later", { addedAt: now - 86400_000, windows: [{ percentage: 100, resetAt: now / 1_000 + 68 * 60 }, { percentage: 100 }] });
+    expect(compareAutoQueueCandidates(earlier, later, policy)).toBeLessThan(0);
+    expect(compareAutoQueueCandidates(earlier, { ...later, queuePriority: true }, policy)).toBeGreaterThan(0);
+    expect(compareAutoQueueCandidates({ ...earlier, lastQuotaAt: 1 }, later, policy)).toBeGreaterThan(0);
+  });
+
+  it("forecasts recovery using every blocking quota without reviving exhausted accounts", () => {
+    const seconds = now / 1_000;
+    const exhausted = candidate("exhausted", { windows: [{ percentage: 0, resetAt: seconds + 60 }, { percentage: 0, resetAt: seconds + 86400 }] });
+    expect(getAutoQueueResetAt(exhausted, policy)).toBe(seconds + 86400);
+    expect(isAutoQueueCandidateEligible(exhausted, policy)).toBe(false);
+    expect(getAutoQueueResetAt({ ...exhausted, windows: [{ percentage: 80, resetAt: seconds + 3600 }, { percentage: 0, resetAt: seconds + 60 }] }, policy)).toBe(seconds + 60);
+    for (const resetAt of [undefined, NaN, Infinity, 0, -1]) {
+      expect(getAutoQueueResetAt({ ...exhausted, windows: [{ percentage: 0, resetAt }, { percentage: 0, resetAt: seconds + 60 }] }, policy)).toBeUndefined();
+    }
+    const due = { ...exhausted, windows: [{ percentage: 0, resetAt: seconds - 60 }] };
+    expect(getAutoQueueResetAt(due, policy)).toBe(seconds - 60);
+    expect(isAutoQueueCandidateEligible(due, policy)).toBe(false);
+    expect(getAutoQueueResetAt(candidate("monthly", { windows: [{}, {}, { percentage: 0, resetAt: seconds + 3 * 86400 }] }), policy)).toBe(seconds + 3 * 86400);
+    const thresholds = { ...policy, hourlyThreshold: 5, weeklyThreshold: 5 };
+    expect(getAutoQueueResetAt(candidate("low", { windows: [{ percentage: 3, resetAt: seconds + 30 }, { percentage: 4, resetAt: seconds + 300 }] }), thresholds)).toBe(seconds + 300);
+  });
+
   it("defaults switching thresholds to zero and preserves explicit thresholds", () => {
     expect(policy.hourlyThreshold).toBe(0);
     expect(policy.weeklyThreshold).toBe(0);
