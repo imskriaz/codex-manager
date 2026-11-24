@@ -3,6 +3,7 @@ import { readFileSync } from "fs";
 import {
   resolveCardHealthReason,
   resolveCardPlanBadge,
+  resolveAccountDateDetail,
   resolveClaimPopoverText,
   resolveCompactIdentityBadge,
   resolvePrimaryAccountControl,
@@ -11,11 +12,22 @@ import {
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
-  it('shows the added date in both card layouts only while Date added sorting is selected', () => {
+  it('shows only the selected date detail in both card layouts', () => {
     const source = readFileSync('webview-src/dashboard/savedAccountCard.tsx', 'utf8');
-    expect(source).toContain('const addedDate = props.showAddedDate ?');
-    expect(source.match(/\{addedDate\}/g)).toHaveLength(2);
-    expect(readFileSync('webview-src/dashboard/main.tsx', 'utf8')).toContain('showAddedDate={accountSort === "date-added"}');
+    expect(source.match(/\{dateDetail \? <span[^\n]+ : <>/g)).toHaveLength(2);
+    expect(readFileSync('webview-src/dashboard/main.tsx', 'utf8')).toContain('accountSort={accountSort}');
+    const account = { addedAtLabel: '2026/11/24', loginAt: 1795485600000, lastQuotaAt: 1795492800000 };
+    expect(resolveAccountDateDetail(account, 'date-added', 'en')).toBe('Added: 2026/11/24');
+    expect(resolveAccountDateDetail(account, 'login-date', 'en')).toBe(`Login: ${new Date(account.loginAt).toLocaleString()}`);
+    expect(resolveAccountDateDetail(account, 'last-refresh', 'en')).toBe(`Refreshed: ${new Date(account.lastQuotaAt).toLocaleString()}`);
+    for (const sort of ['date-added', 'login-date', 'last-refresh']) {
+      expect(resolveAccountDateDetail({ addedAtLabel: '' }, sort, 'en')).toMatch(/: —$/);
+    }
+    for (const sort of ['time-left', 'quota', 'auto-queue', 'email', undefined]) {
+      expect(resolveAccountDateDetail(account, sort, 'en')).toBeUndefined();
+    }
+    expect(resolveAccountDateDetail(account, 'date-added', 'zh')).toBe('添加日期: 2026/11/24');
+    expect(resolveAccountDateDetail(account, 'login-date', 'zh-hant')).toMatch(/^登入日期: /);
   });
   it("keeps unrelated card actions enabled while one action is pending", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
@@ -66,7 +78,8 @@ describe("saved account card presentation", () => {
   it("moves the grid-card plan to the footer and preserves table-view badges", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
-    const cardView = source.slice(source.indexOf("saved-card saved-card-front"));
+    const cardStart = source.lastIndexOf("saved-card saved-card-front");
+    const cardView = source.slice(cardStart);
     const header = cardView.slice(0, cardView.indexOf('<div class="saved-top-actions"'));
 
     expect(header).not.toContain('<div class="saved-meta">');
@@ -75,7 +88,7 @@ describe("saved account card presentation", () => {
     expect(header).not.toContain("{cardPlanBadge}");
     const footer = cardView.slice(cardView.indexOf('<div class="saved-card-footer">'));
     expect(footer).toContain("{cardPlanBadge}");
-    const table = source.slice(source.indexOf("if (props.compactRow)"), source.indexOf("saved-card saved-card-front"));
+    const table = source.slice(source.indexOf("if (props.compactRow)"), cardStart);
     expect(table).not.toContain('<span class="pill active">{copy.current}</span>');
     expect(table).toContain("{cardPlanBadge}");
     expect(styles).not.toMatch(/\.dashboard-view-cards \.accounts-grid\s*{[^}]*(?:grid-auto-rows:\s*1fr|align-items:\s*stretch)/s);

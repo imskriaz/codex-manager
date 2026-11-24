@@ -11379,6 +11379,13 @@ html[data-theme="dark"] .cli-terminal-panel {
   overflow: hidden;
 }
 
+.saved-sort-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .saved-table-meta .pill {
   flex: none;
   min-height: 16px;

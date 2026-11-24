@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.115
+
+- Show only the selected date in account metadata for Date added, Last refreshed, and Login date sorting in grid and list views.
+
 ## 3.0.0-pre.114
 
 - Hide unidentified or unavailable Claude native logins from account lists, including placeholder entries created while an API account is selected.

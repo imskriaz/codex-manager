@@ -8,7 +8,7 @@ import type {
   DashboardSettings,
   DashboardState
 } from "../../src/domain/dashboard/types";
-import { getSensitiveDisplayValue, isAccountAttention } from "./helpers";
+import { formatTimestamp, getSensitiveDisplayValue, isAccountAttention } from "./helpers";
 import {
   renderDetailsIcon,
   DownloadIcon,
@@ -62,6 +62,18 @@ export function resolveCardPlanBadge(planTypeLabel?: string): "Free" | "Plus" | 
   return undefined;
 }
 
+export function resolveAccountDateDetail(
+  account: Pick<DashboardAccountViewModel, "addedAtLabel" | "loginAt" | "lastQuotaAt">,
+  sort: string | undefined,
+  lang: DashboardState["lang"]
+): string | undefined {
+  const zh = lang === "zh", hant = lang === "zh-hant";
+  if (sort === "date-added") return `${zh ? "添加日期" : hant ? "新增日期" : "Added"}: ${account.addedAtLabel || "—"}`;
+  if (sort === "login-date") return `${zh ? "登录日期" : hant ? "登入日期" : "Login"}: ${formatTimestamp(account.loginAt, "—")}`;
+  if (sort === "last-refresh") return `${zh ? "最近刷新" : hant ? "最近重新整理" : "Refreshed"}: ${formatTimestamp(account.lastQuotaAt, "—")}`;
+  return undefined;
+}
+
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
 export function shouldOpenClaimPopover(runningOnOtherDevice: boolean, registryOverrideEnabled: boolean): boolean {
   return runningOnOtherDevice && !registryOverrideEnabled;
@@ -107,7 +119,7 @@ export function SavedAccountCard(props: {
   exportPending: boolean;
   selected: boolean;
   metricPriority: string;
-  showAddedDate?: boolean;
+  accountSort?: string;
   compactRow?: boolean;
   onToggleSelected: () => void;
   onExportAuth: () => void;
@@ -141,7 +153,7 @@ export function SavedAccountCard(props: {
   const hant = props.lang === "zh-hant";
   const exportLabel = zh ? "导出 auth" : hant ? "匯出 auth" : "Export auth";
   const infoLabel = zh ? "账号信息" : hant ? "帳號資訊" : "Account info";
-  const addedDate = props.showAddedDate ? <span class="saved-credits-line" title={account.addedAtLabel}>{zh ? '添加日期' : hant ? '新增日期' : 'Added'}: {account.addedAtLabel || '—'}</span> : null;
+  const dateDetail = resolveAccountDateDetail(account, props.accountSort, props.lang);
   const moreLabel = zh ? "更多操作" : hant ? "更多操作" : "More account actions";
   const queuePriorityLabel = account.queuePriority
     ? zh
@@ -461,8 +473,7 @@ export function SavedAccountCard(props: {
                 <strong title={emailDisplay}>{emailDisplay}</strong>
               </div>
               <div class="saved-table-meta">
-                {addedDate}
-                <>
+                {dateDetail ? <span class="saved-sort-detail" title={dateDetail}>{dateDetail}</span> : <>
                   {compactIdentityBadge ? (
                     <span class="pill saved-running-device" title={compactIdentityBadge.label}>
                       {compactIdentityBadge.label}
@@ -521,7 +532,7 @@ export function SavedAccountCard(props: {
                       <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}
-                </>
+                </>}
               </div>
             </div>
           </div>
@@ -770,8 +781,7 @@ export function SavedAccountCard(props: {
             </div>
             <div class="saved-card-footer">
               <div class="saved-credit-summary">
-                {addedDate}
-                <>
+                {dateDetail ? <span class="saved-credits-line saved-sort-detail" title={dateDetail}>{dateDetail}</span> : <>
                   {cardPlanBadge ? (
                     <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
                       {cardPlanBadge}
@@ -813,7 +823,7 @@ export function SavedAccountCard(props: {
                       <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}
-                </>
+                </>}
               </div>
               <div class="saved-actions" onClick={stopFlip}>
                 <ActionButton

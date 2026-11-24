@@ -2262,7 +2262,7 @@ function App() {
                   exportPending={isActionPending("shareTokens") || isActionPending("exportAuthFile")}
                   selected={selectedAccountIds.has(account.id)}
                   metricPriority={uiPreferences.metricPriority}
-                  showAddedDate={accountSort === "date-added"}
+                  accountSort={accountSort}
                   compactRow={compactRow}
                   onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
                   onExportAuth={() => handleExportAccount(account.id)}
