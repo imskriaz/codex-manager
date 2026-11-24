@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 import { afterEach, expect, it, vi } from 'vitest';
-const fixture = vi.hoisted(() => ({ feedback: vi.fn() }));
+const fixture = vi.hoisted(() => ({ feedback: vi.fn(), links: undefined as Record<string, unknown> | undefined }));
 vi.mock('preact/hooks', () => ({
-  useContext: () => fixture.feedback,
+  useContext: () => fixture.links ?? fixture.feedback,
   useMemo: (compute: () => unknown) => compute(),
   useState: (value: unknown) => [value, vi.fn()],
   useRef: (value: unknown) => ({ current: value }),
@@ -16,14 +16,37 @@ function markdown(onFeedback?: typeof fixture.feedback, text = '```ts\nhello\n``
   const component = nodes(message).find(node => typeof node.type === 'function' && node.type.name === 'MarkdownMessage')!;
   return nodes((component.type as (props: any) => VNode<any>)(component.props)).find(node => node.props.class === 'cli-message-markdown')!;
 }
-afterEach(() => { fixture.feedback.mockReset(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { fixture.links = undefined; fixture.feedback.mockReset(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it('classifies remote workspace and download links before external links', () => {
   const anchor = { hasAttribute: (name: string) => name === 'download', textContent: 'Download report' };
-  expect(isInternalWorkspaceLink('/reports/latest')).toBe(true);
+  expect(isInternalWorkspaceLink('/reports/latest')).toBe(false);
   expect(isInternalWorkspaceLink('http://127.0.0.1:3000/reports/latest')).toBe(true);
   expect(isInternalWorkspaceLink('https://example.com/reports/latest')).toBe(false);
   expect(isDownloadLink(anchor, 'https://example.com/reports/latest')).toBe(true);
   expect(isDownloadLink({ hasAttribute: () => false, textContent: 'Open page' }, 'https://example.com/page')).toBe(false);
+});
+it.each(['http://localhost:5173', 'https://app.localhost:3000', 'http://127.12.0.1:8080', 'http://[::1]:3000'])('keeps loopback URL %s in the workspace Browser', href => {
+  expect(isInternalWorkspaceLink(href)).toBe(true);
+});
+it.each(['https://example.com', 'http://192.168.1.2', 'http://10.0.0.2', 'http://172.16.0.2', 'https://localhost.example.com', '//example.com', 'javascript:alert(1)'])('does not automatically put %s in the right panel', href => {
+  expect(isInternalWorkspaceLink(href)).toBe(false);
+});
+it.each([
+  ['https://example.com/help', null, false, 'external'],
+  ['http://localhost:5173', null, false, 'internal'],
+  ['https://example.com/preview', 'workspace-browser', false, 'internal'],
+  ['https://example.com/ai-tab', null, true, 'internal'],
+  ['https://example.com/help', 'ordinary title', false, 'external']
+])('routes clicked session URL %s to %s', (href, title, aiPage, destination) => {
+  const external = vi.fn(), openInternal = vi.fn(), download = vi.fn();
+  fixture.links = { external, openInternal, download, browserNeeded: () => aiPage };
+  const link = { href, textContent: 'Open page', hasAttribute: () => false, getAttribute: () => title };
+  const preventDefault = vi.fn();
+  markdown().props.onClick({ preventDefault, target: { closest: (selector: string) => selector === 'a[href]' ? link : null } });
+  expect(preventDefault).toHaveBeenCalledOnce();
+  expect(destination === 'external' ? external : openInternal).toHaveBeenCalledExactlyOnceWith(href);
+  expect(destination === 'external' ? openInternal : external).not.toHaveBeenCalled();
+  expect(download).not.toHaveBeenCalled();
 });
 it('reports failed Markdown clipboard fallback through the initiating feedback callback', async () => {
   const direct = vi.fn();

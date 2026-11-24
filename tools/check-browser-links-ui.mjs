@@ -8,17 +8,22 @@ const origin = 'http://127.0.0.1:39875';
 const raw = await (await fetch(origin + '/api/state')).json();
 const state = { ...raw, office: undefined, connectedPeers: [{ id: 'local', name: 'This PC', local: true, connected: true, sessionCount: 1 }], accounts: [], peerAccounts: {}, onboardingCompleted: true, settings: { ...raw.settings, cliIntegrationEnabled: true } };
 const session = { id: '12345678-1234-1234-1234-123456789abc', title: 'Browser link checks', projectPath: 'D:/browser-fixture', status: 'idle' };
-const messages = [{ id: 'links', role: 'assistant', text: '[Local app](http://localhost:5173/login)\n\n[External site](https://example.com/help)\n\n[Retry website](https://example.com/retry)' }];
+const messages = [{ id: 'links', role: 'assistant', text: '[Local app](http://localhost:5173/login)\n\n[External site](https://example.com/help)\n\n[AI preview](https://example.com/preview "workspace-browser")\n\n[Retry website](https://example.com/retry "workspace-browser")' }];
 const host = `(() => {
 const state=${JSON.stringify(state)}, session=${JSON.stringify(session)}, messages=${JSON.stringify(messages)};
 const other={...session,id:'87654321-4321-4321-4321-cba987654321',title:'Other chat'};
 const dispatch=data=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
-window.__browserRequests=[];window.__openedWindows=[];window.__pages=[];window.__pagesBySession={};
+window.__browserRequests=[];window.__externalRequests=[];window.__openedWindows=[];window.__pages=[];window.__pagesBySession={};
 window.open=(...args)=>{window.__openedWindows.push(args);return null;};
 window.acquireVsCodeApi=()=>({getState(){return{};},setState(){},postMessage(message){setTimeout(()=>{
  if(message.type==='dashboard:ready'){dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true});return;}
  if(message.type!=='dashboard:action')return;
  let payload={};
+ if(message.action==='openExternalUrl'){
+  window.__externalRequests.push(message.payload);
+  if(window.__blockNextPopup){window.__blockNextPopup=false;dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'failed',error:'Allow pop-ups for this dashboard, then try the link again.'});return;}
+  window.open(message.payload.url,'_blank');payload={notice:{level:'info',message:'Opened the link in this browser.'}};
+ }
  if(message.action==='listCodexCliSessions')payload={cliSessions:[session,other],cliComposerConfig:{defaultModel:'fixture',models:[{id:'fixture',label:'Fixture',reasoningEfforts:['low']}],projects:[{id:'fixture',path:session.projectPath,label:'Fixture'}],terminalSupported:true}};
  if(message.action==='getCodexCliSessionMessages')payload={cliSession:message.payload.sessionId===other.id?other:session,cliSessionMessages:messages};
  if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:session.projectPath,projectName:'Fixture',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
@@ -69,10 +74,17 @@ try {
     // A narrow device puts Browser over the transcript; closing tools leaves its page available for reuse.
     await panel.getByRole('button', { name: 'Close workspace tools', exact: true }).click();
     await page.getByRole('link', { name: 'External site', exact: true }).click();
-    await page.waitForFunction(() => window.__browserRequests.some(request => request.operation === 'navigate' && request.url === 'https://example.com/help'));
-    assert.equal(await page.evaluate(() => window.__pages.length), 1, 'External link reuses the existing Browser page');
-    assert.deepEqual(await page.evaluate(() => window.__openedWindows), [], 'Chat links never open an external window');
-    assert.equal(context.pages().length, 1, 'Chat links keep the dashboard in its original tab');
+    await page.waitForFunction(() => window.__openedWindows.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__externalRequests), [{url:'https://example.com/help',targetDeviceId:'local'}], 'External links always use the initiating PC');
+    assert.equal(await page.evaluate(() => window.__browserRequests.filter(request => ['open','navigate'].includes(request.operation)).length), 1, 'External links do not navigate the right panel');
+    assert.equal(await panel.isVisible(), false, 'External links leave the right panel closed');
+    await page.evaluate(() => { window.__blockNextPopup = true; });
+    await page.getByRole('link', { name: 'External site', exact: true }).click();
+    await page.getByText('Allow pop-ups for this dashboard, then try the link again.', {exact:true}).waitFor();
+    assert.equal(await panel.isVisible(), false, 'Blocked popups never fall back to the right panel');
+    await page.getByRole('link', { name: 'AI preview', exact: true }).click();
+    await page.waitForFunction(() => window.__browserRequests.some(request => request.operation === 'navigate' && request.url === 'https://example.com/preview'));
+    assert.equal(await page.evaluate(() => window.__pages.length), 1, 'AI-marked link reuses the existing Browser page');
     await panel.getByRole('button', { name: 'Close workspace tools', exact: true }).click();
     await page.evaluate(() => { window.__failNextBrowser = true; });
     await page.getByRole('link', { name: 'Retry website', exact: true }).click();
@@ -99,7 +111,7 @@ try {
     assert.equal(await page.evaluate(() => window.__browserRequests.filter(request => ['open','navigate'].includes(request.operation)).length), 3, 'Returning restores tabs without replaying navigation');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Dashboard fits viewport');
     assert.deepEqual(errors, [], 'No runtime errors');
-    console.log(`PASS ${width}px: link reuse, visible failures, one tab layout, session-only Browser and AI tabs; ${Date.now() - started}ms`);
+    console.log(`PASS ${width}px: external tabs, localhost and AI panel links, popup and navigation failures, session-only Browser; ${Date.now() - started}ms`);
     await context.close();
   }
 } finally { await browser.close(); }

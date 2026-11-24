@@ -1539,7 +1539,7 @@ async function handleOpenExternalUrl(payload: DashboardActionPayload | undefined
     throw new Error("There is no URL to open.");
   }
   if (!isSafeExternalUrl(url)) {
-    throw new Error("Only HTTPS links or local HTTP links without embedded credentials can be opened.");
+    throw new Error("Only HTTP or HTTPS links without embedded credentials can be opened.");
   }
   const opened = await vscode.env.openExternal(vscode.Uri.parse(url));
   if (!opened) {
@@ -1552,10 +1552,7 @@ async function handleOpenExternalUrl(payload: DashboardActionPayload | undefined
 export function isSafeExternalUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    const isLocalHttp =
-      parsed.protocol === "http:" &&
-      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]");
-    return (parsed.protocol === "https:" || isLocalHttp) && !parsed.username && !parsed.password;
+    return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
   } catch {
     return false;
   }

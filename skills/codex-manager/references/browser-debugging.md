@@ -3,6 +3,11 @@
 Use `manager_browser` with the project path and a request. Start with `list` or
 `open`; keep the returned page ID and refresh its revision before mutations.
 
+Session web links open in the user's browser tab by default. Localhost and
+loopback links stay in the workspace Browser. When a link needs that panel for
+AI interaction, open it with `manager_browser` or mark the Markdown link with
+the title `workspace-browser`: `[Open preview](https://example.com "workspace-browser")`.
+
 | Operation | Request fields | Result |
 | --- | --- | --- |
 | `screenshot` | `pageId` | JPEG image content |

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.2
+
+- Open session web links in the user browser by default; keep localhost and explicitly AI-marked links in the workspace Browser.
+- Preserve browser-side popup failure feedback without opening links on the session host.
+
 ## 3.0.0
 
 - Restore the mobile sidebar toggle when a deferred workspace view finishes loading after the dashboard shell.

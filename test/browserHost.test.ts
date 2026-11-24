@@ -68,7 +68,7 @@ describe("browser dashboard bridge", () => {
     await post({ type: 'dashboard:action', action: 'steerCodexCliSessionTurn', requestId: 'large-document', payload: { attachments: [{ size: 50 * 1024 * 1024 }] } });
     expect(timer.mock.calls.at(-1)?.[1]).toBe(300_000);
   });
-  it.each(["opened", "blocked", "unsafe"])("opens external links on the initiating browser without sending a host action: %s", async outcome => {
+  it.each(["opened", "http", "blocked", "unsafe", "credentials"])("opens external links on the initiating browser without sending a host action: %s", async outcome => {
     const events: Array<Record<string, unknown>> = [];
     const popup = { opener: {} as unknown, location: { replace: vi.fn() }, close: vi.fn() };
     const fetchMock = vi.fn();
@@ -83,11 +83,12 @@ describe("browser dashboard bridge", () => {
       window: windowMock, navigator: { onLine: false }, MessageEvent: Event, fetch: fetchMock, URL,
       console: { error: vi.fn(), warn: vi.fn() }, Error, TypeError, Array, JSON, Date, Map
     });
-    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "openExternalUrl", requestId: "local-link", payload: { url: outcome === "unsafe" ? "javascript:alert(1)" : "https://example.com/help", targetDeviceId: "another-pc" } });
+    const url = outcome === 'unsafe' ? 'javascript:alert(1)' : outcome === 'credentials' ? 'https://user:password@example.com' : outcome === 'http' ? 'http://example.com/help' : 'https://example.com/help';
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "openExternalUrl", requestId: "local-link", payload: { url, targetDeviceId: "another-pc" } });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(events).toContainEqual(expect.objectContaining({ requestId: "local-link", status: outcome === "opened" ? "completed" : "failed" }));
-    if (outcome === "opened") { expect(popup.opener).toBeNull(); expect(popup.location.replace).toHaveBeenCalledWith("https://example.com/help"); }
-    if (outcome === "unsafe") expect(windowMock.open).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "local-link", status: ['opened', 'http'].includes(outcome) ? "completed" : "failed" }));
+    if (['opened', 'http'].includes(outcome)) { expect(popup.opener).toBeNull(); expect(popup.location.replace).toHaveBeenCalledWith(url); }
+    if (['unsafe', 'credentials'].includes(outcome)) expect(windowMock.open).not.toHaveBeenCalled();
   });
   it("releases snapshots after startup instead of keeping inactive system catalogues in the bridge", async () => {
     const events: Array<Record<string, unknown>> = [];

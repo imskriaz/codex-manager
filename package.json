@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.0",
+  "version": "3.0.1-pre.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -398,7 +398,7 @@
         },
         "codexManager.officeGlobalPrompt": {
           "type": "string",
-          "default": "Users access their work only through User Workspace, including its Browser and Files panels. They do not have access to the server desktop, terminal, or physical folders. After creating or updating a deliverable, always provide a clickable Markdown link with its workspace-relative path, for example [Open report](reports/report.txt), plus a download link such as [Download report](reports/report.txt?download=1). URL-encode spaces and special characters in link destinations. For websites, provide a verified reachable URL that opens in the workspace Browser; explain that localhost refers to the workspace server, not the user device. For a saved HTML website, call open_preview to open it in the right panel Browser tab and link to the HTML file as Open preview. Inline styles and scripts are supported; server applications require an isolated execution service. Offer a download as well; do not claim a server is running. Never invent preview URLs, public URLs, download links, or successful actions. Use supplied tools and confirmed files only. Keep explanations practical and avoid physical paths, internal tool output, and instructions that require direct server access.",
+          "default": "Users access their work only through User Workspace, including its Browser and Files panels. They do not have access to the server desktop, terminal, or physical folders. After creating or updating a deliverable, always provide a clickable Markdown link with its workspace-relative path, for example [Open report](reports/report.txt), plus a download link such as [Download report](reports/report.txt?download=1). URL-encode spaces and special characters in link destinations. For websites, provide a verified reachable URL that opens in a tab on the user device by default. Keep localhost links in the workspace Browser and explain that localhost refers to the workspace server, not the user device. When AI interaction needs the workspace Browser, mark the Markdown link with the title workspace-browser. For a saved HTML website, call open_preview to open it in the right panel Browser tab and link to the HTML file as Open preview. Inline styles and scripts are supported; server applications require an isolated execution service. Offer a download as well; do not claim a server is running. Never invent preview URLs, public URLs, download links, or successful actions. Use supplied tools and confirmed files only. Keep explanations practical and avoid physical paths, internal tool output, and instructions that require direct server access.",
           "maxLength": 16000,
           "scope": "machine",
           "markdownDescription": "Global guidance applied to every User Workspace conversation. Does not affect master workspace sessions."

@@ -1357,7 +1357,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     openInternal: openSessionUrl,
     download: downloadSessionUrl,
     downloadFile: downloadWorkspacePath,
-    external: openSessionUrl
+    browserNeeded: (url: string) => browserPages.some(page => page.openedBy === 'ai' && page.url === url),
+    external: (url: string) => {
+      if (props.onOpenExternalLink) props.onOpenExternalLink(url, 'local');
+      else reportLocalFeedback({ level: 'warning', message: 'Open this conversation in the dashboard to follow this link.' });
+    }
   };
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
@@ -2268,7 +2272,7 @@ const SessionQuotaRecoveryContext = createContext<string | undefined>(undefined)
 const SessionFeedbackContext = createContext<((notice: DashboardNotice) => void) | undefined>(undefined);
 const SessionAgentContext = createContext<{ open: (id?: string) => void; names: Record<string, string> } | undefined>(undefined);
 const SessionImagesContext = createContext<SessionImage[]>([]);
-const SessionLinkContext = createContext<{ privateWorkspace?:boolean; openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
+const SessionLinkContext = createContext<{ privateWorkspace?:boolean; browserNeeded?: (url: string) => boolean; openInternal: (url: string) => void; download: (url: string) => void; downloadFile: (path: string) => void; external: (url: string) => void }>({ openInternal: () => undefined, download: () => undefined, downloadFile: () => undefined, external: () => undefined });
 
 function uniqueMessageImages(message: DashboardCliSessionMessage): SessionImage[] {
   const seen = new Set<string>();
@@ -2447,13 +2451,10 @@ export function isDownloadLink(link: Pick<HTMLAnchorElement, "hasAttribute" | "t
 }
 
 export function isInternalWorkspaceLink(href: string): boolean {
-  if (href.startsWith("/")) return true;
   try {
-    const base = typeof window === "undefined" ? "http://localhost/" : window.location.href;
-    const url = new URL(href, base);
+    const url = new URL(href);
     if (!["http:", "https:"].includes(url.protocol)) return false;
-    if (url.origin === new URL(base).origin) return true;
-    return /^(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}|\[::1\])$/i.test(url.hostname);
+    return /^(?:localhost|[a-z\d.-]+\.localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i.test(url.hostname);
   } catch {
     return false;
   }
@@ -2484,7 +2485,7 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
       event.preventDefault();
       const href = link.href;
       if (isDownloadLink(link, href)) links.download(href);
-      else if (isInternalWorkspaceLink(href)) links.openInternal(href);
+      else if (isInternalWorkspaceLink(href) || link.getAttribute('title') === 'workspace-browser' || links.browserNeeded?.(href)) links.openInternal(href);
       else links.external(href);
       return;
     }

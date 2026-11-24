@@ -446,7 +446,7 @@ describe("isSafeExternalUrl", () => {
   it("allows ordinary HTTP(S) URLs and rejects executable or credential-bearing schemes", () => {
     expect(isSafeExternalUrl("https://openai.com/research")).toBe(true);
     expect(isSafeExternalUrl("http://localhost:3000/help")).toBe(true);
-    expect(isSafeExternalUrl("http://example.com/help")).toBe(false);
+    expect(isSafeExternalUrl("http://example.com/help")).toBe(true);
     expect(isSafeExternalUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeExternalUrl("file:///tmp/auth.json")).toBe(false);
     expect(isSafeExternalUrl("https://user:password@example.com/private")).toBe(false);

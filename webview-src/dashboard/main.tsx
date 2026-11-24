@@ -642,13 +642,8 @@ function App() {
   };
   useEffect(() => { if (apiTokenOpen && (!isBrowserDashboard || !connectionUnavailable)) sendApiRequest('listApiTokens'); }, [apiTokenOpen,realtimeConnected,connectionUnavailable]);
   const openExternalLink = useCallback((url: string, targetDeviceId?: string): void => {
-    if (!isBrowserDashboard || targetDeviceId && targetDeviceId !== "local") {
-      sendAction("openExternalUrl", undefined, { url, targetDeviceId });
-      return;
-    }
-    const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (!opened) showNotice({ level: "warning", message: "The browser blocked this link. Allow pop-ups for this dashboard and try again." });
-  }, [isBrowserDashboard, sendAction, showNotice]);
+    sendAction("openExternalUrl", undefined, { url, targetDeviceId });
+  }, [sendAction]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
   useEffect(()=>{

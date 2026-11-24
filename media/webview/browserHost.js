@@ -322,9 +322,8 @@
       let popup;
       try {
         const url = new URL(message.payload?.url?.trim());
-        const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-        if (!(url.protocol === "https:" || localHttp) || url.username || url.password)
-          throw new Error("Only HTTPS links or local HTTP links without embedded credentials can be opened.");
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+          throw new Error("Only HTTP or HTTPS links without embedded credentials can be opened.");
         popup = window.open("about:blank", "_blank");
         if (!popup) throw new Error("Allow pop-ups for this dashboard, then try the link again.");
         popup.opener = null;
