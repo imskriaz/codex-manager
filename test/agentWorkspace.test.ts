@@ -68,7 +68,7 @@ it('keeps earlier tabs when conversation links select another agent', () => {
 it('shows model and effort in the tab without a separate refresh or model row', () => {
   render({ sessions: [{ ...alpha, model: 'gpt-6.1-Sol', reasoningEffort: 'high' }, beta] });
   button('Alpha work').props.onClick();
-  expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Alpha (6.1-Sol · high)');
+  expect(tabs().find(node => node.props['aria-selected'])?.props.children).toBe('Alpha (gpt-6.1-Sol · high)');
   expect(nodes(render()).some(node => node.type === 'header')).toBe(false);
   expect(nodes(render()).some(node => node.props['aria-label'] === 'Refresh')).toBe(false);
 });

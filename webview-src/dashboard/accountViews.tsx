@@ -68,6 +68,7 @@ export function RecoveryPanel(props: {
 }
 
 export function BatchSelectionBar(props: {
+  compact?: boolean;
   copy: DashboardCopy;
   selectedCount: number;
   refreshPending: boolean;
@@ -111,7 +112,7 @@ export function BatchSelectionBar(props: {
   };
 
   return (
-    <div class="batch-bar">
+    <div class={`batch-bar${props.compact ? " is-contextual" : ""}`}>
       <div class="batch-bar-count">{formatTemplate(props.copy.batchSelectedCount, { count: props.selectedCount })}</div>
       <div class="batch-menu" ref={rootRef}>
         <button

@@ -168,7 +168,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('"Status unavailable"');
     expect(source).toContain("Running state will be checked when sending");
-    expect(source).toContain('placeholder={props.simple ? "Message…" : "Message Codex…"}');
+    expect(source).toContain('placeholder={props.simple ? presentation.composerPlaceholder : `Message ${runtimeName}…`}');
     expect(source).toContain('onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain('accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}');
@@ -254,7 +254,6 @@ describe("sessions sidebar layout", () => {
     expect(brand).toContain("props.logoUri");
     expect(source).toContain("createPortal(sidebarToggle, sidebarToggleTarget)");
     expect(source).not.toContain("if (props.taskBoardActive) setRailCollapsed(true)");
-    expect(brand).toContain('aria-label="User Workspace"');
     expect(brand).not.toContain('<strong>Team</strong>');
     expect(brand).toContain('<strong>Codex</strong>');
     expect(brand).toContain('aria-label="Dashboard home"');
@@ -358,7 +357,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('name="model"');
     expect(source).toContain('aria-label="Model"');
     expect(source).toContain('name="reasoning-effort"');
-    expect(source).toContain('aria-label="Reasoning"');
+    expect(source).toContain("aria-label={props.simple?'Thinking':'Reasoning'}");
     expect(source).toContain("activitySummary(messages)");
     expect(source).not.toContain('class="cli-turn-change-bar"');
     expect(css).toContain(".cli-activity-summary");
@@ -502,7 +501,7 @@ describe("sessions sidebar layout", () => {
 
     expect(source).toContain('props.onSwitchAccount(peerId, accountId)');
     expect(source).not.toContain('class="cli-pc-group-heading"');
-    expect(source).toContain('onOpenInCodex={props.standalone ? undefined : () => props.onOpenInCodex(props.selectedSession!)}');
+    expect(source).toContain("onOpenInCodex={props.standalone || props.selectedSession?.provider === 'claude' ? undefined : () => props.onOpenInCodex(props.selectedSession!)}");
     expect(source).toContain("Open in Codex</button>");
     const sessionRowStart = source.indexOf("const renderSession =");
     const sessionRowEnd = source.indexOf("const returnToSessionList", sessionRowStart);
@@ -551,7 +550,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-files-workbench.is-detail");
     expect(css).toContain(".cli-review-detail");
     expect(source).toContain('props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"');
-    expect(source).toContain("const toolsCollapsed = contextCollapsed || (activeContextTab !== 'accounts' && (!props.selectedSession || props.dashboardMode === true));");
+    expect(source).toContain("const toolsCollapsed = contextCollapsed || (props.officeUser && !hasUserProjectContext) || (activeContextTab !== 'accounts'");
     expect(source).toContain(".filter(tab => !(props.hideTerminal && tab === 'terminal') && featureAllows(tab) && (tab === 'browser' || !visibleTabs.includes(tab)))");
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
@@ -622,7 +621,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("onTab={selectContextTab}");
     expect(source).toContain("if (filePath) props.onReadFile(filePath, toolProjectPath)");
     expect(source).toContain("target.scrollLeft += event.deltaY");
-    expect(source).toContain('scrollIntoView({ block: "nearest", inline: "nearest" })');
+    expect(source).toContain('scroller.scrollLeft+=bounds.right-viewport.right');
     expect(source).toContain("SessionShareModal");
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
@@ -634,7 +633,7 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('<strong>Running elsewhere</strong>');
     expect(source).not.toContain('class="cli-account-footer-type"');
     expect(source).not.toContain('class="cli-running-quota-inline"');
-    expect(source).toContain('<TurnUsageStrip account={props.account}');
+    expect(source).toContain('account={props.selectedSession?.provider === \'claude\' ? undefined : props.account}');
     expect(source).not.toContain("Running elsewhere · wait to send");
     expect(css).toContain("content-visibility: auto");
     expect(css).toContain("contain-intrinsic-size");
@@ -874,7 +873,7 @@ describe("sessions sidebar layout", () => {
     const stateEffect = source.slice(stateEffectStart, source.indexOf("setDeleteTarget(undefined);", stateEffectStart));
 
     expect(stateEffectStart).toBeGreaterThan(-1);
-    expect(stateEffect).toContain('setSection(props.selectedSession?.archived ? "archived" : "active")');
+    expect(stateEffect).toContain('setSection(props.officeUser ? "active" : props.selectedSession?.archived ? "archived" : "active")');
     expect(stateEffect).not.toContain("if (props.selectedSession)");
   });
 

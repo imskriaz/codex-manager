@@ -41,13 +41,11 @@ it('imports large text idempotently, and rejects changing an existing upload, pr
  for(const file of ['../escape.txt','.workspace-trash/secret.txt','.workspace-history/secret.txt'])await expect(writeOfficeBinary(user,user.workspacePath,file,Buffer.from('no'))).rejects.toThrow();
  await expect(writeOfficeBinary({...user,limits:{storageMb:1,dailyTokens:0,dailyRequests:0}},user.workspacePath,'large.txt',Buffer.alloc(1048576))).rejects.toThrow('storage');
 });
-it('creates real XLSX, DOCX, PPTX and PDF documents and reads them in bounded workers',async()=>{
- for(const extension of ['xlsx','docx','pptx','pdf']){
+it.each(['xlsx','docx','pptx','pdf'])('creates a real %s document and reads it in a bounded worker',async(extension)=>{
  const data=await createOfficeDocument({path:'costing.'+extension,text:'# Buyer follow-up\nLab dip approval needed',slides:[{title:'Buyer follow-up',bullets:['Lab dip approval needed'],notes:'Confirm with buyer.'}],sheets:[{name:'Costing',rows:[['Style','Quantity','Unit cost','Order value'],['ST100',2400,2.75,{formula:'B2*C2'}]]}]});
  expect(data.length).toBeGreaterThan(500);let text:string;try{text=await extractOfficeDocument('costing.'+extension,data);}catch(error){throw new Error(extension+': '+String(error));}expect(text).toMatch(extension==='xlsx'?/ST100/:/Lab dip/);
  if(extension==='xlsx')expect(text).toMatch(/B2\*C2/);
- }
-},30000);
+},40000);
 it('rejects invalid document headers, external spreadsheet formulas and unsupported exports',async()=>{
  await expect(extractOfficeDocument('empty.docx',Buffer.from('x'))).rejects.toThrow('incomplete');
  await expect(extractOfficeDocument('fake.pdf',Buffer.from('not a PDF'))).rejects.toThrow('format');

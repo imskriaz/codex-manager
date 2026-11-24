@@ -93,8 +93,7 @@ export async function resolveMasterOfficeUsername(expectedUsername?: string): Pr
     return stored;
   }, { waitMs: 2_000 });
   if (expectedUsername !== undefined) return operation;
-  let promise: Promise<string>;
-  promise = operation.finally(() => {
+  const promise = operation.finally(() => {
     if (masterUsernameInFlight?.promise === promise) masterUsernameInFlight = undefined;
   });
   masterUsernameInFlight = { file, promise };

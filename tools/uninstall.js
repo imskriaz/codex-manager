@@ -76,8 +76,14 @@ async function main() {
   // Remove the boot trigger first, so a failed best-effort shutdown cannot
   // resurrect the relay at the next Windows sign-in.
   removeFile(startupLauncher);
+  removeFile(startupLauncher?.replace(/\.cmd$/, ".vbs"));
+  removeFile(path.join(storage, "always-online-relay-start.cmd"));
   if (process.platform === "win32") {
     const { execFileSync } = require("node:child_process");
+    let bootTaskExists = true;
+    try { execFileSync("schtasks.exe", ["/Query", "/TN", "CodexManagerAlwaysOnline"], { windowsHide: true, timeout: 3_000, stdio: "pipe" }); }
+    catch (error) { if (error.status !== 1) throw error; bootTaskExists = false; }
+    if (bootTaskExists) execFileSync("schtasks.exe", ["/Delete", "/TN", "CodexManagerAlwaysOnline", "/F"], { windowsHide: true, timeout: 3_000, stdio: "pipe" });
     const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     try {
       execFileSync("reg.exe", ["query", key, "/v", "CodexManagerAlwaysOnline"], { windowsHide: true, timeout: 1_000, stdio: "pipe" });

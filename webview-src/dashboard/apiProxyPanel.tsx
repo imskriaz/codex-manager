@@ -144,6 +144,15 @@ export function ApiProxyPanel(props: {
             </button>
             <button
               type="button"
+              aria-label="Refresh proxy"
+              title="Refresh proxy"
+              disabled={!props.connected || props.loading || props.keyAccess.pending}
+              onClick={props.onRefresh}
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
               aria-label="Proxy connection settings"
               title="Proxy connection settings"
               onClick={() => setConnectionOpen(true)}

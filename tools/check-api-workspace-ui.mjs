@@ -28,7 +28,7 @@ const compiled = await build({ stdin: { contents: `
     window.privacy=()=>setPrivacyMode(true);
     window.stopFlows=()=>setSnapshot(current=>({...current,requests:current.requests.map(row=>({...row,status:'completed'}))}));
     window.manyKeys=()=>setTokens(Array.from({length:80},(_,index)=>({id:'fixture-'+index,name:'Fixture key '+index,createdAt:now,permissions:['state'],projectPaths:[]})));
-    window.failRefresh=()=>{setError('Proxy refresh failed. Retry after reconnecting.');setLoading(false)};
+    window.failRefresh=()=>{setError('Proxy refresh failed. Retry after reconnecting.');setLoading(false);setUncertain(true)};
     window.offline=()=>setConnected(false);
     window.missing=()=>setSnapshot(undefined);
     window.empty=()=>setSnapshot({capturedAt:Date.now(),requests:[]});

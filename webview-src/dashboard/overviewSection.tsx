@@ -896,7 +896,7 @@ function UsageGraph(props: {
             onBlur={dismissSummaryLater}
             onClick={event => { keepSummaryOpen(); setHovered(undefined); setSettingsOpen(false); const anchor = event.currentTarget.getBoundingClientRect(); setAccountSummary(current => current?.pinned ? undefined : { anchor, pinned: true }); }}>
           <span class="usage-graph-summary">
-            {graphMode === "tokens" ? events.length ? `${formatTokenCount(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
+            {!data ? error ? "Usage unavailable" : props.usageGraphPaused ? "Usage paused" : "Loading usage…" : graphMode === "tokens" ? events.length ? `${formatTokenCount(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"} with usage`}
           </span>
           <span class="usage-graph-color-key" aria-label="Account color key">
             {legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {

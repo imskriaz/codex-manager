@@ -1,14 +1,14 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), get: vi.fn(), request: vi.fn(), readFile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), get: vi.fn(), request: vi.fn(), readFile: vi.fn(), unlink: vi.fn() }));
 vi.mock("child_process", async () => ({ ...await vi.importActual<typeof import("child_process")>("child_process"), spawn: mocks.spawn }));
 vi.mock("http", () => ({ get: mocks.get, request: mocks.request }));
-vi.mock("fs/promises", async () => ({ ...await vi.importActual<typeof import("fs/promises")>("fs/promises"), readFile: mocks.readFile }));
+vi.mock("fs/promises", async () => ({ ...await vi.importActual<typeof import("fs/promises")>("fs/promises"), readFile: mocks.readFile, unlink: mocks.unlink }));
 vi.mock("../src/utils/storageRoot", () => ({ getCodexManagerStorageRoot: () => "relay-test-storage" }));
 import { AlwaysOnlineServer } from "../src/services/alwaysOnlineServer";
 
-afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 function unhealthyPort() {
   mocks.get.mockImplementation((_options, callback) => {
@@ -26,6 +26,89 @@ function server() {
 }
 
 describe("detached relay terminal outcomes", () => {
+  it("accepts a valid Node snapshot and confirms its authenticated shutdown", async () => {
+    vi.useFakeTimers();
+    let live = true;
+    mocks.readFile.mockImplementation(async (file: string) => {
+      if (!file.endsWith('.pid')) return JSON.stringify({ adminToken: 'token', mode: 'node' });
+      if (live) return String(process.pid);
+      throw Object.assign(new Error('Missing'), { code: 'ENOENT' });
+    });
+    mocks.get.mockImplementation((_options, callback) => {
+      const request = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      queueMicrotask(() => {
+        if (!live) { request.emit('error', Object.assign(new Error('Closed'), { code: 'ECONNREFUSED' })); return; }
+        const response = Object.assign(new EventEmitter(), { statusCode: 200, setEncoding: vi.fn() });
+        callback(response); response.emit('data', JSON.stringify({ accounts: [], settings: {}, panelTitle: 'Codex Manager' })); response.emit('end');
+      });
+      return request;
+    });
+    mocks.request.mockImplementation((_options, callback) => Object.assign(new EventEmitter(), {
+      destroy: vi.fn(), end: () => {
+        live = false;
+        const response = Object.assign(new EventEmitter(), { resume: vi.fn() });
+        callback(response); response.emit('end');
+      }
+    }));
+    const checked = server().prepareForVscodeSession();
+    await vi.advanceTimersByTimeAsync(200);
+    await checked;
+    expect(mocks.request).toHaveBeenCalledOnce();
+    expect(mocks.request.mock.calls[0]![0].headers['X-Codex-Admin']).toBe('token');
+    expect(mocks.unlink).not.toHaveBeenCalled();
+  });
+
+  it("rejects unrelated HTTP 200 pages as Node hosts and bounds a stalled occupancy check", async () => {
+    vi.useFakeTimers();
+    mocks.readFile.mockImplementation(async (file: string) => file.endsWith(".pid") ? String(process.pid) : JSON.stringify({ adminToken: "token", mode: "node" }));
+    let probes = 0;
+    mocks.get.mockImplementation((_options, callback) => {
+      const request = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      if (++probes % 2) {
+        queueMicrotask(() => {
+          const response = Object.assign(new EventEmitter(), { statusCode: 200, setEncoding: vi.fn(), resume: vi.fn() });
+          callback(response); response.emit("data", "<html>Unrelated server</html>"); response.emit("end");
+        });
+      }
+      return request;
+    });
+    mocks.request.mockImplementation(() => Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() }));
+    const checked = expect(server().prepareForVscodeSession()).rejects.toThrow("did not confirm shutdown");
+    await vi.advanceTimersByTimeAsync(6000);
+    await checked;
+    expect(mocks.unlink).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("ignores an orphaned or reused PID when the dashboard port is free (dead: %s)", async dead => {
+    mocks.readFile.mockImplementation(async (file: string) => file.endsWith(".pid") ? String(process.pid) : JSON.stringify({ adminToken: "token", mode: "node" }));
+    mocks.unlink.mockResolvedValue(undefined);
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      if (dead) throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+      return true;
+    });
+    mocks.get.mockImplementation(() => {
+      const request = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      queueMicrotask(() => request.emit("error", Object.assign(new Error("Port free"), { code: "ECONNREFUSED" })));
+      return request;
+    });
+    await expect(server().prepareForVscodeSession()).resolves.toBeUndefined();
+    expect(mocks.unlink).toHaveBeenCalledWith(expect.stringContaining("always-online-relay.pid"));
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("retains a replacement PID written while stale cleanup was checking the port", async () => {
+    let reads = 0;
+    mocks.readFile.mockImplementation(async (file: string) => file.endsWith(".pid") ? String(++reads === 1 ? process.pid : process.pid + 1) : JSON.stringify({ adminToken: "token", mode: "node" }));
+    vi.spyOn(process, "kill").mockReturnValue(true);
+    mocks.get.mockImplementation(() => {
+      const request = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      queueMicrotask(() => request.emit("error", Object.assign(new Error("Port free"), { code: "ECONNREFUSED" })));
+      return request;
+    });
+    await expect(server().prepareForVscodeSession()).resolves.toBeUndefined();
+    expect(mocks.unlink).not.toHaveBeenCalled();
+  });
+
   it("does not report a stale live PID as a healthy running relay", async () => {
     vi.useFakeTimers(); unhealthyPort();
     mocks.readFile.mockResolvedValue(String(process.pid));

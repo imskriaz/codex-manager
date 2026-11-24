@@ -48,13 +48,11 @@ export function unansweredSessionQuestions(messages: DashboardCliSessionMessage[
   return messages.filter(message => message.questions?.some((_, index) => !answered.has(JSON.stringify(['request_user_input_async', message.id, index]))));
 }
 
-export const SESSION_QUESTION_PROMPT_MS = 120_000;
-
-/** History stays answerable; only a recent question with no later activity interrupts. */
+/** A waiting question stays active until it is answered or the conversation moves on. */
 export function activeSessionQuestion(messages: DashboardCliSessionMessage[], now = Date.now()) {
   const question = unansweredSessionQuestions(messages).at(-1);
   const timestamp = Date.parse(question?.timestamp ?? '');
-  return question && messages.at(-1)?.id === question.id && Number.isFinite(timestamp) && timestamp <= now && now - timestamp < SESSION_QUESTION_PROMPT_MS ? question : undefined;
+  return question && messages.at(-1)?.id === question.id && Number.isFinite(timestamp) && timestamp <= now ? question : undefined;
 }
 
 export function sessionQuestionReply(message: DashboardCliSessionMessage, answers: Record<string, string>): string {

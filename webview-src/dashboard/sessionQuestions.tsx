@@ -3,17 +3,18 @@ import type { DashboardCliSessionMessage } from '../../src/domain/dashboard/type
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
 import { readDismissedCodexRequests, saveDismissedCodexRequests } from './codexSessionPrompts';
-import { activeSessionQuestion, sessionQuestionReply, SESSION_QUESTION_PROMPT_MS } from '../../src/domain/sessionQuestions';
+import { activeSessionQuestion, sessionQuestionReply } from '../../src/domain/sessionQuestions';
 export { sessionQuestionReply } from '../../src/domain/sessionQuestions';
 export const pendingSessionQuestion = activeSessionQuestion;
 
-export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoOpen = false, answered, pending = false, assistantName = 'Codex' }: { message: DashboardCliSessionMessage; onReply?: (text: string) => string | undefined; disabled?: boolean; scope?: string; autoOpen?: boolean; answered: Set<string>; pending?: boolean; assistantName?: string }) {
+export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoOpen = false, openRequested = false, onOpened, answered, pending = false, assistantName = 'Codex' }: { message: DashboardCliSessionMessage; onReply?: (text: string) => string | undefined; disabled?: boolean; scope?: string; autoOpen?: boolean; openRequested?: boolean; onOpened?: () => void; answered: Set<string>; pending?: boolean; assistantName?: string }) {
   const key = `question:${scope ?? message.turnId ?? ''}:${message.id}`;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false), [expired, setExpired] = useState(() => readDismissedCodexRequests().includes(key));
   const [outcome, setOutcome] = useState(''), [ready, setReady] = useState(!onReply), [queued, setQueued] = useState(false);
   const [enlarged,setEnlarged]=useState<{image:string;option:string}>(),[failed,setFailed]=useState<string[]>([]);
   const edited = useRef(false), submitting = useRef(false);
+  const wasActive = useRef(autoOpen);
   const questions = message.questions?.map((question, index) => ({ ...question, index })).filter(question => !answered.has(JSON.stringify(['request_user_input_async', message.id, question.index]))) ?? [];
   const visible = !!onReply && !queued && (open || autoOpen && !expired);
   useEffect(() => { if (!pending) { submitting.current = false; setQueued(false); } }, [pending, questions.length]);
@@ -26,10 +27,14 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
     return () => { disposed = true; };
   }, [key, !!onReply]);
   useEffect(() => {
-    if (!autoOpen) return;
-    const timer = setTimeout(() => setExpired(true), Math.max(0, Date.parse(message.timestamp ?? '') + SESSION_QUESTION_PROMPT_MS - Date.now()));
-    return () => clearTimeout(timer);
-  }, [autoOpen, message.timestamp]);
+    if (wasActive.current && !autoOpen) setOpen(false);
+    wasActive.current = autoOpen;
+  }, [autoOpen]);
+  useEffect(() => {
+    if (!openRequested || !onReply || !questions.length || queued || pending) return;
+    setOpen(true);
+    onOpened?.();
+  }, [openRequested, !!onReply, questions.length, queued, pending]);
   const update = (index: number, value: string) => {
     edited.current = true;
     const next = { ...answers, [index]: value };
@@ -38,7 +43,7 @@ export function SessionQuestionPrompt({ message, onReply, disabled, scope, autoO
   };
   const close = () => { setOpen(false); setExpired(true); if (!saveDismissedCodexRequests([...readDismissedCodexRequests(), key])) setOutcome('Question closed in this tab. Browser storage is unavailable.'); };
   if (!questions.length || queued) return null;
-  return <section class="cli-question-message" aria-label={`${assistantName} question`}>
+  return <section class="cli-question-message" data-question-id={message.id} aria-label={`${assistantName} question`}>
     {!visible ? <>{!onReply?questions.map(question => <p key={question.index}>{question.title}</p>):null}{onReply ? <button type="button" disabled={queued} onClick={() => setOpen(true)} aria-expanded={false}>{queued ? 'Answer queued' : 'Answer'}</button> : null}</> :
       <ModalShell open={visible} title={`${assistantName} has a question`} closeLabel="Close question" className="session-question-modal" onClose={close}><form class="codex-request-panel cli-question-prompt" aria-label={`Answer ${assistantName} question`} onSubmit={event => {
         event.preventDefault();

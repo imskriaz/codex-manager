@@ -12,6 +12,7 @@ beforeEach(async () => {
   server = Object.assign(Object.create(WebDashboardServer.prototype), {
     getUrl: () => origin, settingsStore: { getDashboardSettings: () => ({}) }, isAuthorized: async () => authorized,
     codexPushActions: new Map(), processClientMessage: processMessage,
+    email: { notify: vi.fn() },
     browserPush: { takeAction: (id: string, action: string) => {
       if (!actions.get(id)?.includes(action)) return false;
       actions.delete(id); return true;

@@ -67,11 +67,11 @@ it('preserves async Codex questions and sends native question IDs with selectabl
   expect(unansweredSessionQuestions([ask, { id: 'answer', role: 'user', text: 'Compact' }])).toEqual([ask]);
 });
 
-it('only interrupts for a recent question with no newer activity and keeps old questions answerable', () => {
+it('keeps a dated question active without a timeout until newer activity, preserving answerable history', () => {
   const now = Date.now();
   const ask = { id: 'ask', role: 'assistant' as const, text: '', timestamp: new Date(now - 119_999).toISOString(), questions: [{ title: 'Continue?' }] };
   expect(activeSessionQuestion([ask], now)).toEqual(ask);
-  expect(activeSessionQuestion([ask], now + 1)).toBeUndefined();
+  expect(activeSessionQuestion([ask], now + 60 * 60_000)).toEqual(ask);
   for (const later of [{ id: 'command', kind: 'command' as const, text: 'working' }, { id: 'reply', role: 'user' as const, text: 'Next task' }, { ...ask, id: 'next' }]) expect(activeSessionQuestion([ask, later], now)?.id).not.toBe(ask.id);
   for (const timestamp of [undefined, 'invalid', new Date(now + 1).toISOString()]) expect(activeSessionQuestion([{ ...ask, timestamp }], now)).toBeUndefined();
   expect(unansweredSessionQuestions([ask, { id: 'later', text: 'More work' }])).toEqual([ask]);

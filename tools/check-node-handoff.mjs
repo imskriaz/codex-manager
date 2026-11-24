@@ -175,5 +175,6 @@ try {
   for (const subscription of subscriptions) subscription.dispose();
   store.close();
   assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
-  await rm(root, { recursive: true, force: true });
+  // Windows can retain a detached host's working directory briefly after shutdown.
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

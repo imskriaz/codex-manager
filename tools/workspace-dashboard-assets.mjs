@@ -2,6 +2,7 @@ import path from 'node:path';
 
 // Read-only browser checks can exercise a workspace build against the installed host.
 export async function useWorkspaceDashboardAssets(page, origin, routes = page) {
+  const dashboardBuild = process.env.CODEX_MANAGER_UI_BUILD || 'media/webview/dashboard';
   // Fulfilled navigation responses have no address-space metadata in Chromium.
   await page.context().grantPermissions(['local-network-access'], { origin });
   await routes.route('**/*', async route => {
@@ -12,13 +13,13 @@ export async function useWorkspaceDashboardAssets(page, origin, routes = page) {
   });
   for (const [asset, file, contentType] of [
     ['browserHost.js', 'media/webview/browserHost.js', 'text/javascript'],
-    ['dashboard.js', 'media/webview/dashboard/dashboard.js', 'text/javascript'],
-    ['dashboard-manifest.json', 'media/webview/dashboard/dashboard-manifest.json', 'application/json'],
+    ['dashboard.js', path.join(dashboardBuild, 'dashboard.js'), 'text/javascript'],
+    ['dashboard-manifest.json', path.join(dashboardBuild, 'dashboard-manifest.json'), 'application/json'],
     ['dashboard.css', 'media/webview/quotaSummary.css', 'text/css'],
     ['shared.css', 'media/webview/shared.css', 'text/css']
   ]) await routes.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
   await routes.route('**/assets/chunks/*.js', route => {
     const name = new URL(route.request().url()).pathname.slice('/assets/chunks/'.length);
-    return /^[A-Za-z0-9_-]+\.js$/.test(name) ? route.fulfill({ contentType: 'text/javascript', path: path.resolve('media/webview/dashboard/chunks', name) }) : route.abort();
+    return /^[A-Za-z0-9_-]+\.js$/.test(name) ? route.fulfill({ contentType: 'text/javascript', path: path.resolve(dashboardBuild, 'chunks', name) }) : route.abort();
   });
 }

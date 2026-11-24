@@ -62,7 +62,7 @@ try {
       await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
       await page.locator('.cli-workspace').waitFor();
       const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
-      if (await rail.isVisible()) await rail.click();
+      if (width === 390 || await rail.isVisible()) await rail.click();
       await page.getByRole('button', { name: 'Account menu', exact: true }).click();
       await page.getByRole('menuitem', { name: 'Open account center', exact: true }).click();
       const accounts = page.locator('.workspace-dashboard');
@@ -70,7 +70,7 @@ try {
       await accounts.locator('.hero').waitFor({state:'attached'});
       assert.equal(await page.locator('.hero').count(), 1, 'Dashboard content mounts once across the page and workspace tool');
       assert.ok(await accounts.locator('#settingsOpenButton').count(), 'Full dashboard settings are available in the tool');
-      assert.ok(await accounts.getByRole('heading', { name: /Saved Accounts/ }).count(), 'The tool reuses the full saved accounts section');
+      assert.ok(await accounts.getByRole('group', { name: 'Saved Accounts', exact: true }).count(), 'The tool reuses the full saved accounts section');
       assert.equal(await accounts.locator('.cli-account-dashboard').count(), 0, 'Dashboard tool has no compact account-only override');
       assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab][aria-selected=true]').innerText(), 'Dashboard', 'Account footer selects the workspace Dashboard tab without a conversation');
       assert.equal(await page.getByRole('dialog', { name: 'Account center', exact: true }).count(), 0, 'Account footer uses the workspace panel');

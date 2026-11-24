@@ -361,6 +361,8 @@ function App() {
     return false;
   };
   const [selectedCliSession, setSelectedCliSessionState] = useState<DashboardCliSessionSummary>();
+  const [focusCodexRequestKey, setFocusCodexRequestKey] = useState<string>();
+  const [questionToOpen, setQuestionToOpen] = useState<{ id: string; target: CliSessionTarget }>();
   const setSelectedCliSession = useCallback((update: DashboardCliSessionSummary | undefined | ((current: DashboardCliSessionSummary | undefined) => DashboardCliSessionSummary | undefined)) => {
     setSelectedCliSessionState(current => {
       let next = typeof update === 'function' ? update(current) : update;
@@ -619,6 +621,14 @@ function App() {
     connected: !isBrowserDashboard || !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage),
     peers: state.snapshot?.connectedPeers, sendAction, onNotice: showNotice
   });
+  useEffect(() => {
+    if (!focusCodexRequestKey || !codexPrompts.active || codexPromptKey(codexPrompts.active.request) !== focusCodexRequestKey) return;
+    const prompt = document.querySelector<HTMLElement>('.codex-request-dialog');
+    if (!prompt) return;
+    prompt.focus({ preventScroll: true });
+    prompt.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setFocusCodexRequestKey(undefined);
+  }, [codexPrompts.active, focusCodexRequestKey, browserPath]);
   codexPromptTimeoutRef.current = codexPrompts.timeout;
   const questionNotifications = useSessionQuestionNotifications(showNotice);
   const sendApiRequest = (action: 'generateApiToken'|'editApiToken'|'copyApiToken'|'clearApiProxyLogs'|'listApiTokens'|'saveApiProxyModelMapping'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
@@ -2500,6 +2510,8 @@ function App() {
   const backgroundCodexRequest = questionNotifications.active ?? codexPrompts.background?.request;
   const reviewBackgroundCodexRequest = (): void => {
     if (!backgroundCodexRequest) return;
+    if (backgroundCodexRequest.sourceMessageId) setQuestionToOpen({ id: backgroundCodexRequest.sourceMessageId, target: { id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId } });
+    else setFocusCodexRequestKey(codexPromptKey(backgroundCodexRequest));
     const session = cliSessionsRef.current.find((candidate) =>
       sameCliSessionTarget(candidate, { id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId })
     );
@@ -2731,32 +2743,6 @@ function App() {
                   {tagFilter ? <div class="account-center-options" role="group" aria-label="Account display options">{tagFilter}</div> : null}
                 </WorkspaceMenu>
               </div> : null}
-              {selectedCount > 0 ? (
-                <BatchSelectionBar
-                  copy={snapshot.copy}
-                  selectedCount={selectedCount}
-                  refreshPending={batchRefreshPending}
-                  resyncPending={batchResyncPending}
-                  removePending={batchRemovePending}
-                  sharePending={sharePending}
-                  autoResetPending={isActionPending('batchSetAccountAutoResetAllowed')}
-                  onAutoReset={allowed => sendAction('batchSetAccountAutoResetAllowed', undefined, { accountIds: state.selectedAccountIds, autoResetAllowed: allowed })}
-                  onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
-                  onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
-                  onRemove={() => {
-                    setBrowserActionRequest({
-                      kind: "confirm",
-                      action: "batchRemove",
-                      accountIds: state.selectedAccountIds,
-                      title: "Remove selected accounts",
-                      message: `Remove ${selectedCount} selected account${selectedCount === 1 ? "" : "s"}?`,
-                      confirmLabel: "Remove",
-                      danger: true
-                    });
-                  }}
-                  onShare={handleShareTokens}
-                />
-              ) : null}
             </div>
             <div class="dashboard-account-toolbar">
               <label class="account-search-control">
@@ -2785,10 +2771,38 @@ function App() {
                   </button>
                 ) : null}
               </label>
-              {displayFilters}
-              <div class="dashboard-view-controls">
-                {viewToggle}
-              </div>
+              {selectedCount > 0 ? (
+                <BatchSelectionBar
+                  compact
+                  copy={snapshot.copy}
+                  selectedCount={selectedCount}
+                  refreshPending={batchRefreshPending}
+                  resyncPending={batchResyncPending}
+                  removePending={batchRemovePending}
+                  sharePending={sharePending}
+                  autoResetPending={isActionPending('batchSetAccountAutoResetAllowed')}
+                  onAutoReset={allowed => sendAction('batchSetAccountAutoResetAllowed', undefined, { accountIds: state.selectedAccountIds, autoResetAllowed: allowed })}
+                  onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
+                  onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
+                  onRemove={() => {
+                    setBrowserActionRequest({
+                      kind: "confirm",
+                      action: "batchRemove",
+                      accountIds: state.selectedAccountIds,
+                      title: "Remove selected accounts",
+                      message: `Remove ${selectedCount} selected account${selectedCount === 1 ? "" : "s"}?`,
+                      confirmLabel: "Remove",
+                      danger: true
+                    });
+                  }}
+                  onShare={handleShareTokens}
+                />
+              ) : <>
+                {displayFilters}
+                <div class="dashboard-view-controls">
+                  {viewToggle}
+                </div>
+              </>}
             </div>
             <div class="accounts-grid">
               {sortedAccounts.map((account) => (
@@ -3256,6 +3270,8 @@ function App() {
               sessions={cliSessions}
                 attentionSessionKeys={codexPrompts.entries.filter(entry => !entry.responseId).map(entry => cliSessionTargetKey({ id: entry.request.threadId, deviceId: entry.request.deviceId }))}
               selectedSession={selectedCliSession}
+              openQuestionId={questionToOpen && sameCliSessionTarget(questionToOpen.target, selectedCliSession) ? questionToOpen.id : undefined}
+              onQuestionOpened={() => setQuestionToOpen(undefined)}
               requestPanel={codexRequestView}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}

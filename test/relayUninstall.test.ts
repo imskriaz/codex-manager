@@ -20,9 +20,10 @@ beforeEach(async () => {
 });
 afterEach(async () => { store.close(); await removeTestDirectory(root); });
 
-async function run() {
+async function run(platform = 'test', taskPresent = true) {
   const requests: Array<{ port: number; headers: Record<string, string> }> = [];
-  const processStub = { env: {}, exitCode: 0 };
+  const commands: Array<{ command: string; args: string[]; options: { windowsHide: boolean } }> = [];
+  const processStub = { env: { APPDATA: root }, platform, exitCode: 0 };
   const errors = vi.fn();
   vm.runInNewContext(source, { console: { error: errors, log: vi.fn() }, process: processStub, Buffer, __dirname: path.join(extensionRoot, 'tools'),
     require: (id: string) => {
@@ -30,6 +31,10 @@ async function run() {
       if (id === "node:os") return { homedir: () => root };
       if (id === "node:path") return path;
       if (id === "node:sqlite") return require("node:sqlite");
+      if (id === "node:child_process") return { execFileSync: (command: string, args: string[], options: { windowsHide: boolean }) => {
+        commands.push({ command, args, options });
+        if (command === 'reg.exe' || !taskPresent && args[0] === '/Query') throw Object.assign(new Error('Not found'), { status: 1 });
+      } };
       if (id === "node:http") return { request: (options: typeof requests[number], callback: (response: EventEmitter & { resume(): void }) => void) => {
         requests.push(options);
         const request = new EventEmitter() as EventEmitter & { end(): void };
@@ -45,8 +50,21 @@ async function run() {
   });
   await Promise.resolve();
   await Promise.resolve();
-  return { requests, errors, processStub };
+  return { requests, errors, processStub, commands };
 }
+
+it.each([true, false])('removes Windows launchers and only deletes an existing boot task (%s)', async taskPresent => {
+  const startup = path.join(root, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+  fs.mkdirSync(startup, { recursive: true });
+  const launchers = [path.join(startup, 'CodexManagerAlwaysOnline.cmd'), path.join(startup, 'CodexManagerAlwaysOnline.vbs'), path.join(root, '.codex', 'always-online-relay-start.cmd')];
+  launchers.forEach(file => fs.writeFileSync(file, 'fixture'));
+  const result = await run('win32', taskPresent);
+  expect(result.processStub.exitCode).toBe(0);
+  expect(result.requests).toHaveLength(1);
+  expect(result.commands.filter(command => command.args[0] === '/Delete')).toHaveLength(taskPresent ? 1 : 0);
+  expect(result.commands.every(command => command.options.windowsHide)).toBe(true);
+  expect(launchers.every(file => !fs.existsSync(file))).toBe(true);
+});
 
 it("stops the relay with SQLite's current token instead of the retained legacy file", async () => {
   store.set("files", "always-online-relay.json", { text: JSON.stringify({ adminToken: "current-token" }) });

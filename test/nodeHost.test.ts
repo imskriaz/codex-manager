@@ -3,14 +3,15 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTestDirectory } from './testFilesystem';
+import * as vscode from 'vscode';
 
 const host = vi.hoisted(() => ({
   start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
-  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), captureRecovery: vi.fn(), flushSessions: vi.fn()
+  readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), captureRecovery: vi.fn(), flushSessions: vi.fn(), syncStart: vi.fn()
 }));
-vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context }));
+vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context, sqliteConfiguration: (configuration: unknown) => configuration }));
 vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; setAccountSwitchCoordinator() {} } }));
-vi.mock("../src/services/encryptedSync", () => ({ EncryptedSyncManager: class { async start() {} dispose() {} } }));
+vi.mock("../src/services/encryptedSync", () => ({ EncryptedSyncManager: class { start = host.syncStart; canAutomateAccount() { return true; } dispose() {} } }));
 vi.mock("../src/infrastructure/config/proxyEnvironment", () => ({ initializeCodexProxyEnvironment: async () => undefined, disposeCodexProxyEnvironment: vi.fn() }));
 vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; prepareForShutdown() {} publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
 vi.mock("../src/storage/sqliteState", () => ({
@@ -28,6 +29,7 @@ let signals: Set<(...args: any[]) => void>;
 let storageRoot: string;
 beforeEach(async () => {
   vi.resetAllMocks();
+  host.syncStart.mockResolvedValue(undefined);
   storageRoot = await mkdtemp(join(tmpdir(), 'manager-node-host-'));
   vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT', storageRoot);
   signals = new Set([...process.listeners("SIGINT"), ...process.listeners("SIGTERM")]);
@@ -35,6 +37,19 @@ beforeEach(async () => {
   host.readPid.mockReturnValue(String(process.pid));
   vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
+});
+
+it('becomes ready while optional claim discovery waits and prevents automation until it completes', async () => {
+  let finish!: () => void;
+  host.syncStart.mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? true : fallback } as never);
+  await startNodeHost();
+  expect(host.writePid).toHaveBeenCalled();
+  const canUseAccount = host.background.mock.calls[0]![3] as (id: string) => boolean;
+  expect(canUseAccount('account')).toBe(false);
+  finish();
+  await Promise.resolve();
+  expect(canUseAccount('account')).toBe(true);
 });
 afterEach(async () => {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {

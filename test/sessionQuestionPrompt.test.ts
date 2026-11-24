@@ -8,6 +8,7 @@ vi.mock('preact/hooks', () => ({
   useEffect(setup: () => void | (() => void), dependencies: unknown[]) { const i = harness.cursor++, previous = harness.slots[i]; if (previous && dependencies.every((value, j) => Object.is(value, previous.dependencies[j]))) return; const slot = { dependencies, cleanup: undefined as void | (() => void) }; harness.slots[i] = slot; harness.effects.push(() => { previous?.cleanup?.(); slot.cleanup = setup(); }); }
 }));
 vi.mock('../webview-src/dashboard/cliSessionCache', () => ({ readBrowserCache: harness.read, writeBrowserCache: harness.write }));
+vi.mock('../webview-src/dashboard/primitives', () => ({ ModalShell: ({ children }: { children: unknown }) => children }));
 import { SessionQuestionPrompt } from '../webview-src/dashboard/sessionQuestions';
 import { answeredSessionQuestionIds, sessionQuestionReply } from '../src/domain/sessionQuestions';
 let props: Parameters<typeof SessionQuestionPrompt>[0];
@@ -15,6 +16,7 @@ const submit = vi.fn();
 function render(patch: Partial<typeof props> = {}) { props = { ...props, ...patch }; harness.cursor = 0; const node = SessionQuestionPrompt(props); harness.effects.splice(0).forEach(effect => effect()); return node; }
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
 const find = (type: string) => nodes(render()).find(node => node.type === type)!;
+const findAnswer = () => nodes(render()).find(node => node.type === 'textarea' && typeof node.props.onInput === 'function')!;
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 beforeEach(() => {
   vi.useFakeTimers(); harness.slots = []; harness.cursor = 0; harness.effects = [];
@@ -25,29 +27,42 @@ beforeEach(() => {
 afterEach(() => { harness.slots.forEach(slot => slot?.cleanup?.()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 
-it('automatically closes after two minutes and only reopens on Answer', async () => {
+it('keeps a waiting question visible without a timer and closes when the turn moves on', async () => {
   render(); await flush(); expect(find('form')).toBeDefined();
-  vi.advanceTimersByTime(120_000); expect(find('form')).toBeUndefined();
+  vi.advanceTimersByTime(60 * 60_000); expect(find('form')).toBeDefined();
+  render({ autoOpen: false }); expect(find('form')).toBeUndefined();
   find('button').props.onClick(); expect(find('form')).toBeDefined();
   vi.advanceTimersByTime(120_000); expect(find('form')).toBeDefined(); expect(submit).not.toHaveBeenCalled();
 });
 it('shows a button for old questions and closes immediately after queueing once', async () => {
   render({ autoOpen: false }); await flush(); expect(find('form')).toBeUndefined();
-  find('button').props.onClick(); find('textarea').props.onInput({ currentTarget: { value: 'Typed answer' } });
+  find('button').props.onClick(); findAnswer().props.onInput({ currentTarget: { value: 'Typed answer' } });
   const form = find('form'); form.props.onSubmit({ preventDefault() {} }); form.props.onSubmit({ preventDefault() {} });
   expect(submit).toHaveBeenCalledOnce(); expect(submit.mock.calls[0]![0]).toContain('Typed answer'); expect(render()).toBeNull();
 });
+it('opens a closed historical prompt directly from its banner without losing the draft', async () => {
+  const onOpened = vi.fn();
+  render({ autoOpen: false, onOpened }); await flush();
+  expect(find('form')).toBeUndefined();
+  render({ openRequested: true });
+  expect(find('form')).toBeDefined();
+  expect(onOpened).toHaveBeenCalledOnce();
+  findAnswer().props.onInput({ currentTarget: { value: 'Kept draft' } });
+  render({ openRequested: false });
+  expect(findAnswer().props.value).toBe('Kept draft');
+  expect(submit).not.toHaveBeenCalled();
+});
 it('closes an automatic question when work continues but keeps a failed enqueue editable', async () => {
   render(); await flush(); render({ autoOpen: false }); expect(find('form')).toBeUndefined();
-  find('button').props.onClick(); find('textarea').props.onInput({ currentTarget: { value: 'Kept answer' } });
+  find('button').props.onClick(); findAnswer().props.onInput({ currentTarget: { value: 'Kept answer' } });
   submit.mockReturnValue(undefined); find('form').props.onSubmit({ preventDefault() {} });
-  expect(find('form')).toBeDefined(); expect(find('textarea').props.value).toBe('Kept answer');
+  expect(find('form')).toBeDefined(); expect(findAnswer().props.value).toBe('Kept answer');
   submit.mockReturnValue('retried'); find('form').props.onSubmit({ preventDefault() {} }); expect(submit).toHaveBeenCalledTimes(2); expect(find('form')).toBeUndefined();
 });
 it('retains partial answers with their original indices and renders public history without answer controls', async () => {
   const firstId = JSON.stringify(['request_user_input_async', 'ask', 0]);
   render({ message: { ...props.message, questions: [{ title: 'First?' }, { title: 'Second?' }] }, answered: new Set([firstId]) }); await flush();
-  expect(find('legend').props.children).toBe('Second?'); find('textarea').props.onInput({ currentTarget: { value: 'Second answer' } }); find('form').props.onSubmit({ preventDefault() {} });
+  expect(find('legend').props.children).toBe('Second?'); findAnswer().props.onInput({ currentTarget: { value: 'Second answer' } }); find('form').props.onSubmit({ preventDefault() {} });
   expect(submit.mock.calls[0]![0]).not.toContain('First?'); expect(submit.mock.calls[0]![0]).toContain('Second answer');
   expect(nodes(render({ onReply: undefined })).some(node => node.type === 'button' || node.type === 'textarea')).toBe(false);
 });
@@ -77,14 +92,14 @@ it('hides the answered question banner while its answer is queued and after conf
 
 it('restores an unanswered prompt and its draft when the queued answer fails or is removed', async () => {
   render(); await flush();
-  find('textarea').props.onInput({ currentTarget: { value: 'Retained answer' } });
+  findAnswer().props.onInput({ currentTarget: { value: 'Retained answer' } });
   find('form').props.onSubmit({ preventDefault() {} });
   expect(render()).toBeNull();
   const text = sessionQuestionReply(props.message, { '0': 'Retained answer' });
   expect(render({ pending: true, answered: answeredSessionQuestionIds([{ id: 'queued', role: 'user', text }]) })).toBeNull();
   render({ pending: false, answered: new Set() });
   find('button').props.onClick();
-  expect(find('textarea').props.value).toBe('Retained answer');
+  expect(findAnswer().props.value).toBe('Retained answer');
   find('form').props.onSubmit({ preventDefault() {} });
   expect(submit).toHaveBeenCalledTimes(2);
 });

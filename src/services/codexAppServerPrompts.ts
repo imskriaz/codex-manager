@@ -62,7 +62,7 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
       publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message: `Codex Manager could not display ${serverRequest.method}. Continue in the owning Codex window.` });
       return;
     }
-    const blockingQuestion = request.kind === 'question' && !request.sourceMessageId;
+    const blockingQuestion = request.kind === 'question';
     const timer = blockingQuestion ? undefined : setTimeout(() => {
       const pending = pendingPrompts.get(request.id);
       if (!pending) return;
@@ -113,7 +113,7 @@ export function syncNativeCodexPrompts(source: object, threadId: string, request
       if (previous?.signature === signature) request.createdAt = previous.createdAt;
       else questionTimes.set(serverRequest.id, { signature, createdAt: request.createdAt! });
     }
-    const blockingQuestion = request.kind === 'question' && !request.sourceMessageId;
+    const blockingQuestion = request.kind === 'question';
     const timer = blockingQuestion ? undefined : setTimeout(() => { const pending = pendingPrompts.get(request.id); if (pending) finishPrompt(request.id, pending); }, PROMPT_TIMEOUT_MS);
     pendingPrompts.set(request.id, { nativeSource: source, respondNative: result => respond(serverRequest, result),
       serverId: serverRequest.id, method: serverRequest.method, params: serverRequest.params as Record<string, unknown>, request, timer, expiresAt: blockingQuestion ? Infinity : Date.now() + PROMPT_TIMEOUT_MS, autoApprove });

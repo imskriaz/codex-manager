@@ -21,7 +21,7 @@ describe("relay startup without generated files", () => {
     const args = fixture.exec.mock.calls[0]![1] as string[];
     expect(args[args.indexOf('/TR') + 1]).toBe('cmd.exe /d /s /c ""C:\\test home\\.codex\\always-online-relay-start.cmd""');
     expect(fixture.writeFile).toHaveBeenCalledWith(expect.stringContaining("always-online-relay-start.cmd"), expect.stringContaining("Windows boot task triggered"), expect.any(Object));
-    expect(fixture.unlink).toHaveBeenCalledOnce();
+    expect(fixture.unlink).toHaveBeenCalledTimes(2);
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("Access is denied")));
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("Task creation disabled")));
     fixture.unlink.mockClear();
@@ -29,13 +29,17 @@ describe("relay startup without generated files", () => {
     await installRelayStartup("config", "script");
     expect(fixture.writeFile).toHaveBeenCalledTimes(2);
     expect(fixture.writeFile.mock.calls[1]![0]).toContain('Startup');
-    expect(fixture.unlink).not.toHaveBeenCalled();
+    expect(fixture.writeFile.mock.calls[1]![0]).toMatch(/\.vbs$/);
+    expect(fixture.writeFile.mock.calls[1]![1]).toContain(', 0, False');
+    expect(fixture.unlink).toHaveBeenCalledWith(expect.stringContaining('CodexManagerAlwaysOnline.cmd'));
     expect(fixture.writeFile.mock.calls[0]![0]).not.toContain('Startup');
   });
   it("handles missing entries and reports inconclusive removal", async () => {
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(Object.assign(new Error("missing"), { code: 1 })));
     await removeRelayStartup();
     expect(fixture.exec).toHaveBeenCalledWith("schtasks.exe", ["/Query", "/TN", "CodexManagerAlwaysOnline"], expect.any(Object), expect.any(Function));
+    expect(fixture.unlink).toHaveBeenCalledWith(expect.stringContaining('always-online-relay-start.cmd'));
+    expect(fixture.unlink).toHaveBeenCalledWith(expect.stringContaining('CodexManagerAlwaysOnline.vbs'));
     fixture.exec.mockImplementationOnce((_command, _args, _options, callback) => callback(new Error("timeout")));
     await expect(removeRelayStartup()).rejects.toThrow("timeout");
   });
@@ -49,6 +53,7 @@ describe("relay startup without generated files", () => {
     await migrateRelayStartup("new-storage", "extension");
     expect(fixture.exec).toHaveBeenCalledWith("schtasks.exe", expect.arrayContaining(["/Create", "/SC", "ONSTART"]), expect.any(Object), expect.any(Function));
     fixture.exec.mockClear();
+    fixture.stat.mockRejectedValueOnce(Object.assign(new Error("missing"),{code:"ENOENT"}));
     fixture.stat.mockRejectedValueOnce(Object.assign(new Error("missing"),{code:"ENOENT"}));
     await migrateRelayStartup("new-storage", "extension");
     expect(fixture.exec).not.toHaveBeenCalled();
@@ -75,7 +80,8 @@ describe("relay startup without generated files", () => {
     vi.stubEnv('NODE', undefined); vi.stubEnv('NODE_EXE', undefined);
     const custom = 'D:\\Custom Tools\\nodejs\\node.exe';
     fixture.exec.mockImplementation((executable, _args, options, callback) => {
-      expect(options.timeout).toBe(5000);
+      expect(options.timeout).toBeGreaterThan(0);
+      expect(options.timeout).toBeLessThanOrEqual(1000);
       if (executable === 'where.exe') callback(null, `${custom}\r\n`);
       else {
         expect(executable).toBe(custom);
@@ -83,6 +89,20 @@ describe("relay startup without generated files", () => {
       }
     });
     await expect(resolveNodeExecutable()).resolves.toBe(custom);
+  });
+  it("bounds total discovery even when PATH contains many stalled Node executables", async () => {
+    let now = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    fixture.exec.mockImplementation((executable, _args, options, callback) => {
+      now += options.timeout;
+      if (executable === 'where.exe') callback(null, Array.from({ length: 20 }, (_, index) => `D:\\Node ${index}\\node.exe`).join('\r\n'));
+      else callback(Object.assign(new Error('stalled'), { killed: true }));
+    });
+    try {
+      await expect(resolveNodeExecutable()).rejects.toThrow('5 second deadline');
+      expect(now).toBeLessThanOrEqual(5000);
+      expect(fixture.exec).toHaveBeenCalledTimes(5);
+    } finally { clock.mockRestore(); }
   });
   it("quotes spaces and preserves the startup log in the boot launcher", async () => {
     await installRelayStartup("C:\\user's home\\config.json", "C:\\extension\\start-node.cjs", "C:\\node path\\node.exe");

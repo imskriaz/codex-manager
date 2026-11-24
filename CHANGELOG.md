@@ -1,67 +1,45 @@
 # Changelog
 
-## 3.0.0-pre.119
+## 3.0.0
+
+- Restore the mobile sidebar toggle when a deferred workspace view finishes loading after the dashboard shell.
+- Keep session questions available until answered or resolved, reopen them from reminders, and clear reminders when the conversation moves on.
+- Place bulk account actions beside search, show usage loading and failure states, and add a proxy refresh action.
+- Start standalone hosting without waiting for account-claim discovery, validate dashboard readiness, and recover stale host records without stopping unrelated processes.
+- Bound Windows runtime discovery, hide the per-user startup fallback, and remove obsolete startup launchers and scheduled tasks during cleanup.
 
 - Order Auto queue by reset time before account age and quota score, and forecast exhausted-account recovery from all blocking quota windows.
 
-## 3.0.0-pre.118
-
 - Collapse long pasted user messages behind Show more, with Show less to restore the preview and full text preserved for copying and editing.
-
-## 3.0.0-pre.115
-
-- Show only the selected date in account metadata for Date added, Last refreshed, and Login date sorting in grid and list views.
-
-## 3.0.0-pre.117
 
 - Configure SMTP in master Settings and choose ready, needs-answer, and failed session emails in master and user workspaces.
 - Add a compact envelope action to watch one conversation without adding a toolbar row.
 - Keep SMTP credentials private, make result excerpts optional, avoid duplicate delivery, and surface test and background delivery failures.
 
-## 3.0.0-pre.114
+- Show only the selected date in account metadata for Date added, Last refreshed, and Login date sorting in grid and list views.
 
 - Hide unidentified or unavailable Claude native logins from account lists, including placeholder entries created while an API account is selected.
 
-## 3.0.0-pre.113
-
 - Keep browser Sign out form submissions same-origin so Chromium does not reject logout as Forbidden.
-
-## 3.0.0-pre.112
 
 - Place chat availability beneath the welcome heading with clearer return-time text and readable spacing.
 - Open Settings directly from the user profile and keep Sign out in the settings dialog.
 - Use compact circular account action buttons in cards and lists.
 
-## 3.0.0-pre.111
-
 - Automatically give conversations without a selected project a private saved workspace, reuse it on follow-ups, and retain files until explicitly deleted.
 - Continue file requests in existing projectless chats and show workspace preparation failures in the conversation.
 
-## 3.0.0-pre.110
-
 - Match API accounts to the shared grid and list layout with an API Key title, API badge, persistent stars, icon actions, and recorded input/output token bars with fresh/cached input colors.
-
-## 3.0.0-pre.109
 
 - Remember browser sign-ins until sign-out, including across host restarts, and keep older signed-in devices active until explicitly revoked.
 
-## 3.0.0-pre.102
-
 - Keep Claude account actions independent from unrelated work and avoid blocking them during background activity.
-
-## 3.0.0-pre.101
 
 - Keep account-card actions available independently and report malformed workspace links without throwing.
 
-## 3.0.0-pre.100
-
 - Keep standalone startup available for non-admin Windows users with a verified per-user logon or Startup-folder fallback when the pre-login SYSTEM task is denied.
 
-## 3.0.0-pre.99
-
 - Open an initialized shared database without schema writes so VS Code can start while standalone holds a write transaction.
-
-## 3.0.0-pre.98
 
 - Accept verified VS Code wrapper messages when the runtime masks the parent window, while rejecting embedded preview messages.
 - Load document creation libraries on demand so they do not block dashboard startup.
@@ -70,61 +48,37 @@
 - Launch the native Codex npm executable hidden on Windows and dispose completed-call pipes.
 - Keep direct standalone launches distinct from handoff waits and report supervisor startup failures to the caller.
 
-## 3.0.0-pre.97
-
 - Rename the project picker action to Create new.
 - Show changed-file totals above the User Workspace composer, with access to Files.
 - Remove the leading status dot from connection banners.
 
-## 3.0.0-pre.95
-
 - Use the native account-card structure for OpenAI and Anthropic API accounts, with masked key identity, provider endpoint details, token-usage status, and API-specific actions.
-
-## 3.0.0-pre.94
 
 - Add compact browser voice dictation to the message composer with language selection, editable transcripts, microphone recovery messages and visible draft feedback.
 
-## 3.0.0-pre.93
-
 - Show one notification at a time: action errors replace the connection banner until dismissed or timed out, preserving failure details and restoring connection recovery afterward.
-
-## 3.0.0-pre.92
 
 - Add OpenAI and Anthropic API-key accounts through the existing Add Account dialog, with provider details, saved account rows, selection, verification and removal.
 - Import current API credentials from Codex auth/configuration, inherited environment variables and Claude settings, preserving native logins and deduplicating saved accounts.
 - Keep provider keys out of dashboard snapshots and process arguments, and bind each new turn to its selected credentials across account switches.
 
-## 3.0.0-pre.91
-
 - Use PostgreSQL as the only active store for non-master Office records, including conversations, sign-ins, audit and request logs, usage, memory, schedules, preferences, projects and file-history metadata.
 - Automatically migrate existing records once, verify them before retiring local copies, and retain a recovery export. Keep master data local and report database failures without falling back to SQLite.
 
-## 3.0.0-pre.89
-
 - Keep connected data integrations in their own services and use configured read-only HTTP MCP sources.
 - Discover assigned data for related requests and follow-ups without requiring the source name.
-
-## 3.0.0-pre.88
 
 - Preserve supplied Codex model names, including GPT prefixes.
 - Add native Claude Code models and supported reasoning to the existing picker, with native approvals, conversations, account display and reported usage limits.
 - Lock model changes during active turns and confirm native message receipt and completion before reporting success.
 
-## 3.0.0-pre.87
-
 - Open the new-chat composer by default and use one screen for starting conversations.
 
-## 3.0.0-pre.85
-
 - Show a single Auto label when both the assistant model and thinking are automatic.
-
-## 3.0.0-pre.84
 
 - Open conversation website links in the workspace Browser and reuse its selected page.
 - Fix duplicate workspace tab controls by restoring desktop and mobile picker styles to their correct scope.
 - Keep Browser and AI-opened tabs within their owning conversation, restoring them when that conversation is shown.
-
-## 3.0.0-pre.83
 
 - Focus User Workspace on corporate work with configurable planning, document, spreadsheet, meeting, research and operations skills, session retention, and no user archive controls.
 - Add confirmed ZIP downloads, generated-file cards, corporate home shortcuts, automatic permitted panel selection and a compact user environment.
@@ -132,36 +86,23 @@
 - Count active and retained conversation data, uploads, generated files and recovery storage against user allowances.
 - Keep chat-only sessions out of project tools; retain deleted conversations and session uploads for the configured support period, then purge only their owned storage while preserving saved projects.
 
-
-## 3.0.0-pre.80
-
 - Open Team users directly in the editor, add a top Delete action, and organize settings with left-side tabs on desktop and a section dropdown on mobile.
 - Use mobile section dropdowns across subscriber Settings, API, workspace tools, agents, Git/GitHub, tasks and browser inspector panels.
 - Allow administrators to assign configured read-only data sources to selected users.
 
-## 3.0.0-pre.79
-
 - Add New folder to the project folder picker with confirmed selection, collision errors, and bounded creation feedback on the selected system.
-
-## 3.0.0-pre.77
 
 - Move Scheduled and Library into subscriber Settings and simplify the chat sidebar with a compact account menu at the bottom.
 - Add configurable Auto routing and Regular, Professional, and Expert profiles, with optional locked Auto and shared model/thinking controls.
 - Show questions in viewport-sized dialogs with scrollable contents and visible answer actions; steer verified active-turn answers ahead of queued follow-ups and compact mobile reminders.
 - Start general subscriber chats in My workspace and keep unrelated project files out of greetings and general conversation, including after an unconfirmed response.
 
-## 3.0.0-pre.76
-
 - Fix User Workspace chat and model discovery when public API key slots are full; use process-only internal credentials.
 - Keep permitted configured and saved models available during discovery delays without changing the selected model. Queue temporary service rejections before any workspace action.
 - Match the subscriber Browser to the main navigation, feedback, responsive viewport, and inspector controls, with isolated pages and workspace assets.
 - Align sidebar controls and conversation icons, remove duplicate outcome banners and placeholder prose, and show compact environment details.
 
-## 3.0.0-pre.75
-
 - Keep User Workspace settings navigation rounded and remove horizontal-tab underlines without changing workspace tool tabs or master settings.
-
-## 3.0.0-pre.74
 
 - Add private saved memory to User Workspace with on/off controls and compact add, edit, remove, and clear actions.
 - Let the assistant remember or forget details when requested and use saved context across chats; keep disabled memory out of model context and protect concurrent edits.
@@ -169,38 +110,24 @@
 - Match the subscriber Browser toolbar, controls, and empty states to the workspace theme on desktop and mobile.
 - Open subscriber add, edit, and confirmation actions in separate dialogs, including memories, instructions, account security, chat names, and file recovery.
 
-## 3.0.0-pre.73
-
 - Keep User Workspace compact with clearer text, consistent labels, stronger secondary-text contrast, and balanced touch controls.
 - Respect text-size preferences in subscriber pages, settings, menus, recovery dialogs, and task summaries without changing the master layout.
-
-## 3.0.0-pre.72
 
 - Polish compact User Workspace menus, settings, account security, schedule outcomes, and recoverable file actions on mobile and desktop.
 - Support uploaded images and Office documents, real spreadsheet/document/PDF exports, file history and Trash, bounded document previews, public website reading, and assigned read-only data connections.
 - Keep sign-ins independent per user, revoke old sessions after password resets, enforce manual plan access, show queue positions, and recover interrupted usage without silently discarding unknown consumption.
 - Verify subscriber workflows and maintain host isolation. Payment and email integrations remain disabled until configured.
 
-## 3.0.0-pre.71
-
 - Hide the Failed badge on activity group summaries in both workspaces while preserving individual failure details inside expanded groups.
-
-## 3.0.0-pre.70
 
 - Simplify Scheduled into a compact task management list without templates or creation buttons.
 - Compact Library headers, storage, filters and file rows; align accessible download, removal and refresh icons and remove the redundant view switch.
 
-## 3.0.0-pre.69
-
 - Keep current questions above plans in both workspaces and bound question forms so mobile users can scroll to every option and the answer action.
-
-## 3.0.0-pre.68
 
 - Confirm User Workspace Browser previews with the exact signed-in conversation before reporting them opened, with bounded waits and truthful fallback links.
 - Size the User Workspace model picker to its selected label, align composer controls, and balance the compact account row. Return destination revisions for chained file actions and allow safe recovery from stale revisions.
 - Keep text attachments separate in subscriber transcripts so delivered CSV/file messages acknowledge correctly and do not leave duplicate pending bubbles.
-
-## 3.0.0-pre.67
 
 - Create and update User Workspace schedules through AI chat, with starter ideas and a management list for running, pausing and removing tasks. Persist one-time, daily and weekly runs with selected models, project scope, usage/queue enforcement, revision checks and crash recovery; prevent recursive scheduling from scheduled runs.
 - Add a searchable Library for workspace and project files, with storage usage, type filters, list/grid views, right-panel viewing, verified downloads and revision-checked deletion.
@@ -208,58 +135,35 @@
 - Replace the single-item archive menu with a direct button, match the master mobile composer controls, and keep the account footer anchored below navigation.
 - Collapse activity details and plans by default in both workspaces, preserve manual expansion, and scroll file tabs without shifting the page.
 
-## 3.0.0-pre.66
-
 - Anchor the compact User Workspace account row to the bottom of the sidebar.
 - Open saved HTML websites in the right panel Browser with sandboxed inline interactions, refresh, and a verified preview action. Keep file editing available in Files.
 - Create nested deliverable folders safely and include confirmed file open/download links in assistant replies.
 - Default new User Workspace chats to gpt-6-luna while retaining manual model selection and master configuration.
 
-## 3.0.0-pre.65
-
 - Compact User Workspace plans into a collapsed progress row with clear SVG status icons and shorter expanded steps.
 - Keep the current unanswered question above the plan and composer, with bounded scrolling, preserved answers during plan updates, and no duplicate question card in the transcript.
-
-## 3.0.0-pre.64
 
 - Balance the User Workspace mobile composer and model picker, and replace raw tool envelopes with readable action outcomes.
 - Open newly saved files in the workspace panel without interrupting unsaved edits. Preview HTML alongside existing image, document and media previews.
 - Add editable default guidance for workspace-only access and clickable deliverables, with explicit download links for every file type.
 
-## 3.0.0-pre.63
-
 - Harden User Workspace turn updates, bounded live history, timeout and recovery handling. Stop dependent queued work visibly when an earlier result is uncertain.
 - Preserve file-conflict failures, mask host paths in plans, questions and replies, reject oversized chat attachments, and prevent stale settings responses. Keep active plans visible while follow-ups wait and present questions without duplicate replies.
 
-
-## 3.0.0-pre.62
-
 - Restore ESLint project coverage for session plans and scale dashboard plan markers with browser text settings.
 
-## 3.0.0-pre.61
-
 - Restore manual refresh controls on the dashboard, saved accounts and token history while keeping workspace refresh icons removed.
-
-## 3.0.0-pre.60
 
 - Pin live task checklists above the composer in User Workspace and native Codex sessions, with completed counts, current steps, paused states and saved plan history.
 - Add User Workspace planning, progress updates and answerable questions; record confirmed file changes and retain unfinished steps after cancellation, failure and reload.
 - Read native update_plan history and turn/plan/updated notifications. Show hook, model-routing, response-check and standalone tool-output activities; keep completed thinking summaries and accurate failed-activity badges.
 
-## 3.0.0-pre.58
-
 - Show a short offline notice with the next local availability time and remaining days, hours and minutes, checking blocking 5-hour and weekly/monthly windows across enabled accounts. Share only aggregate availability with User Workspace.
-
-## 3.0.0-pre.56
 
 - Show file activity in bold with action prefixes such as Edited, Created and Deleted; preserve file and review controls and expandable diffs.
 
-## 3.0.0-pre.55
-
 - Replace Automatic in User Workspace with explicit model selection and a master-configured default for new chats. Keep existing conversation choices and queued requests tied to their selected model.
 - Add a default model picker in master User Workspace settings. Model-list failures preserve saved choices and do not silently select another model.
-
-## 3.0.0-pre.54
 
 - Block host shell, Git, GitHub, external URL launching, and host browser execution for User Workspace accounts until an isolated runtime is configured. Add adversarial access tests.
 - Add a master-controlled Global User Workspace Prompt applied to new messages in every user conversation.
@@ -268,84 +172,49 @@
 - Add a shared active-request slider and persistent queues with generic busy messages and local retry times.
 - Allocate per-user storage, daily tokens, and daily requests, with personal usage and reset times. Storage checks cover managed file saves; runtime isolation is required before enabling host execution.
 
-## 3.0.0-pre.53
-
 - Remove manual refresh icons throughout the dashboard and workspace; retain automatic updates and error recovery actions.
-
-## 3.0.0-pre.52
 
 - Keep Windows standalone restarts independent of the initiating terminal's process tree, preserving hidden windows, startup confirmation, authorization checks, and failure logs when that terminal closes.
 
-## 3.0.0-pre.50
-
 - Show the weekly or monthly reset date and countdown in the 5-hour dashboard metric when the main quota is exhausted.
-
-## 3.0.0-pre.49
 
 - Match the account menu to the account card width and join their borders and background as one expanded container, including narrow screens.
 - Rename the automatic theme option to Match System.
 
-## 3.0.0-pre.47
-
 - Suppress duplicate browser pushes while a dashboard, workspace, or VS Code window is being viewed. Recheck queued delivery, expire disconnected viewers, and preserve in-app notices and explicit notification tests.
 - Carry foreground suppression through authenticated peer notice relays.
-
-## 3.0.0-pre.46
 
 - Route dashboard Send, steering and Stop to the same Codex process used by the official VS Code conversation, including versions that no longer expose the legacy IPC channel. Preserve custom CLI choices and restrict owner controls to the matching loaded conversation and Codex home.
 - Confirm the source is idle before handover, use the destination owner when its writer is already loaded, and retain uncertain delivery without replaying a turn.
 
-## 3.0.0-pre.45
-
 - Use compact searchable project pickers across the composer, task board, session move dialog, and API host controls. Keep only the cross removal icon and confirm removal from recents using the session-deletion dialog style.
 - Preserve project folders, sessions, and selection, share recent preferences per system, and keep removed entries searchable.
 
-## 3.0.0-pre.44
-
 - Verify Windows byte-range writer locks and their Codex process identity. Restoring an old conversation no longer marks its interrupted turn as running; preserve recovery, ownership checks, and long active turns.
-
-## 3.0.0-pre.43
 
 - Use compact single-row Settings tables with detail dialogs for users, connections, activity, proxy requests, and system logs. Open new data connections in a separate form dialog.
 - Keep one sidebar search, find collapsed options, focus required module switches, and preserve local zoom while a target is offline.
 - Show the master username before the password button and remove it from the password dialog. Correct activity-load errors and tab scroll position.
 
-## 3.0.0-pre.42
-
 - Reduce outer padding, section spacing, chart and quota insets, and account card padding in the workspace right-panel dashboard.
-
-## 3.0.0-pre.41
 
 - Compact mobile queue rows to 32px, with smaller text, spacing and 24px Steer and recovery controls. Preserve inline expansion, background visibility and delivery safeguards.
 - Update steering UI checks for live history snapshots, HTTP fallback, editable offline drafts and compact controls.
-
-
-## 3.0.0-pre.39
 
 - Size connection warnings to their contents on desktop and mobile.
 - Supervise standalone hosts and restart unexpected exits without reopening VS Code; preserve intentional shutdown and ownership checks.
 - Default Auto approve to On for fresh sessions and unset preferences, preserving explicit Off choices.
 
-## 3.0.0-pre.37
-
 - Reconcile running indicators by runtime observation time rather than transcript modification time, so recent cached live events cannot override fresh status checks.
 - Stop renewing cached running state when the transcript confirms completion and a native refresh is unavailable.
 
-## 3.0.0-pre.36
-
 - Hide the dashboard header row inside the workspace right panel while keeping it visible on dashboard home.
-
-## 3.0.0-pre.35
 
 - Rename Access to Modules, move feature options into their sections, and hide sections when their module is disabled.
 - Search individual settings with one compact search field in browser and VS Code; fix touch toggle sizing and responsive layout.
 - Default automatic account switching to 0% while preserving configured thresholds.
 
-## 3.0.0-pre.34
-
 - Bound cached running indicators to 30 seconds without fresh confirmation, prefer current native status, and prevent old live snapshots from reviving stopped sessions. Keep history visible and show unverified status when checks remain inconclusive.
-
-## 3.0.0-pre.33
 
 - Bring Users, Workspace, MCP data access, Database, Logs, and Proxy into Settings; redirect legacy management links while retaining administrator checks.
 - Use the same compact Settings layout in VS Code and the browser. Hide Team tabs when Team workspace or Web Dashboard is off, and keep Access available to enable them again.
@@ -353,135 +222,75 @@
 - Restore the Settings gear at the top of every workspace sidebar.
 - Replace capacity failure count and retry-delay number fields with compact slider rows below their toggle.
 
-## 3.0.0-pre.33
-
 - Make the Codex workspace logo open Dashboard home directly, including keyboard activation, while retaining the compact account menu on the bottom card.
-
-## 3.0.0-pre.32
 
 - Keep queued messages visible across focus and background changes, retain sending rows until confirmation, and expand messages only when requested. Replace routine queue notices and duplicate delivery toasts with compact status controls and detailed queue tools.
 - Persist a bounded recovery journal before dispatch, mirror it to IndexedDB in the background, recover browser storage failures, and retry only verified unsent owner failures with backoff. Preserve uncertain delivery and ownership checks.
 - Add Tools and Queue status to the account menu, with saved queue inspection, safe repair and confirmed clearing that preserves in-flight sends and composer drafts.
 
-## 3.0.0-pre.31
-
 - Add a 1 to 30 day slider in Browser notifications settings for dismissed notification and app-install reminders, defaulting to one day. Save the preference per browser, show save failures, and use it for future dismissals.
 
-
-## 3.0.0-pre.29
-
 - Remember dismissed notification and app-install offers for 24 hours on this browser, including cancelled permission and installation prompts. Keep cancellation feedback and manual Settings controls available.
-
-
-## 3.0.0-pre.27
 
 - Open the compact Dashboard, Account center, Settings and Sign out menu from the bottom account card. Keep the workspace logo as a heading and omit the account avatar.
 - Hide the current-account details card on narrow dashboard panels while retaining the usage chart, quotas and account controls.
 
-
-## 3.0.0-pre.25
-
 - Restore individual queued message rows above the composer with inline Steer, Edit, Delete and recovery controls. Remove the queue dialog and keep full send errors visible beside the affected message.
-
-## 3.0.0-pre.24
 
 - Consolidate session quota, retry, capacity, and failure notices into one line with optional diagnostics. Remove duplicate quota recovery status, move task conversation access into a header icon, and use the workspace title for the compact dashboard/settings/sign-out menu without an account avatar.
 
-## 3.0.0-pre.23
-
 - Shorten Team activity paths to the project folder and relative file location, hide system directory prefixes, and use readable PowerShell command summaries. Preserve commands, output, grouping, and expansion; label file changes Added or Edited. Administrator activity remains unchanged.
-
-## 3.0.0-pre.22
 
 - Keep the master session renderer and tool grouping for Team members, including every recorded call, command and output. Mask the execution folder while preserving conversation content and retaining activity after reload.
 
-## 3.0.0-pre.21
-
 - Give Team members the shared session interface with private workspaces, conversations and message history, generic waiting states, persistent capacity queues and completion feedback. Model calls use the shared proxy without creating native Codex threads.
 - Restrict account, quota, provider and administrative data to administrators; reject overlapping user folders and workspace escapes, and filter private live updates and notifications by user. Remove session ownership labels from the UI.
-
-## 3.0.0-pre.20
 
 - Remove the dark background from installed app and notification icons, preserving transparency around and inside the Codex logo. Declare the transparent app icons for ordinary use instead of maskable display.
 
-## 3.0.0-pre.19
-
 - Prefill the donation amount with USD 10.11 in the Donate dialog and onboarding.
-
-## 3.0.0-pre.17
 
 - Give Team members the shared session interface with private workspaces, conversations and message history, generic waiting states, persistent capacity queues and completion feedback. Model calls use the shared proxy without creating native Codex threads.
 - Restrict account, quota, provider and administrative data to administrators; reject overlapping user folders and workspace escapes, and filter private live updates and notifications by user. Remove session ownership labels from the UI.
 
-## 3.0.0-pre.16
-
 - Keep the message queue in one compact row with a short failure status; preserve full errors in its tooltip and dialog without a duplicate warning line.
-
-## 3.0.0-pre.15
 
 - Hide the title, subtitle, and current account details in the Dashboard tab while preserving its toolbar, quota graph, and actions.
 
-## 3.0.0-pre.14
-
 - Always show the master username in password settings and the Change password dialog for signed-in master administrators, including remote browsers; retain local-only rotation and deny Team users, API tokens, and peer requests.
-
-## 3.0.0-pre.13
 
 - Keep session running indicators and counts on one shared confirmed cache, retain display state during refresh, and update the cache after status checks while operations verify fresh ownership.
 
-## 3.0.0-pre.12
-
 - Show the browser sign-in form when a session no longer resolves to an enabled user, preserving the return page and avoiding the expired-session JSON screen and login redirect loop.
-
-## 3.0.0-pre.11
 
 - Run scheduled storage cleanup in both VS Code and the standalone host, including unused task/comment uploads, abandoned startup uploads, expired shares/title bridges, deleted-session metadata, and confirmed-deleted shell snapshots.
 - Retain archive and native-fork attachment references, retry only committed transcript deletions, and warn when task deletion succeeds but attachment cleanup remains pending.
 - Add MCP session discovery, work status, scoped peer mailboxes, explicit acknowledgements, retry-safe message IDs, bounded retention, and automatic cleanup on confirmed session deletion.
 
-## 3.0.0-pre.10
-
 - Use a top section picker on mobile for General settings and Team management, while keeping searchable left navigation on desktop.
-
-## 3.0.0-pre.9
 
 - Wait for native turn identity during status refresh and allow a message to start when the previous turn finishes during send verification.
 - Keep full send failures visible above the composer and inside the queue dialog; let task conversations recheck stale status through the host like workspace chats.
 - Recheck the current connection before syncing saved task drafts so an earlier online sync cannot send after disconnecting.
 
-## 3.0.0-pre.8
-
 - Show MCP approvals, typed forms, URL requests, and verification handoffs in browser and VS Code dashboards; inherit session Auto approve for MCP approvals that need no user input.
 - Preserve completed MCP request outcomes in chat history, clear requests resolved elsewhere, and show stdin/network approval context while retaining required human review.
-
-## 3.0.0-pre.7
 
 - Redesign sign-in with Email and Password fields. Team members sign in with their email; master sign-in requires a one-time random username and the shared password.
 - Show the read-only master username below Password in VS Code and the trusted local dashboard, with inline Copy and Rotate controls and conflict feedback.
 - Add administrator Logs and Proxy views under `/manage`, with initiating user, action outcome, request status, timing, and token use. Show signed-in and session-starting users without exposing the master sign-in value.
 
-## 3.0.0-pre.6
-
 - Add a role-gated Team settings page at `/manage`, with user editing, permissions, workspace defaults, MCP access, and SQLite/PostgreSQL configuration; redirect `/admin` to `/manage`.
 - Match the searchable settings sidebar across Team and main Settings, compact the editor tabs, and align Dashboard controls in columns.
-
-
-## 3.0.0-pre.5
 
 - Improve compact tab spacing by context: tighter workspace and Inspector tools, roomier task/API navigation, clearer counts, and clean task selection underlines.
 - Preserve separate settings and maintenance layouts, horizontal scrolling, keyboard focus, and visible close controls on touch screens.
 
-## 3.0.0-pre.3
-
 - Redesign the responsive sign-in page with generic Username and Password fields; require a random master username saved in the shared local environment file for VS Code and standalone hosts.
 - Align the Team enable toggle with the Dashboard settings grid and add the role-gated `/manage` Team administration route (`/admin` redirects there).
 
-## 3.0.0-pre.2
-
 - Add a Team workspace enable toggle under Settings → General → Dashboard; Team routes remain role-gated and separate from regular user settings.
 - Hide Dashboard, environment, terminal, Git, and GitHub workspace tools from users unless their assigned features allow them.
-
-## 3.0.0-pre.1
 
 - Add office users, role-aware workspaces, per-user folders, admin feature/MCP controls, General proxy chat, and reduced Task work for users.
 - Add office workspace root and SQLite/PostgreSQL settings with SQLite fallback, generic quota recovery notices, and Windows-style user workspace theming.
@@ -496,62 +305,40 @@
 - Improve modal keyboard handling, terminal focus exit, task feedback, clipboard acknowledgements, project controls, and shared-board import consistency.
 - Keep agent subtabs transparent with a bottom-border active state, condense queued session messages into a one-line modal entry point, and prevent CSS edits from shifting the Inspector layout.
 
-## 2.0.6-pre.121
+## 2.0.6
 
 - Match workspace tabs and subtabs across tasks, agents, Git/GitHub, API, and Browser Inspector to the compact square Git tab strip, preserving dashboard navigation.
-
-## 2.0.6-pre.120
 
 - Fix file-delete view preservation, settings tab keys, terminal focus exit (Shift+Escape), task completion feedback, acknowledged clipboard copying, shared-board configuration, import-read races, and reachable local-host actions.
 - Preserve per-page Browser Console drafts and history, serialize Inspector polling, honor source wrapping and Info filtering, expose Inspector controls, and retain new-page intents until dispatch.
 - Scope typography regression checks to dashboard text while retaining fixed Browser control sizing.
 
-## 2.0.6-pre.119
-
 - Record first client output timing for tool calls and final-only responses, and avoid reporting buffered or omitted output as already delivered.
-
-## 2.0.6-pre.118
 
 - Keep the AI pointer visible between actions, follow focused fields and drag destinations, and clear it when the user takes control.
 - Align inspector pane controls to the right, keep overflowing tabs scrollable, and show selected storage values in a resizable detail panel below each table.
-
-## 2.0.6-pre.117
 
 - Use natural page cursors, editable draggable/resizable marks, Escape cancellation, and compact comment tables with icon actions.
 - Move zoom, responsive emulation, inspector visibility and encrypted project credentials into the browser menu; show page and preview scrollbars.
 - Fix inspector docking/resizing, compact storage and network tables, inline diagnostics without toast popups, long tab titles and dashboard manifest loading.
 - Expose browser operations consistently through MCP, including credential filling without returning passwords.
 
-## 2.0.6-pre.116
-
 - Remove the proxy route panel, expand request logs to full width, and place connection settings after All logs.
 - Add Clear logs with visible feedback and remove redundant Claude connection explanations.
 
-## 2.0.6-pre.115
-
 - Remove the exhausted-usage upsell banner and compact message settings into two columns, with session Auto Resume and queue priority controls.
-
-## 2.0.6-pre.114
 
 - Keep blocking Codex questions visible in the browser until the owning session resolves them, and deliver async question answers immediately to a verified waiting turn.
 
-## 2.0.6-pre.113
-
 - Hide filenames beside composer image thumbnails while preserving accessible preview and remove controls.
-
-## 2.0.6-pre.110
 
 - Give API keys, API Explorer, and Proxy dedicated URLs that survive refresh and browser history.
 - Accept Claude Desktop one-token Haiku inference probes by applying the backend minimum of sixteen output tokens and reporting the adjustment in a response header.
-
-## 2.0.6-pre.109
 
 - Show newly opened browser tabs before navigation and preserve completed actions with a warning when preview capture fails.
 - Automatically show AI activity and its pointer in the shared browser, recover closed tabs, and prioritize direct tab commands in MCP and the browser skill.
 - Match inspector controls to compact top tabs and keep only control/element selection, pointer, rectangle, and freehand tools. Remove redundant typing/scrolling controls and the Comments shortcut; support direct keyboard input, paste, and wheel scrolling in the preview.
 - Avoid an expired-request warning for questions already confirmed as answered.
-
-## 2.0.6-pre.108
 
 - Place Claude first in Proxy connection and select it whenever the dialog opens.
 - Accept Claude classifier stop sequences with matching streaming and JSON response behavior, preserving prompts, tools, model routes, and reasoning settings.
@@ -559,47 +346,29 @@
 - Refresh request activity while connection settings are open and omit unavailable-account nodes from the route diagram.
 - Avoid duplicate final-response translation for streaming requests.
 
-## 2.0.6-pre.107
-
 - Keep the mobile Browser URL field readable with compact controls and no automatic input scaling.
-
-## 2.0.6-pre.106
 
 - Keep browser pages and feedback scoped to the owning session while mirroring changes to every client viewing that session over the authenticated WebSocket.
 - Make panel reads and reconnects immediate, preserve exact requester and session targeting, and add a close control for the base Browser tab.
 - Bundle and verify the browser runtime for both VS Code and standalone hosts.
 
-## 2.0.6-pre.105
-
 - Recover standalone dashboard requests for stale hashed lazy chunks after an extension update by resolving them through the current dashboard manifest.
 
-## 2.0.6-pre.104
-
 - Recognize gateway aliases as Opus, Sonnet, and Haiku 5.5 and Fable 5.2 in copied Claude configuration.
-
-## 2.0.6-pre.103
 
 - Keep host browser tabs and feedback separate for each session, shared by clients viewing that session. Push browser changes over authenticated WebSockets for immediate mirror refresh.
 - Publish workspace panel changes immediately with a stable command listener. Remove frame waits from reads, unregister closed views immediately, and report changed or background views without replaying commands.
 
-## 2.0.6-pre.102
-
 - Preserve the shared standalone host and startup settings during cleanup of an older extension version when a replacement remains installed. Refuse cleanup if installation registration cannot be verified.
 - Record the source of authenticated shutdown requests and honor the saved host port during uninstall cleanup. Verify independent restart and browser reconnection without VS Code.
-
-## 2.0.6-pre.101
 
 - Add MCP discovery and control of live workspace panels, including mobile dashboards, with browser snapshots and terminal screen reads.
 - Route commands to the selected dashboard and execution PC separately. Require that view's acknowledgement; report disconnected, changed, background, or unconfirmed views without substituting a local browser.
 - Preserve project scopes and custom token grants; upgrade the unchanged automatic MCP grant for workspace panel control.
 
-## 2.0.6-pre.100
-
 - Require the Start with system setup dialog to register and verify Windows boot startup before enabling it; report permission errors and unconfirmed timeouts in the dialog. Confirm task removal before switching startup off.
 - Record VS Code and standalone shutdown progress, handoff, completion, and failures. Detect unconfirmed closes on the next startup without flagging other running windows.
 - Keep test startup traces in disposable storage instead of the user's diagnostic log.
-
-## 2.0.6-pre.99
 
 - Separate Always Active (keep running after VS Code closes) from Start with system (Windows boot). Boot-task failures report their error without blocking the shutdown handoff; no sign-in fallback replaces Windows boot.
 
@@ -607,114 +376,62 @@
 - Display versionless Claude aliases with their mapped Codex model names and include Claude recognition overrides.
 - Translate mid-conversation Claude system messages; verify all four aliases using the installed Claude CLI with both auth schemes.
 
-## 2.0.6-pre.98
-
 - Focus interactive terminals on open and click, route prompt keys and shell shortcuts to the terminal, and keep Escape in terminal search from closing workspace tools.
-
-## 2.0.6-pre.96
 
 - Keep the prepared Always Active host available for VS Code shutdown handoff when optional Windows startup-task registration is slow or unavailable.
 
-## 2.0.6-pre.95
-
 - Commit the browser install, compact workspace monitor, inspector, and responsive UI changes together with their regression checks.
-
-## 2.0.6-pre.94
 
 - Make Claude CLI and Claude Desktop model discovery use recognized Claude IDs while routing each saved model to its selected Codex target.
 - Persist Claude-to-Codex mappings with conflict checks and visible save, failure, and retry states.
 
-## 2.0.6-pre.91
-
 - Compact and polish the browser reset-usage dialog with tighter spacing and clearer reset actions.
 
-## 2.0.6-pre.90
-
 - Keep usage-limit failures in the originating chat instead of showing them as a global notification over another chat.
 
-## 2.0.6-pre.90
-
 - Keep usage-limit failures in the originating chat instead of showing them as a global notification over another chat.
-
-## 2.0.6-pre.89
 
 - Show model-capacity errors as one compact red line, with the original error and diagnostics under Debug details.
 - Keep successful tool output mentioning capacity in its original activity instead of displaying a false capacity error.
-
-## 2.0.6-pre.88
 
 - Load proxy mapping choices from the same Codex model catalogue used by sessions, without requiring a key secret.
 - Save host-wide Claude-to-Codex model routes and expose recognized Claude IDs in discovery, configuration, and responses.
 - Report discovery timeouts and mapping conflicts in the connection dialog, with refresh and retry controls.
 
-## 2.0.6-pre.87
-
 - Hide the browser app install control when the current browser cannot offer installation.
 - Remove the floating workspace's separate install row; use the main conversation toolbar to open the browser install prompt directly.
 - Show install acceptance, cancellation, and failure beside the initiating control.
 
-## 2.0.6-pre.86
-
 - Show Claude-compatible mapping fields first and map them to selectable Codex models.
-
-## 2.0.6-pre.85
 
 - Keep Claude model names in the `claude-*` namespace while mapping each one to a selectable backend model.
 
-## 2.0.6-pre.84
-
 - Polish the Tools panel with clearer Manage data and Inspect system groups, compact cards, and unclipped action affordances.
-
-## 2.0.6-pre.83
 
 - Clarify the installed PWA always-on-top workflow: open it, then choose Keep on top.
 
-## 2.0.6-pre.82
-
 - Add an installable PWA entry point for the workspace, with install controls and visible browser menu guidance when a prompt is unavailable.
-
-## 2.0.6-pre.81
 
 - Add an installable PWA entry point for the workspace, with install controls and visible browser menu guidance when a prompt is unavailable.
 - Make session search results bounded and readable, keep tool arguments copyable while previewing multiline patches, remove repeated Reviews actions, and compact the General settings controls.
 
-## 2.0.6-pre.79
-
 - Improve session search and tool argument formatting, and show one shared Reviews action for grouped file changes.
-
-## 2.0.6-pre.80
 
 - Load proxy models into Codex and Claude connection setup, show Claude role mappings including Fable, and expose Claude-compatible discovery aliases that map back to 9router/provider-qualified models.
 
-## 2.0.6-pre.76
-
 - Keep only the original close button on dashboard toasts; remove the added copy, cancel, and clear icons.
-
-## 2.0.6-pre.75
 
 - Attempt manual sends without waiting on cached running status or background actions, honor explicit Queue mode, and preserve visible Send/Steer errors with Retry.
 
-## 2.0.6-pre.74
-
 - Keep terminal actions in one toolbar, refresh the list and shell screens together, and make the trash button close the selected terminal with confirmation.
-
-## 2.0.6-pre.73
 
 - Enable the interactive Terminal tool in standalone workspaces while preserving standalone chat settings and hiding the VS Code terminal action on the local Node host.
 
-## 2.0.6-pre.71
-
 - Block identical follow-up sends while a new-session prompt or recent transcript entry is still pending, coalesce duplicate session action requests across request IDs, and refresh stale running/disconnected conversations with bounded status reads.
-
-## 2.0.6-pre.70
 
 - Prevent rapid duplicate message submissions with synchronous new-chat and queue dispatch fences, and disable the new-chat send control while a start request is being created.
 
-## 2.0.6-pre.69
-
 - Open Xoom and copy the bKash donation number together, with a visible copied or failure toast.
-
-## 2.0.6-pre.68
 
 - Keep standalone restarts independent of the initiating dashboard or terminal, retain restart credentials on direct launches, and document setup and updates without opening VS Code.
 - Read current restart configuration from SQLite, preserve custom ports, and invoke npm directly on Windows. Add regression checks for interrupted restart, failed builds, and refused shutdown.
@@ -722,106 +439,63 @@
 - Preserve queued messages when cancellation or clipboard writes fail, and verify the exact queued item before removing it.
 - Verify Claude proxy credentials concurrently before model discovery and retain the active-account ownership guard.
 
-## 2.0.6-pre.66
-
 - Size compact account cards, list rows, and search controls by dashboard pane width, with uniform quota text and no horizontal overflow.
 - Align account actions beside the name and plan rows, and reveal project editing on hover or keyboard focus.
-
-## 2.0.6-pre.64
 
 - Compact saved-account cards and list rows across desktop and mobile, with bounded metric text and aligned controls.
 - Keep project folders visible in the session rail and show edit only on hover or focus.
 
-## 2.0.6-pre.63
-
 - Keep Claude tool results compatible with the Responses backend, including image attachments and explicit tool errors.
 - Stream backend reasoning deltas as Claude thinking blocks so Claude Code can continue sending messages after a tool turn.
-
-## 2.0.6-pre.60
 
 - Preserve structured model-capacity failures for automatic recovery and map serialized tool results to readable activity output.
 - Add a standalone update command that installs, compiles, restarts, and documents running Codex Manager without VS Code.
 
-## 2.0.6-pre.59
-
 - Discover shared Browser pages while the workspace is on Env and select the visible Browser tab automatically.
-
-## 2.0.6-pre.57
 
 - Show saved-account quota meters side by side when each has enough width, with stacked meters on narrow cards.
 - Increase conversation titles by 2px and project/path metadata by 1px.
-
-## 2.0.6-pre.56
 
 - Keep Browser available for opening multiple workspace tabs and expand the URL field after removing the redundant new-page icon.
 - Match the inspector's DevTools styling, docking menu, Elements and Console layout, and responsive viewport controls.
 - Align inspector tabs with centered viewport controls and add phone, tablet and desktop presets.
 - Show browser action results as dismissible toasts without adding a status row.
 
-## 2.0.6-pre.55
-
 - Keep Saved Accounts search, filters and view controls on one row; use separate sort, quota and tag icons in narrow dashboards while keeping the search input visible.
-
-## 2.0.6-pre.50
 
 - Show codex-manager as the local standalone session surface instead of the original Codex origin.
 - Refresh CPU, RAM, disk, network and uptime readings on a five-second cadence, including CPU in the first completed sample; keep battery discovery bounded and less frequent.
 
-## 2.0.6-pre.49
-
 - Fill the Saved Accounts toolbar width with aligned search, sort, tag, quota and view controls; adapt to narrow Dashboard panels and larger touch targets.
-
-## 2.0.6-pre.46
 
 - Keep the running spinner visible in the session sidebar while row actions are available.
 
-## 2.0.6-pre.47
-
 - Keep the running spinner visible in the session sidebar and show row action icons on hover.
-
-## 2.0.6-pre.45
 
 - Reuse the full dashboard in the Workspace Dashboard tab with the shared Dashboard icon and compact responsive layout from 320px phones through wide panels.
 - Keep project folder icons visible, show the edit pencil on hover/focus, and drag idle session rows between projects without a separate drag icon. List view has no drag controls.
 
-## 2.0.6-pre.44
-
 - Compact empty project rows and open project rename/removal from the folder's hover edit icon.
 - Drag idle session rows in folder view to move their working folder with native confirmation and visible failures; list view has no drag controls.
-## 2.0.6-pre.43
 
 - Order sidebar sessions by running, interrupted, stopped or incomplete, then completed, preserving order within each group.
 - Use semibold session titles and bold only the selected session title in compact and project lists.
 
-## 2.0.6-pre.42
-
 - Reuse the full dashboard in the workspace Dashboard tab with compact responsive layout and the shared Dashboard icon.
-
-## 2.0.6-pre.41
 
 - Add edit and copy icons to API keys, preserve key values when editing, and reject stale edits. Save new key values in the existing local credential store for copying; explain recovery limits for older hash-only keys.
 - Show separate Requests, In, Out, Cached, Errors, and Last used columns for the latest 100 host proxy requests, with unavailable usage distinguished from zero.
-
-## 2.0.6-pre.39
 
 - Keep verified positive quota usable below proactive switch thresholds in VS Code and standalone Auto Resume.
 - Follow configured Auto Switch and Auto Reset thresholds during recovery, without hidden fallback overrides or cycling between usable accounts.
 - Distinguish unknown quota from exhaustion in recovery messages; ignore code-review quota and preserve fractional remaining quota.
 
-## 2.0.6-pre.37
-
 - Run Auto Switch or the configured reset plan before Auto Resume in VS Code and standalone mode, and resume only after the replacement account is verified usable.
-
-## 2.0.6-pre.36
 
 - Keep the local Always Active Node host running after VS Code closes even when WS Cross System is disabled.
 
-## 2.0.6-pre.35
-
 - Replace wide endpoint tabs with a searchable picker above Operation in the API request editor.
 - Add a searchable operation picker with readable names, full identifiers, keyboard navigation, and permission-aware choices.
-
-## 2.0.6-pre.34
 
 - Keep the API workspace within the viewport, with scrolling inside keys, forms, requests, responses, and proxy logs.
 - Remove duplicate header rows and place key, Explorer, and proxy actions alongside their content.
@@ -832,136 +506,76 @@
 - Pick eligible proxy keys in the connection guide, or create and select an aiProxy-only key when none exist; fill client examples from a new or pasted key without storing its secret.
 - Show account emails and API key names in proxy routes and logs, with live activity refresh and animated running connections.
 
-## 2.0.6-pre.33
-
 - Switch away from accounts rejected by quota or expired authentication immediately in VS Code mode, using the same ownership and account verification rules as standalone.
 - Recover capacity failures reported through structured error details and recognize explicit model, server, and provider capacity messages.
 - Leave verified running native sessions alone during recovery, including sessions without an open VS Code conversation tab.
-
-## 2.0.6-pre.32
 
 - Open API access at `/api` from the sidebar icon immediately after Tasks, with the task workspace preserved.
 - Redesign API keys, API Explorer, and Proxy as full-page tabs with inline key management and request details.
 - Balance the Explorer fields and response panels; show the proxy route beside recent or full external request logs, with responsive light and dark layouts.
 
-## 2.0.6-pre.27
-
 - Keep the enabled API shortcut in the persistent Workspace Tools header after opening task pages, and remove it from the account footer.
-
-## 2.0.6-pre.26
 
 - Move API access out of the primary dashboard actions and expose it as an enabled-only icon in the secondary account tools.
 - Give the API workspace a larger task-style surface for Explorer, Proxy, Logs, and key management.
 
-## 2.0.6-pre.25
-
 - Split the API Proxy tab into a route diagram and recent external API logs side by side; the Logs tab keeps the full request table.
-
-## 2.0.6-pre.24
 
 - Keep the empty Browser tab available after page discovery and background refresh, with live coverage for opening and closing pages.
 - Show connection recovery first in the top notification stack, above workspace panels, while keeping mobile feedback compact and limited to two lines.
 - Exercise real disconnect/reconnect in the responsive toast check and refresh the isolated restart fixture's account before testing recovery.
 
-## 2.0.6-pre.23
-
 - Add Proxy and Logs tabs to the API modal with a routing diagram and recent request status, token usage, duration, and safe failure details.
 - Keep the latest 100 proxy request metadata records in host memory without prompts, responses, or credentials.
 - Make the API key manager easy to open with a labeled header button and refresh its token list on entry.
 
-## 2.0.6-pre.22
-
 - Hide standalone Terminal controls when the host does not support terminals.
-
-## 2.0.6-pre.21
 
 - Keep owner-only task column controls and success feedback out of shared project boards.
 
-## 2.0.6-pre.20
-
 - Show CPU, RAM, battery, network, disk, and uptime readings in the Environment panel when system information is enabled.
-
-## 2.0.6-pre.19
 
 - Keep Browser optional, close browser pages cleanly, and label page tabs with their document titles.
 - Open session links in separate tabs and download file links directly instead of routing them through Browser.
 - Keep mobile failure and connection notices compact, two-line toasts.
 
-## 2.0.6-pre.18
-
 - Resolve deferred dashboard module preloads relative to their asset location in browsers and VS Code webviews.
 - Preserve Browser, Terminal, and Editor loading errors and offer retry and dashboard reload recovery.
 - Automatically register MCP for new Codex sessions with workspace permissions, preserving user-managed entries and explicit opt-outs.
 
-## 2.0.6-pre.17
-
 - Read native Codex protocol 13 status and canonical turn IDs for VS Code sends, steering, and reload recovery.
-
-## 2.0.6-pre.16
 
 - Auto-steer workspace prompts when Codex reports an active writer despite stale idle UI state.
 
-## 2.0.6-pre.15
-
 - Allow workspace sends when native status is unknown while preserving blocking for other actions.
-
-## 2.0.6-pre.14
 
 - Route workspace sends to native steering for active turns and allow fresh idle sends through stale cache state.
 
-## 2.0.6-pre.13
-
 - Refresh native session status before sending workspace prompts.
-
-## 2.0.6-pre.12
 
 - Verify native Codex status freshly before reporting running sessions or resuming work.
 
-## 2.0.6-pre.11
-
 - Keep running session spinners in the right side status column.
-
-## 2.0.6-pre.10
 
 - Fix session rail status dots and running spinners overlapping conversation titles.
 
-## 2.0.6-pre.9
-
 - Include recent verified native-running sessions during VS Code startup recovery, even when a plain reload did not finish persisting its recovery list.
-
-## 2.0.6-pre.8
 
 - Join an Auto Resume already in progress for the same VS Code session instead of opening or continuing it again.
 
-## 2.0.6-pre.7
-
 - Reduce VS Code Auto Resume readiness waiting from two minutes to forty seconds while keeping the official-tab safety check.
-
-## 2.0.6-pre.6
 
 - Keep confirmed dashboard data visible during progressive updates and improve binary file downloads with a clear file summary and responsive download action.
 
-## 2.0.6-pre.5
-
 - Open the workspace Account Center from the account footer even when no conversation is selected, including the dashboard and task board, and keep its mobile content within the panel.
-
-## 2.0.6-pre.4
 
 - Start the VS Code quota scheduler with an immediate active-account check and reopen missing Codex tabs when the native session survived a host restart.
 
-## 2.0.6-pre.3
-
 - Fix VS Code queue ownership without Web Locks, unify browser pages with the workspace tab track, normalize bare URLs, and dock a visual Inspector panel in the workspace.
-
-## 2.0.6-pre.2
 
 - Route conversation links to the selected system: workspace links open in the right Browser panel, downloads return to the dashboard, and external links open in the remote system browser.
 
-## 2.0.6-pre.1
-
 - Match the Browser workspace chrome more closely: one address row, Chrome-order navigation, and a right-docked DevTools-style Inspector with Elements, Console, Sources, and Network tabs.
-
-## 2.0.6
 
 - Refine the Browser workspace panel with shared themed icon controls and an anchored Browser actions flyout.
 
@@ -994,12 +608,10 @@
 - Hand off the saved session message queue to the focused tab when another tab moves to the background, without replaying in-flight sends.
 - Fill task detail panels consistently and make mobile tabs compact and horizontally scrollable.
 
-## 2.0.2-pre.1
+## 2.0.2
 
 - Keep offline dashboard navigation, cached views and local drafts usable while blocking server execution; preserve disconnected account snapshots.
 - Compact task details with newest activity first, grouped file edits, direct actions, clearer offline states, and saved agent and scroll preferences.
-
-## 2.0.2
 
 - Keep live conversations updating when tool output or hydrated images exceed live snapshot limits; preserve full saved history.
 - Recover verified disconnected work through Auto Resume in VS Code and standalone, with durable dispatch and newer-turn guards.

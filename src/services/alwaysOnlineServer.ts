@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "child_process";
 import * as vscode from "vscode";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
-import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
+import { deleteSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { runCrossWindowExclusive, CrossWindowOperationBusyError } from '../utils/crossWindowOperations';
 import { recordHostLifecycle } from './hostLifecycle';
@@ -131,7 +131,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
         await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, config.adminToken, path.join(storage, PID_FILE), config.mode ?? "relay");
       }
     } catch (error) {
-      if (sqliteStoreForFile(path.join(getCodexManagerStorageRoot(), CONFIG_FILE)) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       // No previous relay is normal on first activation.
     }
   }
@@ -416,9 +416,26 @@ function relayIsHealthy(port: number): Promise<boolean> {
 
 function nodeHostIsHealthy(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const request = http.get({ host: "127.0.0.1", port, path: "/api/state", timeout: 800 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
-    request.on("error", () => resolve(false));
-    request.on("timeout", () => { request.destroy(); resolve(false); });
+    const finish = (healthy: boolean): void => { clearTimeout(deadline); resolve(healthy); };
+    const deadline = setTimeout(() => { request.destroy(); finish(false); }, 800);
+    const request = http.get({ host: "127.0.0.1", port, path: "/api/state", timeout: 800 }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        body += chunk;
+        if (body.length > 8 * 1024 * 1024) { request.destroy(); finish(false); }
+      });
+      response.once("end", () => {
+        try {
+          const state = JSON.parse(body) as { accounts?: unknown; settings?: unknown; panelTitle?: unknown };
+          finish(response.statusCode === 200 && Array.isArray(state.accounts) && !!state.settings && typeof state.panelTitle === "string");
+        } catch { finish(false); }
+      });
+      response.once("error", () => finish(false));
+      response.once("aborted", () => finish(false));
+    });
+    request.on("error", () => finish(false));
+    request.on("timeout", () => { request.destroy(); finish(false); });
   });
 }
 
@@ -440,14 +457,16 @@ export function isAlwaysOnlineRelayHealthResponse(statusCode: number | undefined
 
 function portIsOccupied(port: number): Promise<boolean> {
   return new Promise((resolve) => {
+    const finish = (occupied: boolean): void => { clearTimeout(deadline); resolve(occupied); };
+    const deadline = setTimeout(() => { request.destroy(); finish(true); }, 500);
     const request = http.get({ host: "127.0.0.1", port, path: "/health", timeout: 500 }, (response) => {
       response.resume();
-      resolve(true);
+      finish(true);
     });
-    request.on("error", (error: NodeJS.ErrnoException) => resolve(error.code !== "ECONNREFUSED"));
+    request.on("error", (error: NodeJS.ErrnoException) => finish(error.code !== "ECONNREFUSED"));
     request.on("timeout", () => {
       request.destroy();
-      resolve(true);
+      finish(true);
     });
   });
 }
@@ -504,17 +523,35 @@ async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<
   void context;
 }
 
+async function clearStalePid(pidPath: string, expected: number): Promise<void> {
+  const store = sqliteStoreForFile(pidPath);
+  if (store) {
+    store.transaction(() => {
+      try { if (Number(readSqliteStateFile(pidPath).trim()) === expected) deleteSqliteStateFile(pidPath); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    });
+  } else {
+    try { if (Number((await fs.readFile(pidPath, "utf8")).trim()) === expected) await fs.unlink(pidPath); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+}
+
 async function readLivePid(pidPath: string): Promise<number | undefined> {
   let value: number | undefined;
+  const sqlitePid = sqliteStoreForFile(pidPath);
   try {
-    const text = sqliteStoreForFile(pidPath) ? readSqliteStateFile(pidPath) : await fs.readFile(pidPath, "utf8");
+    const text = sqlitePid ? readSqliteStateFile(pidPath) : await fs.readFile(pidPath, "utf8");
     value = Number(text.trim());
     if (!Number.isInteger(value) || value <= 0) return undefined;
     process.kill(value, 0);
     return value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EPERM" && value) return value;
-    if (sqliteStoreForFile(pidPath) && (error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ESRCH" && value) {
+      await clearStalePid(pidPath, value);
+      return undefined;
+    }
+    if (sqlitePid && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return undefined;
   }
 }
@@ -524,6 +561,12 @@ async function waitForRelayShutdown(port: number, token: string, pidPath: string
   while (Date.now() < deadline) {
     const [pid, healthy] = await Promise.all([readLivePid(pidPath), hostIsHealthy(port, mode)]);
     if (!pid && !healthy) {
+      return;
+    }
+    // A crashed host can leave its PID record behind. Do not wait on an
+    // unrelated process when the dashboard port is already free.
+    if (!healthy && !(await portIsOccupied(port))) {
+      if (pid) await clearStalePid(pidPath, pid);
       return;
     }
     await requestShutdown(port, token);

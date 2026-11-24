@@ -34,19 +34,19 @@ export function useSessionQuestionNotifications(onNotice: (notice: DashboardNoti
     current.current = next; setNotices(next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); return true; } catch { return false; }
   };
-  const clearAnswered = (answered: QuestionNotification[]): void => {
+  const clearResolved = (answered: QuestionNotification[]): void => {
     if (!answered.length) return;
     const keys = new Set(answered.map(questionNotificationKey));
     for (const request of answered) dismissed.current.add(questionNotificationKey(request));
     const saved = save(current.current.filter(request => !keys.has(questionNotificationKey(request))));
     if (!saveDismissedCodexRequests([...readDismissedCodexRequests(), ...dismissed.current]) || !saved)
-      feedback.current({ level: 'warning', message: 'Answered question cleared in this tab. Browser storage is unavailable.' });
+      feedback.current({ level: 'warning', message: 'Question reminder cleared in this tab. Browser storage is unavailable.' });
   };
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>): void => {
       const message = event.data;
-      if (message?.type === 'dashboard:codex-request-resolved' && message.answered === true) {
-        clearAnswered(current.current.filter(request => request.id === message.requestId && request.deviceId === message.deviceId));
+      if (message?.type === 'dashboard:codex-request-resolved') {
+        clearResolved(current.current.filter(request => request.id === message.requestId && request.deviceId === message.deviceId));
         return;
       }
       const session = message?.type === 'dashboard:codex-session-live' ? { id: message.state.sessionId, deviceId: message.state.deviceId } :
@@ -55,8 +55,14 @@ export function useSessionQuestionNotifications(onNotice: (notice: DashboardNoti
         message?.type === 'dashboard:action-result' && message.action === 'getCodexCliSessionMessages' ? message.payload?.cliSessionMessages : undefined;
       if (session && history) {
         const answered = answeredSessionQuestionIds(history);
-        clearAnswered(current.current.filter(request => request.threadId === session.id && request.deviceId === session.deviceId &&
+        clearResolved(current.current.filter(request => request.threadId === session.id && request.deviceId === session.deviceId &&
           history.some(item => item.id === request.sourceMessageId && item.questions?.length && item.questions.every((_, index) => answered.has(JSON.stringify(['request_user_input_async', item.id, index]))))));
+        clearResolved(current.current.filter(request => {
+          if (request.threadId !== session.id || request.deviceId !== session.deviceId || !request.sourceMessageId) return false;
+          const index = history.findIndex(item => item.id === request.sourceMessageId);
+          return index >= 0 && history.slice(index + 1).some(item =>
+            !(item.role === 'user' && /^\s*<send_user_message_question_reply>[\s\S]*<\/send_user_message_question_reply>\s*$/.test(item.text) && answeredSessionQuestionIds([item]).size));
+        }));
       }
       const requests = message?.type === 'dashboard:codex-request' ? [message.request] : message?.type === 'dashboard:codex-requests' && Array.isArray(message.requests) ? message.requests : [];
       if (!requests.length) return;

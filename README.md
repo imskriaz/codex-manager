@@ -10,6 +10,12 @@ It is an independent, community project. It is not an official OpenAI product.
 
 Use the [AI control and browser guide](docs/ai-control.md) for MCP setup, browser feedback and standalone native terminals.
 
+## Version 3.0.0
+
+Download the final [3.0.0 release](https://github.com/imskriaz/codex-manager/releases/tag/v3.0.0) or install [codex-manager-3.0.0.vsix](https://github.com/imskriaz/codex-manager/releases/download/v3.0.0/codex-manager-3.0.0.vsix). See the [changelog](CHANGELOG.md) for the full release history.
+
+This release includes OpenAI and Anthropic API-key accounts, native Claude sessions, SMTP session notifications, browser voice dictation, and PostgreSQL storage for Team workspaces. It also improves account controls, session questions, and standalone startup recovery.
+
 ## What it provides
 
 | Area | What you can do |
@@ -88,7 +94,7 @@ Install **Codex Manager** from the [Visual Studio Marketplace](https://marketpla
 Download a release VSIX, then run **Extensions: Install from VSIX...** in VS Code. From a terminal:
 
 ```bash
-code --install-extension codex-manager-<version>.vsix
+code --install-extension codex-manager-3.0.0.vsix --force
 ```
 
 ### Build from source
@@ -202,7 +208,7 @@ Enable **Always Active** in the same Settings panel to keep the local Node host 
 
 **Start with system** is a separate setting: it starts the local host when Windows boots, before sign-in. Turning it on opens setup instructions. Reopen VS Code as administrator, then choose **Verify and enable**; the switch stays off until task registration and verification succeed. Registering or removing the boot task requires administrator permission. If registration fails, the warning keeps the original error; Always Active can still hand off the host when VS Code closes. Windows boot is never replaced by sign-in startup.
 
-The background host prefers an installed Node.js 22.13+ runtime and falls back to VS Code's compatible runtime. Windows handoff and login startup run with hidden windows. The browser uses the same shared password and retains its login when hosts change; SQLite stores the shared login configuration, a salted password verifier, and session fingerprints. Password changes revoke existing logins. After upgrading from an older version, reload VS Code once before closing it so the shared login state can migrate. Handoff can briefly reconnect while the previous host releases the port; a competing launch never stops the active host.
+The background host prefers an installed Node.js 22.13+ runtime and falls back to VS Code's compatible runtime. Runtime discovery is limited to five seconds. When a per-user startup task cannot be registered, the standalone fallback uses a hidden Startup-folder launcher. Windows handoff and login startup run with hidden windows. The browser uses the same shared password and retains its login when hosts change; SQLite stores the shared login configuration, a salted password verifier, and session fingerprints. Password changes revoke existing logins. After upgrading from an older version, reload VS Code once before closing it so the shared login state can migrate. Handoff can briefly reconnect while the previous host releases the port; a competing launch never stops the active host.
 
 The dashboard login requires a username and password. Codex Manager generates a random master username in `~/.codex/codex-manager.env` (or your `--data-dir` directory) as `CODEX_MANAGER_ADMIN_USERNAME`. VS Code and the standalone host read the same file; an explicitly set environment variable takes precedence. View the read-only master username below Password in Settings ? General or in the password dialog, with inline Copy and Rotate controls in VS Code and the trusted local dashboard. Rotation takes effect immediately for new sign-ins. Set or change the shared **Password** in Codex Manager → Settings → General. Team users have an Email field and use that email as their sign-in username, with the password assigned by their administrator.
 

@@ -24,17 +24,33 @@ beforeEach(() => {
 });
 afterEach(() => { harness.cleanups.forEach(cleanup => cleanup()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-it('keeps questions until dismissed through timeouts, missing snapshots, owner reconnects and reloads without storing secret text', () => {
+it('keeps questions through long waits, missing snapshots, owner reconnects and reloads without storing secret text', () => {
   vi.useFakeTimers(); render(); emit({ type: 'dashboard:codex-request', request: request() });
   expect(render().active?.sourceMessageId).toBe('question');
   vi.advanceTimersByTime(60 * 60_000);
   emit({ type: 'dashboard:codex-requests', requests: [] });
-  emit({ type: 'dashboard:codex-request-resolved', requestId: 'owner-request' });
   expect(render().active).toBeDefined(); expect(reopen().active).toBeDefined();
   emit({ type: 'dashboard:codex-request', request: request({ id: 'reconnected-owner' }) });
   expect(render().active?.id).toBe('reconnected-owner');
   const saved = records.get('codexManager.questionNotifications.v1')!;
   expect(JSON.parse(saved)).toHaveLength(1); expect(saved).not.toContain('Secret question text'); expect(saved).not.toContain('Private question');
+});
+
+it('clears a resolved or cancelled turn durably without dismissing another system', () => {
+  render(); emit({ type: 'dashboard:codex-requests', requests: [request(), request({ deviceId: 'remote' })] });
+  emit({ type: 'dashboard:codex-request-resolved', requestId: 'owner-request' });
+  expect(render().active?.deviceId).toBe('remote');
+  expect(reopen().active?.deviceId).toBe('remote');
+});
+
+it('clears a reminder when the owning conversation progresses but keeps it for unrelated snapshots', () => {
+  render(); emit({ type: 'dashboard:codex-request', request: request() });
+  const question = { id: 'question', role: 'assistant', text: 'Choose', questions: [{ title: 'Which?' }] };
+  emit({ type: 'dashboard:codex-session-live', state: { sessionId: 'another-thread', messages: [question, { id: 'work', kind: 'command', text: 'Working' }] } });
+  expect(render().active).toBeDefined();
+  emit({ type: 'dashboard:codex-session-live', state: { sessionId: 'thread', messages: [question, { id: 'work', kind: 'command', text: 'Working' }] } });
+  expect(render().active).toBeUndefined();
+  expect(reopen().active).toBeUndefined();
 });
 
 it('persists dismissal of transcript questions across owner IDs and reloads while allowing new questions', () => {

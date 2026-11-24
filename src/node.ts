@@ -113,9 +113,8 @@ export async function startNodeHost(): Promise<void> {
       }
     }
     let syncReady = false;
-    const syncStartup = sync.start().then(() => { syncReady = true; dashboard.publishLocalStateChange(); })
+    void sync.start().then(() => { if (!closing) { syncReady = true; dashboard.publishLocalStateChange(); } })
       .catch(error => console.warn("[codexManager] standalone account claims could not initialize:", error));
-    await waitWithin(syncStartup, 2_000, "Standalone claims are still loading.").catch(error => console.warn("[codexManager]", error));
     registerNodeBackgroundServices(context, repo, dashboard, id =>
       !getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false) || syncReady && sync.canAutomateAccount(id));
     if (pidFile) writeSqliteStateFile(pidFile, String(process.pid));

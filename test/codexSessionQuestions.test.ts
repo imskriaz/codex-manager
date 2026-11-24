@@ -11,12 +11,25 @@ beforeEach(() => {
   mocks.send.mockReset().mockImplementation(async options => { options.onStarted(); }); mocks.steer.mockReset().mockResolvedValue(undefined);
 });
 
-it('never mirrors old, missing-date or superseded questions, and clears a prompt when work continues', () => {
-  for (const timestamp of ['', 'invalid', new Date(Date.now() - 120_000).toISOString()]) {
+it('ignores invalid or superseded questions and clears a prompt when work continues', () => {
+  for (const timestamp of ['', 'invalid']) {
     syncAsyncCodexQuestions('home', session, [{ ...message, timestamp }]); expect(prompt()).toBeUndefined();
   }
   syncAsyncCodexQuestions('home', session, [message]); expect(prompt()).toBeDefined();
   syncAsyncCodexQuestions('home', session, [message, { id: 'work', kind: 'command', text: 'More activity' }]); expect(prompt()).toBeUndefined();
+});
+
+it('keeps a waiting transcript question mirrored without expiry until the turn progresses', () => {
+  vi.useFakeTimers();
+  const old = { ...message, timestamp: new Date(Date.now() - 60 * 60_000).toISOString() };
+  syncAsyncCodexQuestions('home', session, [old]);
+  const id = prompt().id;
+  vi.advanceTimersByTime(60 * 60_000);
+  expect(prompt().id).toBe(id);
+  syncAsyncCodexQuestions('home', session, [old]);
+  expect(prompt().id).toBe(id);
+  syncAsyncCodexQuestions('home', session, [old, { id: 'next-turn', role: 'user', text: 'Continue with something else' }]);
+  expect(prompt()).toBeUndefined();
 });
 
 it('rejects a push answer if newer activity arrives before the user clicks it', async () => {

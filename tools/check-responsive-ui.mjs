@@ -957,7 +957,7 @@ try {
       await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
       await checkSessionQuestionUi(page, { parentId, width, output });
       assert.deepEqual(errors, [], 'Question prompts have no browser runtime errors');
-      results.push({ width, height, checks: 'question timeout, at-message Answer, new activity, immediate queue, offline, duplicate submission, composer preservation, reconnect' });
+      results.push({ width, height, checks: 'persistent question, banner opens prompt, turn progression, immediate queue, offline, duplicate submission, composer preservation, reconnect' });
       await context.close(); continue;
     }
     if (process.argv.includes('--message-settings')) {
@@ -1097,6 +1097,37 @@ try {
       results.push({ width, height, checks: 'window-only Auto Resume, keyboard/touch, save/reload, parent visibility, overflow' });
       await context.close();
       continue;
+    }
+    if (process.argv.includes('--bulk-actions')) {
+      await page.goto(origin + '/');
+      const toolbar = page.locator('.dashboard-content .dashboard-account-toolbar').first();
+      const selections = page.locator('.dashboard-content .accounts-grid .saved-select-toggle');
+      await selections.first().waitFor();
+      const filters = await toolbar.getByRole('combobox').count();
+      assert.ok(filters > 0, 'Normal account filters are available before selection');
+      await selections.nth(0).click();
+      await selections.nth(1).click();
+      assert.equal(await toolbar.getByRole('searchbox').count(), 1, 'Search stays available during selection');
+      assert.equal(await toolbar.getByRole('combobox').count(), 0, 'Bulk mode replaces unrelated filters');
+      assert.equal(await toolbar.locator('.dashboard-view-controls').count(), 0, 'Bulk mode replaces the view toggle');
+      assert.equal(await page.locator('.accounts-section-header .batch-bar').count(), 0, 'Bulk actions do not create a second header row');
+      const bulk = toolbar.locator('.batch-bar');
+      await bulk.getByRole('button').click();
+      const menu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: snapshot.copy.batchRefreshBtn, exact: true }) });
+      await menu.getByRole('menuitem', { name: snapshot.copy.batchRefreshBtn, exact: true }).click();
+      await page.waitForFunction(() => window.__uiActions.some(action => action.action === 'batchRefresh' && action.payload.accountIds.length === 2));
+      await page.locator('.dashboard-notice').filter({ hasText: 'Simulated action failure. Your draft is preserved.' }).waitFor();
+      assert.equal(await page.locator('.dashboard-content .accounts-grid .saved-select-toggle[aria-pressed="true"]').count(), 2, 'Failed bulk actions retain the selection');
+      assert.ok(await toolbar.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Search and bulk controls fit the toolbar');
+      await page.screenshot({ path: path.join(output, `bulk-actions-${width}.png`) });
+      await selections.nth(0).click();
+      await selections.nth(1).click();
+      assert.equal(await toolbar.locator('.batch-bar').count(), 0, 'Clearing selection leaves bulk mode');
+      assert.equal(await toolbar.getByRole('combobox').count(), filters, 'Normal filters return after selection clears');
+      assert.equal(await toolbar.locator('.dashboard-view-controls').count(), 1, 'The view toggle returns');
+      assert.deepEqual(errors, []);
+      results.push({ width, height, checks: 'Contextual bulk toolbar, selection dispatch, visible failure, normal controls restored, no overflow' });
+      await context.close(); continue;
     }
     if (process.argv.includes('--overview')) {
       await page.goto(origin+'/');
