@@ -21,7 +21,13 @@ export function ProjectPicker(props: {
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0);
   const [removed, setRemoved] = useState<string[]>([]), [notice, setNotice] = useState(''), [failed, setFailed] = useState(false);
+  const [toast, setToast] = useState<{ message: string }>();
   const [pending, setPending] = useState<Project>();
+  useEffect(() => {
+    if (!toast) return;
+    const timer = globalThis.setTimeout(() => setToast(undefined), 4500);
+    return () => globalThis.clearTimeout(timer);
+  }, [toast]);
   useEffect(() => { setOpen(false); setQuery(''); setPending(undefined); }, [scope, props.disabled]);
   useEffect(() => {
     setNotice(''); setFailed(false);
@@ -40,7 +46,7 @@ export function ProjectPicker(props: {
     try {
       const next = [...new Set([...readRemoved(scope), canonicalWebPath(project.path)])];
       localStorage.setItem(storageKey(scope), JSON.stringify(next));
-      setRemoved(next); setFailed(false); setNotice(`Removed ${project.label} from recent projects.`);
+      setRemoved(next); setFailed(false); setNotice(''); setToast({ message: `Removed ${project.label} from recent projects.` });
       window.dispatchEvent(new Event(changed)); setPending(undefined); setActive(0); trigger.current?.focus({ preventScroll: true });
     } catch { setFailed(true); setNotice('Could not remove this recent project. Your project is still available.'); }
   };
@@ -55,6 +61,7 @@ export function ProjectPicker(props: {
   useLayoutEffect(() => { if (open) panel.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' }); }, [open, active, query]);
   const show = () => { setQuery(''); setActive(0); if (!failed) setNotice(''); setOpen(true); };
   return <div class="project-picker">
+    {toast ? createPortal(<div class="dashboard-notice-stack project-picker-toast" aria-live="polite"><div class="dashboard-notice is-info" role="status"><span>{toast.message}</span><button type="button" aria-label="Dismiss project notification" onClick={() => setToast(undefined)}>×</button></div></div>, document.body) : null}
     <button ref={trigger} type="button" role="combobox" name={props.name} class="project-picker-trigger" aria-label={props.label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? `${id}-list` : undefined} disabled={props.disabled} title={props.title ?? props.value} data-value={props.value} onClick={() => open ? close() : show()} onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); show(); } }}>
       <span>{selected?.label ?? (props.value ? props.value.split(/[\\/]/).filter(Boolean).pop() : 'No folder')}</span><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 8 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
     </button>

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { VNode } from 'preact';
 const fixture = vi.hoisted(() => ({ slots: [] as any[], cursor: 0, effects: [] as Array<() => void> }));
+vi.mock('preact/compat', () => ({ createPortal: (node: unknown) => node }));
 vi.mock('preact/hooks', () => ({
   useState(initial: unknown) { const index = fixture.cursor++; fixture.slots[index] ??= { value: typeof initial === 'function' ? initial() : initial }; return [fixture.slots[index].value, (next: any) => { fixture.slots[index].value = typeof next === 'function' ? next(fixture.slots[index].value) : next; }]; },
   useRef(initial: unknown) { const index = fixture.cursor++; return fixture.slots[index] ??= { current: initial }; },
@@ -23,10 +24,11 @@ beforeEach(() => {
   fixture.slots = []; fixture.cursor = 0; fixture.effects = []; storage = new Map();
   vi.stubGlobal('localStorage', { getItem: vi.fn((key: string) => storage.get(key) ?? null), setItem: vi.fn((key: string, value: string) => storage.set(key, value)) });
   vi.stubGlobal('window', new EventTarget());
+  vi.stubGlobal('document', { body: {} });
   props = { label: 'Project', value: 'D:/Alpha', projects: [{ path: 'D:/Alpha', label: 'Alpha' }, { path: 'D:/Beta', label: 'Beta' }], onChange: vi.fn(), onAdd: vi.fn() };
   render(); open();
 });
-afterEach(() => { fixture.slots.forEach(slot => slot?.cleanup?.()); vi.unstubAllGlobals(); });
+afterEach(() => { fixture.slots.forEach(slot => slot?.cleanup?.()); vi.unstubAllGlobals(); vi.useRealTimers(); });
 it('searches project labels and paths without losing the no-folder choice', () => {
   const input = find(node => node.type === 'input');
   (input.props.onInput ?? input.props.oninput)({ currentTarget: { value: 'd:/beta' } });
@@ -62,11 +64,39 @@ it('reports storage failures and preserves the entry for retry', () => {
   expect(confirmation().props.error).toContain('Could not remove');
   expect(storage.size).toBe(0);
   expect(props.onChange).not.toHaveBeenCalled();
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(false);
 });
 it('requires confirmation and cancels without changing recents', () => {
   remove(); expect(storage.size).toBe(0); expect(trigger().props['aria-expanded']).toBe(false);
   confirmation().props.onCancel(); open(); expect(options()).toHaveLength(3);
   expect(storage.size).toBe(0); expect(props.onChange).not.toHaveBeenCalled();
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(false);
+});
+it('shows a dismissible success toast and expires it without changing the picker layout', () => {
+  vi.useFakeTimers();
+  confirmRemoval();
+  expect(find(node => node.props.role === 'status').props.children[0].props.children).toBe('Removed Alpha from recent projects.');
+  expect(nodes(render()).some(node => node.props.class === 'sr-only' && node.props.role === 'status')).toBe(false);
+  vi.advanceTimersByTime(4499);
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(true);
+  vi.advanceTimersByTime(1);
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(false);
+  const input = find(node => node.type === 'input');
+  input.props.onInput({ currentTarget: { value: 'Alpha' } });
+  remove(); confirmation().props.onConfirm();
+  find(node => node.props['aria-label'] === 'Dismiss project notification').props.onClick();
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(false);
+});
+it('restarts the toast timer when the same searchable project is removed again', () => {
+  vi.useFakeTimers();
+  confirmRemoval();
+  vi.advanceTimersByTime(3000);
+  find(node => node.type === 'input').props.onInput({ currentTarget: { value: 'Alpha' } });
+  remove(); confirmation().props.onConfirm(); render();
+  vi.advanceTimersByTime(1500);
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(true);
+  vi.advanceTimersByTime(3000);
+  expect(nodes(render()).some(node => node.props.class === 'dashboard-notice-stack project-picker-toast')).toBe(false);
 });
 it('reports malformed saved preferences and leaves all projects available', () => {
   storage.set('codexManager.projectPicker.removed.local', '{broken');
