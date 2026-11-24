@@ -38,7 +38,7 @@ export function saveApiAccount(input: ApiAccountInput): ApiAccount {
   const normalized = normalizeApiAccount(input), store = storage();
   const id = `api:${normalized.provider}:` + createHash('sha256').update(JSON.stringify([normalized.apiKey, normalized.baseUrl])).digest('hex');
   const previous = store.get<ApiAccount>(namespace, id), now = Date.now();
-  const account: ApiAccount = { id, provider: normalized.provider, name: normalized.name, baseUrl: normalized.baseUrl, createdAt: previous?.createdAt ?? now, updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1), enabled: previous?.enabled !== false };
+  const account: ApiAccount = { id, provider: normalized.provider, name: normalized.name, baseUrl: normalized.baseUrl, createdAt: previous?.createdAt ?? now, updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1), enabled: previous?.enabled !== false, queuePriority: previous?.queuePriority === true };
   store.transaction(() => {
     store.set('secrets', id, normalized.apiKey);
     store.set(namespace, id, account);
@@ -67,6 +67,13 @@ export function setApiAccountEnabled(id: string, enabled: boolean): ApiAccount {
     store.set(namespace, id, updated);
     if (!enabled && store.get<string>('api-account-selection', activeKey(account.provider)) === id) store.set('api-account-selection', activeKey(account.provider), undefined);
   });
+  return updated;
+}
+export function setApiAccountQueuePriority(id: string, queuePriority: boolean): ApiAccount {
+  const store = storage(), account = store.get<ApiAccount>(namespace, id);
+  if (!account) throw new Error('That API account no longer exists. Refresh and retry.');
+  const updated = { ...account, queuePriority, updatedAt: Math.max(Date.now(), account.updatedAt + 1) };
+  store.set(namespace, id, updated);
   return updated;
 }
 export function clearApiAccountSelection(provider: ApiAccountProvider): void { getSqliteStateStore()?.set('api-account-selection', activeKey(provider), undefined); }

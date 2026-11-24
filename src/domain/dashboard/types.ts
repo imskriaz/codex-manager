@@ -436,6 +436,8 @@ export interface DashboardAccountViewModel {
   apiBaseUrl?: string;
   /** Safe display-only hint; never contains the API key itself. */
   apiKeyHint?: string;
+  /** Recorded Manager session totals; input includes cached input. */
+  apiTokenUsage?: { input?: number; cachedInput?: number; output?: number };
   accountName?: string;
   authProviderLabel: string;
   accountStructureLabel: string;

@@ -9,6 +9,7 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { listStoredSessionLive, readStoredSessionLive, isConfirmedSessionDeleted } from "../storage/sqliteSessions";
 import { getCodexHome } from "../codex/authFile";
 import { hydrateSessionImages } from './codexSessionImages';
+import { activeApiAccount } from './apiAccounts';
 
 const MAX_STREAMS = 30;
 const TERMINAL_TTL_MS = 5 * 60_000;
@@ -52,7 +53,7 @@ export function reserveCodexSessionLive(provider: 'codex' | 'claude' = 'codex') 
   prune();
   if (activeSlots.size >= MAX_STREAMS) throw new Error("Codex Manager is already managing 30 turns. Stop a turn or wait for it to finish before starting another.");
   const streamId = randomUUID();
-  const accountId = provider === 'claude' ? undefined : captureSessionAccount();
+  const accountId = provider === 'claude' ? activeApiAccount('anthropic')?.id : captureSessionAccount();
   activeSlots.add(streamId);
   let sessionId: string | undefined;
   let entry: ReturnType<typeof streams.get>;

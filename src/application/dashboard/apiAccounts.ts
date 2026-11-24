@@ -1,5 +1,7 @@
 import type { DashboardAccountViewModel } from "../../domain/dashboard/types";
 import { activeApiAccount, apiAccountCredential, listApiAccounts } from "../../services/apiAccounts";
+import { getSqliteStateStore } from '../../storage/sqliteState';
+import { readApiAccountTokenUsage } from '../../storage/sqliteSessions';
 
 function apiKeyHint(account: Parameters<typeof apiAccountCredential>[0]): string {
   try {
@@ -11,7 +13,10 @@ function apiKeyHint(account: Parameters<typeof apiAccountCredential>[0]): string
 }
 
 export function apiDashboardAccounts(): DashboardAccountViewModel[] {
-  return listApiAccounts().map((account) => {
+  const accounts = listApiAccounts();
+  const store = getSqliteStateStore();
+  const usage = accounts.length && store ? readApiAccountTokenUsage(store) : undefined;
+  return accounts.map((account) => {
     const isCurrent = account.enabled !== false && activeApiAccount(account.provider)?.id === account.id;
     return {
       id: account.id,
@@ -22,6 +27,7 @@ export function apiDashboardAccounts(): DashboardAccountViewModel[] {
       updatedAt: account.updatedAt,
       apiBaseUrl: account.baseUrl,
       apiKeyHint: apiKeyHint(account),
+      apiTokenUsage: usage?.get(account.id),
       authProviderLabel: account.provider === "openai" ? "OpenAI" : "Anthropic",
       accountStructureLabel: "API key",
       workspaceLabel: "",
@@ -36,7 +42,7 @@ export function apiDashboardAccounts(): DashboardAccountViewModel[] {
       switchQueued: false,
       isCurrentWindowAccount: isCurrent,
       enabled: account.enabled !== false,
-      queuePriority: false,
+      queuePriority: account.queuePriority === true,
       tokenRefreshEnabled: false,
       canRefreshToken: false,
       showInStatusBar: false,

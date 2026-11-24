@@ -22,6 +22,7 @@ import {
   EditTagsIcon
 } from "./icons";
 import { ActionButton } from "./primitives";
+import { ApiAccountCard } from "./apiAccountCard";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { isDashboardMainQuotaExhausted, isDashboardAccountOutOfQuota } from "./accountSorting";
@@ -426,16 +427,7 @@ export function SavedAccountCard(props: {
       </div>
     );
 
-  if (account.authMode === 'apiKey') {
-    const apiLabel = account.apiKeyHint || '••••';
-    const tableIdentity = <div class="saved-table-name-block"><div class="saved-table-name-line"><strong title={apiLabel}>{apiLabel}</strong></div><div class="saved-table-meta"><span class="pill">{account.authProviderLabel}</span><span class="pill">API key</span>{account.isActive ? <span class="pill success">Selected</span> : null}</div></div>;
-    const cardIdentity = <div class="saved-title"><div class="saved-identity-line"><h3><button class={`saved-select-toggle ${props.selected ? "selected" : ""}`} type="button" aria-pressed={props.selected} aria-label={selectionLabel} title={selectionLabel} onClick={event => { stopFlip(event); props.onToggleSelected(); }}><span class="saved-select-toggle-mark" aria-hidden="true"></span></button><span class="saved-title-text" title={apiLabel}>{apiLabel}</span></h3></div><div class="saved-table-meta"><span class="pill">{account.authProviderLabel}</span><span class="pill">API key</span>{account.isActive ? <span class="pill success">Selected</span> : null}</div></div>;
-    const enableLabel = account.enabled ? 'Disable API account' : 'Enable API account';
-    const actions = <><button class={`saved-control saved-enabled-toggle ${account.enabled ? 'is-checked' : ''}`} type="button" title={enableLabel} aria-label={enableLabel} aria-pressed={account.enabled} disabled={props.connected === false || props.enabledPending} onClick={() => onAction('toggleAccountEnabled', account.id, { enabled: !account.enabled })}><span class="saved-enabled-toggle-indicator" aria-hidden="true"><span></span></span></button><ActionButton label={account.isActive ? 'Selected' : 'Select account'} pending={props.switchPending} disabled={props.connected === false || account.isActive || !account.enabled} onClick={() => onAction('switch', account.id)} /><ActionButton icon={renderRefreshIcon()} iconOnly label="Verify API key" pending={props.refreshPending} disabled={props.connected === false} onClick={() => onAction('refresh', account.id)} /><ActionButton label="Remove account" pending={props.removePending} disabled={props.connected === false} onClick={() => onAction('remove', account.id)} /></>;
-    const apiInfo = <><div class="row"><div class="row-head"><span class="metric-label">Token usage</span><span class="metric-row-summary"><span class="metric-reset-inline">Provider managed</span></span></div><div class="bar"><span style={{ width: '0%' }}></span></div></div><div class="row"><div class="row-head"><span class="metric-label">Endpoint</span><span class="metric-row-summary"><span class="metric-reset-inline" title={account.apiBaseUrl}>{account.apiBaseUrl}</span></span></div></div></>;
-    return props.compactRow ? <article class={`saved-table-row ${cardStateClass}`} aria-label={apiLabel}><div class="saved-table-identity">{tableIdentity}</div><div class="saved-table-metrics">{apiInfo}</div><div class="saved-table-actions">{actions}</div></article>
-      : <article class={`saved-card-container ${cardStateClass}`} aria-label={apiLabel}><section class="saved-card saved-card-front" aria-label={apiLabel}><div class="saved-head">{cardIdentity}<div class="saved-top-actions">{actions}</div></div><div class="saved-progress">{apiInfo}</div><div class="saved-card-footer"><div class="saved-credit-summary"><span class="saved-credits-line" title={account.apiBaseUrl}>{account.authProviderLabel} · {account.apiBaseUrl}</span></div></div></section></article>;
-  }
+  if (account.authMode === 'apiKey') return <ApiAccountCard {...props} />;
 
   if (account.provider === 'claude') {
     const identity = <div class="saved-table-name-block"><div class="saved-table-name-line"><strong title={emailDisplay}>{emailDisplay}</strong></div><div class="saved-table-meta"><span class="pill">Claude</span><span title={account.subscriptionTitle}>{account.subscriptionText}</span></div></div>;

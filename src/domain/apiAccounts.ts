@@ -1,6 +1,6 @@
 export type ApiAccountProvider = 'openai' | 'anthropic';
 export type ApiAccountInput = { provider: ApiAccountProvider; name: string; apiKey: string; baseUrl?: string };
-export type ApiAccount = { id: string; provider: ApiAccountProvider; name: string; baseUrl: string; createdAt: number; updatedAt: number; enabled?: boolean };
+export type ApiAccount = { id: string; provider: ApiAccountProvider; name: string; baseUrl: string; createdAt: number; updatedAt: number; enabled?: boolean; queuePriority?: boolean };
 
 export function normalizeApiAccount(input: ApiAccountInput): Required<ApiAccountInput> {
   if (!input || !['openai', 'anthropic'].includes(input.provider)) throw new Error('Choose OpenAI or Anthropic.');

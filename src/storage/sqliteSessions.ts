@@ -110,6 +110,13 @@ export function initializeSessionStorage(store: SqliteStateStore): void {
   }
   store.database.exec("CREATE TABLE IF NOT EXISTS running_turns (session_id TEXT PRIMARY KEY,started_at REAL NOT NULL,owner_pid INTEGER,child_pid INTEGER,project_path TEXT NOT NULL,data TEXT NOT NULL)");
   store.watchTable("session_turns","sessions");
+  for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+    const row = operation === 'DELETE' ? 'OLD' : 'NEW';
+    const changed = operation === 'UPDATE' ? 'AND (NEW.input_tokens IS NOT OLD.input_tokens OR NEW.output_tokens IS NOT OLD.output_tokens OR NEW.cached_tokens IS NOT OLD.cached_tokens OR NEW.account_id IS NOT OLD.account_id)' : '';
+    store.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_api_token_usage_${operation} AFTER ${operation} ON session_turns
+      WHEN ${row}.account_id LIKE 'api:%' ${changed}
+      BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('accounts',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+  }
   store.watchTable("session_status","session-status");
   store.watchTable("running_turns","sessions");
   initialized.add(store);
@@ -301,6 +308,28 @@ export function readAccountSessionStats(store: SqliteStateStore, accountId: stri
   return store.prepare(`SELECT COUNT(*) AS turns,COALESCE(SUM(input_tokens),0) AS input_tokens,
     COALESCE(SUM(output_tokens),0) AS output_tokens,COALESCE(SUM(cached_tokens),0) AS cached_tokens,
     COALESCE(SUM(total_tokens),0) AS total_tokens FROM session_turns WHERE account_id=?`).get(accountId)!;
+}
+
+/** Codex reports cumulative thread counts; Claude reports totals for each managed stream. */
+export function readApiAccountTokenUsage(store: SqliteStateStore): Map<string, { input?: number; cachedInput?: number; output?: number }> {
+  initializeSessionStorage(store);
+  const rows = store.prepare(`WITH usage AS (
+    SELECT account_id,input_tokens,output_tokens,cached_tokens,json_extract(data,'$.provider') AS provider,
+      LAG(input_tokens) OVER thread AS previous_input,
+      LAG(output_tokens) OVER thread AS previous_output,
+      LAG(cached_tokens) OVER thread AS previous_cached
+    FROM session_turns WHERE input_tokens IS NOT NULL OR output_tokens IS NOT NULL OR cached_tokens IS NOT NULL
+    WINDOW thread AS (PARTITION BY home,device_id,session_id ORDER BY updated_at,stream_id)
+  ) SELECT account_id,
+    SUM(CASE WHEN provider='claude' OR previous_input IS NULL OR input_tokens<previous_input THEN input_tokens ELSE input_tokens-previous_input END) AS input,
+    SUM(CASE WHEN provider='claude' OR previous_output IS NULL OR output_tokens<previous_output THEN output_tokens ELSE output_tokens-previous_output END) AS output,
+    SUM(CASE WHEN provider='claude' OR previous_cached IS NULL OR cached_tokens<previous_cached THEN cached_tokens ELSE cached_tokens-previous_cached END) AS cached
+    FROM usage WHERE account_id LIKE 'api:%' GROUP BY account_id`).all();
+  const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  return new Map(rows.map(row => {
+    const input = count(row['input']), cached = count(row['cached']);
+    return [String(row['account_id']), { input, output: count(row['output']), cachedInput: input !== undefined && cached !== undefined ? Math.min(input, cached) : undefined }];
+  }));
 }
 
 export function readSessionStatus(store:SqliteStateStore,home:string,id:string): string {

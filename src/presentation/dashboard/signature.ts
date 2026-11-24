@@ -7,6 +7,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
         account.id,
         account.email,
         account.displayName,
+        JSON.stringify(account.apiTokenUsage ?? null),
         JSON.stringify(account.tags ?? []),
         account.accountName ?? "",
         account.planTypeLabel,

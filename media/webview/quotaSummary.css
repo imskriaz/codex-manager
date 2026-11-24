@@ -19448,3 +19448,17 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .voice-dictation .workspace-dialog-footer button:first-child { margin-right: auto; }
 @media (prefers-reduced-motion: reduce) { .voice-dictation-indicator.is-active i { animation: none; } }
 @media (max-width: 420px) { .voice-dictation .workspace-dialog-footer button:first-child { margin-right: 0; } }
+
+.saved-api-details { max-width: 260px; padding: 6px 10px; overflow-wrap: anywhere; font-size: 11px; color: var(--muted); }
+
+.saved-api-token-bar { display: flex; }
+.saved-api-token-bar > span { position: relative; flex: none; }
+.saved-api-token-bar .saved-api-fresh { background: var(--vscode-charts-blue, #3794ff); }
+.saved-api-token-bar .saved-api-cached { background: var(--vscode-charts-green, #89d185); }
+.saved-api-token-bar .saved-api-output { background: var(--vscode-charts-blue, #3794ff); }
+.saved-api-token-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 9px; }
+.saved-api-token-legend > span::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; }
+.saved-api-fresh-label::before { background: var(--vscode-charts-blue, #3794ff); }
+.saved-api-cached-label::before { background: var(--vscode-charts-green, #89d185); }
+
+.saved-api-account .saved-enabled-toggle { display: inline-flex; }

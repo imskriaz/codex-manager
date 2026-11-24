@@ -1,5 +1,5 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
-import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, validateApiAccount } from '../../services/apiAccounts';
+import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, setApiAccountQueuePriority, validateApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
@@ -400,6 +400,10 @@ async function executeDashboardActionMessageCore(
         const enabled = typeof message.payload?.enabled === 'boolean' ? message.payload.enabled : account.enabled === false;
         setApiAccountEnabled(account.id, enabled);
         notice = { level: 'info', message: `${account.name} was ${enabled ? 'enabled' : 'disabled'}.` };
+      } else if (message.action === 'setAccountQueuePriority') {
+        const queuePriority = message.payload?.queuePriority === true;
+        setApiAccountQueuePriority(account.id, queuePriority);
+        notice = { level: 'info', message: `${account.name} was ${queuePriority ? 'starred' : 'unstarred'}.` };
       } else if (message.action === 'remove') {
         if (message.payload?.confirmed !== true) throw new Error('Confirm removal in the account list before retrying.');
         removeApiAccount(account.id);
@@ -407,7 +411,7 @@ async function executeDashboardActionMessageCore(
       } else if (message.action === 'refresh') {
         await validateApiAccount(account);
         notice = { level: 'info', message: 'API key verified. API billing and limits are managed by the provider.' };
-      } else throw new Error('This API account supports selection, key verification and removal from the account list.');
+      } else throw new Error('This API account supports selection, starring, enable/disable, key verification and removal from the account list.');
       ctx.schedulePublishState();
       return { status: 'completed', payload: { notice } };
     }
