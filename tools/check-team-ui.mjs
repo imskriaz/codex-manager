@@ -27,6 +27,8 @@ try { for(const [width,mode] of [[1440,'browser'],[768,'browser'],[390,'browser'
     if(url.pathname==='/api/office/mcp')return route.fulfill({json:{servers:[{id:'orders',label:'Company data',endpoint:'http://127.0.0.1:4321/api/mcp',enabled:true,allowedRoles:['user']}]}});
     if(url.pathname==='/api/office/settings')return route.fulfill({json:{workspaceRoot:'C:/team',databaseProvider:'sqlite',postgresConfigured:false}});
     if(url.pathname==='/api/office/usage/fixture-user')return route.fulfill({json:{revision:'fixture',usage:{tokens:123}}});
+    if(url.pathname==='/api/office/sessions/fixture-user')return route.fulfill({json:{sessions:[{id:'fixture-chat',title:'Buyer follow-up',status:'running',updatedAt:new Date().toISOString()}]}});
+    if(url.pathname==='/api/office/sessions/fixture-user/fixture-chat')return route.fulfill({json:{session:{id:'fixture-chat',title:'Buyer follow-up',status:'running',updatedAt:new Date().toISOString()},messages:[{id:'question',role:'user',text:'Prepare a buyer follow-up.'},{id:'answer',role:'assistant',text:'Preparing the requested summary.'}]}});
     if(url.pathname==='/api/office/users/fixture-user'&&request.method()==='PATCH'){
       patches++;saved=request.postDataJSON();if(failSave){failSave=false;return route.fulfill({status:409,json:{error:'User changed in another window. Refresh and retry.'}});}
       user={...user,...saved};return route.fulfill({json:{user}});
@@ -74,6 +76,9 @@ try { for(const [width,mode] of [[1440,'browser'],[768,'browser'],[390,'browser'
   await settings.getByRole('button',{name:'Edit Alex Updated',exact:true}).click();
   await selectTab('Data access');assert.ok(await editor.getByRole('checkbox',{name:/Company data/}).isChecked());
   await selectTab('Usage');await editor.getByText('123 verified tokens today.',{exact:true}).waitFor();
+  await selectTab('Sessions');await editor.getByRole('button',{name:'View Buyer follow-up',exact:true}).click();
+  const sessionDetails=page.getByRole('dialog',{name:'Buyer follow-up',exact:true});await sessionDetails.getByText('Prepare a buyer follow-up.',{exact:true}).waitFor();await sessionDetails.getByText('Preparing the requested summary.',{exact:true}).waitFor();
+  await page.screenshot({path:path.join(output,`user-session-${width}-${mode}.png`)});await sessionDetails.getByRole('button',{name:'Close session details',exact:true}).click();
   await deleteButton.click();await confirmation.getByRole('button',{name:'Delete user',exact:true}).click();await confirmation.getByRole('alert').filter({hasText:'Keep at least one enabled admin.'}).waitFor();
   await page.screenshot({path:path.join(output,`delete-${width}-${mode}.png`)});
   await confirmation.getByRole('button',{name:'Delete user',exact:true}).click();await settings.getByRole('status').filter({hasText:'User deleted. Workspace files kept.'}).waitFor();assert.equal(deletes,2);assert.equal(await settings.getByRole('button',{name:'Edit Alex Updated',exact:true}).count(),0);

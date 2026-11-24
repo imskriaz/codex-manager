@@ -1202,11 +1202,11 @@ describe("encrypted account sync", () => {
     } finally { manager.dispose(); }
   });
 
-  it("defaults cross-PC claim checks on while local account use avoids credential sync", async () => {
+  it("honors enabled cross-PC claim checks while local account use avoids credential sync", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback,
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? true : fallback,
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);

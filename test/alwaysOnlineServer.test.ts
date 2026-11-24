@@ -20,7 +20,7 @@ afterEach(() => {
 describe("always-online WebSocket relay handoff", () => {
   it('reuses prepared startup but refreshes it when Always Active changes before close', async () => {
     let active = false;
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'alwaysActive' ? active : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'alwaysActive' ? active : key === 'cloudflaredDomain' ? 'https://tunnel.example' : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback } as never);
     const server = new AlwaysOnlineServer({} as never) as any;
     server.preparedRelay = {}; server.verifiedConfiguration = server.configurationKey();
     const prepare = vi.spyOn(server, 'applyConfiguration').mockResolvedValue('paused');
@@ -31,7 +31,7 @@ describe("always-online WebSocket relay handoff", () => {
     server.dispose(); expect(spawn).not.toHaveBeenCalled();
   });
   it('keeps the verified relay enabled when Sync and Claim is off', async () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? false : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? false : key === 'cloudflaredDomain' ? 'https://tunnel.example' : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback } as never);
     const verify = vi.fn(async () => true);
     const server = new AlwaysOnlineServer({} as never, { getRealtimeRelayKey: async () => 'key' } as never, verify);
     const stop = vi.spyOn(server, 'stop').mockResolvedValue();
@@ -43,7 +43,7 @@ describe("always-online WebSocket relay handoff", () => {
   });
 
   it.each(['webDashboardEnabled', 'cloudflaredDomain'])('stops without probing when %s is disabled or missing', async key => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (name: string, fallback: unknown) => name === key ? (key === 'cloudflaredDomain' ? '' : false) : name === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (name: string, fallback: unknown) => name === key ? (key === 'cloudflaredDomain' ? '' : false) : name === 'cloudflaredDomain' ? 'https://tunnel.example' : ['webDashboardEnabled','webSocketServerEnabled'].includes(name) ? true : fallback } as never);
     const verify = vi.fn(async () => true);
     const server = new AlwaysOnlineServer({} as never, { getRealtimeRelayKey: async () => 'key' } as never, verify);
     const stop = vi.spyOn(server, 'stop').mockResolvedValue();
@@ -53,7 +53,7 @@ describe("always-online WebSocket relay handoff", () => {
   });
   it('prepares the local Always Active host when WS Cross System is disabled', async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
-      key === 'alwaysActive' ? true : key === 'webSocketServerEnabled' ? false : key === 'webDashboardEnabled' ? true : key === 'cloudflaredDomain' ? '' : fallback
+      key === 'alwaysActive' ? true : key === 'webSocketServerEnabled' ? false : key === 'webDashboardEnabled' ? true : key === 'cloudflaredDomain' ? '' : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback
     } as never);
     const verify = vi.fn(async () => true);
     const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => 'key' } as never, verify);
@@ -67,7 +67,7 @@ describe("always-online WebSocket relay handoff", () => {
   it("waits without throwing or retaining a stale relay when encrypted sync is unavailable", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) =>
-        key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback
+        key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback
       )
     } as unknown as vscode.WorkspaceConfiguration);
     const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, undefined, async () => true);
@@ -90,7 +90,7 @@ describe("always-online WebSocket relay handoff", () => {
   });
 
   it.each([false, true])("starts the relay only after local host verification (%s)", async verified => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback } as never);
     const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => "key" } as never, async () => verified);
     const stop = vi.spyOn(server, "stop").mockResolvedValue(); const start = vi.spyOn(server, "start").mockResolvedValue("started");
     await expect(server.applyConfiguration()).resolves.toBe(verified ? "started" : "stopped");
@@ -98,7 +98,7 @@ describe("always-online WebSocket relay handoff", () => {
   });
 
   it("does not start after disposal while the host check was pending", async () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : ['webDashboardEnabled','webSocketServerEnabled'].includes(key) ? true : fallback } as never);
     let verify!: (value: boolean) => void;
     const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => "key" } as never, () => new Promise(resolve => { verify = resolve; }));
     const stop = vi.spyOn(server, "stop").mockResolvedValue(); const start = vi.spyOn(server, "start").mockResolvedValue("started");
@@ -108,7 +108,7 @@ describe("always-online WebSocket relay handoff", () => {
 
   it.each([false,true])("converges to the latest domain while an old host check is pending (old failure: %s)", async fail => {
     let domain='https://old.example',finish!:(value:boolean)=>void,reject!:(error:Error)=>void;
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='cloudflaredDomain'?domain:key==='webDashboardEnabled'?true:fallback} as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='cloudflaredDomain'?domain:key==='webDashboardEnabled'?true:['webDashboardEnabled','webSocketServerEnabled'].includes(key)?true:fallback} as never);
     const verify=vi.fn().mockImplementationOnce(()=>new Promise<boolean>((resolve,fail)=>{finish=resolve;reject=fail;})).mockResolvedValue(true);
     const server=new AlwaysOnlineServer({} as never,{getRealtimeRelayKey:async()=> 'key'} as never,verify);
     const stop=vi.spyOn(server,'stop').mockResolvedValue();const start=vi.spyOn(server,'start').mockResolvedValue('started');

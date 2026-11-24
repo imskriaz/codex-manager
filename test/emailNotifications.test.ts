@@ -7,6 +7,7 @@ import { configureCrossWindowOperationCoordinator } from '../src/utils/crossWind
 import { removeTestDirectory } from './testFilesystem';
 import { EmailNotificationService, defaultEmailPreferences, readEmailPreferences, saveEmailPreferences, saveEmailWatch } from '../src/services/emailNotifications';
 import * as concurrency from '../src/utils/concurrency';
+import * as officeUsers from '../src/services/officeUsers';
 
 const { sendMail, close, createTransport } = vi.hoisted(() => {
   const sendMail = vi.fn(), close = vi.fn(); return { sendMail, close, createTransport: vi.fn(() => ({ sendMail, close })) };
@@ -21,6 +22,7 @@ beforeEach(async () => {
   await configureCrossWindowOperationCoordinator(root);
   database = await SqliteStateStore.open(path.join(root, 'state.sqlite')); configureSqliteStateStore(database);
   secrets = new Map();
+  vi.spyOn(officeUsers, 'getOfficeUser').mockResolvedValue({ id: 'alex', username: 'alex@example.test', enabled: true } as officeUsers.OfficeUser);
   service = new EmailNotificationService({ get: async key => secrets.get(key), store: async (key, value) => { secrets.set(key, value); } } as never);
   sendMail.mockReset().mockResolvedValue({ accepted: ['recipient@example.test'], rejected: [] }); close.mockClear(); createTransport.mockClear();
 });
@@ -61,6 +63,16 @@ it('honors event choices, explicit excerpts, disabled users and single-session r
   preferences('alex');
   const disabled = new EmailNotificationService({ get: async key => secrets.get(key) } as never, async () => false);
   disabled.notify({ ...ready, owner: 'alex' }); await disabled.flush(); expect(sendMail).toHaveBeenCalledTimes(3);
+});
+it('sends tests and session notices to the current account email instead of the saved recipient', async () => {
+  await service.saveConfig(smtp); preferences('alex', { address: 'legacy@example.test' });
+  vi.mocked(officeUsers.getOfficeUser).mockResolvedValue({ id: 'alex', username: 'current@example.test', enabled: true } as officeUsers.OfficeUser);
+  await service.test('alex');
+  service.notify({ ...ready, owner: 'alex' }); await service.flush();
+  expect(sendMail.mock.calls.map(call => call[0].to)).toEqual(['current@example.test', 'current@example.test']);
+  vi.mocked(officeUsers.getOfficeUser).mockResolvedValue(undefined);
+  await expect(service.test('alex')).rejects.toThrow('valid email address');
+  expect(sendMail).toHaveBeenCalledTimes(2);
 });
 it('records rejected or unconfirmed deliveries without automatic replay or raw server secrets', async () => {
   await service.saveConfig(smtp); preferences();

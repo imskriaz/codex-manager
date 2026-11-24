@@ -19553,3 +19553,14 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .saved-api-cached-label::before { background: var(--vscode-charts-green, #89d185); }
 
 .saved-api-account .saved-enabled-toggle { display: inline-flex; }
+
+.user-session-messages { padding:0; list-style:none; }
+.user-session-messages > li { padding:10px 0; border-bottom:1px solid var(--border-default); overflow-wrap:anywhere; }
+.user-session-messages p { white-space:pre-wrap; margin:4px 0; }
+.settings-master-modal .settings-sidebar .settings-tab-list { flex:1 1 0; overflow-y:scroll; scrollbar-width:thin; scrollbar-gutter:stable; }
+.settings-master-modal .settings-tab-list::-webkit-scrollbar { width:8px; }
+.settings-master-modal .settings-tab-list::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:4px; }
+.settings-master-modal .settings-tab-list .settings-tab { flex:0 0 auto; }
+.settings-master-modal > .settings-modal-body { overflow-y:auto; scrollbar-gutter:stable; }
+.settings-master-modal .settings-team-section { display:flex; align-items:center; gap:12px; padding-bottom:16px; }
+.settings-master-modal .settings-team-section select { flex:1; min-width:0; }

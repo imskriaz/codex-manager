@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.1-pre.6
+
+- Use the account email for User Workspace notifications and move the per-session email switch into the three-dot menu.
+- Add confirmed clear-all controls for chats and Library files, with ownership, active-work and revision checks.
+- Add an administrator Sessions tab with a compact user-session list and refreshable details.
+- Preserve useful workspace activity details, show website URLs and skill/MCP calls, and hide credentials and host diagnostics.
+- Improve narrow file previews, visible preview failures, and usage refresh after workspace changes.
+- Group related settings, restore sidebar scrolling, and default optional modules off while honoring saved choices.
+
 ## 3.0.1-pre.5
 
 - Automatically resume interrupted User Workspace responses from saved plans and tool results, with two bounded recovery attempts and visible progress.

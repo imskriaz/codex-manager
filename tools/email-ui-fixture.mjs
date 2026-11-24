@@ -1,5 +1,5 @@
-export async function emailUiFixture(context) {
-  const state = { preferences: { revision: '', enabled: false, address: '', ready: true, needsAnswer: true, failed: true, includeResult: false }, watches: [], available: true };
+export async function emailUiFixture(context, address = '') {
+  const state = { preferences: { revision: '', enabled: false, address, ready: true, needsAnswer: true, failed: true, includeResult: false }, watches: [], available: true };
   let config = { revision: '', enabled: true, host: 'smtp.example.test', port: 587, security: 'starttls', user: 'sender', hasPassword: true, from: 'sender@example.test', baseUrl: '' };
   let failTest = true;
   const calls = [];

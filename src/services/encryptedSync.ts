@@ -1598,11 +1598,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
   /** Dashboard transport is independent from account syncing and claims. */
   isCrossPcEnabled(): boolean {
     const config = getCodexManagerConfiguration();
-    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true);
+    return config.get<boolean>("webDashboardEnabled", false) && config.get<boolean>("webSocketServerEnabled", false);
   }
 
   private isEnabled(): boolean {
-    return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true);
+    return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false);
   }
 
   private isFullAccountSyncEnabled(): boolean {
@@ -2113,7 +2113,7 @@ export function isEncryptedSyncRegistryOverrideEnabled(): boolean {
 }
 
 export function getPendingEnablementAccountIds(): string[] {
-  return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled",true) ? [...pendingEnablementAccountIds] : [];
+  return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled",false) ? [...pendingEnablementAccountIds] : [];
 }
 
 export function getEncryptedSyncStatus(): {
@@ -2129,7 +2129,7 @@ export function getEncryptedSyncStatus(): {
 }
 
 export function getSyncedAccountLeases(now = Date.now()): SyncedAccountLeaseView[] {
-  if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true)) return [];
+  if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)) return [];
   return visibleAccountEnablement
     .filter((entry) => entry.enabled)
     .map((entry) => ({

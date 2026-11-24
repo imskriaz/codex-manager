@@ -1164,7 +1164,7 @@ async function runDashboardAction(
     case "getResetCredits":
       return handleGetResetCredits(ctx.repo, account);
     case "getDailyUsage":
-      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", true)) {
+      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", false)) {
         return { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } };
       }
       return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days, payload?.automatic !== true);
@@ -2091,7 +2091,7 @@ async function handleGetDailyUsage(
 }
 
 function ensureCliIntegrationEnabled(): void {
-  if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
+  if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
     throw new Error("Session Integration is disabled. Enable it in Settings before opening sessions.");
   }
 }

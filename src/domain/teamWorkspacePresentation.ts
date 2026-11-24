@@ -41,12 +41,49 @@ export function userWorkspacePathText(text: string, folders: string[]): string {
   return text.replace(/(?<![\w:/\\])\/(?:bin|sbin|usr|etc|tmp|var|opt|home|root|mnt|srv|proc|sys|dev)(?=$|[\s"'`<>|;:,)\]}])/g, '[folder]');
 }
 
+/** Keep work details while removing credentials, internal addresses and host paths. */
+export function userWorkspaceActivityText(text: string, folders: string[]): string {
+  const secret = /^(?:authorization|cookie|set-cookie|password|passwd|secret|clientSecret|api[-_]?key|token|(?:access|refresh|id|session|auth)[-_]?token|connectionString|databaseUrl|endpoint|headers|env|environment|systemPrompt|guidance|instruction)$/i;
+  const clean = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(clean);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, value]) => [key, secret.test(key) ? '[hidden]' : clean(value)]));
+    if (typeof value !== 'string') return value;
+    try {
+      const nested: unknown = JSON.parse(value);
+      if (nested && typeof nested === 'object') return JSON.stringify(clean(nested));
+    } catch { /* Ordinary text has no nested JSON envelope. */ }
+    return scalar(value);
+  };
+  const scalar = (value: string) => userWorkspacePathText(value, folders)
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi, '[hidden credential]')
+    .replace(/\bsk-[a-zA-Z0-9_-]{16,}\b/g, '[hidden credential]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[hidden credential]')
+    .replace(/\b(password|secret|api[-_]?key|access[-_]?token|refresh[-_]?token)["']?\s*[:=]\s*["']?[^\s,;"']+/gi, '$1=[hidden]')
+    .replace(/https?:\/\/[^\s<>"']+/gi, address => {
+      try {
+        const url = new URL(address);
+        if (/^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|\[::1\])/.test(url.hostname) || !url.hostname.includes('.')) return '[private address]';
+        url.username = ''; url.password = '';
+        for (const key of url.searchParams.keys()) if (secret.test(key)) url.searchParams.set(key, '[hidden]');
+        return url.href;
+      } catch { return '[private address]'; }
+    });
+  try { return JSON.stringify(clean(JSON.parse(text) as unknown), null, 2); } catch { return scalar(text); }
+}
+
 /** Mask host locations while preserving commands, arguments, output and grouping. */
 export function userSessionActivity(message: DashboardCliSessionMessage, folders: string[]): DashboardCliSessionMessage {
   if(message.role==='user')return message;
-  const mask=(text:string|undefined)=>text === undefined ? text : userWorkspacePathText(text, folders);
+  const mask=(text:string|undefined)=>text === undefined ? text : userWorkspaceActivityText(text, folders);
   let title=mask(message.title);
-  if(message.kind==='tool-call' && /^read(?:[_\s/\\]|$)/i.test(message.title??'')) {
+  const website = /^(?:(?:read|browse|open)[_\s]+(?:website|web[_\s]+page)|read file\s*·\s*website)(?:\s|$)/i.test(message.title??'');
+  if (message.kind === 'tool-call' && website) {
+    let address: unknown = message.subtitle;
+    try { address = (JSON.parse(message.arguments ?? '{}') as {url?:unknown}).url ?? address; } catch { /* Keep a recorded URL when arguments are incomplete. */ }
+    let url = '';
+    try { if (typeof address === 'string') { const value = new URL(address); if (['https:', 'http:'].includes(value.protocol) && !value.username && !value.password) url = value.href; } } catch { /* Older activities may have no recorded URL. */ }
+    title = 'Browse website' + (url ? ' · ' + mask(url) : '');
+  } else if(message.kind==='tool-call' && /^read(?:[_\s/\\]|$)/i.test(message.title??'') && !/^read[_\s]+connected[_\s]+source/i.test(message.title??'')) {
     let file=(message.title??'').replace(/^read(?:[_\s]+file)?\s*/i,'');
     try { const args=JSON.parse(message.arguments??'{}') as {path?:unknown;file_path?:unknown};const path=args.path??args.file_path;if(typeof path==='string')file=path; } catch { /* Keep the recorded label when arguments are incomplete. */ }
     title='Read File'+(file?' · '+mask(file):'');

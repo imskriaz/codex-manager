@@ -1153,6 +1153,13 @@ function App() {
             if (appliesToSelectedSystem && !partialList) liveSessionListReceived.current = true;
             const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessionsRef.current, ownerDeviceId, partialList);
             setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
+            if (state.snapshot?.office?.role === 'user' && !partialList && selectedCliSessionRef.current && !sessions.some(session => sameCliSessionTarget(session, selectedCliSessionRef.current))) {
+              messageViewRevision.current++;
+              void invalidateCliSessionCache(selectedCliSessionRef.current.id, selectedCliSessionRef.current.deviceId);
+              selectedCliSessionRef.current = undefined;
+              setSelectedCliSession(undefined); setCliSessionMessages([]); setCliSessionMessagesError(undefined);
+              navigateDashboardPath('/workspace', setBrowserPath);
+            }
             // Heartbeats can be truncated by older relays. Refresh only the visible
             // owner's catalogue; partial pushes must never confirm deletions.
             if (appliesToSelectedSystem && partialList && !connectionUnavailable && selectedPeer?.connected)

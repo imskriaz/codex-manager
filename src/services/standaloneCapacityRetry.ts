@@ -39,7 +39,7 @@ export function registerStandaloneCapacityRetry(
   const controller = new AbortController();
   const enabled = () => {
     const config = getCodexManagerConfiguration();
-    return config.get<boolean>("cliIntegrationEnabled", true);
+    return config.get<boolean>("cliIntegrationEnabled", false);
   };
   const recoverable = (message: string) => isCodexPermissionInterruption(message) ||
     isCodexCapacityInterruption(message) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true);

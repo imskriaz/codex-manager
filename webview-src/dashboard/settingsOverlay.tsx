@@ -29,12 +29,13 @@ import { clampWebviewZoom } from "./webviewZoom";
 
 import { BrowserNotifications } from "./browserNotifications";
 import { EmailSettings } from './emailSettings';
+import { UserWorkspaceClear } from './userWorkspaceClear';
 import { MaintenanceTools } from "./maintenanceTools";
 import { SystemStartupSetting } from './systemStartupSetup';
 import { MasterUsernameField } from './masterUsernameField';
 import type { SendAction } from "./hookTypes";
 import { TeamManagementPage, TEAM_SETTINGS_SECTIONS, type TeamSettingsSection } from "./teamManagementPage";
-import { isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "./settingsNavigation";
+import { settingsGroup, isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "./settingsNavigation";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
@@ -142,7 +143,7 @@ export function SettingsOverlay(props: {
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
   const canManageTeam = canShowTeamSettings(props.settings, props.office, document.documentElement.dataset["dashboardHost"] === "browser", props.targetDeviceId);
   const allTabs = [...navigationCopy.tabs,
-    { id: "modules" as const, label: "Modules", heading: "Modules", description: "Turn features on or off. Enabled modules appear in the sidebar." },
+    { id: "modules" as const, label: "Modules", heading: "Modules", description: "Turn features on or off. Options appear in the related settings sections when their module is enabled." },
     { id: "dashboard" as const, label: "Dashboard", heading: "Web Dashboard", description: "Browser hosting and startup." },
     { id: "sessions" as const, label: "Sessions", heading: "Workspace & sessions", description: "Editor limits and accounts in VS Code windows." },
     { id: "connections" as const, label: "Connections", heading: "Cross-system connections", description: "Shared server address for connected systems." },
@@ -152,8 +153,13 @@ export function SettingsOverlay(props: {
     { id: "system-log" as const, label: "System log", heading: "System log", description: "Diagnostic detail, retention, and logs." },
     { id: "tools" as const, label: "Tools", heading: "Tools", description: "Review data, clean up, and troubleshoot this system." },
     ...TEAM_SETTINGS_SECTIONS.map(section => ({ id: section.id, label: section.title, heading: section.title, description: section.description }))];
-  const tabs = [allTabs[0]!, allTabs.find(tab => tab.id === "modules")!, ...allTabs.filter(tab => tab.id !== "general" && tab.id !== "modules")]
-    .filter(tab => isSettingsSectionEnabled(tab.id, props.settings, canManageTeam));
+  const enabledSections = allTabs.filter(tab => isSettingsSectionEnabled(tab.id, props.settings, canManageTeam));
+  const tabs = (['general', 'modules', 'automation', 'data', 'connections', 'sessions', 'users', 'tools'] as SettingsTabId[]).flatMap(id => {
+    if (!enabledSections.some(tab => settingsGroup(tab.id) === id)) return [];
+    const tab = allTabs.find(tab => tab.id === id)!;
+    return [{ ...tab, label: id === 'data' ? 'Data & logs' : id === 'sessions' ? 'Workspace' : id === 'users' ? 'User Workspace' : id === 'connections' ? 'Connections' : tab.label }];
+  });
+  const panelHidden = (section: string) => searching || settingsGroup(section) !== activeTab || !enabledSections.some(tab => tab.id === section);
   const searching = Boolean(sectionSearch.trim());
   const [searchItems, setSearchItems] = useState<SettingsSearchItem[]>([]);
   const searchResults = searchItems.filter(item => matchesSettingsSearch(item.text, sectionSearch));
@@ -175,9 +181,10 @@ export function SettingsOverlay(props: {
     return items;
   };
   const openSearchResult = (item: SettingsSearchItem) => {
-    const enabled = tabs.some(tab => tab.id === item.tab);
+    const enabled = enabledSections.some(tab => tab.id === item.tab);
     setSectionSearch("");
-    setActiveTab(enabled ? item.tab : "modules");
+    setActiveTab(enabled ? settingsGroup(item.tab) as SettingsTabId : "modules");
+    if (enabled && TEAM_SETTINGS_SECTIONS.some(section => section.id === item.tab)) setTeamSection(item.tab as TeamSettingsSection);
     requestAnimationFrame(() => {
       const modal = accessibility.modalRef.current;
       const moduleKey = resolveSettingsModuleKey(item.tab, props.settings);
@@ -205,12 +212,12 @@ export function SettingsOverlay(props: {
     if (props.open) setSearchItems(readSearchItems());
   }, [props.open, props.settings, props.lang, teamSection]);
   useEffect(() => {
-    if (props.open && props.initialSection && tabs.some(tab => tab.id === props.initialSection)) setActiveTab(props.initialSection as SettingsTabId);
+    if (props.open && props.initialSection && enabledSections.some(tab => tab.id === props.initialSection)) { setActiveTab(settingsGroup(props.initialSection) as SettingsTabId); if (TEAM_SETTINGS_SECTIONS.some(section => section.id === props.initialSection)) setTeamSection(props.initialSection as TeamSettingsSection); }
   }, [props.open, props.initialSection]);
   useLayoutEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) setActiveTab("general");
-    if (canManageTeam && TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)) setTeamSection(activeTab as TeamSettingsSection);
-  }, [canManageTeam, activeTab, props.settings]);
+    if (canManageTeam && activeTab === "users" && (!teamSection || !enabledSections.some(section => section.id === teamSection))) setTeamSection(TEAM_SETTINGS_SECTIONS.find(section => enabledSections.some(tab => tab.id === section.id))?.id);
+  }, [canManageTeam, activeTab, props.settings, teamSection]);
   const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
   useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
@@ -230,6 +237,7 @@ export function SettingsOverlay(props: {
           <div class="settings-modal-body" id="user-settings-panel" role="tabpanel" aria-labelledby={`user-settings-tab-${userTab}`} tabIndex={0}>
             <div hidden={userTab !== 'general'}><section class="settings-block user-appearance"><label class="settings-block-title" for="user-theme">Appearance</label><select id="user-theme" value={props.settings.dashboardTheme} onChange={event => { const value = event.currentTarget.value as DashboardSettings['dashboardTheme']; props.onPatchSettings({dashboardTheme:value});props.onSendSetting('dashboardTheme',value); }}><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></section>{props.open ? <BrowserNotifications workspace /> : null}</div>
             {props.open && userTab === 'general' ? <EmailSettings /> : null}
+            {props.open && userTab === 'general' ? <UserWorkspaceClear connected={props.connected !== false} files={props.office.features.includes('files')} onFeedback={notice => props.onUserFeedback?.(notice)} /> : null}
             <div hidden={userTab !== 'account'}><UserWorkspaceAccount open={props.open} owner={props.office.id} /></div>
             <UserWorkspaceInstructions open={props.open} owner={props.office.id} view={userTab} />
             <div hidden={userTab !== 'personalization'}><UserWorkspaceMemory open={props.open} owner={props.office.id} /></div>
@@ -286,7 +294,7 @@ export function SettingsOverlay(props: {
               aria-label={tab.label}
               title={tab.description}
               aria-selected={activeTab === tab.id}
-              aria-controls={`settings-panel-${tab.id}`}
+              aria-controls={enabledSections.filter(section => settingsGroup(section.id) === tab.id).map(section => `settings-panel-${section.id}`).join(" ")}
               tabIndex={activeTab === tab.id ? 0 : -1}
               onClick={() => { setSectionSearch(""); setActiveTab(tab.id); }}
               onKeyDown={(event) => {
@@ -322,13 +330,13 @@ export function SettingsOverlay(props: {
 
         </aside>
         <div class="settings-modal-body">
-          {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{tabs.some(tab => tab.id === item.tab) ? "Open" : "Enable module"}</span></button>)}</section> : null}
+          {searching ? <section class="settings-search-results" aria-label="Settings search results"><div class="settings-panel-heading">Search settings</div><p class="settings-note" role="status">{searchResults.length} matching options</p>{searchResults.map(item => <button type="button" class="settings-search-result" onClick={() => openSearchResult(item)}><span><strong>{item.title}</strong><small>{allTabs.find(tab => tab.id === item.tab)?.label}</small></span><span class="settings-search-result-action">{enabledSections.some(tab => tab.id === item.tab) ? "Open" : "Enable module"}</span></button>)}</section> : null}
           <div
             class="settings-tab-panel"
             id="settings-panel-general"
             role="tabpanel"
             aria-labelledby="settings-tab-general"
-            hidden={activeTab !== "general" || searching}
+            hidden={panelHidden("general")}
           >
           <SettingsPanelIntro tab={allTabs[0]!} />
           <div class="settings-local-preferences settings-layout">
@@ -406,7 +414,7 @@ export function SettingsOverlay(props: {
             </div></fieldset>
           </div>
           <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
-<div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={activeTab !== "modules" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
+<div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={panelHidden("modules")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
 <SettingsToggleBlock settingKey="cliIntegrationEnabled" title="Enable workspace" sub="Add chats and terminals to this dashboard." enabled={props.settings.cliIntegrationEnabled === true}   onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)} />
 <SettingsToggleBlock settingKey="teamWorkspaceEnabled" title="Enable User Workspace" sub="User accounts, permissions, shared tools, and database settings." enabled={props.settings.teamWorkspaceEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)} />
 <SettingsToggleBlock settingKey="apiAccessEnabled" title="Dashboard API" sub="Allow generated Bearer tokens to call the local dashboard API." enabled={props.settings.apiAccessEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)} />
@@ -414,7 +422,7 @@ export function SettingsOverlay(props: {
 <SettingsToggleBlock settingKey="encryptedSyncEnabled" title="Sync and Claim" sub="Sync account data and reserve accounts across your PCs." enabled={props.settings.encryptedSyncEnabled} disabled={props.crossPcSyncPending}  onToggle={props.onSetCrossPcSyncEnabled} />
 <SettingsToggleBlock settingKey="codexAppRestartEnabled" title="Desktop app restart" sub="Restart the desktop app after switching accounts." enabled={props.settings.codexAppRestartEnabled}   onToggle={(enabled) => patchAndSend("codexAppRestartEnabled", enabled)} />
 <SettingsToggleBlock settingKey="dailyTokenUsageEnabled" title="Usage log" sub="Record verified token usage for your accounts." enabled={props.settings.dailyTokenUsageEnabled === true}   onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)} />
-<SettingsToggleBlock settingKey="persistentLoggingEnabled" title="System Log" sub="Save diagnostic logs with account secrets hidden." enabled={props.settings.persistentLoggingEnabled === true}   onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)} /></div></div><div class="settings-tab-panel" id="settings-panel-dashboard" role="tabpanel" aria-labelledby="settings-tab-dashboard" hidden={activeTab !== "dashboard" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "dashboard")!} /><div class="settings-layout"><SettingsToggleBlock
+<SettingsToggleBlock settingKey="persistentLoggingEnabled" title="System Log" sub="Save diagnostic logs with account secrets hidden." enabled={props.settings.persistentLoggingEnabled === true}   onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)} /></div></div><div class="settings-tab-panel" id="settings-panel-dashboard" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={panelHidden("dashboard")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "dashboard")!} /><div class="settings-layout"><SettingsToggleBlock
                       title="Always Active"
                       sub="Keep the local dashboard and system services running after VS Code closes."
                       enabled={props.settings.alwaysActive === true}
@@ -431,7 +439,7 @@ export function SettingsOverlay(props: {
                       targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
-                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={activeTab !== "sessions" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
+                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
                         <div class="settings-block-title">Text file limit</div>
                         <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
                       </div><SettingsDiscreteSlider
@@ -443,7 +451,7 @@ export function SettingsOverlay(props: {
                         description={value => `Open and save text files up to ${value} MB.`}
                         onPreview={value => props.onPatchSettings({ workspaceTextFileLimitMb: value })}
                         onCommit={value => patchAndSend('workspaceTextFileLimitMb', value)}
-                      /></div></div></div><div class="settings-tab-panel" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab !== "connections" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "connections")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Shared dashboard address</div></div><div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
+                      /></div></div></div><div class="settings-tab-panel" id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={panelHidden("connections")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "connections")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Shared dashboard address</div></div><div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
                     <input
                       class="settings-text-input"
                       type="text"
@@ -468,7 +476,7 @@ export function SettingsOverlay(props: {
                           ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
                           : "Set a password before sharing this dashboard."}
                     </div>
-                  </div></div></div></div><div class="settings-tab-panel" id="settings-panel-desktop" role="tabpanel" aria-labelledby="settings-tab-desktop" hidden={activeTab !== "desktop" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "desktop")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">{props.copy.codexAppRestartTitle}</div></div><div class={`settings-stack ${props.settings.codexAppRestartEnabled ? "" : "is-hidden"}`}>
+                  </div></div></div></div><div class="settings-tab-panel" id="settings-panel-desktop" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("desktop")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "desktop")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">{props.copy.codexAppRestartTitle}</div></div><div class={`settings-stack ${props.settings.codexAppRestartEnabled ? "" : "is-hidden"}`}>
                   <div class="settings-segment">
                     <button
                       class={`segment-btn ${props.settings.codexAppRestartMode === "auto" ? "active" : ""}`}
@@ -495,7 +503,7 @@ export function SettingsOverlay(props: {
                     onPick={props.onPickCodexAppPath}
                     onClear={props.onClearCodexAppPath}
                   />
-                </div></div></div></div><div class="settings-tab-panel" id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" hidden={activeTab !== "sync" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sync")!} /><div class="settings-layout">{props.encryptedSyncNeedsConfiguration ? (
+                </div></div></div></div><div class="settings-tab-panel" id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={panelHidden("sync")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sync")!} /><div class="settings-layout">{props.encryptedSyncNeedsConfiguration ? (
                   <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
                 ) : null}{props.encryptedSyncNeedsSettingsSync ? (
                   <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
@@ -554,7 +562,7 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ encryptedSyncVsCodeHeartbeatMinutes: value })}
                     onCommit={(value) => patchAndSend("encryptedSyncVsCodeHeartbeatMinutes", value)}
                   />
-                </div></div></div><div class="settings-tab-panel" id="settings-panel-usage" role="tabpanel" aria-labelledby="settings-tab-usage" hidden={activeTab !== "usage" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "usage")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Usage recording interval</div></div><SettingsDiscreteSlider
+                </div></div></div><div class="settings-tab-panel" id="settings-panel-usage" role="tabpanel" aria-labelledby="settings-tab-data" hidden={panelHidden("usage")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "usage")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Usage recording interval</div></div><SettingsDiscreteSlider
                   value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
                   values={TOKEN_HISTORY_GAP_VALUES}
                   accent="sky"
@@ -563,7 +571,7 @@ export function SettingsOverlay(props: {
                   description={() => "Gap between automatic checks; server retry delays still apply."}
                   onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
                   onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
-                /></div></div></div><div class="settings-tab-panel" id="settings-panel-system-log" role="tabpanel" aria-labelledby="settings-tab-system-log" hidden={activeTab !== "system-log" || searching}><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "system-log")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Diagnostic logging</div></div><label class="settings-block-head">
+                /></div></div></div><div class="settings-tab-panel" id="settings-panel-system-log" role="tabpanel" aria-labelledby="settings-tab-data" hidden={panelHidden("system-log")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "system-log")!} /><div class="settings-layout"><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Diagnostic logging</div></div><label class="settings-block-head">
                   <span class="settings-block-title">Log level</span>
                   <select class="settings-select" aria-label="Log level" value={props.settings.persistentLogLevel ?? "info"}
                     onChange={(event) => patchAndSend("persistentLogLevel", event.currentTarget.value)}>
@@ -586,7 +594,7 @@ export function SettingsOverlay(props: {
             id="settings-panel-automation"
             role="tabpanel"
             aria-labelledby="settings-tab-automation"
-            hidden={activeTab !== "automation" || searching}
+            hidden={panelHidden("automation")}
           >
             <SettingsPanelIntro tab={allTabs[1]!} />
             <div class="settings-layout">
@@ -799,7 +807,7 @@ export function SettingsOverlay(props: {
             id="settings-panel-data"
             role="tabpanel"
             aria-labelledby="settings-tab-data"
-            hidden={activeTab !== "data" || searching}
+            hidden={panelHidden("data")}
           >
             <SettingsPanelIntro tab={allTabs[2]!} />
             <div class="settings-layout">
@@ -859,11 +867,11 @@ export function SettingsOverlay(props: {
             </div>
           </div>
           </fieldset>
-          <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools" || searching}>
+          <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={panelHidden("tools")} >
             <SettingsPanelIntro tab={tabs.find(tab => tab.id === "tools")!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
-          {canManageTeam && teamSection ? <div class="settings-tab-panel" id={`settings-panel-${teamSection}`} role="tabpanel" aria-labelledby={`settings-tab-${teamSection}`} hidden={searching || !TEAM_SETTINGS_SECTIONS.some(section => section.id === activeTab)}><TeamManagementPage key={props.office?.id} office={props.office} section={teamSection} open={props.open && activeTab === teamSection} /></div> : null}
+          {canManageTeam && teamSection ? <div class="settings-tab-panel" id="settings-panel-users" role="tabpanel" aria-labelledby="settings-tab-users" hidden={panelHidden(teamSection)}><label class="settings-team-section">Workspace section<select aria-label="Workspace section" value={teamSection} onChange={event => setTeamSection(event.currentTarget.value as TeamSettingsSection)}>{TEAM_SETTINGS_SECTIONS.filter(section => enabledSections.some(tab => tab.id === section.id)).map(section => <option key={section.id} value={section.id}>{section.title}</option>)}</select></label><TeamManagementPage key={props.office?.id} office={props.office} section={teamSection} open={props.open && activeTab === 'users'} /></div> : null}
         </div>
       </div>
     </div>

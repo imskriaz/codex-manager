@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { canShowTeamSettings } from "../webview-src/dashboard/settingsOverlay";
 import type { DashboardOfficeView, DashboardSettings } from "../src/domain/dashboard/types";
-import { isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "../webview-src/dashboard/settingsNavigation";
+import { settingsGroup, isSettingsSectionEnabled, matchesSettingsSearch, resolveSettingsModuleKey } from "../webview-src/dashboard/settingsNavigation";
 
 const enabled = { webDashboardEnabled: true, teamWorkspaceEnabled: true } as DashboardSettings;
 const admin = { id: "master", role: "unrestricted-admin" } as DashboardOfficeView;
 
 describe("conditional Settings sections", () => {
+  it('groups related module options into common sections while retaining the Modules tab', () => {
+    expect(['dashboard','connections','sync'].map(settingsGroup)).toEqual(['connections','connections','connections']);
+    expect(['usage','system-log','data'].map(settingsGroup)).toEqual(['data','data','data']);
+    expect(settingsGroup('desktop')).toBe('sessions'); expect(settingsGroup('mcp')).toBe('users'); expect(settingsGroup('modules')).toBe('modules');
+  });
   it.each([
     ["dashboard", "webDashboardEnabled"], ["sessions", "cliIntegrationEnabled"],
     ["sync", "encryptedSyncEnabled"], ["desktop", "codexAppRestartEnabled"],

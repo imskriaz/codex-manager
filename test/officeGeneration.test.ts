@@ -123,6 +123,7 @@ it('surfaces a connected-source failure and allows a verified aggregate retry wi
  const report=vi.fn();
  expect(await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'count'}],new AbortController().signal,'',report)).toBe('There are 247 matching records.');
  expect(read).toHaveBeenCalledTimes(2);
+ expect(report.mock.calls.at(-1)?.[0]).toMatchObject({title:'MCP call · orders_query',arguments:expect.stringContaining('purchase_orders'),result:expect.stringContaining('247')});
  expect(report.mock.calls.map(([event])=>event.status)).toEqual(['inProgress','failed','inProgress','completed']);
  const retry=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);
  expect(retry.messages.at(-1).content).toContain('too much data for chat');
@@ -133,7 +134,8 @@ it('loads configured specialist guidance on demand without granting file tools',
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
  const settings=teamSettings.readTeamSettings();vi.spyOn(teamSettings,'readTeamSettings').mockReturnValue({...settings,presentation:{...settings.presentation,catalog:[{id:'buyer-review',label:'Buyer review',description:'Review buyer requests',starter:'Review this request',prompt:'Check the approved revision and due dates.'}]}});
  vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('use_office_skill',{id:'buyer-review'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Please provide the buyer request.'}}]})) as never);
- await (server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,'',vi.fn());
+ const activity=vi.fn();await (server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,'',activity);
+ expect(activity).toHaveBeenCalledWith(expect.objectContaining({kind:'tool-call',title:'Use skill · Buyer review',status:'completed'}));expect(JSON.stringify(activity.mock.calls)).not.toContain('Check the approved revision');
  const first=JSON.parse(vi.mocked(upstream).mock.calls[0][1]!.body as string),second=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);
  expect(first.tools.find((tool:any)=>tool.function.name==='use_office_skill').function.description).toContain('Buyer review');expect(JSON.stringify(first)).not.toContain('Check the approved revision');expect(second.messages.at(-1).content).toContain('Check the approved revision');expect(first.tools.some((tool:any)=>tool.function.name==='save_file')).toBe(false);
  vi.mocked(upstream).mockResolvedValueOnce(toolResponse('use_office_skill',{id:'unknown'}) as never);await expect(generate()).rejects.toThrow('available workspace skill');

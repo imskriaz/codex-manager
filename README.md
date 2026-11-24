@@ -205,9 +205,11 @@ Open the Command Palette and search for `Codex Manager`.
 
 ## Browser dashboard and Cloudflare
 
-The browser dashboard is enabled by default and listens on `http://127.0.0.1:39875` when enabled. In the dashboard Settings:
+Optional modules start disabled on fresh installs; saved module choices are retained. Keep **Modules** separate to enable the features you need. Their options appear in the related **Connections**, **Workspace**, **Data & logs**, and **User Workspace** settings sections.
 
-1. Turn on **Web dashboard**.
+The browser dashboard listens on `http://127.0.0.1:39875` when enabled. In the dashboard Settings:
+
+1. Turn on **Web Dashboard** in **Modules**.
 2. Set the shared **Password** in General; remote dashboard login and optional cross-PC claim checks use that same password.
 3. For a public HTTPS address, enable **WS Cross System**, enter the final URL (for example `https://codex.example.com`), and configure the tunnel to forward to `http://127.0.0.1:39875`.
 4. The manager automatically prepares the relay on the system verified to host that tunnel. Other systems connect without preparing a detached host.

@@ -48,10 +48,10 @@ export function EmailSettings({ master = false }: { master?: boolean }) {
       {!state.available ? <p role="status">Email delivery is off. {master ? 'Configure and enable SMTP below.' : 'Ask your administrator to enable SMTP.'}</p> : null}
       <form onSubmit={event => { event.preventDefault(); void act('preferences'); }}>
         <fieldset disabled={busy}>
-          <label>Email address<input type="email" autoComplete="email" maxLength={254} value={state.preferences.address} onInput={event => patch({ address: event.currentTarget.value })} placeholder="you@example.com" /></label>
+          {master ? <label>Email address<input type="email" autoComplete="email" maxLength={254} value={state.preferences.address} onInput={event => patch({ address: event.currentTarget.value })} placeholder="you@example.com" /></label> : <p>Notifications are sent to your account email.</p>}
           <label class="email-check"><input type="checkbox" checked={state.preferences.enabled} onChange={event => patch({ enabled: event.currentTarget.checked })} />Email me about all my sessions</label>
           {([['ready', 'Notify me when ready'], ['needsAnswer', 'When an answer or approval is needed'], ['failed', 'When a session fails'], ['includeResult', 'Include a result excerpt in the email']] as const).map(([key, label]) => <label class="email-check" key={key}><input type="checkbox" checked={state.preferences[key]} onChange={event => patch({ [key]: event.currentTarget.checked })} />{label}</label>)}
-          <p>For a single conversation, use “Email me when ready” in its header. Result excerpts are off by default.</p>
+          <p>For a single conversation, use “Email me when ready” in its three-dot menu. Result excerpts are off by default.</p>
           <div class="email-actions"><button type="submit">Save email preferences</button><button type="button" disabled={!state.available || !state.preferences.address} onClick={() => void act('test')}>Send test email</button></div>
         </fieldset>
       </form>
@@ -72,18 +72,24 @@ export function EmailSettings({ master = false }: { master?: boolean }) {
   </section>;
 }
 
-export function SessionEmailWatch({ sessionKey }: { sessionKey: string }) {
+export function useSessionEmailWatch(sessionKey?: string, onToggle?: () => void) {
   const [enabled, setEnabled] = useState(false), [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [feedback, setFeedback] = useState(''), [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true; setReady(false); setFeedback(''); setEnabled(false);
+    if (!sessionKey) return;
     void request<EmailState>('/api/email/preferences').then(value => { if (active) { setEnabled(value.watches.includes(sessionKey)); setReady(true); } }, () => { if (active) setReady(true); });
     return () => { active = false; };
   }, [sessionKey]);
   const toggle = async () => {
+    if (!sessionKey || busy) return;
+    onToggle?.();
     setBusy(true); setFailed(false); setFeedback('Saving email preference…');
     try { const value = await request<EmailState>('/api/email/preferences', 'POST', { sessionKey, enabled: !enabled }); setEnabled(value.watches.includes(sessionKey)); setFeedback(value.available ? enabled ? 'Session email turned off.' : 'You’ll receive an email when this session is ready.' : 'Preference saved. Email delivery is off; ask the administrator to enable SMTP.'); }
     catch (error) { setFailed(true); setFeedback(errorText(error)); }
     finally { setBusy(false); }
   };
-  return <span class="session-email-watch"><button class={`cli-icon-button ${enabled ? 'is-active' : ''}`} type="button" aria-label="Email me when ready" title="Email me when ready" aria-pressed={enabled} aria-busy={busy} disabled={!ready || busy} onClick={() => void toggle()}><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>{feedback ? <span class="session-email-feedback" role={failed ? 'alert' : 'status'}>{feedback}<button type="button" aria-label="Dismiss email notice" onClick={() => setFeedback('')}>×</button></span> : null}</span>;
+  return {
+    menuItem: <button type="button" role="menuitemcheckbox" aria-checked={enabled} aria-busy={busy} disabled={!ready || busy} onClick={() => void toggle()}><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Email me when ready{enabled ? ' (on)' : ''}</button>,
+    feedback: feedback ? <span class="session-email-watch"><span class="session-email-feedback" role={failed ? 'alert' : 'status'}>{feedback}<button type="button" aria-label="Dismiss email notice" onClick={() => setFeedback('')}>×</button></span></span> : null
+  };
 }

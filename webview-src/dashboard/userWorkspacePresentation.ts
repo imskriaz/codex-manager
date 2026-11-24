@@ -12,20 +12,26 @@ export function currentUserWorkspaceQuestion(messages: DashboardCliSessionMessag
   return question?.questions?.some((_, index) => !answered.has(JSON.stringify(['request_user_input_async', question.id, index]))) ? question : undefined;
 }
 
-/** Tool envelopes and file contents belong in Files, not the conversation. */
+/** Compact outcome shown above the expandable recorded arguments and results. */
 export function userToolSummary(message: DashboardCliSessionMessage): string {
   let result: {status?: string; error?: unknown; payload?: {notice?: {message?: unknown}}} | undefined;
   try { result = JSON.parse(message.result ?? 'null') as typeof result; } catch { /* Older activities may contain plain text. */ }
   if (message.status === 'failed' || result?.status === 'failed') {
-    const error = typeof result?.error === 'string' ? result.error : 'This action could not be completed. Please try again.';
+    const error = typeof result?.error === 'string' ? result.error : message.text && message.text !== message.title ? message.text : 'This action could not be completed. Please try again.';
     return userWorkspaceNotice(error).slice(0, 600);
   }
   if (message.status === 'inProgress') return 'Working on this action…';
   if (message.status === 'interrupted' || message.status === 'declined') return 'This action was stopped.';
-  if (message.status === 'unknown') return 'This action could not be confirmed. Check your files before retrying.';
+  if (message.status === 'unknown') return 'This action could not be confirmed. Review the activity before retrying.';
   const notice = result?.payload?.notice?.message;
   if (typeof notice === 'string') return userWorkspaceNotice(notice).slice(0, 600);
-  return /read/i.test(message.title ?? '') ? 'File read. Open Files to view its contents.' : /browse|list/i.test(message.title ?? '') ? 'Workspace files checked. Open Files to browse them.' : 'Action completed. Open Files to view your work.';
+  if (/^(?:browse website|read website|read web page)/i.test(message.title ?? '')) return 'Website read.';
+  if (/^search web/i.test(message.title ?? '')) return 'Web search completed.';
+  if (/^(?:read connected source|MCP call)/i.test(message.title ?? '')) return 'Connected source read.';
+  if (/^List MCP/i.test(message.title ?? '')) return 'Available data connections checked.';
+  if (/^Use skill/i.test(message.title ?? '')) return 'Skill guidance applied.';
+  if (message.text && message.text !== message.title) return message.text;
+  return /read/i.test(message.title ?? '') ? 'File read. Open Files to view its contents.' : /browse|list/i.test(message.title ?? '') ? 'Workspace files checked. Open Files to browse them.' : 'Action completed.';
 }
 
 export function currentUserWorkspacePlan(messages: DashboardCliSessionMessage[], turnId: string | undefined, running: boolean): DashboardCliSessionMessage | undefined {

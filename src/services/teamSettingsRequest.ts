@@ -5,6 +5,7 @@ export async function requestLocalTeamSettings(request: DashboardActionPayload["
   if (!request || typeof request.path !== "string" || typeof request.method !== "string") throw new Error("Choose a valid Team settings action.");
   const { path, method, body } = request;
   const allowed = path === "/api/office/users" ? ["GET", "POST"]
+    : /^\/api\/office\/sessions\/[a-f0-9-]{36}(?:\/[a-f0-9-]{36})?$/i.test(path) ? ['GET']
     : /^\/api\/office\/users\/[a-f0-9-]{36}$/i.test(path) ? ["PATCH", "DELETE"]
     : path === "/api/office/mcp" || path === "/api/office/settings" ? ["GET", "PUT"]
     : path === "/api/office/models" || path === "/api/office/logs" || path === "/api/office/proxy" ? ["GET"]

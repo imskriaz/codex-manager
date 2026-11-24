@@ -68,7 +68,7 @@ export function registerCommands(
     (accountId) => sync?.canRefreshAccount(accountId) ?? true,
     sync
       ? async () => {
-          const enabled = getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true);
+          const enabled = getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false);
           if (!enabled) return undefined;
           try {
             return await sync.syncNow(true, false);

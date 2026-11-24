@@ -109,7 +109,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
   async enableSystemStartup(): Promise<void> {
     if (process.platform !== 'win32') throw new Error('Start with system currently requires Windows.');
-    if (!getCodexManagerConfiguration().get<boolean>('webDashboardEnabled', true)) throw new Error('Enable Web Dashboard before setting up Windows startup.');
+    if (!getCodexManagerConfiguration().get<boolean>('webDashboardEnabled', false)) throw new Error('Enable Web Dashboard before setting up Windows startup.');
     await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
       await this.prepareRelay(await this.getLocalHostKey(true), true);
     });
@@ -214,8 +214,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const domain = config.get<string>("cloudflaredDomain", "").trim();
     const alwaysActive = config.get<boolean>("alwaysActive", false);
     const startWithSystem = config.get<boolean>("alwaysActiveStartWithSystem", false);
-    const dashboardEnabled = config.get<boolean>("webDashboardEnabled", true);
-    const crossSystemEnabled = config.get<boolean>("webSocketServerEnabled", true);
+    const dashboardEnabled = config.get<boolean>("webDashboardEnabled", false);
+    const crossSystemEnabled = config.get<boolean>("webSocketServerEnabled", false);
     // Always Active is a local standalone host. Keep it independent from the
     // optional cross-system relay toggle so VS Code can hand off the local
     // dashboard when WS Cross System is disabled.

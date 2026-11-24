@@ -7,6 +7,7 @@ import {useWorkspaceDashboardAssets} from './workspace-dashboard-assets.mjs';
 import {emailUiFixture} from './email-ui-fixture.mjs';
 import {checkUserDeliverablesUi} from './check-user-deliverables-ui.mjs';
 import {checkUserWorkspaceRecoveryUi} from './check-user-workspace-recovery-ui.mjs';
+import {checkUserMessageRenderingUi,checkUserFileRenderingUi} from './check-user-message-rendering-ui.mjs';
 const origin='http://127.0.0.1:39875';
 const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
@@ -51,6 +52,7 @@ session={id:session?.id||'12345678-1234-1234-1234-123456789abc',title:session?.t
 messages.push({id:crypto.randomUUID(),role:'user',text:message.payload.text});persist();payload={cliSession:session,cliSessions:[session],cliSessionMessages:messages,notice:{level:'info',message:'Message accepted and queued.'}};
 }else if(message.action==='getWorkspaceEnvironment')payload={workspaceEnvironment:{projectPath:'C:/team/alex',projectName:'My workspace',isGitRepository:false,changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
 else if(message.action==='listWorkspaceFiles')payload={workspaceFiles:window.__libraryFiles||[]};
+else if(message.action==='readWorkspaceFile'&&window.__previewFiles?.[message.payload.filePath]&&message.payload.fileDownloadOffset===undefined)payload={workspaceFile:window.__previewFiles[message.payload.filePath]};
 else if(message.action==='readWorkspaceFile'){if(message.payload.filePath==='missing.html'){dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'failed',error:'File could not be opened. Choose another file.'});return;}const content='Saved file contents.';payload=message.payload.fileDownloadOffset!==undefined?{workspaceFileDownload:{path:message.payload.filePath,revision:'r1',offset:0,size:content.length,data:btoa(content)}}:{workspaceFile:{path:message.payload.filePath,content,kind:'text',language:'javascript',mimeType:'text/javascript',revision:'r1',size:content.length}};}
 else if(message.action==='deleteWorkspaceFile'){window.__libraryFiles=window.__libraryFiles.filter(file=>file.path!==message.payload.filePath);payload={notice:{level:'info',message:'File deleted.'}};}
 else if(message.action==='workspaceBrowser'){
@@ -76,7 +78,7 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  const errors=[];page.on('pageerror',error=>errors.push(error.stack||error.message));
  page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
- const emailFixture=await emailUiFixture(context);
+ const emailFixture=await emailUiFixture(context,office.username);
  await context.route('**/assets/codex.svg',route=>route.fulfill({contentType:'image/svg+xml',path:path.resolve('media/product-icons/codex-openai.svg')}));
  await page.addInitScript(()=>{window.SpeechRecognition=class{start(){window.__dictation=this;}stop(){this.onend?.();}abort(){}};});
  await context.route('**/api/workspace/image?*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64')}));
@@ -153,24 +155,78 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
   await checkUserWorkspaceRecoveryUi(page,context,{width,output,nav});
   assert.deepEqual(errors,[]);await context.close();continue;
  }
+ if(process.argv.includes('--rendering')){
+  await checkUserMessageRenderingUi(page,{width,output});assert.deepEqual(errors,[]);await context.close();continue;
+ }
+ if(process.argv.includes('--file-rendering')){
+  await checkUserFileRenderingUi(page,{width,output,nav});assert.deepEqual(errors,[]);await context.close();continue;
+ }
+ if(process.argv.includes('--browsing')){
+  const id='12345678-1234-1234-1234-123456789abc';
+  await page.evaluate(id=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id,title:'Website research',status:'idle'},messages:[{id:'read-web',kind:'tool-call',title:'Read website',text:'Source read.',status:'completed',arguments:JSON.stringify({url:'https://example.test/reports/wages-2026'})},{id:'read-file',kind:'tool-call',title:'Read file',text:'File read.',status:'completed',arguments:JSON.stringify({path:'reports/notes.md'})}]})),id);
+  await page.goto(origin+'/workspace/'+id);
+  const group=page.locator('.cli-activity-group-details > summary');if(await group.count())await group.first().click();
+  const website=page.locator('.cli-activity > summary').filter({hasText:'Browse website · https://example.test/reports/wages-2026'});await website.waitFor();await website.click();
+  await page.getByText('Website read.',{exact:true}).waitFor();assert.equal(await page.getByText('Read File · website',{exact:true}).count(),0);
+  await page.locator('.cli-activity > summary').filter({hasText:'Read File · reports/notes.md'}).waitFor();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+  await page.screenshot({path:path.join(output,'website-label-'+width+'.png'),fullPage:true});
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({width,elapsedMs:Date.now()-start,websiteUrlVisible:true,fileLabelPreserved:true,errors:0}));await context.close();continue;
+ }
  if(process.argv.includes('--email')){
   await openSettings();const email=page.getByRole('region',{name:'Email notifications',exact:true});
-  await email.getByLabel('Email address',{exact:true}).fill('alex@example.test');
+  await email.getByText('Notifications are sent to your account email.',{exact:true}).waitFor();
+  assert.equal(await email.getByLabel('Email address',{exact:true}).count(),0);
   await email.getByRole('checkbox',{name:'Notify me when ready',exact:true}).check();
   await email.getByRole('button',{name:'Save email preferences',exact:true}).click();await email.getByRole('status').filter({hasText:'Email preferences saved.'}).waitFor();
   assert.equal(emailFixture.state.preferences.address,'alex@example.test');assert.equal(emailFixture.state.preferences.includeResult,false);
   await email.getByRole('button',{name:'Send test email',exact:true}).click();await email.getByRole('alert').filter({hasText:'SMTP authentication failed.'}).waitFor();
-  assert.equal(await email.getByLabel('Email address',{exact:true}).inputValue(),'alex@example.test');
+  assert.equal(await email.getByLabel('Email address',{exact:true}).count(),0);
   await email.getByRole('button',{name:'Send test email',exact:true}).click();await email.getByRole('status').filter({hasText:'Test email accepted'}).waitFor();
   await page.screenshot({path:path.join(output,'email-settings-'+width+'.png'),fullPage:true});
   await page.getByRole('dialog',{name:'Settings',exact:true}).press('Escape');
   const id='12345678-1234-1234-1234-123456789abc';await page.evaluate(id=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id,title:'Email check',status:'idle'},messages:[{id:'answer',role:'assistant',text:'Done.'}]})),id);await page.goto(origin+'/workspace/'+id);
-  const watch=page.getByRole('button',{name:'Email me when ready',exact:true});await watch.waitFor();
+  assert.equal(await page.getByRole('button',{name:'Email me when ready',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Session actions',exact:true}).click();
+  const watch=page.getByRole('menuitemcheckbox',{name:/^Email me when ready/});await watch.waitFor();
   const header=page.locator('.cli-conversation-header');const before=await header.boundingBox();await watch.click();await page.getByRole('status').filter({hasText:'You’ll receive an email'}).waitFor();
   const after=await header.boundingBox();assert.equal(after.height,before.height,'Email feedback adds no header height');
-  const geometry=await watch.boundingBox();assert.ok(geometry.width<=32&&geometry.height<=32,'Email control stays compact');assert.equal(await watch.getAttribute('aria-pressed'),'true');assert.ok(emailFixture.state.watches.includes('local:'+id));
-  await page.screenshot({path:path.join(output,'email-session-'+width+'.png'),fullPage:true});await page.getByRole('button',{name:'Dismiss email notice',exact:true}).click();await watch.click();await page.getByRole('status').filter({hasText:'Session email turned off.'}).waitFor();
-  assert.equal(emailFixture.state.watches.length,0);assert.deepEqual(errors,[]);console.log(JSON.stringify({width,emailPreferences:true,testFailureVisible:true,compactHeader:true,noExtraHeight:true,errors:0}));await context.close();continue;
+  await page.getByRole('button',{name:'Session actions',exact:true}).click();assert.equal(await watch.getAttribute('aria-checked'),'true');assert.ok(emailFixture.state.watches.includes('local:'+id));await page.getByRole('button',{name:'Session actions',exact:true}).click();
+  await page.screenshot({path:path.join(output,'email-session-'+width+'.png'),fullPage:true});await page.getByRole('button',{name:'Dismiss email notice',exact:true}).click();await page.getByRole('button',{name:'Session actions',exact:true}).click();await watch.click();await page.getByRole('status').filter({hasText:'Session email turned off.'}).waitFor();
+  assert.equal(emailFixture.state.watches.length,0);assert.deepEqual(errors,[]);console.log(JSON.stringify({width,elapsedMs:Date.now()-start,emailPreferences:true,testFailureVisible:true,emailInMenu:true,noExtraHeight:true,errors:0}));await context.close();continue;
+ }
+ if(process.argv.includes('--clear')){
+  const calls=[];let fail=true,storageBytes=4096;
+  await page.evaluate(()=>{window.__libraryFiles=[{name:'report.txt',path:'report.txt',type:'file',depth:0},{name:'input.txt',path:'uploads/input.txt',type:'file',depth:1}];});
+  await context.route('**/api/workspace/preferences',route=>route.fulfill({json:{instructions:'Keep my saved instructions.',usage:{tokens:12,requests:1,storageBytes,resetsAt:Date.now()+3600000}}}));
+  await context.route('**/api/workspace/clear**',async route=>{
+   const method=route.request().method(),kind=method==='GET'?new URL(route.request().url()).searchParams.get('kind'):route.request().postDataJSON().kind;
+   calls.push({method,kind});
+   if(method==='GET')return route.fulfill({json:{kind,count:kind==='files'?2:1,revision:'clear-r1'}});
+   assert.equal(route.request().postDataJSON().confirmed,true);assert.equal(route.request().postDataJSON().revision,'clear-r1');
+   if(fail){fail=false;return route.fulfill({status:400,json:{error:'Your workspace changed. Review the clear action again before deleting.'}});}
+   if(kind==='files'){await page.evaluate(()=>{window.__libraryFiles=[];});storageBytes=0;}
+   return route.fulfill({json:{message:kind==='files'?'2 files permanently deleted.':'1 chat permanently deleted.'}});
+  });
+  await openSettings();
+  await page.getByRole('button',{name:'Clear all chats',exact:true}).click();
+  let confirm=page.getByRole('dialog',{name:'Clear all chats',exact:true});await confirm.getByText('Permanently delete 1 chat? This cannot be undone.',{exact:true}).waitFor();
+  await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(calls.filter(call=>call.method==='POST').length,0);
+  await page.getByRole('status').filter({hasText:'Clear action cancelled.'}).waitFor();
+  await page.getByRole('button',{name:'Clear all files',exact:true}).click();confirm=page.getByRole('dialog',{name:'Clear all files',exact:true});await confirm.getByRole('button',{name:'Delete permanently',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Your workspace changed.'}).waitFor();
+  await page.getByRole('button',{name:'Clear all chats',exact:true}).click();confirm=page.getByRole('dialog',{name:'Clear all chats',exact:true});await confirm.getByRole('button',{name:'Delete permanently',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'1 chat permanently deleted.'}).waitFor();
+  await nav('Library');await page.locator('.user-library-files li').first().waitFor();
+  await page.getByRole('button',{name:'Clear all files',exact:true}).click();confirm=page.getByRole('dialog',{name:'Clear all files',exact:true});await confirm.getByRole('button',{name:'Delete permanently',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'2 files permanently deleted.'}).waitFor();await page.waitForFunction(()=>document.querySelectorAll('.user-library-files li').length===0);
+  await page.getByText('0 files',{exact:true}).waitFor();
+  await page.screenshot({path:path.join(output,'clear-library-'+width+'.png'),fullPage:true});
+  await nav('Usage');await page.getByText('0 / Unlimited',{exact:true}).waitFor();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+  await page.screenshot({path:path.join(output,'clear-usage-'+width+'.png'),fullPage:true});
+  assert.deepEqual(errors.filter(error=>!error.includes('status of 400')),[]);
+  console.log(JSON.stringify({width,elapsedMs:Date.now()-start,clearCancellation:true,clearConflictVisible:true,chatsAndFilesSeparate:true,libraryRefresh:true,usageRefresh:true}));await context.close();continue;
  }
  if(process.argv.includes('--appearance')){
   await openSettings();
@@ -442,6 +498,11 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  }
  await page.evaluate(activities=>localStorage.setItem('private-workspace-fixture',JSON.stringify({session:{id:'12345678-1234-1234-1234-123456789abc',title:'Master session',status:'idle',projectPath:'C:/team/alex'},messages:[{id:'user',role:'user',text:'Check files'},...activities,{id:'answer',role:'assistant',text:'Master response ready.'}]})),activities);
  await page.reload();await page.getByRole('button',{name:/^Master session/}).click();await page.getByText('Master response ready.',{exact:true}).waitFor();
+ if(process.argv.includes('--email')){
+  assert.equal(await page.locator('.cli-conversation-header').getByRole('button',{name:'Email me when ready',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Session actions',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:/^Email me when ready/}).waitFor();
+  await page.screenshot({path:path.join(output,'email-menu-master.png'),fullPage:true});await page.getByRole('button',{name:'Session actions',exact:true}).click();
+ }
  const masterTranscript=await page.locator('.cli-session-messages').textContent();
  await page.locator('.session-plan-count').filter({hasText:'3 of 3 complete'}).waitFor();
  assert.match(masterTranscript,/C:\\Windows\\System32\\WindowsPowerShell/);assert.match(masterTranscript,/C:\/team\/alex\/output\/commit.cjs/);assert.match(masterTranscript,/Update|Edited/);

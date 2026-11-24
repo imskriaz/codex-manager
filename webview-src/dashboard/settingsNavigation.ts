@@ -7,11 +7,19 @@ export const SETTINGS_MODULE_KEYS: Record<string, keyof DashboardSettings> = {
   mcp: "teamWorkspaceEnabled", database: "teamWorkspaceEnabled", logs: "teamWorkspaceEnabled", proxy: "apiAccessEnabled"
 };
 
+export function settingsGroup(section: string): string {
+  if (['dashboard', 'connections', 'sync'].includes(section)) return 'connections';
+  if (['sessions', 'desktop'].includes(section)) return 'sessions';
+  if (['data', 'usage', 'system-log'].includes(section)) return 'data';
+  if (['users', 'workspace', 'mcp', 'database', 'logs', 'proxy'].includes(section)) return 'users';
+  return section;
+}
+
 export function isSettingsSectionEnabled(section: string, settings: DashboardSettings, canManageTeam: boolean): boolean {
   if (["users", "workspace", "mcp", "database", "logs", "proxy"].includes(section) && !canManageTeam) return false;
   if (section === "proxy") return settings.apiAccessEnabled === true;
   const key = SETTINGS_MODULE_KEYS[section];
-  if (section === "connections") return settings.webSocketServerEnabled !== false;
+  if (section === "connections") return settings.webSocketServerEnabled === true;
   return !key || settings[key] === true;
 }
 

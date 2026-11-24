@@ -1,6 +1,6 @@
 import { expect,it } from 'vitest';
 import { currentUserWorkspacePlan,currentUserWorkspaceQuestion,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary,userToolSummary } from '../webview-src/dashboard/userWorkspacePresentation';
-import { userWorkspacePathText } from '../src/domain/teamWorkspacePresentation';
+import { userWorkspacePathText, userWorkspaceActivityText } from '../src/domain/teamWorkspacePresentation';
 import { messageSessionPlan, sessionPlanMessage } from '../src/domain/sessionPlan';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 it('prioritizes the latest unanswered question and restores it when an unsent answer is removed',()=>{
@@ -19,10 +19,11 @@ it('summarizes file tool envelopes without showing file contents or metadata and
  expect(userToolSummary(message)).toBe('File created.');expect(message.result).toContain('internal');
  expect(userToolSummary({...message,status:'inProgress'})).toContain('Working');
  expect(userToolSummary({...message,result:JSON.stringify({status:'failed',error:'The file changed. Read it again before saving.'})})).toBe('The file changed. Read it again before saving.');
- expect(userToolSummary({...message,status:'failed',result:'not JSON'})).toContain('could not be completed');
+ expect(userToolSummary({...message,status:'failed',text:'The source could not be reached.',result:'not JSON'})).toBe('The source could not be reached.');
+ expect(userToolSummary({...message,status:'failed',text:message.title,result:'not JSON'})).toContain('could not be completed');
  expect(userToolSummary({...message,status:'unknown'})).toContain('could not be confirmed');
  expect(userToolSummary({...message,status:'interrupted'})).toContain('stopped');
- for(const result of ['null','42','[]','{broken','plain contents'])expect(userToolSummary({...message,result})).toBe('Action completed. Open Files to view your work.');
+ for(const result of ['null','42','[]','{broken','plain contents'])expect(userToolSummary({...message,result})).toBe('Action completed.');
 });
 it('keeps the working turn plan pinned while a later follow-up is queued, and never reuses it for a new turn',()=>{
  const plan={...sessionPlanMessage('plan',{steps:[{step:'Write',status:'inProgress'},{step:'Check',status:'pending'}]}),turnId:'working'};
@@ -96,4 +97,22 @@ it('labels file reads with the project-relative file while retaining all recorde
  expect(safe.title).toBe('Read File · codex-manager\\notes.txt');expect(safe.text).toBe('Read the whole file');expect(safe.result).toBe('All contents');
  const legacy=userSessionActivity({id:'read',kind:'tool-call',title:'Read /srv/projects/codex-manager/notes.txt',text:'Read'},['/srv/projects/codex-manager']);
  expect(legacy.title).toBe('Read File · codex-manager/notes.txt');
+});
+it('labels browsing with its recorded URL and keeps connected sources separate from file reads', () => {
+ const browsing = userSessionActivity({id:'web',kind:'tool-call',title:'Read website',text:'Source read.',arguments:JSON.stringify({url:'https://example.test/report/2026?q=wages'})},[]);
+ expect(browsing.title).toBe('Browse website · https://example.test/report/2026?q=wages');
+ expect(userSessionActivity(browsing,[]).title).toBe(browsing.title);
+ expect(userToolSummary({...browsing,status:'completed'})).toBe('Website read.');
+ expect(userSessionActivity({id:'legacy',kind:'tool-call',title:'Read File · website',text:''},[]).title).toBe('Browse website');
+ expect(userSessionActivity({id:'source',kind:'tool-call',title:'Read connected source',text:''},[]).title).toBe('Read connected source');
+ expect(userSessionActivity({...browsing,title:'Read website',arguments:JSON.stringify({url:'https://user:secret@example.test/'})},[]).title).toBe('Browse website');
+});
+it('preserves useful tool arguments and results while hiding credentials and private system details', () => {
+ const value=JSON.parse(userWorkspaceActivityText(JSON.stringify({tool:'list_orders',arguments:{buyer:'Example',limit:10},result:{count:42,filename:'report.xlsx'},password:'private-password',api_key:'private-key',endpoint:'http://10.0.0.1/admin',guidance:'private system prompt',url:'https://example.test/report?token=abc'}),[]));
+ expect(value.tool).toBe('list_orders');expect(value.arguments).toEqual({buyer:'Example',limit:10});expect(value.result.count).toBe(42);
+ expect(value.url).not.toContain('abc');
+ expect(value.password).toBe('[hidden]');expect(value.api_key).toBe('[hidden]');expect(value.endpoint).toBe('[hidden]');expect(value.guidance).toBe('[hidden]');
+ expect(userWorkspaceActivityText('Authorization: Bearer abc-secret https://localhost:39875/admin',[])).not.toContain('abc-secret');
+ expect(userWorkspaceActivityText('Read https://example.test/report?q=verified',[])).toContain('https://example.test/report?q=verified');
+ expect(userWorkspaceActivityText(JSON.stringify({content:[{type:'text',text:JSON.stringify({password:'nested-secret',count:42})}]}),[])).not.toContain('nested-secret');
 });

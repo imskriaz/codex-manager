@@ -134,6 +134,7 @@ export class OfficeSessionService {
     }
   }
   project(owner: string, id: string): string { return this.read(owner,id).projectPath; }
+  inspect(owner: string, id: string) { const session = this.read(owner, id); return { session: summary(session), messages: messages(session) }; }
   result(owner:string,id:string):{status:NonNullable<import('../domain/officeSchedule').UserSchedule['runStatus']>;error?:string}{
     const session=store().get<Session>(namespace(owner),id);
     if(!session||session.owner!==owner||session.deletedAt!==undefined)return{status:'cancelled',error:'Conversation removed.'};

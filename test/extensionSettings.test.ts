@@ -32,12 +32,13 @@ describe("5-hour quota control defaults", () => {
   it("matches the shipped portable defaults in fresh dashboard settings and keeps explicit Off", () => {
     const manifest = require("../package.json").contributes.configuration.properties;
     const expected = {
-      codexAppRestartMode: "auto", autoRefreshMinutes: 10, usageHistoryRetentionDays: 30,
-      cliIntegrationEnabled: true, apiAccessEnabled: false, autoSwitchEnabled: true,
+      codexAppRestartEnabled: false, codexAppRestartMode: "auto", autoRefreshMinutes: 10, usageHistoryRetentionDays: 30,
+      cliIntegrationEnabled: false, apiAccessEnabled: false, autoSwitchEnabled: true,
       autoSwitchWaitForSessionsEnabled: false, autoSwitchReloadWindowEnabled: true,
       modelCapacityAutoSwitchEnabled: true, modelCapacityFailureCount: 3,
       autoResumeEnabled: true, autoSwitchRefreshAllBeforeSwitchEnabled: true,
-      autoResetEnabled: true, quotaWarningEnabled: true, webDashboardEnabled: true,
+      autoResetEnabled: true, quotaWarningEnabled: true, webDashboardEnabled: false,
+      encryptedSyncEnabled: false, webSocketServerEnabled: false, dailyTokenUsageEnabled: false, teamWorkspaceEnabled: false,
       encryptedSyncVsCodeHeartbeatMinutes: 10
     };
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
@@ -48,6 +49,11 @@ describe("5-hour quota control defaults", () => {
     for (const [key, value] of Object.entries(expected)) {
       if (typeof value === "boolean") expect(new ExtensionSettingsStore().getDashboardSettings()[key as keyof typeof expected]).toBe(false);
     }
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      typeof expected[key as keyof typeof expected] === 'boolean' ? true : fallback } as never);
+    for (const [key, value] of Object.entries(expected)) {
+      if (typeof value === 'boolean') expect(new ExtensionSettingsStore().getDashboardSettings()[key as keyof typeof expected]).toBe(true);
+    }
     for (const key of ["cloudflaredDomain", "codexAppPath", "codexCliPath"]) expect(manifest[`codexManager.${key}`].default).toBe("");
   });
   it('keeps quota monitoring and enabled recovery when quota warnings are off', () => {
@@ -56,9 +62,9 @@ describe("5-hour quota control defaults", () => {
     expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(true);
     expect(isHourlyQuotaControlEnabled()).toBe(true);
   });
-  it("defaults token collection on and bounds its interval from one minute to one day", () => {
+  it("defaults token collection off and bounds its interval from one minute to one day", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
-    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: true, dailyTokenUsageIntervalMinutes: 60 });
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: false, dailyTokenUsageIntervalMinutes: 60 });
     expect([NaN, Infinity, -1, 0, 1, 1.6, 60, 1440, 1441].map(normalizeDailyTokenUsageIntervalMinutes)).toEqual([60, 60, 1, 1, 1, 2, 60, 1440, 1440]);
   });
   it.each([[false, false], [false, true], [true, false], [true, true]])(
@@ -137,9 +143,9 @@ describe("5-hour quota control defaults", () => {
     expect(overlay).not.toContain("WebSocket heartbeat gap");
   });
 
-  it("keeps claim checks on while full cross-PC account sync defaults off", () => {
+  it("defaults sync off while retaining explicit claim and full-sync choices", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8"));
-    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(true);
+    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(false);
     expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncClaimAllAccountsEnabled"].default).toBe(false);
     expect(manifest.contributes.configuration.properties["codexManager.fullCrossPcAccountSyncEnabled"].default).toBe(
       false
@@ -150,7 +156,7 @@ describe("5-hour quota control defaults", () => {
       inspect: vi.fn(),
       update: vi.fn()
     } as never);
-    expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(true);
+    expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(false);
     expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncClaimAllAccountsEnabled).toBe(false);
     expect(new ExtensionSettingsStore().getDashboardSettings().fullCrossPcAccountSyncEnabled).toBe(false);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

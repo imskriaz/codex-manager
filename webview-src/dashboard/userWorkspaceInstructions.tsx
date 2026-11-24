@@ -10,6 +10,7 @@ export function UserWorkspaceInstructions(props: { open: boolean; owner: string;
   const [draft, setDraft] = useState(''), [saved, setSaved] = useState<string>();
   const [busy, setBusy] = useState(false), [status, setStatus] = useState(''), [error, setError] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>();
+  const [usageWarning, setUsageWarning] = useState('');
   const [editing, setEditing] = useState(false);
   const cancelEdit = () => { setEditing(false); setDraft(saved ?? ''); setStatus('Instruction editing cancelled.'); setError(false); };
   const revision=useRef(0);
@@ -25,6 +26,24 @@ export function UserWorkspaceInstructions(props: { open: boolean; owner: string;
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; revision.current++; };
   }, [props.open, props.owner, loadAttempt]);
+  useEffect(() => {
+    if (!props.open || props.view !== 'usage') return;
+    let active = true, refreshing = false;
+    const refresh = async () => {
+      if (refreshing || document.visibilityState === 'hidden') return;
+      refreshing = true;
+      try {
+        const value = await request<Preferences>('/api/workspace/preferences');
+        if (active) { setPreferences(current => current ? { ...current, usage: value.usage, limits: value.limits } : value); setUsageWarning(''); }
+      } catch { if (active) setUsageWarning('Usage could not be refreshed. Showing the last available values.'); }
+      finally { refreshing = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15000);
+    const changed = () => void refresh();
+    window.addEventListener('focus', changed); document.addEventListener('visibilitychange', changed); window.addEventListener('codex:workspace-data-changed', changed);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', changed); document.removeEventListener('visibilitychange', changed); window.removeEventListener('codex:workspace-data-changed', changed); };
+  }, [props.open, props.owner, props.view]);
   const reloadInstructions = async () => {
     if (busy) return;
     const current = revision.current;
@@ -36,7 +55,7 @@ export function UserWorkspaceInstructions(props: { open: boolean; owner: string;
       if (current === revision.current) { setError(true); setStatus(userWorkspaceNotice(reason instanceof Error ? reason.message : 'Instructions could not be reloaded. Please try again.')); }
     } finally { if (current === revision.current) setBusy(false); }
   };
-  return <><div hidden={props.view !== 'usage'}>{preferences?.usage ? <section class="settings-block settings-block-wide user-workspace-usage" aria-label="Your usage"><h3 class="settings-block-title">Usage</h3><dl>{([
+  return <><div hidden={props.view !== 'usage'}>{preferences?.usage ? <section class="settings-block settings-block-wide user-workspace-usage" aria-label="Your usage"><h3 class="settings-block-title">Usage</h3>{usageWarning?<p role="status">{usageWarning}</p>:null}<dl>{([
     ['Tokens today', preferences.usage.tokens, preferences.limits?.dailyTokens],
     ['Requests today', preferences.usage.requests, preferences.limits?.dailyRequests],
     ['Storage (MB)', preferences.usage.storageBytes === undefined ? undefined : Math.ceil(preferences.usage.storageBytes / 1024 / 1024 * 100) / 100, preferences.limits?.storageMb]

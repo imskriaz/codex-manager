@@ -2,6 +2,7 @@ import {WorkspacePresentationSetting} from './workspacePresentationSetting';
 import {WorkspaceServicesSetting} from './workspaceServicesSetting';
 import {DEFAULT_OFFICE_PRESENTATION,type OfficePresentation} from '../../src/domain/officePresentation';
 import {UserUsageReview} from './userUsageReview';
+import { UserSessions } from './userSessions';
 import type { OfficeLimits } from "../../src/services/officeQuota";
 const unlimitedOfficeLimits = {storageMb: 0, dailyTokens: 0, dailyRequests: 0};
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -31,12 +32,12 @@ type UserDraft = {
   mcpServers: string[];
 };
 export const TEAM_SETTINGS_SECTIONS: { id: TeamSettingsSection; title: string; description: string }[] = [
-  { id: "logs", title: "Logs", description: "See who initiated each action and its outcome." },
-  { id: "proxy", title: "Proxy", description: "Monitor requests, user identity, running status, and token use." },
   { id: "users", title: "Users", description: "Manage sign-in, workspace access, and permissions." },
   { id: "workspace", title: "User Workspace", description: "Choose where new Team user workspaces are created." },
   { id: "mcp", title: "MCP data access", description: "Manage the data connections available to your Team." },
-  { id: "database", title: "Database", description: "Configure storage for Team users and data connections." }
+  { id: "database", title: "Database", description: "Configure storage for Team users and data connections." },
+  { id: "logs", title: "Logs", description: "See who initiated each action and its outcome." },
+  { id: "proxy", title: "Proxy", description: "Monitor requests, user identity, running status, and token use." }
 ];
 const FEATURES: { id: OfficeFeature; title: string; description: string }[] = [
   { id: "generalChat", title: "General chat", description: "Everyday conversations in the user workspace." },
@@ -63,7 +64,7 @@ const newUser = (): UserDraft => ({
 });
 const USER_TABS = [
   {id: 'profile', label: 'Profile'}, {id: 'plan', label: 'Plan & limits'},
-  {id: 'usage', label: 'Usage'}, {id: 'permissions', label: 'Permissions'}, {id: 'data', label: 'Data access'}
+  {id: 'usage', label: 'Usage'}, {id: 'sessions', label: 'Sessions'}, {id: 'permissions', label: 'Permissions'}, {id: 'data', label: 'Data access'}
 ] as const;
 
 
@@ -469,7 +470,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
               }}
             >
               <div class="team-editor-layout">
-              <label class="team-user-picker">User settings<select aria-label="User settings section" value={userTab} disabled={pending} onChange={event => setUserTab(event.currentTarget.value as typeof userTab)}>{USER_TABS.filter(tab => draft.id || tab.id !== 'usage').map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}</select></label>
+              <label class="team-user-picker">User settings<select aria-label="User settings section" value={userTab} disabled={pending} onChange={event => setUserTab(event.currentTarget.value as typeof userTab)}>{USER_TABS.filter(tab => draft.id || !['usage','sessions'].includes(tab.id)).map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}</select></label>
               <nav class="team-user-tabs" role="tablist" aria-label="User settings" aria-orientation="vertical" onKeyDown={event => {
                 if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
                 const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')];
@@ -478,7 +479,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                 event.preventDefault();
                 const next = buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length];
                 next?.focus(); next?.click();
-              }}>{USER_TABS.filter(tab => draft.id || tab.id !== 'usage').map(tab => <button key={tab.id} type="button" role="tab" id={`team-user-tab-${tab.id}`} aria-controls={`team-editor-panel-${tab.id}`} aria-selected={userTab === tab.id} tabIndex={userTab === tab.id ? 0 : -1} disabled={pending} onClick={() => setUserTab(tab.id)}>{tab.label}</button>)}</nav>
+              }}>{USER_TABS.filter(tab => draft.id || !['usage','sessions'].includes(tab.id)).map(tab => <button key={tab.id} type="button" role="tab" id={`team-user-tab-${tab.id}`} aria-controls={`team-editor-panel-${tab.id}`} aria-selected={userTab === tab.id} tabIndex={userTab === tab.id ? 0 : -1} disabled={pending} onClick={() => setUserTab(tab.id)}>{tab.label}</button>)}</nav>
               <fieldset class="team-editor-fields" disabled={pending}>
                 <div
                   id="team-editor-panel-profile" role="tabpanel" aria-labelledby="team-user-tab-profile" hidden={userTab !== "profile"}
@@ -549,6 +550,7 @@ export function TeamManagementPage(props: { office?: DashboardOfficeView; sectio
                 <fieldset class="team-settings-form"><legend>User allowances</legend><p>Use 0 for unlimited. Daily allowances reset at midnight UTC. A response already running may finish before the token limit takes effect.</p>{([['storageMb', 'File storage (MB)'], ['dailyTokens', 'Tokens per day'], ['dailyRequests', 'Requests per day']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} max={1000000000} step={1} required value={draft.limits?.[key] ?? 0} onInput={event => setDraft({...draft, limits: {...unlimitedOfficeLimits, ...draft.limits, [key]: Number(event.currentTarget.value)}})} /></label>)}</fieldset>
                 </div>
                 {draft.id ? <div id="team-editor-panel-usage" role="tabpanel" aria-labelledby="team-user-tab-usage" hidden={userTab !== "usage"}>{userTab === 'usage' ? <UserUsageReview key={draft.id} id={draft.id}/> : null}</div> : null}
+                {draft.id ? <div id="team-editor-panel-sessions" role="tabpanel" aria-labelledby="team-user-tab-sessions" hidden={userTab !== 'sessions'}>{userTab === 'sessions' ? <UserSessions key={draft.id} id={draft.id} /> : null}</div> : null}
                 <div
                   id="team-editor-panel-permissions" role="tabpanel" aria-labelledby="team-user-tab-permissions" hidden={userTab !== "permissions"}
                   aria-label="Permissions"

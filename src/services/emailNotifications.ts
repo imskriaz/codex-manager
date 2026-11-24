@@ -3,6 +3,7 @@ import type * as vscode from 'vscode';
 import { getSqliteStateStore } from '../storage/sqliteState';
 import { runCrossWindowExclusive } from '../utils/crossWindowOperations';
 import { waitWithin } from '../utils/concurrency';
+import { getOfficeUser } from './officeUsers';
 
 const CONFIG_KEY = 'codexManager.smtp.v1';
 export type EmailEvent = 'ready' | 'needsAnswer' | 'failed';
@@ -32,10 +33,10 @@ export function readEmailPreferences(owner: string): EmailPreferences {
   return store().get<EmailPreferences>(namespace(owner), 'email') ?? { ...defaultEmailPreferences };
 }
 export function readEmailWatches(owner: string): string[] { return store().get<string[]>(namespace(owner), 'email-watches') ?? []; }
-export function saveEmailWatch(owner: string, input: unknown): string[] {
+export function saveEmailWatch(owner: string, input: unknown, address = readEmailPreferences(owner).address): string[] {
   const body = form(input), key = body['sessionKey'];
   if (typeof key !== 'string' || !/^(?:local|[a-zA-Z0-9_-]{1,128}):[a-f0-9-]{36}$/.test(key) || typeof body['enabled'] !== 'boolean') throw new Error('Choose a valid conversation for email notifications.');
-  if (body['enabled'] && !readEmailPreferences(owner).address) throw new Error('Add your email address in Settings before enabling session emails.');
+  if (body['enabled'] && !address) throw new Error('Add your email address in Settings before enabling session emails.');
   return store().transaction(() => {
     const values = readEmailWatches(owner).filter(value => value !== key);
     if (body['enabled']) { if (values.length >= 100) throw new Error('You can watch up to 100 conversations. Turn off another session email first.'); values.push(key); }
@@ -57,6 +58,11 @@ export class EmailNotificationService {
   private sends: Promise<void> = Promise.resolve();
   private queued = 0;
   constructor(private readonly secrets: vscode.SecretStorage, private readonly ownerAllowed: (owner: string) => Promise<boolean> = () => Promise.resolve(true)) {}
+
+  async preferences(owner: string): Promise<EmailPreferences> {
+    const prefs = readEmailPreferences(owner);
+    return owner === 'master' ? prefs : { ...prefs, address: (await getOfficeUser(owner))?.username ?? '' };
+  }
 
   private async config(): Promise<SmtpConfig> {
     const saved = await this.secrets.get(CONFIG_KEY);
@@ -104,7 +110,7 @@ export class EmailNotificationService {
     } finally { transport.close(); }
   }
   async test(owner: string): Promise<void> {
-    const prefs = readEmailPreferences(owner);
+    const prefs = await this.preferences(owner);
     await this.send(email(prefs.address), { id: randomUUID(), event: 'ready', title: 'Test email', message: 'Email notifications are connected. Your selected session updates will be sent here.' }, false);
   }
   notify(notice: EmailNotice): void {
@@ -114,7 +120,7 @@ export class EmailNotificationService {
       if (!(await this.config()).enabled) return;
       const owner = notice.owner ?? 'master';
       if (!await this.ownerAllowed(owner)) return;
-      const prefs = readEmailPreferences(owner);
+      const prefs = await this.preferences(owner);
       const watching = !!notice.sessionKey && readEmailWatches(owner).includes(notice.sessionKey);
       if ((!prefs.enabled || !prefs[notice.event]) && !(watching && notice.event === 'ready')) return;
       const id = createHash('sha256').update(notice.id).digest('hex');

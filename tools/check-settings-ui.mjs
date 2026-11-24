@@ -32,8 +32,9 @@ try {
     for (const section of sections) {
       if (await picker.isVisible()) await picker.selectOption(section);
       else await settings.locator(`#settings-tab-${section}`).click();
-      await settings.locator(`#settings-panel-${section}`).waitFor({ state: 'visible' });
-      if (['users', 'workspace', 'mcp', 'database', 'logs', 'proxy'].includes(section)) {
+      await settings.locator('.settings-tab-panel:not([hidden])').first().waitFor({ state: 'visible' });
+      assert.ok(await settings.locator('.settings-tab-panel:not([hidden])').count(), 'Every grouped tab has visible options');
+      if (section === 'users') {
         await settings.getByText(/Loading (Team settings|activity|proxy)/).waitFor({ state: 'hidden' });
       }
       const geometry = await settings.evaluate(element => {

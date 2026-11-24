@@ -121,7 +121,8 @@ import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTaskWi
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { LocalMcpServer } from './localMcpServer';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
-import { EmailNotificationService, readEmailPreferences, readEmailWatches, saveEmailPreferences, saveEmailWatch } from './emailNotifications';
+import { EmailNotificationService, readEmailWatches, saveEmailPreferences, saveEmailWatch } from './emailNotifications';
+import { clearOfficeWorkspace } from './officeWorkspaceClear';
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterruption, isCodexCapacityInterruption } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
@@ -634,7 +635,7 @@ export class WebDashboardServer implements vscode.Disposable {
       repo,
       () => undefined,
       async () => {
-        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true)) {
+        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)) {
           return undefined;
         }
         return this.encryptedSync
@@ -1012,7 +1013,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private isEnabled(): boolean {
     const config = getCodexManagerConfiguration();
-    return config.get<boolean>("webDashboardEnabled", true);
+    return config.get<boolean>("webDashboardEnabled", false);
   }
 
   /** Verify that the public tunnel reaches this server without exposing a device identifier. */
@@ -1285,7 +1286,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (!apiAuthorized) this.renewSessionCookie(request, response);
-    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/email/preferences","/api/email/test","/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
+    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/email/preferences","/api/email/test","/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/workspace/clear","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
       response.statusCode=403;this.sendJson(response,{error:"This page is unavailable in your workspace."});return;
     }
     if (path.startsWith('/api/email/')) {
@@ -1298,11 +1299,14 @@ export class WebDashboardServer implements vscode.Disposable {
           else if (method === 'PUT') this.sendJson(response, { config: await this.email.saveConfig(JSON.parse(await readDashboardRequestBody(request, 16384))), message: 'SMTP settings saved.' });
           else throw new Error('Choose a valid SMTP settings action.');
         } else if (path === '/api/email/preferences') {
-          if (method === 'PUT') saveEmailPreferences(owner, JSON.parse(await readDashboardRequestBody(request, 8192)));
-          else if (method === 'POST') saveEmailWatch(owner, JSON.parse(await readDashboardRequestBody(request, 8192)));
+          if (method === 'PUT') {
+            const body: unknown = JSON.parse(await readDashboardRequestBody(request, 8192));
+            saveEmailPreferences(owner, owner === 'master' || !body || typeof body !== 'object' || Array.isArray(body) ? body : { ...body, address: officeUser.username });
+          }
+          else if (method === 'POST') saveEmailWatch(owner, JSON.parse(await readDashboardRequestBody(request, 8192)), (await this.email.preferences(owner)).address);
           else if (method !== 'GET') throw new Error('Choose a valid email preferences action.');
           this.emailWatching = this.email.hasMasterSubscription(); this.refreshCliSessionRealtimeLifecycle();
-          this.sendJson(response, { preferences: readEmailPreferences(owner), watches: readEmailWatches(owner), available: (await this.email.publicConfig()).enabled, status: this.email.status(owner), ...(method !== 'GET' ? { message: 'Email preferences saved.' } : {}) });
+          this.sendJson(response, { preferences: await this.email.preferences(owner), watches: readEmailWatches(owner), available: (await this.email.publicConfig()).enabled, status: this.email.status(owner), ...(method !== 'GET' ? { message: 'Email preferences saved.' } : {}) });
         } else if (path === '/api/email/test' && method === 'POST') {
           const key = `email-test:${owner}`;
           const previous = getSqliteStateStore()?.get<number>('email-rate-limit', key) ?? 0;
@@ -1380,6 +1384,20 @@ export class WebDashboardServer implements vscode.Disposable {
     if(path==='/api/workspace/image'){
       try{if(method!=='GET'||officeUser?.role!=='user')throw new Error('This image is unavailable.');const mimeType=requestUrl.searchParams.get('mimeType')??'';const image=await readOfficeImage(officeUser,requestUrl.searchParams.get('filePath')??'',mimeType);response.setHeader('Content-Type',mimeType);response.setHeader('Content-Security-Policy',"default-src 'none'");response.end(image.data);}
       catch{response.statusCode=404;response.end('This image is unavailable.');}return;
+    }
+    if(path==='/api/workspace/clear'){
+      if(!officeUser||officeUser.role!=='user'||!officeUser.enabled){response.statusCode=403;this.sendJson(response,{error:'Sign in to your workspace.'});return;}
+      try{
+        if(method!=='GET'&&method!=='POST')throw new Error('Choose a valid clear action.');
+        const input:unknown=method==='GET'?{kind:requestUrl.searchParams.get('kind')}:JSON.parse(await readDashboardRequestBody(request,8192));
+        if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('Choose a valid clear action.');
+        const result=await clearOfficeWorkspace(officeUser,input as Record<string,unknown>,method==='GET');
+        if(method==='POST'&&result.kind==='chats'){
+          const message:DashboardHostMessage={type:'dashboard:action-result',requestId:`auto-team-clear-${crypto.randomUUID()}`,action:'listCodexCliSessions',status:'completed',payload:{cliSessions:this.teamSessions().list(officeUser.id)}};
+          for(const socket of this.webSocketClients)if(this.browserSocketOfficeUser?.get(socket)?.id===officeUser.id)sendDashboardSocketMessage(socket,JSON.stringify(message),true);
+        }
+        this.sendJson(response,result);
+      }catch(error){response.statusCode=400;this.sendJson(response,{error:userWorkspaceNotice(error instanceof Error?error.message:'Clearing could not be confirmed. Refresh before retrying.')});}return;
     }
     if(path==='/api/workspace/account'){
       if(!officeUser||officeUser.role!=='user'){response.statusCode=403;this.sendJson(response,{error:'Sign in to your workspace.'});return;}
@@ -1507,6 +1525,21 @@ export class WebDashboardServer implements vscode.Disposable {
         this.sendJson(response, { user });
       } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : "Office user could not be created." }); }
       return;
+    }
+    if(path.startsWith('/api/office/sessions/')){
+      if(!officeUser||officeUser.role==='user'){response.statusCode=403;this.sendJson(response,{error:'User sessions are restricted to administrators.'});return;}
+      try{
+        if(method!=='GET')throw new Error('Choose a valid session view.');
+        const parts=path.slice('/api/office/sessions/'.length).split('/');
+        if(parts.length>2||parts.some(value=>!/^[a-f0-9-]{36}$/i.test(value)))throw new Error('Choose a valid user session.');
+        const user=await getOfficeUser(parts[0]);if(!user||user.role!=='user')throw new Error('This user is unavailable.');
+        const service=this.teamSessions(),sessions=service.list(user.id);
+        if(!parts[1])this.sendJson(response,{sessions});
+        else{
+          const session=sessions.find(value=>value.id===parts[1]);if(!session)throw new Error('This conversation is unavailable.');
+          this.sendJson(response,service.inspect(user.id,session.id));
+        }
+      }catch(error){response.statusCode=400;this.sendJson(response,{error:error instanceof Error?error.message:'User sessions could not be loaded.'});}return;
     }
     if(path.startsWith('/api/office/usage/')){
       if(!officeUser||officeUser.role==='user'){response.statusCode=403;this.sendJson(response,{error:'Usage review is restricted to administrators.'});return;}
@@ -1892,7 +1925,7 @@ export class WebDashboardServer implements vscode.Disposable {
             if(!args||Array.isArray(args)||typeof args!=='object')throw new OfficeActionError('The schedule request could not be read.');
             const schedules=this.teamSchedules();
             const activityId=crypto.randomUUID(),title=call.function.name==='list_schedules'?'Review schedules':'Update schedule';
-            report({id:activityId,kind:'tool-call',title,text:title,status:'inProgress'});
+            report({id:activityId,kind:'tool-call',title,text:title,arguments:call.function.arguments,status:'inProgress'});
             try{
               let result:unknown;
               if(call.function.name==='list_schedules')result=schedules.list(current).map(({projectPath:_project,...task})=>task);
@@ -1916,15 +1949,15 @@ export class WebDashboardServer implements vscode.Disposable {
                 schedules.start();
               }
               if(result&&typeof result==='object'&&!Array.isArray(result)){const {projectPath:_project,...safe}=result as Record<string,unknown>;result=safe;}
-              report({id:activityId,kind:'tool-call',title,text:'Scheduled tasks updated.',status:'completed'});
+              report({id:activityId,kind:'tool-call',title,text:'Scheduled tasks updated.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});
               conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             }catch(error){report({id:activityId,kind:'tool-call',title,text:'This schedule action could not be completed.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This schedule action could not be completed.'));}
             continue;
           }
           if(['render_document','run_runtime'].includes(call.function.name)){
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!tools.some(tool=>tool.function.name===call.function.name))throw new OfficeActionError('This workspace capability is unavailable.');
-            const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID(),title=call.function.name==='render_document'?'Render document':'Run isolated script';report({id:activityId,kind:'tool-call',title,text:title,status:'inProgress'});
-            try{signal.throwIfAborted();sideEffects=true;const result=call.function.name==='render_document'?await renderOfficeThumbnails(current,projectPath,args,signal):await runOfficeRuntime(current,projectPath,args,signal);const failed='status' in result&&result.status!=='completed';report({id:activityId,kind:'tool-call',title,text:result.message,status:failed?'failed':'completed'});if(failed)failedActions.set(call.function.name,result.message);else failedActions.delete(call.function.name);
+            const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID(),title=call.function.name==='render_document'?'Render document':'Run isolated script';report({id:activityId,kind:'tool-call',title,text:title,arguments:call.function.arguments,status:'inProgress'});
+            try{signal.throwIfAborted();sideEffects=true;const result=call.function.name==='render_document'?await renderOfficeThumbnails(current,projectPath,args,signal):await runOfficeRuntime(current,projectPath,args,signal);const failed='status' in result&&result.status!=='completed';report({id:activityId,kind:'tool-call',title,text:result.message,arguments:call.function.arguments,result:JSON.stringify(result),status:failed?'failed':'completed'});if(failed)failedActions.set(call.function.name,result.message);else failedActions.delete(call.function.name);
               if('files' in result)for(const file of result.files)deliverables.set(file,false);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This action could not be confirmed.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(call.function.name,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Report this limitation truthfully. Do not claim completion or replay uncertain execution. Offer supported file or content alternatives.'})});}continue;
           }
@@ -1932,18 +1965,20 @@ export class WebDashboardServer implements vscode.Disposable {
             const current=await getOfficeUser(user.id);
             if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!tools.some(tool=>tool.function.name===call.function.name))throw new OfficeActionError('This source is unavailable.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>;
-            const activityId=crypto.randomUUID(),title=call.function.name==='read_web_page'?'Read website':call.function.name==='search_web'?'Search web':'Read connected source';report({id:activityId,kind:'tool-call',title,text:title,status:'inProgress'});
+            const activityId=crypto.randomUUID(),title=call.function.name==='read_web_page'?'Read website':call.function.name==='search_web'?'Search web':call.function.name==='list_connections'?'List MCP connections':'MCP call'+(typeof args['tool']==='string'?' · '+args['tool']:' · Discover tools');
+            const sourceArguments=JSON.stringify(args);
+            report({id:activityId,kind:'tool-call',title,text:title,arguments:sourceArguments,status:'inProgress'});
             try{
               if(['read_web_page','search_web'].includes(call.function.name)&&!current.features.includes('browser'))throw new Error('Website research is unavailable.');
               const value=call.function.name==='search_web'?await searchOfficeWeb(args['query'],signal):call.function.name==='read_web_page'?await readOfficeWebPage(args['url'],signal):call.function.name==='list_connections'?await listOfficeConnections(current):await readOfficeConnection(current,args['connectionId'],args['tool'],args['arguments'],signal);
               if(call.function.name==='read_web_page'&&value&&typeof value==='object'&&'url' in value&&'title' in value&&typeof value.url==='string'&&typeof value.title==='string')researchSources.set(value.url,value.title);
-              report({id:activityId,kind:'tool-call',title,text:'Source read.',status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This source could not be read.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Explain this limitation. Do not invent facts or citations.'})});}
+              report({id:activityId,kind:'tool-call',title,text:'Source read.',arguments:sourceArguments,result:JSON.stringify(value),status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This source could not be read.');report({id:activityId,kind:'tool-call',title,text:detail,arguments:sourceArguments,status:'failed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Explain this limitation. Do not invent facts or citations.'})});}
             continue;
           }
           if(call.function.name==='manage_recovery'){
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!current.features.includes('files'))throw new OfficeActionError('File access changed.');
-            const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Reviewing saved files',status:'inProgress'});
+            const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Reviewing saved files',arguments:call.function.arguments,status:'inProgress'});
             try{
               if(args['operation']!=='list')sideEffects=true;
               const result=await runCrossWindowExclusive(`office-storage:${current.id}`,'Manage saved files',async()=>{
@@ -1952,7 +1987,7 @@ export class WebDashboardServer implements vscode.Disposable {
                 if(args['operation']==='restore')return restoreOfficeFile(current,args['id'],typeof args['revision']==='string'?args['revision']:undefined);
                 if(args['operation']==='discard'&&args['confirmed']===true)return discardOfficeFile(current,args['id']);
                 throw new Error('Choose restore, or explicitly confirmed permanent removal.');
-              });report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+              });report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             }catch(error){report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'This saved file action did not finish.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This saved file action did not finish.'));}
             continue;
           }
@@ -1962,7 +1997,7 @@ export class WebDashboardServer implements vscode.Disposable {
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>;
             if(!args||typeof args!=='object'||Array.isArray(args))throw new OfficeActionError('The file action could not be read.');
             const activityId=crypto.randomUUID(),title=args['operation']==='inspect'?'Inspect files':'Manage files',actionKey=JSON.stringify(['manage_files',args['operation'],args['path']]);
-            report({id:activityId,kind:'tool-call',title,text:title,status:'inProgress'});
+            report({id:activityId,kind:'tool-call',title,text:title,arguments:call.function.arguments,status:'inProgress'});
             try{
               if(args['operation']!=='inspect')sideEffects=true;
               signal.throwIfAborted();
@@ -1978,7 +2013,7 @@ export class WebDashboardServer implements vscode.Disposable {
               }
               failedActions.delete(actionKey);
               const {deletedPath:_deleted,...safe}=value;
-              report({id:activityId,kind:'tool-call',title,text:value.message??'Files inspected.',status:'completed'});
+              report({id:activityId,kind:'tool-call',title,text:value.message??'Files inspected.',arguments:call.function.arguments,result:JSON.stringify(safe),status:'completed'});
               conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(safe)});
             }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(actionKey,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.'})});}
             continue;
@@ -1987,11 +2022,11 @@ export class WebDashboardServer implements vscode.Disposable {
             const current=await getOfficeUser(user.id);
             if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!current.features.includes('files'))throw new OfficeActionError('File access changed.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>;
-            const activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Create document',text:'Preparing document',status:'inProgress'});
+            const activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Create document',text:'Preparing document',arguments:call.function.arguments,status:'inProgress'});
             try{
               const data=await createOfficeDocument(args);signal.throwIfAborted();sideEffects=true;
               const value=await runCrossWindowExclusive(`office-storage:${current.id}`,'Save document',()=>writeOfficeBinary(current,projectPath,String(args['path']),data,typeof args['revision']==='string'?args['revision']:undefined));
-              report({id:activityId,kind:'tool-call',title:'Create document',text:'Document saved.',status:'completed'});
+              report({id:activityId,kind:'tool-call',title:'Create document',text:'Document saved.',arguments:call.function.arguments,result:JSON.stringify(value),status:'completed'});
               report({id:crypto.randomUUID(),kind:'file-change',title:'Updated files',text:'Document saved.',status:'completed',changes:[{path:value.path,kind:args['revision']?'update':'add'}]});
               failedActions.delete(`write_file:${String(args['path'])}`);
               deliverables.set(value.path,false);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});
@@ -2002,7 +2037,9 @@ export class WebDashboardServer implements vscode.Disposable {
             const current=await getOfficeUser(user.id),args=JSON.parse(call.function.arguments) as {id?:unknown};
             if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath)throw new OfficeActionError('Workspace skills are unavailable.');
             const skill=readTeamSettings().presentation.catalog.find(card=>card.id===args.id);if(!skill)throw new OfficeActionError('Choose an available workspace skill.');
-            signal.throwIfAborted();conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({id:skill.id,label:skill.label,guidance:skill.prompt,instruction:'Apply this guidance within workspace permissions. Use source-reading tools for technical claims; report unverifiable details. Do not claim unsupported file operations.'})});
+            signal.throwIfAborted();
+            report({id:crypto.randomUUID(),kind:'tool-call',title:'Use skill · '+skill.label,text:skill.description||'Skill guidance applied.',arguments:JSON.stringify({id:skill.id,label:skill.label}),status:'completed'});
+            conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({id:skill.id,label:skill.label,guidance:skill.prompt,instruction:'Apply this guidance within workspace permissions. Use source-reading tools for technical claims; report unverifiable details. Do not claim unsupported file operations.'})});
             continue;
           }
           if(call.function.name==='suggest_workflows'){
@@ -3226,7 +3263,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private refreshCliSessionRealtimeLifecycle(): void {
-    if ((!this.hasWorkspaceViewer() && !this.pushWatching && !this.emailWatching) || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
+    if ((!this.hasWorkspaceViewer() && !this.pushWatching && !this.emailWatching) || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
       this.stopCliSessionRealtime();
       return;
     }
@@ -3299,10 +3336,10 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishCliSessionsRealtimeCore(): Promise<void> {
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true))
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false))
       return;
     const sessions = await this.readLocalCliSessions(true);
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return;
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
     const previous = this.localPeerState ?? this.lastLocalPeerState;
     if (previous) {
       this.localPeerStateRevision++;
@@ -3541,7 +3578,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async publishPeerNotification(notice: MirroredNotification): Promise<void> {
     if (notice.level === 'info') return;
-    if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
+    if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', false)) return;
     const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ? crypto.createHash('sha256').update(notice.notificationId).digest('hex') : crypto.createHash('sha256').update(JSON.stringify([notice.level, notice.title, notice.message, notice.systemName])).digest('hex'), sentAt: Date.now(),
       notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName, url: notificationTargetUrl(notice.url),
         ...(notice.suppressPush || this.isUserViewingNotifications() ? { suppressPush: true } : {}) } };
@@ -3619,7 +3656,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async readLocalCliSessions(
     force = false
   ): Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> {
-    if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return [];
+    if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return [];
     const now = Date.now();
     if (!force && now < this.localCliSessionsRetryAt) return this.localCliSessions ?? [];
     if (!force && this.localCliSessions && now - this.localCliSessionsReadAt < LOCAL_CLI_SESSION_CACHE_MS) {
@@ -3654,7 +3691,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private getConnectedPeers(): DashboardPeerView[] {
-    const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true);
+    const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
     // Counts use the last completed catalogue; discovery must not hold up the dashboard.
     if (cliEnabled && this.hasWorkspaceViewer()) void this.readLocalCliSessions();
     const localSessionCount = cliEnabled
@@ -4162,7 +4199,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (this.localPeerState) return this.localPeerState;
     const revision = this.localPeerStateRevision;
     const pending = (this.localPeerStateRead ??= (async () => {
-      const enabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true);
+      const enabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
       const [sessions, dashboard] = await Promise.all([
         enabled ? this.readLocalCliSessions() : Promise.resolve([]),
         buildDashboardState(this.repo, this.settingsStore, "/assets/codex.svg")

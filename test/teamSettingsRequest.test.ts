@@ -3,6 +3,15 @@ import { requestLocalTeamSettings } from "../src/services/teamSettingsRequest";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it('allows read-only user session lists and details through the administrator bridge', async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ sessions: [] }))); vi.stubGlobal('fetch', fetch);
+  const path = '/api/office/sessions/11111111-1111-1111-1111-111111111111';
+  await requestLocalTeamSettings({ path, method: 'GET' });
+  await requestLocalTeamSettings({ path: path + '/22222222-2222-2222-2222-222222222222', method: 'GET' });
+  await expect(requestLocalTeamSettings({ path, method: 'POST' })).rejects.toThrow('valid Team settings action');
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
 it.each([['/api/email/smtp','GET'],['/api/email/smtp','PUT'],['/api/email/preferences','POST'],['/api/email/test','POST']])('allows the local email settings bridge: %s %s', async (path, method) => {
   const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'Saved.' }))); vi.stubGlobal('fetch', fetch);
   await expect(requestLocalTeamSettings({ path, method })).resolves.toEqual({ message: 'Saved.' }); expect(fetch).toHaveBeenCalledOnce();

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { WebDashboardServer } from '../src/services/webDashboardServer';
 import { SqliteStateStore, configureSqliteStateStore } from '../src/storage/sqliteState';
-import { defaultEmailPreferences } from '../src/services/emailNotifications';
+import { defaultEmailPreferences, saveEmailPreferences } from '../src/services/emailNotifications';
+import * as officeUsers from '../src/services/officeUsers';
 import { removeTestDirectory } from './testFilesystem';
 
 let root: string, database: SqliteStateStore, server: WebDashboardServer, host: any, user: any;
@@ -13,7 +14,8 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'manager-email-routes-'));
   database = await SqliteStateStore.open(path.join(root, 'state.sqlite')); configureSqliteStateStore(database);
   server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: { get: vi.fn(async () => undefined) } } as never, {} as never); host = server;
-  user = { id: 'alex', role: 'user', enabled: true };
+  user = { id: 'alex', username: 'alex@example.test', role: 'user', enabled: true };
+  vi.spyOn(officeUsers, 'getOfficeUser').mockImplementation(async () => user);
   vi.spyOn(host, 'isAuthorized').mockResolvedValue(true); vi.spyOn(host, 'officeUserForRequest').mockImplementation(async () => user);
   vi.spyOn(host, 'refreshCliSessionRealtimeLifecycle').mockImplementation(() => undefined);
 });
@@ -26,11 +28,22 @@ async function call(url: string, method = 'GET', body?: unknown) {
 }
 it('keeps SMTP configuration master-only and binds preferences to the authenticated owner', async () => {
   expect((await call('/api/email/smtp')).status).toBe(403);
-  const saved = await call('/api/email/preferences', 'PUT', { ...defaultEmailPreferences, address: 'alex@example.test', enabled: true, owner: 'master' });
+  const saved = await call('/api/email/preferences', 'PUT', { ...defaultEmailPreferences, address: 'other@example.test', enabled: true, owner: 'master' });
   expect(saved.status).toBe(200); expect(saved.value.preferences.address).toBe('alex@example.test');
   user = { id: 'master', role: 'unrestricted-admin', enabled: true };
   expect((await call('/api/email/preferences')).value.preferences.address).toBe('');
   const config = await call('/api/email/smtp'); expect(config.status).toBe(200); expect(config.value.config).not.toHaveProperty('password');
+});
+it('uses the account email before any preferences are saved and ignores a legacy recipient', async () => {
+  const current = await call('/api/email/preferences');
+  expect(current.value.preferences.address).toBe(user.username);
+  const watch = await call('/api/email/preferences', 'POST', { sessionKey: 'local:12345678-1234-1234-1234-123456789abc', enabled: true });
+  expect(watch.status).toBe(200); expect(watch.value.watches).toHaveLength(1);
+  const preferences = { ...defaultEmailPreferences, address: undefined };
+  const saved = await call('/api/email/preferences', 'PUT', { ...preferences, enabled: true });
+  expect(saved.status).toBe(200); expect(saved.value.preferences.address).toBe(user.username);
+  saveEmailPreferences(user.id, { ...saved.value.preferences, address: 'legacy@example.test' });
+  expect((await call('/api/email/preferences')).value.preferences.address).toBe(user.username);
 });
 it('reports test delivery failures in the initiating request and throttles repeated tests', async () => {
   vi.spyOn(host.email, 'test').mockRejectedValue(new Error('SMTP authentication failed. Check the username and app password.'));
