@@ -2,12 +2,12 @@
 import * as users from '../src/services/officeUsers';
 import {afterEach,expect,it,vi} from 'vitest';
 afterEach(()=>vi.restoreAllMocks());
-it('retains independent subscriber sign-ins and caps devices per owner, preserving newest devices',()=>{
+it('retains independent subscriber sign-ins without evicting older devices',()=>{
  const sessions=Array.from({length:30},(_,i)=>({officeUserId:'user'+i,fingerprint:i.toString(16).padStart(64,'0'),expiresAt:Date.now()+100000}));expect(normalizePersistedWebDashboardSessions(JSON.stringify(sessions))).toHaveLength(30);
- const devices=sessions.map(session=>({...session,officeUserId:'same'}));expect(normalizePersistedWebDashboardSessions(JSON.stringify(devices)).map(value=>value.fingerprint)).toEqual(devices.slice(-16).map(value=>value.fingerprint));
+ const devices=sessions.map(session=>({...session,officeUserId:'same',expiresAt:0}));expect(normalizePersistedWebDashboardSessions(JSON.stringify(devices))).toEqual(devices);
 });
 it('rejects a stale password/security version even when a cookie has not expired',async()=>{
- const token='a'.repeat(64),session={fingerprint:fingerprintWebDashboardSession(token),expiresAt:Date.now()+100000,officeUserId:'alex',officeSessionVersion:'old'};
+ const token='a'.repeat(64),session={fingerprint:fingerprintWebDashboardSession(token),expiresAt:0,officeUserId:'alex',officeSessionVersion:'old'};
  const server=Object.assign(Object.create(WebDashboardServer.prototype),{auth:{readSessions:async()=>JSON.stringify([session])},sessions:new Map()});
  const user={id:'alex',enabled:true,sessionVersion:'old'} as users.OfficeUser;vi.spyOn(users,'getOfficeUser').mockResolvedValue(user);
  expect(await server.isAuthorizedSessionToken(token)).toBe(true);user.sessionVersion='reset';expect(await server.isAuthorizedSessionToken(token)).toBe(false);user.sessionVersion='old';user.enabled=false;expect(await server.isAuthorizedSessionToken(token)).toBe(false);

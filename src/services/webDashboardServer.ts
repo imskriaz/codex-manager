@@ -145,8 +145,8 @@ import {
 const WEB_DASHBOARD_PORT = Number(process.env["CODEX_MANAGER_PORT"] ?? 39875);
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
 const SESSION_COOKIE = "codex_dashboard_session";
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const MAX_PERSISTED_SESSIONS = 16;
+// Browsers cap persistent cookies at 400 days; renew on authenticated requests.
+const SESSION_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60;
 const MAX_LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const MAX_DASHBOARD_MESSAGE_BYTES = MAX_CHAT_WIRE_BYTES;
@@ -1224,6 +1224,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path === "/login") {
       const returnPath = normalizeWebDashboardReturnPath(requestUrl.searchParams.get("returnTo") ?? "/");
       if (await this.isAuthorized(request) && (await this.officeUserForRequest(request))?.enabled) {
+        this.renewSessionCookie(request, response);
         response.statusCode = 303;
         response.setHeader("Location", returnPath);
         response.end();
@@ -1275,6 +1276,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       return;
     }
+    if (!apiAuthorized) this.renewSessionCookie(request, response);
     if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
       response.statusCode=403;this.sendJson(response,{error:"This page is unavailable in your workspace."});return;
     }
@@ -1368,8 +1370,8 @@ export class WebDashboardServer implements vscode.Disposable {
             currentStore?.set('office-password-attempts',officeUser.id,{count:attempts&&attempts.until>Date.now()?attempts.count+1:1,until:attempts&&attempts.until>Date.now()?attempts.until:Date.now()+300000});
             if(!await authenticateOfficeUser(officeUser.username,input['currentPassword'],()=>Promise.resolve(false),''))throw new Error('Your current password is incorrect.');
             const value=await updateOfficeUser(officeUser.id,{password:input['password']},{sessionVersion:officeUser.sessionVersion});currentStore?.set('office-password-attempts',officeUser.id,undefined);
-            const replacement=crypto.randomBytes(32).toString('hex');try{await this.rememberSession(replacement,Date.now()+SESSION_TTL_MS,undefined,value);}catch{this.closeOfficeUserSockets(officeUser.id);this.sendJson(response,{message:'Password changed. Sign in again with your new password.',signInRequired:true});return;}this.closeOfficeUserSockets(officeUser.id);
-            response.setHeader('Set-Cookie',`${SESSION_COOKIE}=${replacement}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS/1000}${isForwardedHttpsRequest(request)?'; Secure':''}`);
+            const replacement=crypto.randomBytes(32).toString('hex');try{await this.rememberSession(replacement,0,undefined,value);}catch{this.closeOfficeUserSockets(officeUser.id);this.sendJson(response,{message:'Password changed. Sign in again with your new password.',signInRequired:true});return;}this.closeOfficeUserSockets(officeUser.id);
+            this.renewSessionCookie(request,response,replacement);
             this.sendJson(response,{message:'Password changed. Other devices have been signed out.'});return;
           }
         }
@@ -2239,14 +2241,10 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       const token = crypto.randomBytes(32).toString("hex");
-      await this.rememberSession(token, now + SESSION_TTL_MS, credential, officeUser);
+      await this.rememberSession(token, 0, credential, officeUser);
       recordOfficeAudit("sign-in", "completed", officeActor(officeUser));
       response.statusCode = 303;
-      const secure = isForwardedHttpsRequest(request) ? "; Secure" : "";
-      response.setHeader(
-        "Set-Cookie",
-        `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secure}`
-      );
+      this.renewSessionCookie(request, response, token);
       response.setHeader("Location", returnPath);
       response.end();
     } finally { this.loginInFlight--; }
@@ -2300,14 +2298,31 @@ export class WebDashboardServer implements vscode.Disposable {
       const user = await getOfficeUser(session.officeUserId);
       if (!user?.enabled || user.sessionVersion !== session.officeSessionVersion) { this.sessions.delete(token); return false; }
     }
-    if (expiresAt) {
-      this.sessions.set(token, expiresAt);
-    }
-    if (!expiresAt || expiresAt <= Date.now()) {
+    if (expiresAt === undefined || expiresAt !== 0 && expiresAt <= Date.now()) {
       this.sessions.delete(token);
       return false;
     }
+    if (expiresAt !== 0) {
+      // Upgrade still-valid older logins without restoring concurrently revoked sessions.
+      const credential = await this.auth.getDashboardPassphraseFingerprint();
+      const upgraded = await runCrossWindowExclusive("state:dashboard-sessions", "Remember dashboard login", async () => {
+        const localOnly = !session?.officeUserId || session.officeUserId === 'master';
+        const sessions = normalizePersistedWebDashboardSessions(await this.auth.readSessions(localOnly));
+        const current = sessions.find(value => value.fingerprint === fingerprint);
+        if (!current) return false;
+        current.expiresAt = 0;
+        await this.auth.writeSessions(JSON.stringify(sessions), credential, localOnly);
+        return true;
+      }, { waitMs: 2_000 });
+      if (!upgraded) { this.sessions.delete(token); return false; }
+    }
+    this.sessions.set(token, 0);
     return true;
+  }
+
+  private renewSessionCookie(request: http.IncomingMessage, response: http.ServerResponse, token = readDashboardSessionToken(request)): void {
+    if (!token || this.sessions.get(token) !== 0) return;
+    response.setHeader("Set-Cookie", `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}${isForwardedHttpsRequest(request) ? '; Secure' : ''}`);
   }
 
   private async rememberSession(token: string, expiresAt: number, credential?: string, office?: OfficeUser): Promise<void> {
@@ -2874,15 +2889,17 @@ export class WebDashboardServer implements vscode.Disposable {
       if (!isPeer && !localBrowser) {
         const token = readDashboardSessionToken(request);
         const expiresAt = token ? this.sessions.get(token) : undefined;
-        if (expiresAt) {
+        if (expiresAt !== undefined) {
           this.browserSocketExpiresAt.set(client, expiresAt);
           this.browserSocketSessionFingerprint.set(client, fingerprintWebDashboardSession(token!));
-          const timer = setTimeout(
-            () => client.close(4001, "Dashboard session expired"),
-            Math.max(0, expiresAt - Date.now())
-          );
-          timer.unref?.();
-          this.browserSocketExpiryTimers.set(client, timer);
+          if (expiresAt !== 0) {
+            const timer = setTimeout(
+              () => client.close(4001, "Dashboard session expired"),
+              Math.max(0, expiresAt - Date.now())
+            );
+            timer.unref?.();
+            this.browserSocketExpiryTimers.set(client, timer);
+          }
         }
         if (browserPassphraseFingerprint) {
           this.browserSocketPassphraseFingerprint.set(client, browserPassphraseFingerprint);
@@ -3257,7 +3274,7 @@ export class WebDashboardServer implements vscode.Disposable {
         ? await this.auth.getDashboardPassphraseFingerprint()
         : undefined;
       if (
-        (expiresAt !== undefined && expiresAt <= Date.now()) ||
+        (expiresAt !== undefined && expiresAt !== 0 && expiresAt <= Date.now()) ||
         (expectedFingerprint !== undefined && currentFingerprint !== expectedFingerprint)
       ) {
         socket.close(4001, "Dashboard session expired");
@@ -3379,7 +3396,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.closeRemoteBrowserSockets((socket) => {
       const expectedFingerprint = this.browserSocketPassphraseFingerprint.get(socket);
       const expiresAt = this.browserSocketExpiresAt.get(socket);
-      return expiresAt === undefined || expiresAt <= now || expectedFingerprint !== currentFingerprint || !sessions.has(this.browserSocketSessionFingerprint.get(socket)!);
+      return expiresAt === undefined || expiresAt !== 0 && expiresAt <= now || expectedFingerprint !== currentFingerprint || !sessions.has(this.browserSocketSessionFingerprint.get(socket)!);
     });
   }
 
@@ -4592,6 +4609,7 @@ class RequestBodyTooLargeError extends Error {}
 
 export interface PersistedWebDashboardSession {
   fingerprint: string;
+  /** Zero keeps the session valid until explicitly revoked. */
   expiresAt: number;
   officeUserId?: string;
   role?: OfficeRole;
@@ -4610,7 +4628,7 @@ export function normalizePersistedWebDashboardSessions(
   try {
     const parsed: unknown = JSON.parse(value);
     if (!Array.isArray(parsed)) return [];
-    const sessions = parsed
+    return parsed
       .filter((item): item is PersistedWebDashboardSession => {
         if (!item || typeof item !== "object") return false;
         const candidate = item as Partial<PersistedWebDashboardSession>;
@@ -4619,17 +4637,11 @@ export function normalizePersistedWebDashboardSessions(
           /^[a-f0-9]{64}$/.test(candidate.fingerprint) &&
           typeof candidate.expiresAt === "number" &&
           Number.isFinite(candidate.expiresAt) &&
-          candidate.expiresAt > now &&
+          (candidate.expiresAt === 0 || candidate.expiresAt > now) &&
           (candidate.officeUserId === undefined || typeof candidate.officeUserId === "string") &&
           (candidate.role === undefined || candidate.role === "admin" || candidate.role === "user" || candidate.role === "unrestricted-admin")
         );
       });
-    const counts = new Map<string, number>();
-    return sessions.reverse().filter(session => {
-      const owner = session.officeUserId ?? 'master', count = counts.get(owner) ?? 0;
-      counts.set(owner, count + 1);
-      return count < MAX_PERSISTED_SESSIONS;
-    }).reverse();
   } catch {
     return [];
   }

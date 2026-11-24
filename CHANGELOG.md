@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.109
+
+- Remember browser sign-ins until sign-out, including across host restarts, and keep older signed-in devices active until explicitly revoked.
+
 ## 3.0.0-pre.102
 
 - Keep Claude account actions independent from unrelated work and avoid blocking them during background activity.

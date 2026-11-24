@@ -45,6 +45,9 @@ describe("Web Dashboard encrypted-sync passphrase", () => {
     const sessions = normalizePersistedWebDashboardSessions(
       JSON.stringify([
         { fingerprint, expiresAt: 2_000 },
+        { fingerprint, expiresAt: 0 },
+        { fingerprint, expiresAt: -1 },
+        { fingerprint, expiresAt: null },
         { fingerprint: token, expiresAt: 2_000 },
         { fingerprint, expiresAt: 500 },
         { fingerprint: "bad", expiresAt: 2_000 }
@@ -52,7 +55,7 @@ describe("Web Dashboard encrypted-sync passphrase", () => {
       1_000
     );
 
-    expect(sessions).toEqual([{ fingerprint, expiresAt: 2_000 }]);
+    expect(sessions).toEqual([{ fingerprint, expiresAt: 2_000 }, { fingerprint, expiresAt: 0 }]);
     expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
 });

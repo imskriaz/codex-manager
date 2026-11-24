@@ -51,12 +51,16 @@ it("preserves existing browser login and the same password across both hosts and
   const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
   try {
     await expect((server as any).isAuthorized({ headers: { host: "dashboard.example", "cf-ray": "tunnel", cookie: `codex_dashboard_session=${token}` }, socket: { remoteAddress: "127.0.0.1" } })).resolves.toBe(true);
+    expect(JSON.parse((await node.readSessions())!)[0].expiresAt).toBe(0);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
+    await expect((server as any).isAuthorizedSessionToken(token)).resolves.toBe(true);
   } finally { server.dispose(); }
 });
 
-it("allows fresh remote login in standalone and persists logout for the next VS Code owner", async () => {
+it("remembers remote login across time and host restarts until logout", async () => {
   await new DashboardAuth(storage, source).refresh();
-  const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
+  const settings = { getDashboardSettings: () => ({}) } as never;
+  const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, settings);
   const headers = new Map<string, string>();
   const response = { statusCode: 200, setHeader: (key: string, value: string) => headers.set(key, value), end: vi.fn() };
   const request = Object.assign(new EventEmitter(), { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-proto": "https" }, setEncoding: vi.fn() });
@@ -68,14 +72,32 @@ it("allows fresh remote login in standalone and persists logout for the next VS 
     const cookie = headers.get("Set-Cookie")!;
     expect(cookie).toContain("HttpOnly; SameSite=Strict");
     expect(cookie).toContain("Secure");
+    expect(cookie).toContain("Max-Age=34560000");
     const token = cookie.split(";")[0]!.split("=")[1]!;
+    expect(JSON.parse((await new DashboardAuth(storage).readSessions())!)).toEqual([expect.objectContaining({ expiresAt: 0 })]);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 800 * 24 * 60 * 60 * 1000);
     await expect((server as any).isAuthorizedSessionToken(token)).resolves.toBe(true);
-    const nextHost = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
+    store.close();
+    store = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
+    configureSqliteStateStore(store);
+    const nextHost = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, settings);
     try {
-      const remote = { headers: { host: "dashboard.example", "cf-ray": "tunnel", cookie: `codex_dashboard_session=${token}` }, socket: { remoteAddress: "127.0.0.1" } };
+      const remote = { method: "GET", url: "/api/schema", headers: { host: "dashboard.example", "x-forwarded-proto": "https", "cf-ray": "tunnel", cookie: `codex_dashboard_session=${token}` }, socket: { remoteAddress: "127.0.0.1" } };
       await expect((nextHost as any).officeUserForRequest(remote)).resolves.toMatchObject({ id: "master", role: "unrestricted-admin" });
+      headers.clear();
+      await (nextHost as any).handle(remote, response);
+      expect(headers.get("Set-Cookie")).toBe(cookie);
+      remote.url = "/login";
+      headers.clear();
+      await (nextHost as any).handle(remote, response);
+      expect(headers.get("Set-Cookie")).toBe(cookie);
+      expect(headers.get("Location")).toBe("/");
+      remote.method = "POST";
+      remote.url = "/logout";
+      await (nextHost as any).handle(remote, response);
+      expect(response.statusCode).toBe(303);
+      expect(headers.get("Set-Cookie")).toContain("Max-Age=0");
     } finally { nextHost.dispose(); }
-    await (server as any).forgetSession(token);
     await new DashboardAuth(storage, source).refresh();
     await expect((server as any).isAuthorizedSessionToken(token)).resolves.toBe(false);
   } finally { server.dispose(); }
@@ -100,6 +122,21 @@ it("revokes sessions on password rotation or removal and never resurrects legacy
   secrets.set("codexManager.webDashboard.sessions.v1", "stale legacy sessions");
   await new DashboardAuth(storage, source).refresh();
   await expect(node.readSessions()).resolves.toBeUndefined();
+});
+
+it("does not restore a legacy login revoked while it is being upgraded", async () => {
+  const auth = new DashboardAuth(storage, source);
+  await auth.refresh();
+  const token = "c".repeat(64);
+  const sessions = JSON.stringify([{ fingerprint: fingerprintWebDashboardSession(token), expiresAt: Date.now() + 60_000 }]);
+  const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
+  const internal = server as any;
+  vi.spyOn(internal.auth, "readSessions").mockResolvedValueOnce(sessions).mockResolvedValue("[]");
+  const write = vi.spyOn(internal.auth, "writeSessions");
+  try {
+    await expect(internal.isAuthorizedSessionToken(token)).resolves.toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  } finally { server.dispose(); }
 });
 
 it("preserves committed authentication when storage is full, then retries successfully", async () => {
@@ -132,7 +169,7 @@ it("fails closed on corrupt standalone credentials and repairs them from the tru
 it("closes a live standalone browser socket when a different owner revokes its login in SQLite", async () => {
   const extension = new DashboardAuth(storage, source);
   await extension.refresh();
-  const token = "b".repeat(64), fingerprint = fingerprintWebDashboardSession(token), expiresAt = Date.now() + 60_000;
+  const token = "b".repeat(64), fingerprint = fingerprintWebDashboardSession(token), expiresAt = 0;
   await extension.writeSessions(JSON.stringify([{ fingerprint, expiresAt }]));
   const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: storage } as never, {} as never);
   const socket = { readyState: 1, close: vi.fn() };
@@ -143,6 +180,10 @@ it("closes a live standalone browser socket when a different owner revokes its l
     internal.browserSocketPassphraseFingerprint.set(socket, await extension.getDashboardPassphraseFingerprint());
     internal.browserSocketExpiresAt.set(socket, expiresAt);
     await internal.closeInvalidRemoteBrowserSockets();
+    expect(socket.close).not.toHaveBeenCalled();
+    const presence = vi.spyOn(internal, "updateWorkspaceViewer").mockImplementation(() => undefined);
+    await internal.handleBrowserSocketMessage(JSON.stringify({ type: "dashboard:workspace-presence", viewing: false }), socket);
+    expect(presence).toHaveBeenCalled();
     expect(socket.close).not.toHaveBeenCalled();
     const foreign = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
     try { foreign.set("dashboard-auth", "sessions", "[]"); } finally { foreign.close(); }
