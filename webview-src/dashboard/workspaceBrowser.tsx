@@ -482,7 +482,6 @@ export default function WorkspaceBrowser(props: {
       {!props.connected ? (
         <p role="status">Offline. Reconnect to control the browser. Unsaved feedback stays in this panel.</p>
       ) : null}
-      {agentVisible && state.agentActivity ? <p class="workspace-browser-agent-activity" role="status"><span class="workspace-browser-agent-dot" aria-hidden="true" />AI · {props.simple ? "Working on this page" : agentLabel} · {state.agentActivity.status}</p> : null}
       <div class={`workspace-browser-content dock-${dock}`}>
       <div class="workspace-browser-page">
       {responsive ? <form class="workspace-browser-viewport" aria-label="Responsive viewport" onSubmit={event => { event.preventDefault(); command({ operation: 'resize', ...viewport }); }}>
@@ -642,7 +641,7 @@ export default function WorkspaceBrowser(props: {
               <circle class="workspace-browser-agent-halo" r="18" fill="#0078d433" />
               <path d="M0 0V25L6.5 19.5 11 29 16 26.5 11.5 17H21Z" fill="#fff" stroke="#171717" stroke-width="1.5" stroke-linejoin="round" />
             </svg>
-            <span>AI · {agentLabel}</span>
+            <span role="status" title={`AI · ${props.simple ? 'Working on this page' : agentLabel} · ${state.agentActivity.status}`} aria-label={`AI · ${props.simple ? 'Working on this page' : agentLabel} · ${state.agentActivity.status}`}>{agentLabel?.split(' ')[0] ?? 'Working'}</span>
           </div> : null}
           {anchor && (points.length > 0 || visibleNote) ? <div class="workspace-browser-inline-comment" onPointerDown={event => { if ((event.target as HTMLElement).closest('button,textarea,input,p,code')) return; const box = event.currentTarget, parent = box.parentElement!.getBoundingClientRect(), rect = box.getBoundingClientRect(); commentDrag.current = { x: event.clientX, y: event.clientY, left: (rect.left - parent.left) / parent.width * 100, top: (rect.top - parent.top) / parent.height * 100 }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }} onPointerMove={event => { const drag = commentDrag.current; if (!drag) return; const box = event.currentTarget, parent = box.parentElement!.getBoundingClientRect(); setCommentPosition({ x: Math.max(0, Math.min((parent.width - box.offsetWidth) / parent.width * 100, drag.left + (event.clientX - drag.x) / parent.width * 100)), y: Math.max(0, Math.min((parent.height - box.offsetHeight) / parent.height * 100, drag.top + (event.clientY - drag.y) / parent.height * 100)) }); }} onPointerUp={() => { commentDrag.current = undefined; }} onPointerCancel={() => { commentDrag.current = undefined; }} role="dialog" aria-label={visibleNote ? 'Saved comment' : 'Comment on mark'} style={{ '--comment-left': `${commentPosition?.x ?? Math.min(65, Math.max(2, anchor.x / size.width * 100))}%`, '--comment-top': `${commentPosition?.y ?? Math.min(70, Math.max(2, anchor.y / size.height * 100))}%` }}>
 

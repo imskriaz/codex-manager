@@ -2639,8 +2639,7 @@ function App() {
           <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${view}`}>
             <div class="header accounts-section-header">
               <div>
-                <h2 class="header-title header-title-with-meta">
-                  {compact ? null : snapshot.copy.savedAccounts}
+                <div class="account-filters" role="group" aria-label={snapshot.copy.savedAccounts}>
                   <span class="account-count-badges">
                     <button
                       class={`header-count-badge header-count-link ${uiPreferences.filter === "all" ? "is-selected" : ""}`}
@@ -2721,7 +2720,7 @@ function App() {
                       </button>
                     ) : null}
                   </span>
-                </h2>
+                </div>
               </div>
               {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
                 <WorkspaceMenu label="More account actions" icon={<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor" /><circle cx="12" cy="12" r="1.8" fill="currentColor" /><circle cx="19" cy="12" r="1.8" fill="currentColor" /></svg>}>

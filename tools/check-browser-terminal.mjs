@@ -142,6 +142,7 @@ try {
   assert.equal(await ui.getByRole('button', { name: 'Browser actions', exact: true }).count(), 0, 'The removed action menu is not rendered.');
   assert.equal(await ui.locator('.workspace-browser-page-tabs').count(), 0, 'Browser pages use the parent workspace tab track.');
   await ui.locator('.workspace-browser-preview img').waitFor();
+  assert.equal(await ui.locator('.workspace-browser-stage').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)', 'Unused page-preview space blends with the page');
   await ui.getByRole('button', { name: 'Browser menu', exact: true }).click();
   await ui.getByRole('menuitemcheckbox', { name: 'Browser inspector', exact: true }).click();
   const inspector = ui.getByRole('complementary', { name: 'Browser inspector', exact: true });
@@ -189,15 +190,37 @@ try {
   const elementPreview = ui.locator('.workspace-browser-preview > svg');
   await elementPreview.click({ position: { x: 4, y: 5 } });
   await ui.getByRole('tab', { name: 'Elements', exact: true }).waitFor();
-  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
   const pointerPage = await workspaceBrowser(root, { operation: 'list', pageId: opened.pageId });
   await workspaceBrowser(root, { operation: 'hover', operationId: randomUUID(), openedBy: 'ai', pageId: opened.pageId, revision: pointerPage.revision, selector: 'button' });
   await ui.evaluate(projectPath => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:browser-changed', projectPath } })), root);
   await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).waitFor();
-  await ui.locator('.workspace-browser-agent-activity').waitFor();
+  assert.equal(await ui.locator('.workspace-browser-agent-activity').count(), 0, 'AI activity adds no row below the address bar');
+  const agentPointer = ui.locator('.workspace-browser-agent-pointer');
+  assert.equal(await agentPointer.locator('span').innerText(), 'Pointing', 'The compact pointer badge shows its current action');
+  assert.match(await agentPointer.getByRole('status').getAttribute('aria-label'), /Pointing.*completed/, 'Activity and outcome remain accessible');
+  const pointerIcon = await agentPointer.locator('svg').boundingBox();
+  assert.equal(pointerIcon.width, 36, 'The pointer and halo are half their previous size');
+  assert.equal(pointerIcon.height, 36);
   const animation = await ui.locator('.workspace-browser-agent-ripple').evaluate(element => getComputedStyle(element).animationName);
   assert.equal(animation, 'workspace-agent-ripple', 'AI operations display an animated pointer');
   await ui.locator('.workspace-browser').screenshot({ path: path.resolve('output/browser-agent-pointer.png') });
+  const nextPointerPage = await workspaceBrowser(root, { operation: 'list', pageId: opened.pageId });
+  await workspaceBrowser(root, { operation: 'hover', operationId: randomUUID(), openedBy: 'ai', pageId: opened.pageId, revision: nextPointerPage.revision, x: 450, y: 220 });
+  await ui.evaluate(projectPath => dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:browser-changed', projectPath } })), root);
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser-agent-pointer').getAnimations().some(animation => animation.transitionProperty === 'left' && animation.playState === 'running'));
+  const movement = await agentPointer.evaluate(async element => {
+    const animation = element.getAnimations().find(item => item.transitionProperty === 'left');
+    const duration = animation.effect.getTiming().duration;
+    await animation.finished;
+    return { duration, left: element.style.left };
+  });
+  assert.equal(movement.duration, 480, 'Position updates glide to their destination');
+  assert.ok(Math.abs(parseFloat(movement.left) - 450 / 1280 * 100) < .001, 'The pointer reaches the requested position');
+  await ui.emulateMedia({ reducedMotion: 'reduce' });
+  assert.ok(parseFloat(await agentPointer.evaluate(element => getComputedStyle(element).transitionDuration)) <= .001, 'Reduced motion disables pointer movement');
+  await ui.emulateMedia({ reducedMotion: 'no-preference' });
+  console.log('Compact action badge, smooth pointer movement, reduced motion, and no extra address-bar row passed.');
   await ui.waitForTimeout(5000);
   assert.ok(await ui.getByRole('img', { name: 'AI pointer: hover', exact: true }).isVisible(), 'The last AI pointer stays visible between operations');
   const field = (await workspaceBrowser(root, { operation: 'styles', pageId: opened.pageId, selector: 'input[aria-label="Name"]' })).value.rect;
@@ -206,7 +229,7 @@ try {
   await inputPreview.hover({ position: { x: (field.x + field.width / 2) / 1280 * inputBounds.width, y: (field.y + field.height / 2) / 800 * inputBounds.height } });
   await ui.waitForFunction(() => getComputedStyle(document.querySelector('.workspace-browser-preview > svg')).cursor === 'text');
   await inputPreview.click({ position: { x: (field.x + field.width / 2) / 1280 * inputBounds.width, y: (field.y + field.height / 2) / 800 * inputBounds.height } });
-  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
   await ui.keyboard.type('Ada Lovelace');
   for (let attempt = 0; attempt < 100 && typedName !== 'Ada Lovelace'; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(typedName, 'Ada Lovelace', 'Rapid direct keyboard input is preserved while screenshots complete');
@@ -291,14 +314,14 @@ try {
   await inspector.getByRole('alert').filter({ hasText: 'Evaluation outcome is unknown' }).waitFor();
   assert.equal(evaluationCount, 3, 'Inconclusive evaluation is never replayed automatically');
   rejectEvaluate = false;
-  await ui.getByRole('button', { name: 'Reload page', exact: true }).click();
-  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.getByRole('textbox', { name: 'Browser URL', exact: true }).press('Enter');
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
   await ui.getByRole('button', { name: 'Browser menu', exact: true }).click();
   await ui.getByRole('menuitemcheckbox', { name: 'Responsive viewport', exact: true }).click();
-  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
   for (const preset of ['phone', 'tablet', 'desktop']) {
     await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).selectOption(preset);
-    await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+    await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
     assert.equal(await ui.getByRole('combobox', { name: 'Viewport preset', exact: true }).inputValue(), preset);
     if (preset === 'phone') {
       await ui.waitForFunction(() => document.querySelector('.workspace-browser-preview img').naturalWidth === 390);
@@ -381,7 +404,7 @@ try {
   await ui.waitForFunction(() => document.querySelector('#instruction').value.includes('Improve this layout') && document.querySelector('#instruction-image').src.startsWith('data:image/jpeg'));
   console.log('Marked feedback screenshot added to the instruction composer.'); await ui.getByRole('button',{name:'Close comments',exact:true}).click();
   const beforeAdd = (await workspaceBrowser(root,{operation:'list'})).pages;
-  await ui.waitForFunction(() => !document.querySelector('button[aria-label="Reload page"]').disabled);
+  await ui.waitForFunction(() => document.querySelector('.workspace-browser').getAttribute('aria-busy') === 'false');
   await ui.locator('#add-browser').click();
   await ui.waitForFunction(count => Number(document.querySelector('#page-count').textContent) === count,beforeAdd.length+1);
   await ui.locator('#add-browser').click();
