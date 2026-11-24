@@ -27,6 +27,29 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('continues after a real file save and lost model response without duplicating the file or accepted request',async()=>{
+ const actor={...user,workspacePath:path.join(root,'private'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
+ await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true}),resolveLanguage:()=> 'en'};
+ vi.mocked(upstream).mockClear()
+ .mockResolvedValueOnce(toolResponse('update_plan',{plan:[{step:'Save presentation',status:'in_progress'},{step:'Verify presentation',status:'pending'}]}))
+ .mockResolvedValueOnce(toolResponse('save_file',{path:'presentation.html',content:'<!doctype html><h1>Saved presentation</h1>'}))
+ .mockRejectedValueOnce(new Error('Connection lost after saving'))
+ .mockResolvedValueOnce(toolResponse('read_file',{path:'presentation.html'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Verified your presentation. [Download](presentation.html?download=1)'}}]})) as never);
+ const sessions=(server as any).teamSessions(),accepted=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'startCodexCliSession',requestId:'resume-file-request',payload:{text:'Create a visual presentation',model:'fast'}});
+ const id=accepted.messages[0].payload.cliSession.id;
+ await vi.waitFor(()=>expect(sessions.list(actor.id)[0]?.queueError).toContain('Resuming saved work automatically'),{timeout:15000});
+ const project=sessions.project(actor.id,id),before=await fs.stat(path.join(project,'presentation.html'));
+ const saved=store.get<any>(`office-sessions:${actor.id}`,id)!;saved.turns[0].retryAt=0;store.set(`office-sessions:${actor.id}`,id,saved);sessions.pump();
+ await vi.waitFor(()=>expect(sessions.result(actor.id,id).status).toBe('completed'),{timeout:15000});
+ expect(await fs.readFile(path.join(project,'presentation.html'),'utf8')).toBe('<!doctype html><h1>Saved presentation</h1>');
+ expect((await fs.stat(path.join(project,'presentation.html'))).mtimeMs).toBe(before.mtimeMs);
+ expect((await fs.readdir(project)).filter(name=>name.endsWith('.html'))).toEqual(['presentation.html']);
+ expect(readOfficeUsage(actor.id).requests).toBe(1);expect(vi.mocked(upstream)).toHaveBeenCalledTimes(5);
+ const continuation=JSON.parse(vi.mocked(upstream).mock.calls[3][1]!.body as string);
+ expect(JSON.stringify(continuation.messages)).toContain('Do not blindly replay tools');expect(JSON.stringify(continuation.messages)).toContain('presentation.html');
+});
 it.each(['docx','xlsx','pptx','pdf'])('keeps failed %s page renders downloadable without returning extracted content',async extension=>{
  const project=path.join(root,'project');await fs.mkdir(project);
  const actor={...user,workspacePath:root,features:['files'] as OfficeUser['features']};

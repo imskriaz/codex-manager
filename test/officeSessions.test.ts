@@ -5,7 +5,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as teamSettings from "../src/services/teamSettings";
 import { saveOfficeInstructions } from "../src/services/officePreferences";
-import { OfficeCapacityError, OfficeSessionService } from "../src/services/officeSessions";
+import { OfficeActionError, OfficeCapacityError, OfficeSessionService } from "../src/services/officeSessions";
+import { OfficeQuotaError, readOfficeUsage } from '../src/services/officeQuota';
 import { sessionPlanMessage, messageSessionPlan } from '../src/domain/sessionPlan';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import type { OfficeUser } from "../src/services/officeUsers";
@@ -98,12 +99,16 @@ it('bounds large live snapshots while retaining complete saved history',async()=
  expect(snapshots.every(state=>isCodexSessionLiveState(state))).toBe(true);expect(snapshots.at(-1).truncated).toBe(true);
  const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.at(-1)?.text.length).toBe(20_000);
 });
-it('stops old queued work after an uncertain response and accepts an explicit continuation',async()=>{
- let reject!:(error:Error)=>void;const generate=vi.fn(()=>new Promise<string>((_resolve,no)=>{reject=no;}));const {service}=setup(generate);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+it('recovers the original request before running its queued follow-up, without another accepted request',async()=>{
+ let reject!:(error:Error)=>void;const generate=vi.fn<() => Promise<string>>().mockImplementationOnce(()=>new Promise<string>((_resolve,no)=>{reject=no;})).mockResolvedValueOnce('Recovered after checking saved work.').mockResolvedValueOnce('Follow-up done.');const {service}=setup(generate);const first=await service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
  await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'queued',payload:{sessionId:first.cliSession!.id,text:'Later'}});
- reject(new Error('Unknown result'));await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));
- const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});expect(read.cliSessionMessages?.some(message=>message.text.includes('message was not run'))).toBe(true);
- generate.mockResolvedValueOnce('Recovered after checking saved work.');await service.handle(user,{type:'dashboard:action',action:'sendCodexCliSessionMessage',requestId:'continue',payload:{sessionId:first.cliSession!.id,text:'Continue'}});await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));expect(generate).toHaveBeenCalledTimes(2);expect(JSON.stringify(generate.mock.calls[1])).toContain('Inspect saved work only if it is relevant');
+ reject(new Error('Unknown result'));await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueError).toContain('Resuming saved work automatically'));
+ expect(generate).toHaveBeenCalledTimes(1);expect(readOfficeUsage(user.id).requests).toBe(2);
+ const saved=storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id)!;saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);service.pump();
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));expect(generate).toHaveBeenCalledTimes(3);
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read',payload:{sessionId:first.cliSession!.id}});
+ expect(read.cliSessionMessages?.filter(message=>message.role).map(message=>message.text)).toEqual(['Hello','Recovered after checking saved work.','Later','Follow-up done.']);
+ expect(readOfficeUsage(user.id).requests).toBe(2);expect(JSON.stringify(generate.mock.calls[1])).toContain('Do not blindly replay tools');
 });
 it('releases a timed-out generation and rejects late reports or success',async()=>{
  vi.useFakeTimers();
@@ -174,14 +179,65 @@ it("retains a capacity rejection in the queue and resumes the original message w
  expect(result.cliSessionMessages?.filter(message=>message.role).map(message=>message.text)).toEqual(["Hello","Ready"]);
  expect(changed.mock.calls.flatMap(call=>call[1]).some(message=>message.type==="dashboard:notice"&&message.message==="Your response is ready.")).toBe(true);
 });
-it("does not replay ambiguous model failures and cancels pending work without deleting history",async()=>{
+it("bounds ambiguous response recovery and cancels pending work without deleting history",async()=>{
  const generate=vi.fn(async()=>{throw new Error("account-private@example.test token expired");});const {service}=setup(generate);
- const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- await service.pump();expect(generate).toHaveBeenCalledTimes(1);
+ const first=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueError).toContain('attempt 1 of 2'));
+ for(let attempt=1;attempt<=2;attempt++){
+  const saved=storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id)!;saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);service.pump();
+  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(attempt+1));await vi.waitFor(()=>expect((service as any).running.size).toBe(0));
+ }
+ expect(service.list(user.id)[0]?.status).toBe('idle');service.pump();expect(generate).toHaveBeenCalledTimes(3);expect(readOfficeUsage(user.id).requests).toBe(1);
  const result=await service.handle(user,{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"read",payload:{sessionId:first.cliSession!.id}});
  expect(JSON.stringify(result)).not.toContain("account-private");expect(result.cliSessionMessages?.at(-1)?.text).toContain("could not be confirmed");
  const cancel=await service.handle(user,{type:"dashboard:action",action:"cancelCodexCliSessionTurn",requestId:"cancel",payload:{sessionId:first.cliSession!.id}});
  expect(cancel.cliSessionMessages?.[0]?.text).toBe("Hello");
+});
+it('resumes a saved incomplete plan after restart, preserving confirmed results and file revisions',async()=>{
+ const generate=vi.fn(async(_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,project:string,report:(activity:any)=>void)=>{
+  await fs.writeFile(path.join(project,'report.html'),'<h1>Already saved</h1>');
+  report(sessionPlanMessage('saved-plan',{steps:[{step:'Write report',status:'completed'},{step:'Verify report',status:'inProgress'}]}));
+  report({id:'saved-file',kind:'tool-call',title:'Update file',text:'Saved report.html',status:'completed',result:'report.html revision 123',changes:[{path:'report.html',kind:'add'}]});
+  throw new Error('Connection lost');
+ });
+ const first=setup(generate as any),accepted=await first.service.handle(user,start());await vi.waitFor(()=>expect(first.service.list(user.id)[0]?.queueError).toContain('Resuming'));
+ first.service.stop();const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);
+ const next=setup();next.service.start();await vi.waitFor(()=>expect(next.generate).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(next.service.list(user.id)[0]?.status).toBe('idle'));
+ const context=JSON.stringify(next.generate.mock.calls[0][2]);expect(context).toContain('Verify report');expect(context).toContain('report.html revision 123');expect(context).toContain('Inspect current files and revisions');
+ expect(await fs.readFile(path.join(saved.projectPath,'report.html'),'utf8')).toBe('<h1>Already saved</h1>');expect(readOfficeUsage(user.id).requests).toBe(1);
+});
+it.each(['working','uncertain'])('recovers legacy %s work without reclaiming an active lease',async state=>{
+ const first=setup(),accepted=await first.service.handle(user,start());await vi.waitFor(()=>expect(first.service.list(user.id)[0]?.status).toBe('idle'));first.service.stop();
+ const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;Object.assign(saved.turns[0],{state,assistant:undefined,lease:'old-worker',leaseUntil:Date.now()-1});storage.set(`office-sessions:${user.id}`,saved.id,saved);
+ const next=setup();next.service.start();expect(next.generate).not.toHaveBeenCalled();expect(next.service.list(user.id)[0]?.queueError).toContain('Resuming');
+ const retry=storage.get<any>(`office-sessions:${user.id}`,saved.id)!;retry.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,retry);next.service.pump();
+ await vi.waitFor(()=>expect(next.service.list(user.id)[0]?.status).toBe('idle'));expect(next.generate).toHaveBeenCalledOnce();
+});
+it('keeps a question awaiting its answer when the response acknowledgement is interrupted',async()=>{
+ const generate=vi.fn(async(_user:unknown,_model:unknown,_messages:unknown,_signal:unknown,_project:unknown,report:(activity:any)=>void)=>{
+  report({id:'question',role:'assistant',text:'Choose a format',questions:[{title:'Format?',options:['PPTX','HTML']}]});throw new Error('Lost acknowledgement');
+ });
+ const {service}=setup(generate as any),accepted=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.pump();expect(generate).toHaveBeenCalledOnce();
+ expect(service.result(user.id,accepted.cliSession!.id).status).toBe('needs-answer');
+ const read=await service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'questions',payload:{sessionId:accepted.cliSession!.id}});expect(read.cliSessionMessages?.at(-1)?.questions?.[0].options).toEqual(['PPTX','HTML']);
+});
+it.each([new OfficeActionError('Access changed'),new OfficeQuotaError('Quota reached')])('does not auto-recover an explicit action or quota failure',async error=>{
+ const generate=vi.fn(async()=>{throw error;}),{service}=setup(generate);await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe('idle'));service.pump();expect(generate).toHaveBeenCalledOnce();
+});
+it('honors cancellation during recovery backoff and never sends the automatic continuation',async()=>{
+ const generate=vi.fn(async()=>{throw new Error('Interrupted');}),{service}=setup(generate),accepted=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueError).toContain('Resuming'));
+ await service.handle(user,{type:'dashboard:action',action:'cancelCodexCliSessionTurn',requestId:'stop-recovery',payload:{sessionId:accepted.cliSession!.id}});service.pump();expect(service.list(user.id)[0]?.status).toBe('idle');expect(generate).toHaveBeenCalledOnce();
+});
+it('allows only one service instance to claim a recovery and ignores a late old attempt',async()=>{
+ let finish!:(text:string)=>void;const generate=vi.fn<() => Promise<string>>().mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;})).mockResolvedValue('Verified recovery');
+ const first=setup(generate),accepted=await first.service.handle(user,start());await vi.waitFor(()=>expect(generate).toHaveBeenCalledOnce());
+ const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;saved.turns[0].leaseUntil=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);
+ const second=setup();second.service.pump();
+ const waiting=storage.get<any>(`office-sessions:${user.id}`,saved.id)!;waiting.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,waiting);
+ second.service.pump();const third=setup();third.service.pump();
+ await vi.waitFor(()=>expect(second.generate).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(second.service.list(user.id)[0]?.status).toBe('idle'));
+ finish('Late old result');await vi.waitFor(()=>expect((first.service as any).running.size).toBe(0));
+ expect(third.generate).not.toHaveBeenCalled();const result=await second.service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'recovered',payload:{sessionId:saved.id}});
+ expect(result.cliSessionMessages?.at(-1)?.text).toBe('Hello');expect(JSON.stringify(result)).not.toContain('Late old result');
 });
 it("does not announce a completed response after the user cancels the turn",async()=>{
  let finish!:(value:string)=>void;const generate=vi.fn<ConstructorParameters<typeof OfficeSessionService>[0]["generate"]>((_user,_model,_messages,_signal,_project,report)=>{report({id:'active-call',kind:'tool-call',text:'Reading the document',status:'inProgress'});return new Promise<string>(resolve=>{finish=resolve;});});

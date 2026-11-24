@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1-pre.5
+
+- Automatically resume interrupted User Workspace responses from saved plans and tool results, with two bounded recovery attempts and visible progress.
+- Keep pending questions paused and honor cancellation, access checks, allowance limits and unknown action outcomes during recovery.
+
+
 ## 3.0.1-pre.3
 
 - Set User Workspace defaults for deliberate tool and skill selection, complete deliverables, evidence-based answers, and self-checks before delivery.
