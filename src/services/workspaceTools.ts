@@ -287,9 +287,14 @@ export async function readWorkspaceFile(
     const buffer = snapshot.buffer;
     const revision = workspaceFileRevision(buffer);
     if (preview.kind === "document") {
-      const { default: converter } = await import("mammoth");
-      const converted = await converter.convertToHtml({ buffer });
-      return { path: relative, content: converted.value, language: "html", kind: "document", mimeType: preview.mimeType, size: snapshot.size, revision };
+      try {
+        const { renderOfficePreview } = await import('./officeRendering');
+        const content = await renderOfficePreview(relative, buffer, new AbortController().signal);
+        return { path: relative, content, language: "html", kind: "document", mimeType: preview.mimeType, size: snapshot.size, revision };
+      } catch (error) {
+        console.warn('[codexManager] File page preview unavailable', error);
+        return { path: relative, content: '', language: 'binary', kind: 'binary', mimeType: preview.mimeType, size: snapshot.size, revision, previewWarning: 'A visual preview is unavailable. Download the original file to view it.' };
+      }
     }
     return { path: relative, content: "", language: preview.kind, kind: preview.kind, mimeType: preview.mimeType, size: snapshot.size, revision, dataUrl: `data:${preview.mimeType};base64,${buffer.toString("base64")}` };
   }
@@ -589,6 +594,8 @@ function previewTypeForFile(filePath: string): { kind: "image" | "audio" | "vide
   if (videoMimeTypes[extension]) return { kind: "video", mimeType: videoMimeTypes[extension] };
   if (extension === "pdf") return { kind: "pdf", mimeType: "application/pdf" };
   if (extension === "docx") return { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+  if (extension === "xlsx") return { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  if (extension === "pptx") return { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
   return undefined;
 }
 

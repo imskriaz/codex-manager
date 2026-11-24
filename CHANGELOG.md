@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1-pre.3
+
+- Set User Workspace defaults for deliberate tool and skill selection, complete deliverables, evidence-based answers, and self-checks before delivery.
+- Add visual design guidance and strengthen the PowerPoint workflow with varied layouts, capability checks, and honest rendering coverage.
+- Recommend Elephant-Goldfish review when the task and available reviewer tools support it.
+- Add Excel workbook, spreadsheet formula, interface design, and fact-checking workflows with explicit verification limits.
+- Use actual Office page renders in file tabs when rendering is configured; otherwise show a download action without extracted content or slide outlines. Report media playback failures in the viewer.
+
 ## 3.0.1-pre.2
 
 - Open session web links in the user browser by default; keep localhost and explicitly AI-marked links in the workspace Browser.

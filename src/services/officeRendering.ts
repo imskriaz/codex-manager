@@ -12,7 +12,7 @@ import {runCrossWindowExclusive} from '../utils/crossWindowOperations';
 
 export async function officeDocumentPdf(name:string,data:Buffer,signal:AbortSignal):Promise<Buffer>{
  if(/\.pdf$/i.test(name))return data;
- const config=readOfficeIntegrations();if(!config.rendererUrl)throw new Error('Page rendering is not configured. An outline preview is available.');
+ const config=readOfficeIntegrations();if(!config.rendererUrl)throw new Error('Page rendering is not configured. Download the original document to view it.');
  await extractOfficeDocument(name,data,'validate');signal.throwIfAborted();const form=new FormData();form.append('files',new Blob([new Uint8Array(data)]) as never,path.basename(name));
  const response=await fetch(config.rendererUrl+'/forms/libreoffice/convert',{method:'POST',body:form,redirect:'error',headers:config.rendererToken?{Authorization:'Bearer '+config.rendererToken}:{},signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
  if(!response.ok){await response.body?.cancel();throw new Error('Page rendering is temporarily unavailable. The original document is kept.');}

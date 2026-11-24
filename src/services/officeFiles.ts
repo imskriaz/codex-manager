@@ -39,9 +39,7 @@ export async function importOfficeAttachment(user:OfficeUser,file:ChatAttachment
 }
 export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text'){
  const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>10*1048576)throw new Error('Keep each Office document under 10 MB.');const data=await fs.readFile(target);
- if(format==='html'&&/\.(docx|pptx)$/i.test(file)){
-  const {readOfficeIntegrations}=await import('./officeIntegrations');if(readOfficeIntegrations().rendererUrl){try{return await (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal);}catch{return '<p role="status">Rendered pages are temporarily unavailable. Showing the content preview; the original file is kept.</p>'+await extractOfficeDocument(file,data,format);}}
- }
+ if(format==='html'&&/\.(docx|pptx|xlsx)$/i.test(file))return (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal);
  return extractOfficeDocument(file,data,format);
 }
 

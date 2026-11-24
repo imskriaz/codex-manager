@@ -3,6 +3,11 @@ import {DEFAULT_OFFICE_PRESENTATION,validateOfficePresentation,publicOfficePrese
 import {readOfficeRecommendations,saveOfficeRecommendations} from '../src/services/officeRecommendations';
 const state=vi.hoisted(()=>new Map<string,unknown>());
 vi.mock('../src/storage/sqliteState',()=>({getSqliteStateStore:()=>({get:(ns:string,id:string)=>state.get(ns+':'+id),set:(ns:string,id:string,value:unknown)=>state.set(ns+':'+id,value),transaction:(run:()=>unknown)=>run()})}));
+it('accepts every built-in workflow within the administrator catalog limits',()=>{
+ const value=validateOfficePresentation(structuredClone(DEFAULT_OFFICE_PRESENTATION));
+ expect(value.catalog).toEqual(DEFAULT_OFFICE_PRESENTATION.catalog);
+ expect(publicOfficePresentation(value).catalog.every(card=>!('prompt' in card))).toBe(true);
+});
 it('validates custom identity, labels and card catalog without exposing server instructions',()=>{
  const value=validateOfficePresentation({...structuredClone(DEFAULT_OFFICE_PRESENTATION),assistantName:'Office aide',profileLabels:{auto:'Automatic',regular:'Everyday',professional:'Business',expert:'Specialist'},catalog:[{id:'buyer-reports',label:'Buyer reports',description:'Summarize the week',starter:'Draft our buyer report.',prompt:'Check owners and dates.'}]});
  expect(value.profileLabels.expert).toBe('Specialist');expect(value.catalog[0].id).toBe('buyer-reports');const publicValue=publicOfficePresentation(value);expect(publicValue).not.toHaveProperty('identityPrompt');expect(publicValue.catalog[0]).not.toHaveProperty('prompt');

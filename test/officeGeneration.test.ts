@@ -27,6 +27,24 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it.each(['docx','xlsx','pptx','pdf'])('keeps failed %s page renders downloadable without returning extracted content',async extension=>{
+ const project=path.join(root,'project');await fs.mkdir(project);
+ const actor={...user,workspacePath:root,features:['files'] as OfficeUser['features']};
+ const documents=await import('../src/services/officeFiles');
+ const preview=vi.spyOn(documents,'readOfficeDocument').mockRejectedValue(new Error('Renderer failed'));
+ await fs.writeFile(path.join(project,`report.${extension}`),'original document bytes');
+ const result=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'readWorkspaceFile',requestId:'preview',payload:{projectPath:project,filePath:`report.${extension}`}});
+ expect(result.messages[0]).toMatchObject({status:'completed',payload:{workspaceFile:{kind:'binary',content:'',previewWarning:expect.stringContaining('Download')},notice:{level:'warning'}}});
+ expect(preview).toHaveBeenCalledWith(actor,expect.any(String),`report.${extension}`,'html');
+});
+it('keeps documents over the visual preview limit downloadable without loading the parser',async()=>{
+ const project=path.join(root,'project');await fs.mkdir(project);const file=path.join(project,'large.pptx');await fs.writeFile(file,'');await fs.truncate(file,10*1048576+1);
+ const actor={...user,workspacePath:root,features:['files'] as OfficeUser['features']};
+ const documents=await import('../src/services/officeFiles'),preview=vi.spyOn(documents,'readOfficeDocument');
+ const result=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'readWorkspaceFile',requestId:'large-preview',payload:{projectPath:project,filePath:'large.pptx'}});
+ expect(result.messages[0]).toMatchObject({status:'completed',payload:{workspaceFile:{kind:'binary',content:'',size:10*1048576+1,previewWarning:expect.stringContaining('10 MB')}}});
+ expect(preview).not.toHaveBeenCalled();
+});
 it('uses the prepared workspace for file requests instead of asking for a project',async()=>{
  const actor={...user,features:['generalChat','files'] as OfficeUser['features']};
  vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);

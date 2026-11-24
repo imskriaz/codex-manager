@@ -1034,6 +1034,7 @@ export interface DashboardWorkspaceFile {
   content: string;
   language: string;
   kind: "text" | "binary" | "image" | "audio" | "video" | "pdf" | "document";
+  previewWarning?: string;
   mimeType: string;
   size: number;
   revision: string;
