@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.7
+
+- Keep browser dictation and its review modal as the default. Add an optional Local Whisper setting with a model download notice and setup status.
+- Local Whisper detects spoken languages automatically and inserts short transcribed segments directly into the composer. Audio stays on the host, with recording recovery on failures and cancellation.
+
 ## 3.0.1-pre.6
 
 - Use the account email for User Workspace notifications and move the per-session email switch into the three-dot menu.
@@ -13,7 +18,6 @@
 
 - Automatically resume interrupted User Workspace responses from saved plans and tool results, with two bounded recovery attempts and visible progress.
 - Keep pending questions paused and honor cancellation, access checks, allowance limits and unknown action outcomes during recovery.
-
 
 ## 3.0.1-pre.3
 

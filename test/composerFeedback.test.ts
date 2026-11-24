@@ -3,7 +3,27 @@ import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
 vi.mock('preact/hooks', () => ({ useState: (value: unknown) => [value, vi.fn()], useRef: (value: unknown) => ({ current: value ?? null }), useId: () => 'composer-fixture', useLayoutEffect: () => undefined, useEffect: () => undefined }));
 import { Composer, QueuedMessages, TurnUsageStrip } from '../webview-src/dashboard/cliSessionsModal';
+import { VoiceDictation } from '../webview-src/dashboard/voiceDictation';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
+
+it('appends local speech to the current textarea without losing edits or dropping successive segments', () => {
+  const onDraft = vi.fn(), onFeedback = vi.fn();
+  const config: Parameters<typeof Composer>[0] = { localWhisperEnabled: true, attachments: [], attachmentReading: false, draft: 'Saved draft', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
+    onFeedback, onAttach() {}, onRemoveAttachment() {}, onDraft, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
+  const tree = nodes(Composer(config));
+  const input = tree.find(node => node.type === 'textarea')!;
+  const textarea = { value: 'Edited draft', focus: vi.fn() };
+  (input.ref as { current: unknown }).current = textarea;
+  const voice = tree.find(node => node.type === VoiceDictation)!;
+  expect(voice.props.localWhisperEnabled).toBe(true);
+  expect(voice.props.onText('বাংলা')).toBe(true);
+  expect(voice.props.onText('日本語')).toBe(true);
+  expect(onDraft).toHaveBeenLastCalledWith('Edited draft বাংলা 日本語');
+  textarea.value = 'x'.repeat(64_000);
+  expect(voice.props.onText('More')).toBe(false);
+  expect(onFeedback).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
+  expect(textarea.value).toHaveLength(64_000);
+});
 
 it('keeps queue rows collapsed with error details on the warning icon', () => {
   const tree = nodes(QueuedMessages({ queue: {

@@ -3250,6 +3250,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+              localWhisperEnabled={snapshot.settings.localWhisperEnabled === true}
               userNavigation={userWorkspaceNavigation}
               officeUser={snapshot.office?.role === "user" ? snapshot.office : undefined}
 

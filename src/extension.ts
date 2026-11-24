@@ -1,4 +1,5 @@
 import { prepareQuotaSummaryPanelForExtensionHostRestart } from "./presentation/dashboard/panel";
+import { disposeLocalDictation } from './services/localDictation';
 import { waitWithin } from "./utils/concurrency";
 import { registerStorageMaintenance } from './services/storageMaintenance';
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
@@ -39,6 +40,7 @@ let transientNotices: vscode.Disposable | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  context.subscriptions.push({ dispose: disposeLocalDictation });
   try { context = await initializeSqliteContextWithRetry(context); } catch (error) {
     console.error("[codexManager] storage initialization failed; recovery controls remain available", error);
     showStorageRecovery(context, error);

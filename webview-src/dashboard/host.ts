@@ -18,6 +18,7 @@ if ("setState" in vscodeApi) vscodeApi.setState?.({ dashboardOpen: true });
 
 export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
   switch (action) {
+    case "localDictation": return 50_000;
     case "generateApiToken":
     case "listApiTokens":
     case "revokeApiToken": return 20_000;

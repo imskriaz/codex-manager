@@ -19529,6 +19529,10 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .voice-interim span { color: var(--accent); font-weight: 600; }
 .voice-dictation-notice { margin: -2px 0 0; color: var(--text-secondary); font-size: calc(11px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
 .voice-dictation-notice.is-warning { color: var(--warning); }
+.cli-composer:has(.voice-dictation-inline) { position: relative; }
+.voice-dictation-trigger.is-active { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--bg-elevated)); }
+.voice-dictation-inline { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 6px); padding: 7px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; z-index: 4; }
+.voice-dictation-inline.is-warning { color: var(--warning); }
 .voice-dictation .workspace-dialog-footer { flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .voice-dictation .workspace-dialog-footer button { min-height: 30px; }
 .voice-dictation .workspace-dialog-footer button:first-child { margin-right: auto; }

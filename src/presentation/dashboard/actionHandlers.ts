@@ -1,4 +1,5 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
+import { localDictation } from '../../services/localDictation';
 import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, setApiAccountQueuePriority, validateApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
@@ -487,6 +488,9 @@ async function runDashboardAction(
       ctx.schedulePublishState();
       return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Saved ${saved.name}. The first account for this provider is selected automatically; use Select to switch accounts. Refresh verifies its key.` } };
     }
+    case "localDictation":
+      if (!getCodexManagerConfiguration().get<boolean>('localWhisperEnabled', false)) throw new Error('Enable Local Whisper in Settings before using local dictation.');
+      return { dictation: await localDictation(payload?.dictationRequest, ctx.context.extensionPath) };
     case "teamSettingsRequest": {
       if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
       if (!payload?.teamSettingsRequest?.path.startsWith('/api/email/') && getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Modules settings first.");

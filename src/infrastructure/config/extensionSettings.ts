@@ -39,6 +39,7 @@ export class ExtensionSettingsStore {
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "auto",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
+      localWhisperEnabled: config.get<boolean>("localWhisperEnabled", false),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
       workspaceTextFileLimitMb: normalizeWorkspaceTextFileLimitMb(config.get<number>('workspaceTextFileLimitMb', 10)),
       standaloneCapacityRetryDelaySeconds: normalizeStandaloneCapacityRetryDelaySeconds(config.get<number>('standaloneCapacityRetryDelaySeconds', 5)),

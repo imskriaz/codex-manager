@@ -5,6 +5,10 @@ import path from "node:path";
 import { getPeerActionTimeoutMs } from "../src/services/webDashboardServer";
 
 describe("dashboard action timeouts", () => {
+  it('allows the bounded local transcription to finish before browser and peer deadlines', () => {
+    expect(getActionTimeoutMs('localDictation')).toBe(50_000);
+    expect(getPeerActionTimeoutMs('localDictation')).toBe(50_000);
+  });
   it('keeps workspace history and diff reads within both local and remote deadlines', () => {
     expect(getActionTimeoutMs('getWorkspaceEnvironment')).toBe(135_000);
     expect(getPeerActionTimeoutMs('getWorkspaceEnvironment')).toBe(135_000);

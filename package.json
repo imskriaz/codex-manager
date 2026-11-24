@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.6",
+  "version": "3.0.1-pre.7",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -44,6 +44,12 @@
     "configuration": {
       "title": "Codex Manager",
       "properties": {
+        "codexManager.localWhisperEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Optional local Whisper dictation with automatic spoken-language detection and direct composer input. Enabling downloads the runtime and multilingual model (about 500 MB); requires Python 3.11-3.13. Audio stays on this host. Disabled by default to retain browser dictation and its modal."
+        },
         "codexManager.codexAppRestartMode": {
           "type": "string",
           "scope": "machine",
@@ -94,7 +100,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",

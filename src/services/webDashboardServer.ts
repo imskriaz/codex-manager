@@ -180,6 +180,7 @@ function sendDashboardSocketMessage(socket: WebSocket | UndiciWebSocket, message
 }
 
 export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
+  if (action === 'localDictation') return 50_000;
   if (action === "batchSetAccountAutoResetAllowed") return 30_000 * Math.max(1, accountCount);
   if (action === "refreshAll" || action === "batchRefresh") return 240_000 * Math.max(1, accountCount);
   if (action === "batchResyncProfile") return 300_000 * Math.max(1, accountCount);
@@ -2452,6 +2453,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const settings = Object.fromEntries(Object.entries(state.settings).map(([key,value])=>[key,typeof value === "boolean" ? false : typeof value === "number" ? 0 : typeof value === "string" ? "" : []])) as unknown as DashboardState["settings"];
     settings.dashboardTheme = getSqliteStateStore()?.get<DashboardState["settings"]["dashboardTheme"]>(`office-preferences:${office.id}`,"dashboardTheme") ?? state.settings.dashboardTheme;
     settings.cliIntegrationEnabled=true;
+    settings.localWhisperEnabled=state.settings.localWhisperEnabled === true;
     settings.teamWorkspaceEnabled=true;
     settings.workspaceTextFileLimitMb=state.settings.workspaceTextFileLimitMb;
     return {
@@ -2527,7 +2529,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (!user.enabled) return false;
     if (message.type === "dashboard:setting") return message.key === "dashboardTheme" || message.key === "displayLanguage";
     if (message.type !== "dashboard:action") return ["dashboard:ready","dashboard:workspace-presence","dashboard:workspace-surface","dashboard:workspace-command-result"].includes(message.type);
-    if (["listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"].includes(message.action)) return user.features.includes("generalChat") || user.features.includes("tasks");
+    if (["localDictation","listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"].includes(message.action)) return user.features.includes("generalChat") || user.features.includes("tasks");
     if (["listWorkspaceFiles","readWorkspaceFile","saveWorkspaceFile","deleteWorkspaceFile"].includes(message.action)) return user.features.includes("files");
     if (message.action === "workspaceBrowser") return user.features.includes("browser");
     if (message.action === "createWorkspaceFolder") return user.features.includes("files");

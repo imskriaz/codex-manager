@@ -8,6 +8,7 @@ import type {
 } from "../../core/types";
 
 export type DashboardSettingKey =
+  | "localWhisperEnabled"
   | "dashboardTheme"
   | "systemInfoEnabled"
   | "privacyMode"
@@ -74,6 +75,7 @@ export interface DashboardSettings {
   cliIntegrationEnabled?: boolean;
   apiAccessEnabled?: boolean;
   workspaceTextFileLimitMb?: number;
+  localWhisperEnabled?: boolean;
   standaloneCapacityRetryDelaySeconds?: number;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */
@@ -563,6 +565,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "localDictation"
   | "saveApiAccount"
   | "enableSystemStartup"
   | "workspaceBrowser"
@@ -707,6 +710,7 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  dictationRequest?: import('../../services/localDictation').LocalDictationRequest;
   apiAccount?: import('../apiAccounts').ApiAccountInput;
   coordinationRequest?: import('../sessionCoordination').SessionCoordinationRequest;
   masterUsername?: string;
@@ -1218,6 +1222,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  dictation?: import('../../services/localDictation').LocalDictationResult;
   apiAccountSaved?: { id: string };
   teamSettingsResponse?: unknown;
   masterUsername?: string;
