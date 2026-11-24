@@ -1,10 +1,30 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const native = vi.hoisted(() => ({ cached: vi.fn(), discover: vi.fn(), sessions: vi.fn() }));
+const native = vi.hoisted(() => ({ cached: vi.fn(), discover: vi.fn(), sessions: vi.fn(), activeApiAccount: vi.fn() }));
 vi.mock('../src/services/claudeCliRuntime', () => ({ cachedClaudeConnection: native.cached, discoverClaudeModels: native.discover, claudeConfigHome: () => 'native-test', claudeAccountKey: (account?: {email?: string}) => account?.email }));
 vi.mock('../src/services/claudeSessions', () => ({ listClaudeSessions: native.sessions }));
+vi.mock('../src/services/apiAccounts', () => ({ activeApiAccount: native.activeApiAccount }));
 import { claudeDashboardAccount, isClaudeAccount, refreshClaudeDashboardAccount } from '../src/application/dashboard/claudeAccount';
-beforeEach(() => { vi.clearAllMocks(); native.sessions.mockReturnValue([]); native.cached.mockReturnValue(undefined); native.discover.mockResolvedValue({ models: [] }); });
+beforeEach(() => { vi.clearAllMocks(); native.sessions.mockReturnValue([]); native.cached.mockReturnValue(undefined); native.discover.mockResolvedValue({ models: [] }); native.activeApiAccount.mockReturnValue(undefined); });
 it('keeps native discovery optional and adds no account before detection', () => { expect(claudeDashboardAccount()).toBeUndefined(); expect(native.discover).toHaveBeenCalled(); });
+it.each([
+  { models: [{}] },
+  { models: [{}], account: {} },
+  { models: [{}], account: { email: '' } },
+  { models: [{}], account: { email: '  ' } },
+  { models: [], account: { email: 'old@example.test' } },
+  { models: [], warning: 'Native authentication failed' }
+])('does not list an unidentified or unavailable native login: %j', connection => {
+  native.cached.mockReturnValue(connection);
+  expect(claudeDashboardAccount()).toBeUndefined();
+  expect(native.sessions).not.toHaveBeenCalled();
+});
+it.each([undefined, { models: [{}], account: { email: 'old@example.test' } }])('does not fabricate a native login for an active API account: %j', connection => {
+  native.cached.mockReturnValue(connection);
+  native.activeApiAccount.mockReturnValue({ id: 'api:anthropic:test' });
+  expect(claudeDashboardAccount()).toBeUndefined();
+  expect(native.activeApiAccount).toHaveBeenCalledWith('anthropic');
+  expect(native.sessions).not.toHaveBeenCalled();
+});
 it('keeps native login and reported quota separate from Codex automation', () => {
   native.cached.mockReturnValue({ models: [{ id: 'claude-code/opus' }], account: { email: 'native@example.test', subscriptionType: 'Pro' } });
   native.sessions.mockReturnValue([{ nativeQuota: { checkedAt: 100, accountKey: 'native@example.test', limits: [{ kind: 'five_hour', usedPercent: 25 }, { kind: 'seven_day', status: 'allowed' }] } }]);

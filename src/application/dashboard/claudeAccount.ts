@@ -11,16 +11,15 @@ export function isClaudeAccount(id: string): boolean { return id === accountId()
 export function claudeDashboardAccount(): DashboardAccountViewModel | undefined {
   void discoverClaudeModels();
   const connection = cachedClaudeConnection();
-  const apiSelected = !!activeApiAccount('anthropic');
-  if (!connection?.models.length && !apiSelected) return undefined;
-  const nativeAccount = apiSelected ? undefined : connection?.account;
+  const nativeAccount = activeApiAccount('anthropic') ? undefined : connection?.account;
   const key = claudeAccountKey(nativeAccount);
+  if (!connection?.models.length || !nativeAccount?.email?.trim() || !key) return undefined;
   const quota = listClaudeSessions().map(session => session.nativeQuota).filter((value): value is NonNullable<typeof value> => value !== undefined && key !== undefined && value.accountKey === key)
     .sort((a, b) => b.checkedAt - a.checkedAt)[0];
   const metrics = (quota?.limits ?? []).map(limit => ({ key: limit.kind, label: limit.kind === 'five_hour' ? '5h' : limit.kind === 'seven_day' ? 'Weekly' : limit.kind.replace(/_/g, ' '),
     percentage: limit.resetsAt && limit.resetsAt * 1000 <= Date.now() || limit.usedPercent === undefined ? undefined : Math.max(0, 100 - limit.usedPercent),
     resetAt: limit.resetsAt === undefined ? undefined : limit.resetsAt * 1000, visible: true }));
-  return { id: accountId(), provider: 'claude', displayName: 'Claude Code', email: nativeAccount?.email ?? 'Claude Code native login',
+  return { id: accountId(), provider: 'claude', displayName: 'Claude Code', email: nativeAccount.email,
     authProviderLabel: 'Claude', accountStructureLabel: 'Native Claude Code login', workspaceLabel: '', isTeamWorkspace: false,
     subscriptionText: nativeAccount?.subscriptionType ?? 'Native login', subscriptionTitle: 'Managed by Claude Code',
     addMethodLabel: 'Native Claude Code', addedAtLabel: '', planTypeLabel: nativeAccount?.subscriptionType ?? 'Claude',

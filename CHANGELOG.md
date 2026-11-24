@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.0-pre.114
+
+- Hide unidentified or unavailable Claude native logins from account lists, including placeholder entries created while an API account is selected.
+
 ## 3.0.0-pre.111
 
 - Automatically give conversations without a selected project a private saved workspace, reuse it on follow-ups, and retain files until explicitly deleted.
