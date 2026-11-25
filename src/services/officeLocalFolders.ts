@@ -59,10 +59,12 @@ export class OfficeLocalFolderConnections {
   private connection(owner: string, project: string, client?: string): Connection {
     const value = this.connections.get(this.key(owner, project));
     if (!value || client && value.client !== client || Date.now() - value.seen >= 30_000)
-      throw new Error('Local folder is offline. Open the workspace in the browser that connected it and reconnect the folder.');
+      throw new Error('Local folder is offline. Its browser connection is not active. Keep the browser with folder access open; its saved permission will be reused when it reconnects.');
     return value;
   }
   poll(owner: string, project: string, client: string): LocalFolderCommand[] {
+    // The same browser can resume polling after suspension or a host restart.
+    this.connect(owner, project, client);
     const connection = this.connection(owner, project, client);
     connection.seen = Date.now();
     return [...connection.pending.values()].filter(value => !value.delivered).map(value => { value.delivered = true; return value.command; });

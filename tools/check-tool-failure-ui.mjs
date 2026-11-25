@@ -3,11 +3,11 @@ import path from 'node:path';
 
 export async function checkToolFailureUi(page, { width, output }) {
   const id = '12345678-1234-1234-1234-123456789abc';
-  const error = 'This binary file cannot be read as text with the available file reader. Use a compatible reader or a supported text export.';
+  const error = 'This binary file cannot be read as text with the available file reader.';
   const explanation = 'Read file (archive.pst) could not be completed: ' + error;
   const messages = [
     { id: 'user', role: 'user', text: 'Review the messages in my project.' },
-    { id: 'read-archive', kind: 'tool-call', title: 'Read file', text: error, status: 'failed', arguments: JSON.stringify({ path: 'archive.pst' }), result: JSON.stringify({ error, instruction: 'Try another supported approach.' }) },
+    { id: 'read-archive', kind: 'tool-call', title: 'Read file', text: error, status: 'failed', arguments: JSON.stringify({ path: 'archive.pst' }), result: JSON.stringify({ status: 'failed', error }) },
     { id: 'explanation', role: 'assistant', text: explanation },
     { id: 'alternative', kind: 'tool-call', title: 'Read file', text: 'Read file', status: 'completed', arguments: JSON.stringify({ path: 'export.csv' }), result: JSON.stringify({ status: 'completed', payload: { workspaceFile: { path: 'export.csv', content: 'Subject,From\nOrder,Buyer', kind: 'text' } } }) },
     { id: 'answer', role: 'assistant', text: 'I used the readable CSV export: it contains an order from Buyer.\n\nCould not complete these actions:\n- archive.pst: ' + error }

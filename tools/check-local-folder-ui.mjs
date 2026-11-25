@@ -13,10 +13,11 @@ const state = { ...raw, office, accounts: [], connectedPeers: [], peerAccounts: 
 const mockHost = `(() => {
   const state = ${JSON.stringify(state)};
   const config = { defaultModel:'fast',models:[{id:'fast',label:'Fast',reasoningEfforts:['low','medium']}],projects:[{id:'root',path:'C:/team/alex',label:'My workspace'}],defaultSandboxMode:'workspace-write',terminalSupported:false };
+  const session={id:'12345678-1234-1234-1234-123456789abc',title:'Local folder session',status:'idle',projectPath:'C:/team/alex/Local-fixture',updatedAt:new Date().toISOString()};
   const dispatch = data => dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
   window.acquireVsCodeApi = () => ({getState(){return{}},setState(){},postMessage(message){setTimeout(() => {
     if (message.type === 'dashboard:ready' || message.type === 'dashboard:workspace-presence') { dispatch({type:'dashboard:snapshot',state});dispatch({type:'dashboard:connection',connected:true}); }
-    else if (message.type === 'dashboard:action') dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:message.action === 'listCodexCliSessions' ? {cliSessions:[],cliComposerConfig:config} : {}});
+    else if (message.type === 'dashboard:action') dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:message.action === 'listCodexCliSessions' ? {cliSessions:[session],cliComposerConfig:config} : message.action==='getCodexCliSessionMessages'?{cliSession:session,cliSessionMessages:[]}:{}});
   }, 5)}});
 })();`;
 const output = path.join(os.tmpdir(), 'codex-manager-local-folder-ui'); await mkdir(output, { recursive: true });
@@ -26,7 +27,8 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 850 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], queue = [], results = new Map(), registrations = [];
-    page.on('pageerror', error => errors.push(error.message));
+    let failPolls = 0;
+    page.on('pageerror', error => errors.push(error.stack || error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await useWorkspaceDashboardAssets(page, origin, context);
     await context.route('**/assets/browserHost.js*', route => route.fulfill({ contentType: 'text/javascript', body: mockHost }));
@@ -38,14 +40,18 @@ try {
           registrations.push(body);
           return route.fulfill({ json: { project: { id: 'local', label: 'My project', path: 'C:/team/alex/Local-fixture', localFolder: { name: 'My local folder' } } } });
         }
-        if (body.operation === 'poll') return route.fulfill({ json: { commands: queue.splice(0) } });
+        if (body.operation === 'poll') {
+          if (failPolls > 0) { failPolls--; return route.fulfill({ contentType:'application/json', body:'interrupted' }); }
+          return route.fulfill({ json: { commands: queue.splice(0) } });
+        }
         if (body.operation === 'result') results.set(body.id, body);
         return route.fulfill({ json: { completed: true } });
       }
-      return route.fulfill({ json: url.pathname === '/api/state' ? state : { limits: {}, usage: {}, records: [], messages: [] } });
+      return route.fulfill({ json: url.pathname === '/api/state' ? state : url.pathname==='/api/email/preferences'?{watches:[],available:false}:{ limits: {}, usage: {}, records: [], messages: [] } });
     });
     await page.addInitScript(() => {
       window.showDirectoryPicker = async options => {
+        window.__folderPicks = (window.__folderPicks || 0) + 1;
         if (options.mode !== 'readwrite') throw Error('Expected folder read/write permission');
         if (window.__cancelFolder) throw new DOMException('Cancelled', 'AbortError');
         const root = await navigator.storage.getDirectory();
@@ -89,15 +95,23 @@ try {
     const stale = await run({ id: 'stale', operation: 'write', path: 'readme.txt', revision: read.result.revision, data: btoa('Wrong') }); assert.match(stale.error, /exists or changed/);
     const denied = await run({ id: 'escape', operation: 'read', path: '../secret' }); assert.match(denied.error, /relative path/);
     const verify = await run({ id: 'verify', operation: 'read', path: 'readme.txt' }); assert.equal(atob(verify.result.data), 'After');
+    await page.evaluate(() => { window.__folderRestored = 0; window.addEventListener('codex-manager:local-folder-connected', () => window.__folderRestored++); });
+    failPolls = 1;
+    const recovered = await run({ id:'recovered',operation:'read',path:'readme.txt' });assert.equal(atob(recovered.result.data),'After');
+    await page.waitForFunction(() => window.__folderRestored > 0);
+    assert.equal(await page.evaluate(() => window.__folderPicks), 2, 'An interrupted connection reuses approval without showing the picker again');
     await page.reload(); await page.locator('.cli-workspace').waitFor();
+    await page.waitForTimeout(500);
+    assert.equal(registrations.length,1,'Workspace startup does not reconnect unrelated saved projects');
+    await page.goto(origin+'/workspace/12345678-1234-1234-1234-123456789abc');await page.locator('.cli-workspace').waitFor();
     const deadline = Date.now() + 10000;
     while (registrations.length < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(registrations.length, 2, 'Restores remembered folder permission');
+    assert.equal(registrations.length, 2, 'Restores remembered folder permission only when its session opens');
     assert.equal(registrations[1].client, registrations[0].client, 'Reload retains the owning tab connection');
     assert.equal(registrations[1].project, 'C:/team/alex/Local-fixture');
     const restored = await run({ id: 'restored', operation: 'read', path: 'readme.txt' }); assert.equal(atob(restored.result.data), 'After');
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ width, modalMs, elapsedMs: Date.now() - started, folderPicker: true, cancelled: true, localReadWrite: true, conflictPreserved: true, reloadRestored: true, errors: 0 }));
+    console.log(JSON.stringify({ width, modalMs, elapsedMs: Date.now() - started, folderPicker: true, cancelled: true, localReadWrite: true, conflictPreserved: true, interruptionRecovered:true, reloadRestored: true, errors: 0 }));
     await context.close();
   }
 } finally { await browser.close(); console.log('Screenshots: ' + output); }

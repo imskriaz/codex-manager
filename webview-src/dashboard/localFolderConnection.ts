@@ -11,9 +11,11 @@ type Connection = { handle: LocalDirectory; client: string; stopped: boolean; ow
 const connections = new Map<string, Connection>();
 const newProjects = new WeakMap<LocalDirectory, { owner: string; id: string }>();
 let owner: string | undefined;
+let activeProject: string | undefined;
 let clientOwner: string | undefined, tabClient: string | undefined;
 let feedback: (notice: DashboardNotice) => void = () => {};
 const limit = 10 * 1024 * 1024;
+export const localFolderConnectedEvent = 'codex-manager:local-folder-connected';
 
 export function supportsLocalFolders(): boolean {
   return typeof window !== 'undefined' && typeof (window as Window & { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function' && window.isSecureContext && document.documentElement.dataset['dashboardHost'] === 'browser';
@@ -105,6 +107,7 @@ async function remember(project: string, handle: LocalDirectory): Promise<void> 
   }); } finally { db.close(); }
 }
 async function serve(project: string, connection: Connection) {
+  let failures = 0, lastPollAt = Date.now();
   while (!connection.stopped) {
     try {
       const { commands } = await request<{ commands: LocalFolderCommand[] }>(endpoint, 'POST', { operation: 'poll', project, client: connection.client });
@@ -115,12 +118,23 @@ async function serve(project: string, connection: Connection) {
         catch (failure) { error = failure instanceof Error ? failure.message : 'The local folder action failed.'; }
         await request(endpoint, 'POST', { operation: 'result', project, client: connection.client, id: command.id, result, error });
       }
+      if (failures || Date.now() - lastPollAt >= 25_000) {
+        if (activeProject === project) feedback({ level: 'info', message: 'Local folder connection restored.' });
+        window.dispatchEvent(new CustomEvent(localFolderConnectedEvent, { detail: project }));
+      }
+      failures = 0;
+      lastPollAt = Date.now();
       // Idle connections leave HTTP slots free for user actions.
       if (!commands.length) await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
-      if (!connection.stopped) feedback({ level: 'warning', message: error instanceof Error ? error.message : 'Local folder disconnected. Reconnect it before continuing.' });
-      connection.stopped = true;
-      if (connections.get(project) === connection) connections.delete(project);
+      if (connection.stopped || owner !== connection.owner) return;
+      failures++;
+      const detail = error instanceof Error ? error.message : 'Local folder connection interrupted.';
+      if (activeProject === project) feedback({ level: 'warning', message: detail + (failures < 3 ? ' Retrying the connection; file changes will not be replayed.' : ' The connection could not be restored. Reopen this workspace to retry with its saved folder permission.') });
+      if (failures >= 3) {
+        connection.stopped = true;
+        if (connections.get(project) === connection) connections.delete(project);
+      } else await new Promise(resolve => setTimeout(resolve, failures * 1000));
     }
   }
 }
@@ -149,10 +163,12 @@ export async function connectLocalFolder(handle: LocalDirectory, name: string, p
   const connection = { handle, client, stopped: false, owner: sourceOwner };
   connections.set(value.project.path, connection);
   void serve(value.project.path, connection);
+  window.dispatchEvent(new CustomEvent(localFolderConnectedEvent, { detail: value.project.path }));
   void remember(value.project.path, handle).catch(() => { if (owner === sourceOwner) feedback({ level: 'warning', message: 'Folder connected for this visit. Its permission could not be remembered; choose it again after reloading.' }); });
   return value.project;
 }
 export async function forgetLocalFolder(project: string): Promise<void> {
+  if (activeProject === project) activeProject = undefined;
   const savedOwner = owner, connection = connections.get(project);
   if (connection) {
     connection.stopped = true; connections.delete(project);
@@ -165,29 +181,30 @@ export async function forgetLocalFolder(project: string): Promise<void> {
     transaction.oncomplete = () => resolve(); transaction.onerror = transaction.onabort = () => reject(new Error('Saved local folder permission could not be removed.'));
   }); } finally { db.close(); }
 }
-export function bindLocalFolderConnections(nextOwner: string | undefined, onFeedback: (notice: DashboardNotice) => void): () => void {
-  owner = nextOwner; feedback = onFeedback;
-  let active = true;
-  if (nextOwner) void (async () => {
+export function selectLocalFolderProject(project: string | undefined): void {
+  activeProject = project;
+  const sourceOwner = owner;
+  if (!sourceOwner || !project || connections.has(project)) return;
+  void (async () => {
     const db = await database();
-    const records = await new Promise<Array<{ owner: string; project: string; handle: LocalDirectory }>>((resolve, reject) => {
-      const reading = db.transaction('folders').objectStore('folders').getAll();
-      reading.onsuccess = () => resolve(reading.result as Array<{ owner: string; project: string; handle: LocalDirectory }>);
+    const record = await new Promise<{ owner: string; project: string; handle: LocalDirectory } | undefined>((resolve, reject) => {
+      const reading = db.transaction('folders').objectStore('folders').get(JSON.stringify([sourceOwner, project]));
+      reading.onsuccess = () => resolve(reading.result as { owner: string; project: string; handle: LocalDirectory } | undefined);
       reading.onerror = () => reject(new Error('Saved local folders could not be loaded.'));
     }).finally(() => db.close());
-    for (const record of records) {
-      if (!active || owner !== nextOwner) return;
-      if (record.owner !== nextOwner || connections.has(record.project)) continue;
-      if (await record.handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
-        onFeedback({ level: 'warning', message: `Reconnect ${record.handle.name} from the project's settings to allow local folder access.` }); continue;
-      }
-      if (!active || owner !== nextOwner) return;
-      try { await connectLocalFolder(record.handle, '', record.project); }
-      catch (error) { onFeedback({ level: 'warning', message: error instanceof Error ? error.message : 'A saved local folder could not reconnect.' }); }
+    if (!record || record.owner !== sourceOwner || record.project !== project || owner !== sourceOwner || activeProject !== project || connections.has(project)) return;
+    if (await record.handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+      if (owner === sourceOwner && activeProject === project) feedback({ level: 'warning', message: `Reconnect ${record.handle.name} from the project's settings to allow local folder access.` });
+      return;
     }
-  })().catch(() => { if (active) onFeedback({ level: 'warning', message: 'Saved local folders are unavailable. Choose a folder again to reconnect.' }); });
+    if (owner !== sourceOwner || activeProject !== project) return;
+    await connectLocalFolder(record.handle, '', record.project);
+  })().catch(error => { if (owner === sourceOwner && activeProject === project) feedback({ level: 'warning', message: error instanceof Error ? error.message : 'This saved local folder could not reconnect.' }); });
+}
+export function bindLocalFolderConnections(nextOwner: string | undefined, onFeedback: (notice: DashboardNotice) => void): () => void {
+  owner = nextOwner; feedback = onFeedback;
   return () => {
-    active = false; owner = undefined;
+    owner = undefined; activeProject = undefined;
     for (const [project, connection] of connections) {
       connection.stopped = true;
       void request(endpoint, 'POST', { operation: 'disconnect', project, client: connection.client }).catch(() => {});

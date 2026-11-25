@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('../webview-src/dashboard/teamSettingsRequest', () => ({ request: vi.fn() }));
-import { chooseLocalFolder, performLocalFolderCommand, type LocalDirectory } from '../webview-src/dashboard/localFolderConnection';
+import { bindLocalFolderConnections, selectLocalFolderProject, forgetLocalFolder, chooseLocalFolder, performLocalFolderCommand, type LocalDirectory } from '../webview-src/dashboard/localFolderConnection';
 
 function directory(name = 'Project') {
   const entries = new Map<string, any>();
@@ -29,6 +29,20 @@ function directory(name = 'Project') {
   return { handle, entries, add };
 }
 afterEach(() => vi.unstubAllGlobals());
+it('checks permission only for the opened session and ignores removed or inactive saved folders',async()=>{
+  const root=directory('Outlook'),permission=vi.spyOn(root.handle,'queryPermission').mockResolvedValue('prompt');
+  const records=new Map([['["alex","/outlook"]',{owner:'alex',project:'/outlook',handle:root.handle}]]);
+  const get=vi.fn((key:string)=>{const reading={result:records.get(key),onsuccess:undefined as (()=>void)|undefined};queueMicrotask(()=>reading.onsuccess?.());return reading;});
+  const opening=vi.fn(()=>{const db={result:{transaction:()=>{const transaction={objectStore:()=>({get,delete:(key:string)=>{records.delete(key);queueMicrotask(()=>transaction.oncomplete?.());}}),oncomplete:undefined as (()=>void)|undefined};return transaction;},close:vi.fn()},onsuccess:undefined as (()=>void)|undefined};queueMicrotask(()=>db.onsuccess?.());return db;});
+  vi.stubGlobal('indexedDB',{open:opening});const notice=vi.fn(),unbind=bindLocalFolderConnections('alex',notice);
+  try {
+    await Promise.resolve();expect(opening).not.toHaveBeenCalled();expect(notice).not.toHaveBeenCalled();
+    selectLocalFolderProject('/other');await vi.waitFor(()=>expect(get).toHaveBeenCalledWith('["alex","/other"]'));expect(permission).not.toHaveBeenCalled();
+    selectLocalFolderProject('/outlook');await vi.waitFor(()=>expect(notice).toHaveBeenCalledWith(expect.objectContaining({message:expect.stringContaining('Reconnect Outlook')})));
+    notice.mockClear();await forgetLocalFolder('/outlook');selectLocalFolderProject('/outlook');await Promise.resolve();await Promise.resolve();expect(notice).not.toHaveBeenCalled();expect(permission).toHaveBeenCalledTimes(1);
+    records.set('["alex","/outlook"]',{owner:'alex',project:'/outlook',handle:root.handle});selectLocalFolderProject('/outlook');selectLocalFolderProject(undefined);await Promise.resolve();await Promise.resolve();expect(notice).not.toHaveBeenCalled();
+  } finally {unbind();}
+});
 
 it('reads and revision-checks saves directly through the selected folder', async () => {
   const root = directory(); root.add('report.txt', 'Before');

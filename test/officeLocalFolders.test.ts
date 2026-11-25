@@ -23,6 +23,19 @@ it('keeps projects and users separate and refuses an active second tab', () => {
   expect(() => service.request('sam', '/project', { operation: 'list' })).toThrow('offline');
   expect(() => service.request('alex', '/project', { operation: 'write', path: '../secret' })).toThrow('relative path');
 });
+it('resumes the same polling client after suspension and host restart without replaying writes', async () => {
+  service.connect('alex', '/project', client);
+  const pending=service.request('alex','/project',{operation:'write',path:'notes.txt',data:'eA=='});
+  expect(service.poll('alex','/project',client)).toHaveLength(1);
+  const expired=expect(pending).rejects.toThrow('not replayed');
+  await vi.advanceTimersByTimeAsync(31_000);await expired;
+  expect(service.poll('alex','/project',client)).toEqual([]);
+  service.close();service=new OfficeLocalFolderConnections();
+  expect(service.poll('alex','/project',client)).toEqual([]);
+  expect(()=>service.poll('alex','/project',other)).toThrow('another browser tab');
+  const result=service.request('alex','/project',{operation:'list'}),[command]=service.poll('alex','/project',client);
+  service.complete('alex','/project',client,command.id,{files:[]});await expect(result).resolves.toEqual({files:[]});
+});
 it('expires undelivered writes without replay and ignores late results', async () => {
   service.connect('alex', '/project', client);
   const result = service.request('alex', '/project', { operation: 'write', path: 'report.txt', data: 'eA==' });

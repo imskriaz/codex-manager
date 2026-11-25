@@ -1,3 +1,4 @@
+import { localFolderConnectedEvent } from './localFolderConnection';
 import { UserMessageText } from './userMessageText';
 import {CorporateHome} from './corporateHome';
 import {VoiceDictation} from './voiceDictation';
@@ -3235,6 +3236,14 @@ function WorkspaceFilesView(props: {
   onFeedback: (notice: DashboardNotice) => void;
   onSave: (filePath: string, content: string, revision: string) => void;
 }) {
+  useEffect(() => {
+    const connected = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== props.projectPath) return;
+      if (props.activePath) props.onOpenFile(props.activePath); else props.onRefresh();
+    };
+    window.addEventListener(localFolderConnectedEvent, connected);
+    return () => window.removeEventListener(localFolderConnectedEvent, connected);
+  }, [props.projectPath, props.activePath, props.onRefresh, props.onOpenFile]);
   const downloadRequest = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected !== false);
   const [downloading, setDownloading] = useState(false);
   const [downloadMessage, setDownloadMessage] = useState("");
