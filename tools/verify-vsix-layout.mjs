@@ -16,7 +16,7 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
-if (!listing.split('\n').includes('extension/tools/local-whisper.py')) throw new Error('VSIX local Whisper worker is missing.');
+if (listing.split('\n').some(file => /(?:localDictation\.|local-whisper\.py)/.test(file))) throw new Error('VSIX contains the removed local dictation runtime. Clean stale build output and package again.');
 for (const file of ['start-node.cjs', 'standalone-config.cjs', 'standalone-supervisor.cjs', 'update-standalone.cjs', 'local-mcp.cjs', 'codex-owner-bridge.cjs', 'codex-owner-launcher.cs'])
   if (!listing.split('\n').includes(`extension/tools/${file}`)) throw new Error(`VSIX standalone launcher is missing: ${file}`);
 for (const file of ['extension/AGENTS.md', 'extension/WORKSPACE-GOAL.md', 'extension/pending_log.md', 'extension/PROJECT_LOG.md'])

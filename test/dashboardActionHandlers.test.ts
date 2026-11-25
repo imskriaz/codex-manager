@@ -1,4 +1,5 @@
 import * as proxyMapping from "../src/services/aiProxyModelMapping";
+import * as fallbackCatalog from '../src/services/codexFallbackCatalog';
 import * as teamSettingsRequest from "../src/services/teamSettingsRequest";
 import { AlwaysOnlineServer } from '../src/services/alwaysOnlineServer';
 import * as fs from "fs/promises";
@@ -100,6 +101,21 @@ beforeEach(() => {
 });
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it.each(['browser', 'webview'] as const)('returns fallback edits and model test failures to the initiating %s', async hostKind => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as never);
+  const save = vi.spyOn(fallbackCatalog, 'saveCodexFallbackCatalog').mockResolvedValue('custom-model');
+  const ctx = { ...createContext(), hostKind };
+  const result = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'manageCodexModels', requestId: 'save-fallback', payload: { codexModelRequest: { operation: 'save', ids: 'custom-model', expected: '' } } });
+  expect(save).toHaveBeenCalledWith('custom-model', '');
+  expect(result).toMatchObject({ status: 'completed', payload: { codexModels: { ids: 'custom-model' } } });
+  vi.spyOn(sessionEditors, 'loadCodexModels').mockResolvedValue({ ids: 'custom-model\nnew-model', message: 'Loaded 1 model.' });
+  const loaded = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'manageCodexModels', requestId: 'load-fallback', payload: { codexModelRequest: { operation: 'load' } } });
+  expect(loaded).toMatchObject({ status: 'completed', payload: { codexModels: { ids: 'custom-model\nnew-model' } } });
+  vi.spyOn(sessionEditors, 'testCodexModel').mockRejectedValue(new Error('This account cannot use custom-model'));
+  const failed = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'manageCodexModels', requestId: 'test-fallback', payload: { codexModelRequest: { operation: 'test', model: 'custom-model' } } });
+  expect(failed).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('This account cannot use custom-model') });
+});
 
 it.each(['browser', 'webview'] as const)('returns folder creation and its original failure to the initiating %s', async hostKind => {
   const create = vi.spyOn(workspaceProjects, 'createWorkspaceFolder').mockResolvedValue(path.join(operationDirectory, 'New folder'));

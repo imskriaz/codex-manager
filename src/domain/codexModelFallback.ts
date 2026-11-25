@@ -11,7 +11,19 @@ const definitions = [
   ['gpt-6-sol','GPT-6 Sol','Coding and agentic work.'],
   ['gpt-6-luna','GPT-6 Luna','Focused, repeatable work and extraction.']
 ] as const;
-export function codexFallbackModels(saved:readonly DashboardCliModelOption[],hidden:readonly string[]=[]):DashboardCliModelOption[]{
+export const DEFAULT_CODEX_FALLBACK_MODEL_IDS = definitions.map(([id]) => id).join('\n');
+
+export function parseCodexFallbackModelIds(value: unknown): string[] {
+  if (typeof value !== 'string' || value.length > 16_000) throw new Error('Enter up to 100 fallback model IDs, one per line.');
+  const ids = [...new Set(value.split(/[\s,]+/).filter(Boolean))];
+  if (ids.length > 100 || ids.some(id => !/^[a-z0-9][a-z0-9._:/-]{0,127}$/i.test(id) || id.startsWith('claude'))) throw new Error('Enter valid Codex model IDs (up to 100), one per line.');
+  return ids;
+}
+
+export function codexFallbackModels(saved:readonly DashboardCliModelOption[],hidden:readonly string[]=[], ids = parseCodexFallbackModelIds(DEFAULT_CODEX_FALLBACK_MODEL_IDS)):DashboardCliModelOption[]{
   const excluded=new Set(hidden),known=new Set(saved.map(model=>model.id));
-  return [...saved,...definitions.filter(([id])=>!excluded.has(id)&&!known.has(id)).map(([id,label,description])=>({id,label,description:description+' Offline catalog; account availability is unverified.',defaultReasoningEffort:id==='gpt-6-luna'?'high':'medium',reasoningEfforts:['low','medium','high','xhigh','max',...(id==='gpt-6-luna'?[]:['ultra'])]}))];
+  return [...saved,...ids.filter(id=>!excluded.has(id)&&!known.has(id)).map(id=>{
+    const definition = definitions.find(([knownId]) => knownId === id);
+    return {id,label:definition?.[1] ?? id,description:(definition?.[2] ?? 'User-configured model.')+' Fallback catalog; account availability is unverified.',defaultReasoningEffort:id==='gpt-6-luna'?'high':'medium',reasoningEfforts:['low','medium','high','xhigh','max',...(id==='gpt-6-luna'?[]:['ultra'])]};
+  })];
 }

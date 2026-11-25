@@ -1,5 +1,6 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
-import { localDictation } from '../../services/localDictation';
+import { saveCodexFallbackCatalog } from '../../services/codexFallbackCatalog';
+import { loadCodexModels, testCodexModel } from '../../services/codexSessionResume';
 import { apiAccountValidation, clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, selectApiAccount, setApiAccountEnabled, setApiAccountQueuePriority, refreshApiAccounts, saveValidatedApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
@@ -491,9 +492,6 @@ async function runDashboardAction(
       ctx.schedulePublishState();
       return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Key verified and saved ${saved.name}. The first account for this provider is selected automatically; use Select to switch accounts.` } };
     }
-    case "localDictation":
-      if (!getCodexManagerConfiguration().get<boolean>('localWhisperEnabled', false)) throw new Error('Enable Local Whisper in Settings before using local dictation.');
-      return { dictation: await localDictation(payload?.dictationRequest, ctx.context.extensionPath) };
     case "teamSettingsRequest": {
       if (ctx.hostKind === "browser" || (payload?.targetDeviceId && payload.targetDeviceId !== "local")) throw new Error("Manage Team settings on this system in VS Code or its authenticated browser dashboard.");
       if (!payload?.teamSettingsRequest?.path.startsWith('/api/email/') && getCodexManagerConfiguration().get<boolean>("teamWorkspaceEnabled", false) !== true) throw new Error("Enable Team workspace in Modules settings first.");
@@ -1234,6 +1232,23 @@ async function runDashboardAction(
       return handleUnarchiveCodexCliSession(payload?.sessionId);
     case "deleteCodexCliSession":
       return handleDeleteCodexCliSession(payload);
+    case 'manageCodexModels': {
+      ensureCliIntegrationEnabled();
+      const request = payload?.codexModelRequest;
+      if (request?.operation === 'load') {
+        const codexModels = await loadCodexModels();
+        ctx.schedulePublishState();
+        return { codexModels };
+      }
+      if (request?.operation === 'save') {
+        if (typeof request.ids !== 'string' || typeof request.expected !== 'string') throw new Error('Enter fallback model IDs and reload their saved values before saving.');
+        const ids = await saveCodexFallbackCatalog(request.ids, request.expected);
+        ctx.schedulePublishState();
+        return { codexModels: { ids, message: 'Fallback models saved. The model picker will refresh.' } };
+      }
+      if (request?.operation !== 'test' || typeof request.model !== 'string') throw new Error('Choose a model to test or save the fallback list.');
+      return { codexModels: { message: await testCodexModel(request.model) } };
+    }
     case "getCodexSkills": {
       ensureCliIntegrationEnabled();
       const result = await readCodexSkills(await resolveWorkspaceProjectPathAsync(payload?.projectPath));

@@ -17,7 +17,7 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
+import { loadCodexModels, testCodexModel, readCodexSkills, setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 import { moveCodexCliSession, resolveRecordedSessionProject } from '../src/services/codexSessionResume';
 import { sessionQuestionReply } from '../src/domain/sessionQuestions';
 import { saveSessionStatus } from '../src/storage/sqliteSessions';
@@ -1171,7 +1171,8 @@ it('discovers live models over stale cache, reads all pages and refreshes after 
   const request = vi.fn(async (_method: string, params: any) => params.cursor ? { data: [{ id: 'live-two', displayName: 'Live two', defaultReasoningEffort: 'high', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], nextCursor: null } : { data: [null, { id: 'live-one' }, { id: 'hidden', hidden: true }], nextCursor: 'next' });
   mocks.open.mockResolvedValue({ request, close: vi.fn() });
   const config = await readCodexCliComposerConfig(root);
-  expect(config.models.filter(model => model.provider !== 'claude').map(model => model.id)).toEqual(['live-one', 'live-two']);
+  expect(config.models.filter(model => model.provider !== 'claude').map(model => model.id)).toEqual(expect.arrayContaining(['live-one', 'live-two', 'gpt-6.2-sol', 'gpt-6.2-astra']));
+  expect(config.modelDiscoveryWarning).toContain('fallback');
   expect(config.defaultModel).toBe('live-two'); expect(config.defaultReasoningEffort).toBe('high');
   expect(request).toHaveBeenCalledWith('model/list', expect.objectContaining({ cursor: 'next' }), expect.any(Number));
   await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(2);
@@ -1185,4 +1186,59 @@ it.each(['offline', 'duplicate-cursor'])('keeps cached models with a warning whe
   const config = await readCodexCliComposerConfig(root);
   expect(config.models.map(model => model.id)).toEqual(expect.arrayContaining(['saved-model','gpt-6.2-sol','gpt-6.2-astra'])); expect(config.modelDiscoveryWarning).toContain('saved catalog');
   if (scenario === 'duplicate-cursor') expect(request).toHaveBeenCalledTimes(2);
+});
+
+it('tests the exact model in an ephemeral read-only thread and preserves native failures', async () => {
+  const rpc = { request: vi.fn(async () => ({ thread: { id, ephemeral: true }, model: 'custom-model' })), close: vi.fn(), startAndWaitForTurn: vi.fn(async () => undefined) };
+  mocks.open.mockResolvedValue(rpc);
+  await expect(testCodexModel('custom-model')).resolves.toContain('successfully');
+  expect(rpc.request).toHaveBeenCalledWith('thread/start', expect.objectContaining({ model: 'custom-model', ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never' }), 10_000);
+  expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ model: 'custom-model' }), 15_000, expect.any(Function));
+  rpc.startAndWaitForTurn.mockRejectedValueOnce(new Error('This account cannot use custom-model'));
+  await expect(testCodexModel('custom-model')).rejects.toThrow('This account cannot use');
+  expect(rpc.close).toHaveBeenCalled();
+});
+it('does not treat model substitution as a successful availability test', async () => {
+  const rpc = { request: vi.fn(async () => ({ thread: { id, ephemeral: true }, model: 'different-model' })), close: vi.fn(), startAndWaitForTurn: vi.fn() };
+  mocks.open.mockResolvedValue(rpc);
+  await expect(testCodexModel('custom-model')).rejects.toThrow('did not confirm');
+  expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+});
+it('interrupts an unfinished test and preserves its original timeout even when interruption fails', async () => {
+  const rpc = { request: vi.fn(async (method: string) => {
+    if (method === 'turn/interrupt') throw new Error('Connection lost');
+    return { thread: { id, ephemeral: true }, model: 'custom-model' };
+  }), close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started?: (id: string) => void) => { started?.('test-turn'); throw new Error('Test request timed out'); }) };
+  mocks.open.mockResolvedValue(rpc);
+  await expect(testCodexModel('custom-model')).rejects.toThrow('Test request timed out');
+  expect(rpc.request).toHaveBeenCalledWith('turn/interrupt', { threadId: id, turnId: 'test-turn' }, 1000);
+  expect(rpc.close).toHaveBeenCalledOnce();
+});
+it('keeps custom provider catalogs separate from OpenAI fallbacks', async () => {
+  await writeFile(path.join(root, 'config.toml'), 'model_provider = "custom"\n');
+  mocks.open.mockResolvedValue({ request: vi.fn(async () => ({ data: [{ id: 'provider-model' }] })), close: vi.fn() });
+  const config = await readCodexCliComposerConfig(root, false);
+  expect(config.models.map(model => model.id)).toEqual(['provider-model']);
+  expect(config.modelDiscoveryWarning).toBeUndefined();
+});
+it('keeps discovered models available when fallback settings are malformed', async () => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'codexFallbackModelIds' ? 'bad$model' : fallback } as never);
+  mocks.open.mockResolvedValue({ request: vi.fn(async () => ({ data: [{ id: 'live-model' }] })), close: vi.fn() });
+  const config = await readCodexCliComposerConfig(root, false);
+  expect(config.models.map(model => model.id)).toEqual(['live-model']);
+  expect(config.modelDiscoveryWarning).toContain('fallback list is invalid');
+});
+it('loads fresh models past the cached catalog, preserves custom entries, and keeps native failures visible', async () => {
+  let ids = 'custom-model';
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'codexFallbackModelIds' ? ids : fallback, update: vi.fn(async (_key, value) => { ids = value; }) } as never);
+  const request = vi.fn().mockResolvedValueOnce({ data: [{ id: 'old-model' }] }).mockResolvedValueOnce({ data: [{ id: 'new-model', displayName: 'New live model' }] });
+  mocks.open.mockResolvedValue({ request, close: vi.fn() });
+  await readCodexCliComposerConfig(root, false);
+  await expect(loadCodexModels()).resolves.toMatchObject({ ids: 'custom-model\nold-model\nnew-model', message: expect.stringContaining('Loaded 1 models') });
+  const config = await readCodexCliComposerConfig(root, false);
+  expect(config.models[0]).toMatchObject({ id: 'new-model', label: 'New live model' });
+  expect(request).toHaveBeenCalledTimes(2);
+  request.mockRejectedValueOnce(new Error('Sign-in expired'));
+  await expect(loadCodexModels()).rejects.toThrow('Sign-in expired');
+  expect(ids).toBe('custom-model\nold-model\nnew-model');
 });

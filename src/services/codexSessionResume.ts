@@ -1,7 +1,8 @@
 import { providerConversation, saveProviderConversation, nativeSessionId, routedSessionId, presentProviderSessions, presentProviderSummary, providerHistoryPage, withNativeSession, providerRoutingSuppressed } from './sessionProviders';
 import { hydrateSessionImages } from './codexSessionImages';
 import { activeApiAccount, apiAccountIdentity, hasApiAccountRuntime, withApiAccountRuntime } from './apiAccounts';
-import { codexFallbackModels } from '../domain/codexModelFallback';
+import { codexFallbackModels, parseCodexFallbackModelIds } from '../domain/codexModelFallback';
+import { readCodexFallbackCatalog, rememberDiscoveredCodexModels } from './codexFallbackCatalog';
 import { readSessionPlan, sessionPlanMessage } from '../domain/sessionPlan';
 import { matchesCodexSessionAccess } from '../domain/codexSessionAccess';
 import { readWorkspaceProjects, workspaceProjectLabels, hiddenWorkspaceProjectPaths } from './workspaceProjects';
@@ -986,15 +987,22 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
     const auth = await readSmallOptionalFile(path.join(codexHome, 'auth.json'), MAX_CONFIG_BYTES);
     const identity = createHash('sha256').update(JSON.stringify([auth, configRaw, apiAccountIdentity('openai')])).digest('hex');
     const live = await readLiveCliModels(codexHome, identity);
-    if (live.length) models = live;
-    else {
-      const provider=readTomlString(configRaw,'model_provider');
-      if(!provider||provider==='openai') {
+    const provider=readTomlString(configRaw,'model_provider');
+    const openai = !provider || provider === 'openai';
+    if (live.length) {
+      models = live;
+      if (openai) {
+        try { await rememberDiscoveredCodexModels(live.map(model => model.id)); }
+        catch (error) { modelDiscoveryWarning = `Models loaded, but the fallback list could not be updated: ${error instanceof Error ? error.message : String(error)}`; }
+      }
+    } else modelDiscoveryWarning = models.length ? 'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.' : 'Models could not be discovered. Check provider sign-in and refresh to retry.';
+    if(openai) {
         let hidden:string[]=[];
         try{const cached=JSON.parse(modelsRaw??'{}') as {models?:Array<{slug?:string;id?:string;visibility?:string;hidden?:boolean}>};hidden=(cached.models??[]).filter(model=>model.hidden===true||model.visibility==='hide'||model.visibility==='hidden').map(model=>model.slug??model.id??'');}catch{/* An unreadable cache still permits the bundled fallback. */}
-        models=codexFallbackModels(models,hidden);
-        modelDiscoveryWarning='Live model discovery is unavailable. Showing the saved catalog and documented fallback models; account access is unverified. Refresh to retry.';
-      } else modelDiscoveryWarning=models.length?'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.':'Models could not be discovered. Check provider sign-in and refresh to retry.';
+        const originalCount = models.length;
+        try { models=codexFallbackModels(models,hidden,parseCodexFallbackModelIds(readCodexFallbackCatalog())); }
+        catch (error) { modelDiscoveryWarning = `The fallback list is invalid. Edit it in Settings > Workspace. ${error instanceof Error ? error.message : String(error)}`; }
+        if (models.length > originalCount) modelDiscoveryWarning = [modelDiscoveryWarning, live.length ? 'Some models are from your fallback list; account access is unverified. Test them in Settings > Workspace.' : 'Showing the saved catalog and fallback models; account access is unverified. Refresh to retry.'].filter(Boolean).join(' ');
     }
   }
   const configuredModel = readTomlString(configRaw, "model");
@@ -1017,6 +1025,69 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
       : (models.find(model => model.id === configuredModel) ?? models[0])?.defaultReasoningEffort,
     defaultSandboxMode: "danger-full-access"
   };
+}
+
+export async function loadCodexModels(): Promise<{ ids: string; message: string }> {
+  const home = resolveCodexHome();
+  const [auth, config] = await Promise.all([
+    readSmallOptionalFile(path.join(home, 'auth.json'), MAX_CONFIG_BYTES),
+    readSmallOptionalFile(path.join(home, 'config.toml'), MAX_CONFIG_BYTES)
+  ]);
+  const provider = readTomlString(config, 'model_provider');
+  if (provider && provider !== 'openai') throw new Error('Codex fallback models are for the OpenAI provider. Switch providers before loading this list.');
+  const account = apiAccountIdentity('openai');
+  const identity = createHash('sha256').update(JSON.stringify([auth, config, account])).digest('hex');
+  const models = await readLiveCliModels(home, identity, true);
+  if (!models.length) throw new Error('Codex returned no visible models. The saved fallback list was kept. Check sign-in and retry.');
+  if (home !== resolveCodexHome() || account !== apiAccountIdentity('openai') || auth !== await readSmallOptionalFile(path.join(home, 'auth.json'), MAX_CONFIG_BYTES) || config !== await readSmallOptionalFile(path.join(home, 'config.toml'), MAX_CONFIG_BYTES)) throw new Error('The account or provider changed while loading models. The saved list was kept; retry.');
+  await rememberDiscoveredCodexModels(models.map(model => model.id));
+  return { ids: readCodexFallbackCatalog(), message: `Loaded ${models.length} models. The saved fallback list is updated.` };
+}
+
+export async function testCodexModel(model: string): Promise<string> {
+  if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => testCodexModel(model));
+  if (parseCodexFallbackModelIds(model).length !== 1 || !MODEL_ID_PATTERN.test(model)) throw new Error('Enter one valid Codex model ID to test.');
+  const home = resolveCodexHome(), account = apiAccountIdentity('openai');
+  const auth = await readSmallOptionalFile(path.join(home, 'auth.json'), MAX_CONFIG_BYTES);
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-manager-model-test-'));
+  const controller = new AbortController();
+  let rpc: CodexAppServerRpc | undefined;
+  let threadId: string | undefined, turnId: string | undefined, completed = false;
+  let shutdown: Promise<void> | undefined;
+  const close = () => shutdown ??= (async () => {
+    try {
+      if (rpc && threadId && turnId && !completed) await rpc.request('turn/interrupt', { threadId, turnId }, 1000);
+    } catch { /* The timeout remains unconfirmed if the remote host cannot acknowledge interruption. */ }
+    finally { await rpc?.close(); }
+  })();
+  const abort = () => { void close(); };
+  controller.signal.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('Model test timed out. Access is unconfirmed; retry when connected.')), 20_000);
+  try {
+    await waitWithin((async () => {
+      const executable = await resolveCodexCliExecutable();
+      controller.signal.throwIfAborted();
+      rpc = await openCodexAppServer(executable, directory, controller.signal);
+      controller.signal.throwIfAborted();
+      const result = await rpc.request<{ thread?: { id?: string; ephemeral?: boolean }; model?: string }>('thread/start', {
+        model, cwd: directory, ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never',
+        ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}),
+        baseInstructions: 'This is a model availability test. Reply only OK. Do not use tools.'
+      }, 10_000);
+      controller.signal.throwIfAborted();
+      if (!result.thread?.id || result.thread.ephemeral !== true || result.model !== model) throw new Error('Codex did not confirm the requested model in a temporary test session. Access is unconfirmed. Update Codex and retry.');
+      threadId = result.thread.id;
+      await rpc.startAndWaitForTurn(threadId, { threadId, model, input: [{ type: 'text', text: 'Reply only OK. Do not use tools.' }] }, 15_000, id => { turnId = id; });
+      completed = true;
+      controller.signal.throwIfAborted();
+    })(), 20_000, 'Model test timed out. Access is unconfirmed; retry when connected.', controller.signal);
+    if (home !== resolveCodexHome() || account !== apiAccountIdentity('openai') || auth !== await readSmallOptionalFile(path.join(home, 'auth.json'), MAX_CONFIG_BYTES)) throw new Error('The account changed during the test. Access is unconfirmed; test again.');
+    return `${model} completed a test request successfully.`;
+  } finally {
+    clearTimeout(timer); controller.abort(); controller.signal.removeEventListener('abort', abort);
+    await close();
+    if (path.dirname(directory) === path.resolve(os.tmpdir()) && path.basename(directory).startsWith('codex-manager-model-test-')) await fs.rm(directory, { recursive: true, force: true });
+  }
 }
 
 export async function readCodexSkills(project: string): Promise<{ skills: Array<{ name: string; description: string }>; warning?: string }> {
@@ -1098,15 +1169,14 @@ export async function sendCodexCliSessionMessage(options: {
   return sendCodexQuestionReply(attachmentHome, options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId, attachmentHome), onAttempt => sendAppServerSessionMessage(options, cwd, onAttempt, attachmentHome));
 }
 
-async function readLiveCliModels(codexHome: string, identity: string): Promise<DashboardCliComposerConfig["models"]> {
+async function readLiveCliModels(codexHome: string, identity: string, force = false): Promise<DashboardCliComposerConfig["models"]> {
   const normalizedHome = `${path.resolve(codexHome)}:${identity}`;
   const now = Date.now();
   const cache = cliModelListCache;
   const cacheTtl = cache?.models.length ? CLI_MODEL_LIST_CACHE_TTL_MS : CLI_MODEL_LIST_FAILURE_TTL_MS;
-  if (cache?.codexHome === normalizedHome && now - cache.fetchedAt < cacheTtl) return cache.models;
-  if (cliModelListProbe && cliModelListProbeHome === normalizedHome) return cliModelListProbe;
-  cliModelListProbeHome = normalizedHome;
-  cliModelListProbe = (async () => {
+  if (!force && cache?.codexHome === normalizedHome && now - cache.fetchedAt < cacheTtl) return cache.models;
+  if (!force && cliModelListProbe && cliModelListProbeHome === normalizedHome) return cliModelListProbe;
+  const fetchModels = async () => {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('Model discovery timed out.')), APP_SERVER_MODEL_LIST_TIMEOUT_MS);
@@ -1125,12 +1195,20 @@ async function readLiveCliModels(codexHome: string, identity: string): Promise<D
         } while (cursor);
         return [...new Map(models.map(model => [model.id, model])).values()];
       } finally { clearTimeout(timer); controller.abort(); }
-    } catch {
+    } catch (error) {
+      if (force) throw error;
       // The composer can still open with an empty model list when the live
       // catalog is unavailable (for example while the CLI is signing in).
       return [];
     }
-  })()
+  };
+  if (force) {
+    const models = await fetchModels();
+    cliModelListCache = { codexHome: normalizedHome, models, fetchedAt: Date.now() };
+    return models;
+  }
+  cliModelListProbeHome = normalizedHome;
+  cliModelListProbe = fetchModels()
     .then((models) => {
       cliModelListCache = { codexHome: normalizedHome, models, fetchedAt: Date.now() };
       return models;

@@ -1,5 +1,4 @@
 import { normalizeModelCapacityFailures } from '../../infrastructure/config/extensionSettings';
-import { localDictation, disposeLocalDictation } from '../../services/localDictation';
 import * as vscode from "vscode";
 import { getDashboardCopy } from "../../application/dashboard/copy";
 import type { DashboardSettingKey } from "../../domain/dashboard/types";
@@ -38,12 +37,6 @@ export async function handleDashboardSettingUpdate(
   let updated = false;
 
   switch (key) {
-    case 'localWhisperEnabled':
-      if (typeof value !== 'boolean') return false;
-      await updateDashboardConfiguration(config, key, value, target);
-      if (value) await localDictation({ operation: 'prepare' });
-      else disposeLocalDictation();
-      return true;
     case "alwaysActive":
       if (typeof value !== "boolean") return false;
       await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);

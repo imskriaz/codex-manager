@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.22",
+  "version": "3.0.1-pre.24",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -44,12 +44,6 @@
     "configuration": {
       "title": "Codex Manager",
       "properties": {
-        "codexManager.localWhisperEnabled": {
-          "type": "boolean",
-          "default": false,
-          "scope": "machine",
-          "markdownDescription": "Optional local Whisper dictation with automatic spoken-language detection and direct composer input. Enabling downloads the runtime and multilingual model (about 500 MB); requires Python 3.11-3.13. Audio stays on this host. Disabled by default to retain browser dictation and its modal."
-        },
         "codexManager.codexAppRestartMode": {
           "type": "string",
           "scope": "machine",
@@ -498,6 +492,12 @@
           },
           "scope": "machine",
           "markdownDescription": "Optional User Workspace renderer, isolated execution service and web-search credentials. Configure in master workspace settings. Keys stay on this host."
+        },
+        "codexManager.codexFallbackModelIds": {
+          "type": "string",
+          "default": "gpt-6.2-sol\ngpt-6.2-astra\ngpt-6.1-terra\ngpt-6.1-sol\ngpt-6-astra\ngpt-6-sol\ngpt-6-luna",
+          "scope": "machine",
+          "markdownDescription": "Editable Codex fallback model IDs, one per line. Added to the model picker when absent from live discovery. Successful live discovery adds new IDs to this list; fallback entries do not confirm account access."
         }
       }
     },

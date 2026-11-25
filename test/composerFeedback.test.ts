@@ -18,19 +18,18 @@ it('keeps the entered local project name when session discovery supplies its int
   expect(picker.props.title).toBe('My project');
 });
 
-it('appends local speech to the current textarea without losing edits or dropping successive segments', () => {
+it('appends browser speech to the current textarea without losing edits or dropping successive segments', () => {
   const onDraft = vi.fn(), onFeedback = vi.fn();
-  const config: Parameters<typeof Composer>[0] = { localWhisperEnabled: true, attachments: [], attachmentReading: false, draft: 'Saved draft', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
+  const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: 'Saved draft', projects: [], models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
     onFeedback, onAttach() {}, onRemoveAttachment() {}, onDraft, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
   const tree = nodes(Composer(config));
   const input = tree.find(node => node.type === 'textarea')!;
   const textarea = { value: 'Edited draft', focus: vi.fn() };
   (input.ref as { current: unknown }).current = textarea;
   const voice = tree.find(node => node.type === VoiceDictation)!;
-  expect(voice.props.localWhisperEnabled).toBe(true);
   expect(voice.props.onText('বাংলা')).toBe(true);
   expect(voice.props.onText('日本語')).toBe(true);
-  expect(onDraft).toHaveBeenLastCalledWith('Edited draft বাংলা 日本語');
+  expect(onDraft).toHaveBeenLastCalledWith("Edited draft\n\u09ac\u09be\u0982\u09b2\u09be\n\u65e5\u672c\u8a9e");
   textarea.value = 'x'.repeat(64_000);
   expect(voice.props.onText('More')).toBe(false);
   expect(onFeedback).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));

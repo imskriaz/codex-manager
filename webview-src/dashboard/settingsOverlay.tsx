@@ -1,5 +1,5 @@
+import {CodexModelsSetting} from './codexModelsSetting';
 import {MobileSectionPicker} from './mobileSectionPicker';
-import {LocalWhisperStatus} from './localWhisperStatus';
 import {UserWorkspaceLibrary,UserWorkspaceScheduled,type UserWorkspaceNavigation} from './userWorkspacePages';
 import {UserWorkspaceAccount} from './userWorkspaceAccount';
 import {UserWorkspaceMemory} from './userWorkspaceMemory';
@@ -440,7 +440,7 @@ export function SettingsOverlay(props: {
                       targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
-                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="localWhisperEnabled" title="Local Whisper dictation" sub="Optional automatic language detection, with speech typed directly into the composer. Enabling downloads the local runtime and multilingual model (about 500 MB). Audio is transcribed on this host; no API key is needed. Requires Python 3.11-3.13. Leave disabled to use the browser dictation modal." enabled={props.settings.localWhisperEnabled === true} disabled={!!props.targetDeviceId} onToggle={enabled => patchAndSend("localWhisperEnabled", enabled)}><LocalWhisperStatus enabled={props.settings.localWhisperEnabled === true} targetDeviceId={props.targetDeviceId} /></SettingsToggleBlock><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
+                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><CodexModelsSetting onSaved={ids => props.onPatchSettings({codexFallbackModelIds: ids})} saved={props.settings.codexFallbackModelIds} connected={props.connected !== false && props.targetConnected !== false} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} /><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
                         <div class="settings-block-title">Text file limit</div>
                         <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
                       </div><SettingsDiscreteSlider

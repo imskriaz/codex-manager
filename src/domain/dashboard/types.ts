@@ -8,7 +8,6 @@ import type {
 } from "../../core/types";
 
 export type DashboardSettingKey =
-  | "localWhisperEnabled"
   | "dashboardTheme"
   | "systemInfoEnabled"
   | "privacyMode"
@@ -61,6 +60,7 @@ export type DashboardSettingKey =
   | "displayLanguage";
 
 export interface DashboardSettings {
+  codexFallbackModelIds?: string;
   dashboardTheme: DashboardThemeOption;
   systemInfoEnabled?: boolean;
   /** Shared privacy preference used by every dashboard and details surface. */
@@ -75,7 +75,6 @@ export interface DashboardSettings {
   cliIntegrationEnabled?: boolean;
   apiAccessEnabled?: boolean;
   workspaceTextFileLimitMb?: number;
-  localWhisperEnabled?: boolean;
   standaloneCapacityRetryDelaySeconds?: number;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */
@@ -565,7 +564,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
-  | "localDictation"
+  | "manageCodexModels"
   | "saveApiAccount"
   | "enableSystemStartup"
   | "workspaceBrowser"
@@ -710,7 +709,7 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
-  dictationRequest?: import('../../services/localDictation').LocalDictationRequest;
+  codexModelRequest?: { operation: 'save' | 'load' | 'test'; ids?: string; expected?: string; model?: string };
   apiAccount?: import('../apiAccounts').ApiAccountInput;
   apiAccountId?: string;
   apiAccountRevision?: number;
@@ -1225,7 +1224,7 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
-  dictation?: import('../../services/localDictation').LocalDictationResult;
+  codexModels?: { ids?: string; message: string };
   apiAccountSaved?: { id: string };
   teamSettingsResponse?: unknown;
   masterUsername?: string;

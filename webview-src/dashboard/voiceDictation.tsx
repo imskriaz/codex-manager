@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ModalShell } from "./primitives";
-import { LocalVoiceDictation } from './localVoiceDictation';
 
 const MAX_DICTATION_LENGTH = 64_000;
 
@@ -51,7 +50,6 @@ function defaultLanguage(language?: string): string {
 }
 
 type VoiceDictationProps = {
-  localWhisperEnabled?: boolean;
   disabled?: boolean;
   language?: string;
   scope?: string;
@@ -60,7 +58,7 @@ type VoiceDictationProps = {
 };
 
 export function VoiceDictation(props: VoiceDictationProps) {
-  return props.localWhisperEnabled ? <LocalVoiceDictation {...props} /> : <BrowserVoiceDictation {...props} />;
+  return <BrowserVoiceDictation {...props} />;
 }
 
 export function BrowserVoiceDictation(props: VoiceDictationProps) {
