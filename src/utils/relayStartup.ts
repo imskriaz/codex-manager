@@ -106,7 +106,7 @@ export async function resolveNodeExecutable(): Promise<string> {
     if (executable) return executable;
   }
   if (Date.now() >= deadline) failures.push("Runtime discovery exceeded its 5 second deadline");
-  throw new Error(`Always Active could not verify Node.js 22.13 or newer. Retry when the system is less busy, or install a compatible Node.js runtime and restart VS Code. ${failures.join("; ")}`);
+  throw new Error(`Always Active could not verify Node.js 22.13 or newer. Retry when the system is less busy, or install a compatible Node.js runtime and restart the Manager host (VS Code or standalone Node.js). ${failures.join("; ")}`);
 }
 
 /** Register a pre-login Windows boot task. The task runs as SYSTEM so it does

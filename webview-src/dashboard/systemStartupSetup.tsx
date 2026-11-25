@@ -44,10 +44,17 @@ export function SystemStartupSetting(props: {
     <ModalShell open={props.parentOpen && open} title="Set up Windows boot startup" closeLabel="Cancel startup setup" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={busy} onClose={cancel}>
       <strong>Windows boot startup</strong>
       <p>Set up startup on <strong>{props.targetName}</strong>. The switch stays off until Windows confirms registration.</p>
-      <ol><li>On this PC, close VS Code and reopen it using <strong>Run as administrator</strong>.</li>
-        <li>Open Codex Manager settings again and choose <strong>Start with system</strong>.</li>
-        <li>Choose <strong>Verify and enable</strong> below. Manager registers and checks the Windows boot task before enabling this setting.</li></ol>
-      <p>Always Active keeps the host running after VS Code closes and works separately from Windows boot startup.</p>
+      <p>Use the instructions for how Manager is running on the selected PC, even when viewing this dashboard from another device.</p>
+      <p><strong>Running in VS Code</strong></p>
+      <ol><li>Close VS Code on that PC and reopen it using <strong>Run as administrator</strong>.</li>
+        <li>Open Codex Manager settings again and choose <strong>Start with system</strong>.</li></ol>
+      <p><strong>Running directly with Node.js</strong></p>
+      <ol><li>Open Windows PowerShell as administrator, or run <code>Start-Process powershell -Verb RunAs</code> and accept the Windows prompt.</li>
+        <li>In the administrator terminal, use <code>Set-Location 'C:\path\to\codex-manager'</code> with your cloned checkout's path. Node.js 22.13 or newer is required.</li>
+        <li>For a new clone, run <code>npm.cmd ci</code>, then <code>npm.cmd run compile</code>.</li>
+        <li>Run <code>npm.cmd run standalone:restart</code> to start or restart the standalone host from this checkout, then reopen its browser dashboard and choose <strong>Start with system</strong>.</li></ol>
+      <p>Choose <strong>Verify and enable</strong> below. Manager registers and checks Windows startup before enabling this setting. Administrator access allows startup before sign-in; Windows may otherwise allow only startup at sign-in.</p>
+      <p>Always Active keeps the host running after VS Code closes and works separately from Windows startup. A direct Node.js host runs without VS Code.</p>
       {error ? <div class="settings-note settings-notice-warning" role="alert">{error}</div> : null}
       {busy ? <p role="status">Registering and verifying Windows boot startup…</p> : null}
       <div class="modal-actions"><button type="button" disabled={busy} onClick={cancel}>Cancel</button>

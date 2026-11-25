@@ -334,7 +334,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
         configPath, scriptTarget, executable, startWithSystem
       }, error);
-      const message = `Start with system could not ${startWithSystem ? "register the Windows boot task. Run VS Code as administrator and retry" : "remove the Windows boot task; it may still start at boot"}. Always Active can still keep the host running after VS Code closes. ${error instanceof Error ? error.message : String(error)}`;
+      const message = `Start with system could not ${startWithSystem ? "register the Windows boot task. Run the Manager host (VS Code or standalone Node.js) as administrator and retry" : "remove the Windows boot task; it may still start at boot"}. Always Active can still keep the host running after VS Code closes. ${error instanceof Error ? error.message : String(error)}`;
       if (message !== this.startupWarning) {
         this.startupWarning = message;
         void vscode.window.showWarningMessage(message);
