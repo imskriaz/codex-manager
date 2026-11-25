@@ -130,7 +130,7 @@ it('surfaces a connected-source failure and allows a verified aggregate retry wi
  expect(await (server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'count'}],new AbortController().signal,'',report)).toBe('There are 247 matching records.');
  expect(read).toHaveBeenCalledTimes(2);
  expect(report.mock.calls.at(-1)?.[0]).toMatchObject({title:'MCP call · orders_query',arguments:expect.stringContaining('purchase_orders'),result:expect.stringContaining('247')});
- expect(report.mock.calls.map(([event])=>event.status)).toEqual(['inProgress','failed','inProgress','completed']);
+ expect(report.mock.calls.filter(([event])=>event.kind==='tool-call').map(([event])=>event.status)).toEqual(['inProgress','failed','inProgress','completed']);
  const retry=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);
  expect(retry.messages.at(-1).content).toContain('too much data for chat');
  const final=JSON.parse(vi.mocked(upstream).mock.calls[2][1]!.body as string);
@@ -275,6 +275,69 @@ it('preserves a confirmed file conflict even when the assistant claims success',
  vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'failed',error:'The file changed. Read its latest version before saving.'}],reloadAfterResponse:false});
  vi.mocked(upstream).mockResolvedValueOnce(toolResponse('save_file',{path:'notes.txt',content:'overwrite',revision:'old'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Saved successfully.'}}]})) as never);
  await expect((server as any).teamSessions().options.generate(actor,'fast',[{role:'user',content:'Save notes'}],new AbortController().signal,actor.workspacePath,vi.fn())).rejects.toThrow('file changed');
+});
+it('returns a thrown file-read failure to the assistant, then uses another readable file in the same turn',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const],limits:{dailyTokens:0}};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const action=vi.spyOn(server as any,'processOfficeMessage').mockRejectedValueOnce(new Error('Folder connection timed out. Reconnect it before retrying.')).mockResolvedValueOnce({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{path:'export.csv',kind:'text',content:'Subject,From\nOrder,Buyer',revision:'r1'}}}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'archive.pst'}) as never).mockResolvedValueOnce(toolResponse('read_file',{path:'export.csv'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The CSV export contains an order from Buyer. The mail archive could not be read.'}}]})) as never);
+ const report=vi.fn(),save=vi.fn();
+ const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,report,false,undefined,undefined,{save});
+ expect(answer).toContain('The CSV export contains an order');expect(answer).toContain('archive.pst: Folder connection timed out');expect(action).toHaveBeenCalledTimes(2);
+ const retry=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string),feedback=JSON.parse(retry.messages.at(-1).content);
+ expect(feedback).toMatchObject({error:'Folder connection timed out. Reconnect it before retrying.',instruction:expect.stringContaining('Try a different supported approach')});
+ expect(feedback.instruction).toContain('PST mail archive');expect(feedback.instruction).toContain('inspect the current state');
+ expect(report.mock.calls.some(([event])=>event.role==='assistant'&&event.text.includes('archive.pst')&&event.text.includes('timed out'))).toBe(true);
+ expect(save.mock.calls.some(([value])=>value.messages.some((message:any)=>message.role==='tool'&&message.content.includes('Folder connection timed out')))).toBe(true);
+});
+it('treats an unsupported binary read as a tool failure and lets the assistant explain the export alternative',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{path:'archive.pst',kind:'binary',content:'',revision:'r1',size:2048}}}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'archive.pst'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'I cannot read this mail archive with the available tools. Export the relevant messages as text or CSV so I can continue.'}}]})) as never);
+ const report=vi.fn();const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,report);
+ expect(answer).toContain('Export the relevant messages');expect(answer).toContain('Could not complete these actions');
+ const request=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string),result=JSON.parse(request.messages.at(-1).content);
+ expect(result.error).toContain('binary file cannot be read as text');expect(result.instruction).toContain('supported text or CSV export');
+ expect(report.mock.calls.filter(([event])=>event.kind==='tool-call'&&event.status==='completed')).toHaveLength(0);
+ expect(report.mock.calls.some(([event])=>event.role==='assistant'&&event.text.includes('binary file'))).toBe(true);
+});
+it('keeps the explanation of a confirmed read failure instead of discarding the final response',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'failed',error:'This format needs a compatible reader.'}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'archive.pst'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'No compatible archive reader is available. Provide a text export to continue.'}}]})) as never);
+ const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn());
+ expect(answer).toContain('Provide a text export');expect(answer).toContain('archive.pst: This format needs a compatible reader.');expect(upstream).toHaveBeenCalledTimes(2);
+});
+it('returns document extraction exceptions as tool results so another supported source can be read',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const],limits:{dailyTokens:0}};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const documents=await import('../src/services/officeFiles');vi.spyOn(documents,'readOfficeDocument').mockRejectedValue(new Error('This PDF has no extractable text.'));
+ const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'Readable notes'}}}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'scan.pdf'}) as never).mockResolvedValueOnce(toolResponse('read_file',{path:'notes.txt'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'I used the readable notes. The scanned PDF needs text extraction first.'}}]})) as never);
+ const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn());
+ expect(answer).toContain('I used the readable notes');expect(action).toHaveBeenCalledOnce();
+ expect(JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string).messages.at(-1).content).toContain('no extractable text');
+});
+it('does not turn cancellation during a tool call into recovery or another assistant request',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const controller=new AbortController();vi.spyOn(server as any,'processOfficeMessage').mockImplementationOnce(async()=>{controller.abort(new Error('Stopped by user'));throw controller.signal.reason;});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'notes.txt'}) as never);
+ await expect((server as any).teamSessions().options.generate(actor,'fast',[],controller.signal,actor.workspacePath,vi.fn())).rejects.toThrow('Stopped by user');expect(upstream).toHaveBeenCalledOnce();
+});
+it('clears a failed read only when the same target is subsequently confirmed',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.spyOn(server as any,'processOfficeMessage').mockResolvedValueOnce({messages:[{type:'dashboard:action-result',status:'failed',error:'Folder is offline. Reconnect before reading.'}]}).mockResolvedValueOnce({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'Confirmed report'}}}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'report.txt'}) as never).mockResolvedValueOnce(toolResponse('read_file',{path:'report.txt'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The reconnected folder contains the confirmed report.'}}]})) as never);
+ const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn());
+ expect(answer).toBe('The reconnected folder contains the confirmed report.');expect(answer).not.toContain('Could not complete');
+});
+it('explains a failed ZIP and allows individual confirmed downloads as an alternative',async()=>{
+ const actor={...user,features:['generalChat' as const,'files' as const],limits:{dailyTokens:0}};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ const archives=await import('../src/services/officeArchives');vi.spyOn(archives,'createOfficeArchive').mockRejectedValue(new Error('The archive is too large to prepare at once.'));
+ vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed'}]});
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('save_file',{path:'report.txt',content:'Report'}) as never).mockResolvedValueOnce(toolResponse('create_zip',{path:'reports.zip',files:['report.txt','notes.txt']}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The ZIP could not be prepared. Download the saved report individually instead.'}}]})) as never);
+ const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn());
+ expect(answer).toContain('[Download report.txt](report.txt?download=1)');expect(answer).toContain('archive is too large');
+ const feedback=JSON.parse(JSON.parse(vi.mocked(upstream).mock.calls[2][1]!.body as string).messages.at(-1).content);
+ expect(feedback).toMatchObject({error:'The archive is too large to prepare at once.',instruction:expect.stringContaining('different supported approach')});
 });
 it('accepts a confirmed retry of the same file action and keeps upstream metadata out of message roles',async()=>{
  const actor={...user,features:['generalChat' as const,'files' as const]};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);

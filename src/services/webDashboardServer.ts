@@ -1856,11 +1856,24 @@ export class WebDashboardServer implements vscode.Disposable {
         if (workspaceFilesEnabled) conversation[0]!['content'] = String(conversation[0]!['content']) + ' This conversation already has a workspace, created automatically if no project was selected. Perform requested file work here without asking the user to choose or create a project, including when earlier replies asked for one. Files stay saved until the user deletes them.';
         conversation[0]!['content']=String(conversation[0]!['content'])+` Current UTC time: ${new Date().toISOString()}. `+(scheduledRun?'This is a scheduled execution. Perform only the saved task now; scheduling tools are unavailable.':'When asked to schedule future work, use the scheduling tools to actually save it. Ask for a missing time or time zone instead of guessing. Explain the confirmed local time, recurrence, and model. Never claim a schedule exists without confirmation. Scheduled runs cannot send email or access sources unavailable in this workspace.');
         conversation[0]!['content']=String(conversation[0]!['content'])+' Keep the requested deliverable format. For PowerPoint use the native editable layouts in create_document; advanced layouts do not require an external runtime. For decks over six slides, save small JSON slide arrays under presentation-parts/ then assemble with slideFiles. Keep each model action small. Reuse confirmed research and saved parts; do not restart preparation after a failure. An incomplete response is a failure, not a reason to repeat the whole task.';
+        conversation[0]!['content']=String(conversation[0]!['content'])+' A failed tool call is feedback for the next action, not the end of the task. Explain the failure briefly and try a different supported approach using the tools actually available. Preserve successful work. Do not repeat the same failing call without new information or bypass access restrictions. For unknown write or external-action outcomes, inspect state before retrying. When no supported alternative works, explain the limitation and a concrete next step; never leave only a failed tool label or claim unread content was read.';
         const checkpoint=continuation?.checkpoint,contextLength=conversation.length;
         if(checkpoint){conversation.push(...resumeOfficeGeneration(checkpoint));conversation.push({role:'system',content:'Resume this same accepted request from the saved tool results. Do not restart completed research or plans. Inspect unknown action outcomes before writing. Use small saved slide parts or short file edits to avoid another output limit. Current permissions and tools still apply.'});}
         let sideEffects=checkpoint?.sideEffects??false;const planId=checkpoint?.planId??crypto.randomUUID(),failedActions=new Map<string,string>(checkpoint?.failedActions),deliverables=new Map<string,boolean>(checkpoint?.deliverables),researchSources=new Map<string,string>(checkpoint?.researchSources);
         const saveCheckpoint=()=>continuation?.save(officeGenerationCheckpoint({planId,messages:conversation.slice(contextLength),sideEffects,failedActions:[...failedActions],deliverables:[...deliverables],researchSources:[...researchSources]}));
         const pushResult=(result:Record<string,unknown>)=>{conversation.push(result);saveCheckpoint();};
+        const toolFailure = (call: { id: string; function: { name: string; arguments: string } }, activityId: string, title: string, error: unknown, key = call.function.name, guidance = '') => {
+          const detail = userWorkspaceNotice(error instanceof Error ? error.message : typeof error === 'string' ? error : 'This action could not be completed.');
+          let file = '';
+          try { const args = JSON.parse(call.function.arguments) as {path?:unknown}; if (typeof args.path === 'string') file = args.path; } catch { /* Malformed arguments are reported to the assistant for correction. */ }
+          const archive = /\.pst$/i.test(file);
+          const instruction = 'Try a different supported approach using the available tools, within the same permissions. Do not repeat an unchanged failed call or claim it succeeded. Before retrying a write or external action with an uncertain outcome, inspect the current state. If no supported alternative exists, explain the reason and a concrete next step to the user.' + (archive ? ' A PST mail archive requires a compatible reader; use one only if available. Otherwise explain that a supported text or CSV export is needed. Do not treat the archive as plain text.' : '') + (guidance ? ' ' + guidance : '');
+          failedActions.set(key, detail);
+          const result = { error: detail, instruction };
+          report({ id: activityId, kind: 'tool-call', title, text: detail, status: 'failed', arguments: call.function.arguments, result: JSON.stringify(result) });
+          report({ id: crypto.randomUUID(), role: 'assistant', text: `${title}${file ? ` (${file})` : ''} could not be completed: ${detail}` });
+          pushResult({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+        };
         for(let step=0;step<32;step++){
         for(const text of continuation?.takeSteering?.()??[])conversation.push({role:'user',content:text});
         signal.throwIfAborted();saveCheckpoint();
@@ -1887,7 +1900,8 @@ export class WebDashboardServer implements vscode.Disposable {
         if(steering.length){for(const text of steering)conversation.push({role:'user',content:text});saveCheckpoint();continue;}
         if(!message?.tool_calls?.length){
           if(typeof message?.content!=="string")throw new Error("Empty response.");
-          if(failedActions.size)throw new OfficeActionError([...failedActions.values()][0]);
+          const blockingFailure = [...failedActions].find(([key]) => !/^(?:(?:read_file|list_files|open_preview):|(?:render_document|read_web_page|search_web|read_connection|list_connections|list_schedules|create_zip)$)/.test(key));
+          if(blockingFailure)throw new OfficeActionError(blockingFailure[1]);
           const answerText=message.content;const sourceLinks=[...researchSources].filter(([url])=>!answerText.includes(url)).map(([url,title])=>`[${title.replace(/[\[\]\\]/g,'')}](${url})`);
           const answer=message.content+(sourceLinks.length?'\n\nSources read: '+sourceLinks.join(' · '):'');
           const links=[...deliverables].flatMap(([file,preview])=>{
@@ -1895,7 +1909,8 @@ export class WebDashboardServer implements vscode.Disposable {
             const name=file.split('/').at(-1)!.replace(/[\[\]\\]/g,'\\$&');
             return [...(answer.includes(`](${url})`)?[]:[`[${preview?'Open preview':'Open'} ${name}](${url})`]),...(answer.includes(`](${url}?download=1)`)?[]:[`[Download ${name}](${url}?download=1)`])];
           });
-          return userWorkspacePathText(answer+(links.length?'\n\n'+links.join(' · '):''),[projectPath,user.workspacePath]);
+          const limitations = [...failedActions].map(([key, detail]) => `- ${key.includes(':') && key.slice(key.indexOf(':') + 1) || 'Workspace action'}: ${detail}`);
+          return userWorkspacePathText(answer+(links.length?'\n\n'+links.join(' · '):'')+(limitations.length?'\n\nCould not complete these actions:\n'+limitations.join('\n'):''),[projectPath,user.workspacePath]);
         }
         if(!Array.isArray(message.tool_calls)||message.tool_calls.some(call=>!call||typeof call.id!=='string'||!call.id||call.id.length>256||!call.function||typeof call.function.name!=='string'||typeof call.function.arguments!=='string'||call.function.arguments.length>256_000))throw new OfficeActionError('The requested action could not be read. Please try again.');
         if(message.tool_calls.length>8)throw new Error("Too many requested actions.");
@@ -1939,10 +1954,8 @@ export class WebDashboardServer implements vscode.Disposable {
               report({id:activityId,kind:'tool-call',title:'Memory',text:result.message ?? 'Saved memory reviewed.',status:'completed'});
               pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             } catch (error) {
-              const detail = userWorkspaceNotice(error instanceof Error ? error.message : 'Memory could not be updated.');
-              report({id:activityId,kind:'tool-call',title:'Memory',text:detail,status:'failed'});
-              failedActions.set('memory',detail);
-              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'List memories again before retrying. Use add for a new memory. For update or remove, copy the exact ID from list. Never invent IDs. Do not claim this action succeeded.'})});
+              signal.throwIfAborted();
+              toolFailure(call,activityId,'Memory',error,'memory','List memories again before retrying. Use add for a new memory. For update or remove, copy the exact ID from list. Never invent IDs.');
             }
             continue;
           }
@@ -1992,17 +2005,18 @@ export class WebDashboardServer implements vscode.Disposable {
                 schedules.start();
               }
               if(result&&typeof result==='object'&&!Array.isArray(result)){const {projectPath:_project,...safe}=result as Record<string,unknown>;result=safe;}
+              failedActions.delete(call.function.name);
               report({id:activityId,kind:'tool-call',title,text:'Scheduled tasks updated.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});
               pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
-            }catch(error){report({id:activityId,kind:'tool-call',title,text:'This schedule action could not be completed.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This schedule action could not be completed.'));}
+            }catch(error){signal.throwIfAborted();toolFailure(call,activityId,title,error);}
             continue;
           }
           if(['render_document','run_runtime'].includes(call.function.name)){
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!tools.some(tool=>tool.function.name===call.function.name))throw new OfficeActionError('This workspace capability is unavailable.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID(),title=call.function.name==='render_document'?'Render document':'Run isolated script';report({id:activityId,kind:'tool-call',title,text:title,arguments:call.function.arguments,status:'inProgress'});
-            try{signal.throwIfAborted();sideEffects=true;const result=call.function.name==='render_document'?await renderOfficeThumbnails(current,projectPath,args,signal):await runOfficeRuntime(current,projectPath,args,signal);const failed='status' in result&&result.status!=='completed';report({id:activityId,kind:'tool-call',title,text:result.message,arguments:call.function.arguments,result:JSON.stringify(result),status:failed?'failed':'completed'});if(failed)failedActions.set(call.function.name,result.message);else failedActions.delete(call.function.name);
+            try{signal.throwIfAborted();sideEffects=true;const result=call.function.name==='render_document'?await renderOfficeThumbnails(current,projectPath,args,signal):await runOfficeRuntime(current,projectPath,args,signal);const failed='status' in result&&result.status!=='completed';if(failed){toolFailure(call,activityId,title,result.message);continue;}report({id:activityId,kind:'tool-call',title,text:result.message,arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});failedActions.delete(call.function.name);
               if('files' in result)for(const file of result.files)deliverables.set(file,false);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This action could not be confirmed.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(call.function.name,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Report this limitation truthfully. Do not claim completion or replay uncertain execution. Offer supported file or content alternatives.'})});}continue;
+            }catch(error){signal.throwIfAborted();toolFailure(call,activityId,title,error);}continue;
           }
           if(['read_web_page','search_web','list_connections','read_connection'].includes(call.function.name)){
             const current=await getOfficeUser(user.id);
@@ -2015,8 +2029,8 @@ export class WebDashboardServer implements vscode.Disposable {
               if(['read_web_page','search_web'].includes(call.function.name)&&!current.features.includes('browser'))throw new Error('Website research is unavailable.');
               const value=call.function.name==='search_web'?await searchOfficeWeb(args['query'],signal):call.function.name==='read_web_page'?await readOfficeWebPage(args['url'],signal):call.function.name==='list_connections'?await listOfficeConnections(current):await readOfficeConnection(current,args['connectionId'],args['tool'],args['arguments'],signal);
               if(call.function.name==='read_web_page'&&value&&typeof value==='object'&&'url' in value&&'title' in value&&typeof value.url==='string'&&typeof value.title==='string')researchSources.set(value.url,value.title);
-              report({id:activityId,kind:'tool-call',title,text:'Source read.',arguments:sourceArguments,result:JSON.stringify(value),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This source could not be read.');report({id:activityId,kind:'tool-call',title,text:detail,arguments:sourceArguments,status:'failed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Explain this limitation. Do not invent facts or citations.'})});}
+              failedActions.delete(call.function.name);report({id:activityId,kind:'tool-call',title,text:'Source read.',arguments:sourceArguments,result:JSON.stringify(value),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
+            }catch(error){signal.throwIfAborted();toolFailure(call,activityId,title,error,call.function.name,'Do not invent facts or citations. Try a smaller result or a validated aggregate when the source response is too large.');}
             continue;
           }
           if(call.function.name==='manage_recovery'){
@@ -2030,8 +2044,8 @@ export class WebDashboardServer implements vscode.Disposable {
                 if(args['operation']==='restore')return restoreOfficeFile(current,args['id'],typeof args['revision']==='string'?args['revision']:undefined);
                 if(args['operation']==='discard'&&args['confirmed']===true)return discardOfficeFile(current,args['id']);
                 throw new Error('Choose restore, or explicitly confirmed permanent removal.');
-              });report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
-            }catch(error){report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'This saved file action did not finish.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This saved file action did not finish.'));}
+              });failedActions.delete(call.function.name);report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+            }catch(error){signal.throwIfAborted();toolFailure(call,activityId,'Manage saved files',error);}
             continue;
           }
           if(call.function.name==='manage_files'){
@@ -2058,7 +2072,7 @@ export class WebDashboardServer implements vscode.Disposable {
               const {deletedPath:_deleted,...safe}=value;
               report({id:activityId,kind:'tool-call',title,text:value.message??'Files inspected.',arguments:call.function.arguments,result:JSON.stringify(safe),status:'completed'});
               pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(safe)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(actionKey,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.'})});}
+            }catch(error){signal.throwIfAborted();toolFailure(call,activityId,title,error,actionKey,'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.');}
             continue;
           }
           if(call.function.name==='create_document'){
@@ -2082,7 +2096,7 @@ export class WebDashboardServer implements vscode.Disposable {
               const review=/\.pptx$/i.test(value.path)&&!integrations.rendererUrl?'Slide rendering is not configured. The editable PowerPoint is saved; visual layout has not been verified.':undefined;
               if(review)report({id:crypto.randomUUID(),role:'assistant',text:review});
               pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({...value,...(review?{visualReview:review}:{})})});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'Document could not be saved.');report({id:activityId,kind:'tool-call',title:'Create document',text:detail,arguments:call.function.arguments,status:'failed'});if(failedActions.get(`write_file:${String(args['path'])}`)===detail)throw new OfficeActionError(detail+' Repeated document attempts stopped. Saved work was preserved.');failedActions.set(`write_file:${String(args['path'])}`,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Use create_document only for XLSX, DOCX, PPTX or PDF. Use save_file for CSV, text and HTML. Large PowerPoints should use small saved JSON slideFiles. Inspect an existing file for its current revision before retrying. Do not claim success until the file is saved.'})});}
+            }catch(error){signal.throwIfAborted();const detail=userWorkspaceNotice(error instanceof Error?error.message:'Document could not be saved.');const repeated=failedActions.get(`write_file:${String(args['path'])}`)===detail;toolFailure(call,activityId,'Create document',error,`write_file:${String(args['path'])}`,'Use create_document only for XLSX, DOCX, PPTX or PDF. Use save_file for CSV, text and HTML. Large PowerPoints should use small saved JSON slideFiles. Inspect an existing file for its current revision before retrying. Do not claim success until the file is saved.');if(repeated)throw new OfficeActionError(detail+' Repeated document attempts stopped. Saved work was preserved.');}
             continue;
           }
           if(call.function.name==='use_office_skill'){
@@ -2119,25 +2133,32 @@ export class WebDashboardServer implements vscode.Disposable {
             signal.throwIfAborted();
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!current.features.includes('files'))throw new OfficeActionError('File access changed.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'Bundling files',status:'inProgress'});
-            try{sideEffects=true;const value=await createOfficeArchive(current,projectPath,args);report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'ZIP ready to download.',status:'completed'});report({id:crypto.randomUUID(),kind:'file-change',title:'Generated files',text:'ZIP ready to download.',status:'completed',changes:[{path:value.path,kind:'add'}]});deliverables.set(value.path,false);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});}catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'The ZIP could not be created.');report({id:activityId,kind:'tool-call',title:'Create ZIP',text:detail,status:'failed'});throw new OfficeActionError(detail);}
+            try{sideEffects=true;const value=await createOfficeArchive(current,projectPath,args);failedActions.delete(call.function.name);report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'ZIP ready to download.',status:'completed'});report({id:crypto.randomUUID(),kind:'file-change',title:'Generated files',text:'ZIP ready to download.',status:'completed',changes:[{path:value.path,kind:'add'}]});deliverables.set(value.path,false);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});}catch(error){signal.throwIfAborted();toolFailure(call,activityId,'Create ZIP',error);}
             continue;
           }
           const activityId=crypto.randomUUID(),title=call.function.name==="list_files"?"Browse files":call.function.name==="read_file"?"Read file":call.function.name==="save_file"?"Update file":call.function.name==='open_preview'?'Open preview':"Workspace action";
           report({id:activityId,kind:"tool-call",title,text:title,status:"inProgress",arguments:call.function.arguments});
+          let actionAllowed = false;
           try {
           const current=await getOfficeUser(user.id);
           if(!current?.enabled||current.role!=="user"||current.workspacePath!==user.workspacePath||!current.features.some(feature=>feature==="generalChat"||feature==="tasks")||!current.features.includes("files")||!tools.some(tool=>tool.function.name===call.function.name))throw new Error("Workspace access changed.");
+          actionAllowed = true;
           signal.throwIfAborted();
           const args=JSON.parse(call.function.arguments) as {path?:string;content?:string;revision?:string};
           if (call.function.name === 'open_preview' && (!current.features.includes('browser') || !/\.html?$/i.test(args.path ?? ''))) throw new OfficeActionError('Choose a saved HTML website to preview.');
           if(call.function.name==="save_file")sideEffects=true;
           const result:{messages:DashboardHostMessage[]}=call.function.name==='read_file'&&args.path&&/\.(xlsx|docx|pptx|pdf)$/i.test(args.path)&&!officeLocalProject(current.id,projectPath)?{messages:[{type:'dashboard:action-result' as const,requestId:call.id,action:'readWorkspaceFile' as const,status:'completed' as const,payload:{workspaceFile:{path:args.path,content:await readOfficeDocument(current,projectPath,args.path),kind:'text' as const,language:'text',mimeType:'text/plain',size:0,revision:await readWorkspaceFileRevision(projectPath,args.path)}}}]}:await this.processOfficeMessage(current,{type:"dashboard:action",requestId:`team-tool-${crypto.randomUUID()}`,action:call.function.name==="list_files"?"listWorkspaceFiles":['read_file','open_preview'].includes(call.function.name)?"readWorkspaceFile":"saveWorkspaceFile",payload:{projectPath,filePath:args.path,fileContent:args.content,fileRevision:args.revision}});
           const value=result.messages.find(item=>item.type==="dashboard:action-result");
+          signal.throwIfAborted();
+          const actionKey=`${call.function.name==='save_file'?'write_file':call.function.name}:${args.path??''}`;
+          if (value?.type !== 'dashboard:action-result' || value.status !== 'completed') {
+            toolFailure(call, activityId, title, value?.type === 'dashboard:action-result' ? value.error : undefined, actionKey);
+            continue;
+          }
+          if (call.function.name === 'read_file' && value.payload?.workspaceFile?.kind === 'binary') throw new OfficeActionError('This binary file cannot be read as text with the available file reader. Use a compatible reader or a supported text export.');
           if (call.function.name==='open_preview' && value?.type==='dashboard:action-result' && value.status==='completed' && value.payload?.workspaceFile?.kind!=='text') throw new OfficeActionError('Choose a saved HTML website to preview.');
           report({id:activityId,kind:"tool-call",title,text:title,status:value?.type==="dashboard:action-result"&&value.status==="completed"?"completed":"failed",arguments:call.function.arguments,result:JSON.stringify(value)});
-          const actionKey=`${call.function.name==='save_file'?'write_file':call.function.name}:${args.path??''}`;
-          if(value?.type==='dashboard:action-result'&&value.status==='completed')failedActions.delete(actionKey);
-          else failedActions.set(actionKey,value?.type==='dashboard:action-result'&&value.error?userWorkspaceNotice(value.error):'This action could not be completed. Please try again.');
+          failedActions.delete(actionKey);
           if(call.function.name==='save_file'&&value?.type==='dashboard:action-result'&&value.status==='completed')report({id:crypto.randomUUID(),kind:'file-change',title:'Updated files',text:'File saved.',status:'completed',changes:[{path:args.path??'',kind:args.revision?'update':'add'}]});
           if (['save_file','open_preview'].includes(call.function.name) && args.path && value?.type==='dashboard:action-result' && value.status==='completed') deliverables.set(pathLib.relative(projectPath,pathLib.resolve(projectPath,args.path)).split(pathLib.sep).join('/'),/\.html?$/i.test(args.path) && current.features.includes('browser'));
           let toolResult:unknown=value;
@@ -2154,7 +2175,12 @@ export class WebDashboardServer implements vscode.Disposable {
             }else toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. No single active viewer is available for confirmation. Provide its Open preview link.'};
           }
           pushResult({role:"tool",tool_call_id:call.id,content:JSON.stringify(toolResult).slice(0,160_000)});
-          } catch(error){report({id:activityId,kind:"tool-call",title,text:"This action could not be completed.",status:"failed",arguments:call.function.arguments});throw error;}
+          } catch(error){
+            if (!actionAllowed || signal.aborted) throw error;
+            let file = '';
+            try { const args = JSON.parse(call.function.arguments) as {path?:unknown}; if (typeof args.path === 'string') file = args.path; } catch { /* Return invalid arguments as a failed tool result. */ }
+            toolFailure(call,activityId,title,error,`${call.function.name==='save_file'?'write_file':call.function.name}:${file}`);
+          }
         }
         }
         throw new Error("The workspace task reached its action limit.");

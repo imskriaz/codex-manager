@@ -8,6 +8,7 @@ import {emailUiFixture} from './email-ui-fixture.mjs';
 import {checkUserDeliverablesUi} from './check-user-deliverables-ui.mjs';
 import {checkUserWorkspaceRecoveryUi} from './check-user-workspace-recovery-ui.mjs';
 import {checkUserMessageRenderingUi,checkUserFileRenderingUi} from './check-user-message-rendering-ui.mjs';
+import {checkToolFailureUi} from './check-tool-failure-ui.mjs';
 const origin='http://127.0.0.1:39875';
 const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
@@ -84,6 +85,9 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  await context.route('**/api/workspace/image?*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5WQAAAAASUVORK5CYII=','base64')}));
  const start=Date.now();await page.goto(origin+'/workspace');
  await page.locator('.cli-workspace').waitFor();
+ if(process.argv.includes('--tool-failure')){
+  await checkToolFailureUi(page,{width,output});assert.deepEqual(errors,[]);await context.close();continue;
+ }
  if(process.argv.includes('--composer-changes')){
   await page.getByRole('combobox',{name:'Project',exact:true}).click();
   await page.getByRole('button',{name:'Create new',exact:true}).click();
