@@ -3,6 +3,12 @@ import path from 'node:path';
 
 // The responsive harness intercepts the host and blocks API writes.
 export async function checkSystemStartupUi(page, { origin, width, output }) {
+  const consoleErrors = [];
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  // Settings loads email preferences even while their section is hidden.
+  await page.route('**/api/email/*', route => route.request().method() === 'GET'
+    ? route.fulfill({ json: { preferences: { address: '', enabled: false, ready: false, needsAnswer: false, failed: false, includeResult: false }, watches: [], available: false } })
+    : route.abort());
   await page.goto(origin);
   await page.locator('.cli-workspace').waitFor();
   const rail = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
@@ -18,7 +24,7 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   assert.equal(await active.getAttribute('aria-pressed'), 'false');
   assert.equal(await boot.isEnabled(), true, 'Boot startup works with Always Active off');
   await boot.click();
-  const modal = page.getByRole('dialog', { name: 'Set up Windows boot startup', exact: true });
+  const modal = page.getByRole('dialog', { name: 'Set up system startup', exact: true });
   await modal.waitFor();
   assert.equal(await boot.getAttribute('aria-pressed'), 'false', 'Opening instructions does not enable startup');
   await modal.getByText('Run as administrator', { exact: true }).waitFor();
@@ -27,10 +33,18 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   for (const command of ['Start-Process powershell -Verb RunAs', "Set-Location 'C:\\path\\to\\codex-manager'", 'npm.cmd ci', 'npm.cmd run compile', 'npm.cmd run standalone:restart']) {
     await modal.getByText(command, { exact: true }).waitFor();
   }
+  await modal.locator('summary').getByText('Windows', { exact: true }).click();
+  await modal.locator('summary').getByText('macOS', { exact: true }).click();
+  for (const command of ['cd /path/to/codex-manager', 'npm ci', 'npm run compile', 'npm start -- --background', 'npm run standalone:restart', '~/Library/LaunchAgents']) await modal.getByText(command, { exact: true }).waitFor();
+  await modal.getByText(/It does not start before sign-in/).waitFor();
+  assert.ok(await modal.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'macOS commands fit the setup dialog');
+  await page.screenshot({ path: path.join(output, `startup-macos-${width}.png`) });
+  await modal.locator('summary').getByText('macOS', { exact: true }).click();
+  await modal.locator('summary').getByText('Windows', { exact: true }).click();
   assert.ok(await modal.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Windows commands fit the setup dialog');
   assert.equal(await page.evaluate(() => window.__uiActions.some(m => m.type === 'dashboard:setting' && m.key === 'alwaysActiveStartWithSystem')), false);
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByText('Windows boot startup setup cancelled.', { exact: true }).waitFor();
+  await page.getByText('System startup setup cancelled.', { exact: true }).waitFor();
   await boot.click();
   const verify = modal.getByRole('button', { name: 'Verify and enable', exact: true });
   await verify.click();
@@ -59,5 +73,6 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   await modal.waitFor({state:'hidden'});
   assert.equal(await boot.getAttribute('aria-pressed'), 'true', 'Only matching confirmed success enables startup');
   assert.equal(await active.getAttribute('aria-pressed'), 'false', 'Always Active remains independent');
-  await page.getByText('Windows boot startup verified and enabled.', {exact:true}).first().waitFor();
+  await page.getByText('System startup registration verified and enabled. Windows starts at boot or sign-in; macOS starts at your next sign-in.', {exact:true}).first().waitFor();
+  assert.deepEqual(consoleErrors, [], 'Startup instructions have no browser console errors');
 }

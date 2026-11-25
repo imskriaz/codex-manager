@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.9",
+  "version": "3.0.1-pre.10",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -345,7 +345,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Start the local dashboard host when Windows boots, before sign-in. Separate from Always Active; administrator permission is required to register the boot task."
+          "markdownDescription": "Start the local dashboard host at Windows boot or sign-in, or at macOS user sign-in. Separate from Always Active. Windows needs administrator permission for a pre-sign-in boot task; macOS installs a per-user LaunchAgent without sudo for the next sign-in."
         },
         "codexManager.cloudflaredDomain": {
           "type": "string",

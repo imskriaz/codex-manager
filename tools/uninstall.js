@@ -78,6 +78,7 @@ async function main() {
   removeFile(startupLauncher);
   removeFile(startupLauncher?.replace(/\.cmd$/, ".vbs"));
   removeFile(path.join(storage, "always-online-relay-start.cmd"));
+  if (process.platform === 'darwin') removeFile(path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.codex-manager.always-online.plist'));
   if (process.platform === "win32") {
     const { execFileSync } = require("node:child_process");
     let bootTaskExists = true;

@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { getCodexManagerStorageRoot } from "./storageRoot";
+import { installMacRelayStartup, removeMacRelayStartup } from './macRelayStartup';
 
 const REGISTRY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const VALUE = "CodexManagerAlwaysOnline";
@@ -112,6 +113,11 @@ export async function resolveNodeExecutable(): Promise<string> {
 /** Register a pre-login Windows boot task. The task runs as SYSTEM so it does
  * not depend on an interactive account session being present. */
 export async function installRelayStartup(configPath: string, scriptPath: string, executable = process.execPath, enabled = true): Promise<void> {
+  if (process.platform === 'darwin') {
+    if (enabled) await installMacRelayStartup(configPath, scriptPath, executable);
+    else await removeMacRelayStartup();
+    return;
+  }
   if (process.platform !== "win32") return;
   if (!enabled) {
     await removeRelayStartup(configPath);
@@ -154,6 +160,7 @@ export async function installRelayStartup(configPath: string, scriptPath: string
 }
 
 export async function removeRelayStartup(configPath = path.join(getCodexManagerStorageRoot(), "always-online-relay.json")): Promise<void> {
+  if (process.platform === 'darwin') return removeMacRelayStartup();
   if (process.platform !== "win32") return;
   await removeBootTask();
   await removeLegacyRegistryEntry();

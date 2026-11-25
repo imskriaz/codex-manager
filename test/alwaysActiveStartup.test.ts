@@ -99,7 +99,8 @@ it('applies the latest boot toggle without disarming an existing Always Active h
   expect(spawn).toHaveBeenCalledOnce();
 });
 
-it('enables boot startup only after registration and verification finish', async () => {
+it.each(['win32', 'darwin'])('enables startup only after registration and verification finish on %s', async platformName => {
+  Object.defineProperty(process, 'platform', { ...platform, value: platformName });
   let finish!: () => void;
   vi.mocked(installRelayStartup).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
   const { host, spawn, settings } = server(false, false);
@@ -113,7 +114,8 @@ it('enables boot startup only after registration and verification finish', async
   expect(spawn).not.toHaveBeenCalled();
 });
 
-it('preserves the scheduler error and leaves boot disabled after failed verification', async () => {
+it.each(['win32', 'darwin'])('preserves the registration error and leaves startup disabled after failed verification on %s', async platformName => {
+  Object.defineProperty(process, 'platform', { ...platform, value: platformName });
   const error = new Error('Access is denied');
   vi.mocked(installRelayStartup).mockRejectedValueOnce(error);
   const { host, settings } = server(true, false);

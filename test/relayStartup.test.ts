@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({ exec: vi.fn(), stat: vi.fn(), unlink: vi.fn(), writeFile: vi.fn() }));
+const mac = vi.hoisted(() => ({ install: vi.fn(), remove: vi.fn() }));
+vi.mock('../src/utils/macRelayStartup', () => ({ installMacRelayStartup: mac.install, removeMacRelayStartup: mac.remove }));
 vi.mock("child_process", () => ({ execFile: fixture.exec }));
 vi.mock("fs/promises", () => ({ stat: fixture.stat, unlink: fixture.unlink, writeFile: fixture.writeFile }));
 import { installRelayStartup, migrateRelayStartup, removeRelayStartup, resolveNodeExecutable } from "../src/utils/relayStartup";
@@ -15,6 +17,15 @@ beforeEach(() => {
 afterEach(() => { Object.defineProperty(process,"platform",platform); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("relay startup without generated files", () => {
+  it('routes macOS registration and removal to the per-user LaunchAgent', async () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+    await installRelayStartup('config', 'script', 'node');
+    expect(mac.install).toHaveBeenCalledWith('config', 'script', 'node');
+    await installRelayStartup('config', 'script', 'node', false);
+    await removeRelayStartup();
+    expect(mac.remove).toHaveBeenCalledTimes(2);
+    expect(fixture.exec).not.toHaveBeenCalled();
+  });
   it("registers the packaged script and removes the legacy launcher only after success", async () => {
     await installRelayStartup("C:\\test home\\.codex\\always-online-relay.json", "C:\\extension\\tools\\always-online-server.js");
     expect(fixture.exec).toHaveBeenCalledWith("schtasks.exe", expect.arrayContaining(["/Create", "/SC", "ONSTART", "/RU", "SYSTEM"]), { windowsHide: true, timeout: 5000 }, expect.any(Function));

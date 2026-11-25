@@ -50,8 +50,8 @@ export async function handleDashboardSettingUpdate(
       return config.get<boolean>(key, !value) === value;
     case "alwaysActiveStartWithSystem":
       if (typeof value !== "boolean") return false;
-      if (value) throw new Error('Open Start with system setup and choose Verify and enable before enabling Windows boot startup.');
-      await runCrossWindowExclusive('host:windows-startup', 'Windows boot startup setup', async () => {
+      if (value) throw new Error('Open Start with system setup and choose Verify and enable before enabling system startup.');
+      await runCrossWindowExclusive('host:windows-startup', 'System startup setup', async () => {
         await removeRelayStartup();
         await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
       });

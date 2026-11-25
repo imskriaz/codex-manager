@@ -20,8 +20,8 @@ export function SystemStartupSetting(props: {
       const message = event.data;
       if (message?.type !== 'dashboard:action-result' || message.action !== 'enableSystemStartup' || message.requestId !== pending.current?.id) return;
       clear(); setBusy(false);
-      if (message.status !== 'completed') { setError(message.error || 'Windows boot startup was not verified. It remains off.'); return; }
-      props.onEnabled(); setNotice('Windows boot startup verified and enabled.'); setOpen(false);
+      if (message.status !== 'completed') { setError(message.error || 'System startup registration was not verified. It remains off.'); return; }
+      props.onEnabled(); setNotice('System startup registration verified and enabled. Windows starts at boot or sign-in; macOS starts at your next sign-in.'); setOpen(false);
     };
     window.addEventListener('message', receive);
     return () => { window.removeEventListener('message', receive); clear(); };
@@ -35,16 +35,17 @@ export function SystemStartupSetting(props: {
       clear(); setBusy(false); setError('Verification timed out. Its outcome is unconfirmed. Refresh settings before retrying; no request was replayed.');
     }, 30_000) };
   };
-  const cancel = () => { setOpen(false); setNotice('Windows boot startup setup cancelled.'); };
+  const cancel = () => { setOpen(false); setNotice('System startup setup cancelled.'); };
   return <>
-    <SettingsToggleBlock title="Start with system" sub="Start the local host when Windows boots, before sign-in. Setup must be verified before enabling."
+    <SettingsToggleBlock title="Start with system" sub="Start the local host at Windows boot or sign-in, or at macOS sign-in. Verify setup before enabling."
       enabled={props.enabled} disabled={busy}
       onToggle={enabled => { setError(''); setNotice(''); if (enabled) setOpen(true); else props.onDisable(); }} />
     {notice ? <div class="settings-note" role="status">{notice}</div> : null}
-    <ModalShell open={props.parentOpen && open} title="Set up Windows boot startup" closeLabel="Cancel startup setup" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={busy} onClose={cancel}>
-      <strong>Windows boot startup</strong>
-      <p>Set up startup on <strong>{props.targetName}</strong>. The switch stays off until Windows confirms registration.</p>
+    <ModalShell open={props.parentOpen && open} title="Set up system startup" closeLabel="Cancel startup setup" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={busy} onClose={cancel}>
+      <strong>Windows and macOS startup</strong>
+      <p>Set up startup on <strong>{props.targetName}</strong>. The switch stays off until Manager verifies the startup registration.</p>
       <p>Use the instructions for how Manager is running on the selected PC, even when viewing this dashboard from another device.</p>
+      <details open><summary>Windows</summary>
       <p><strong>Running in VS Code</strong></p>
       <ol><li>Close VS Code on that PC and reopen it using <strong>Run as administrator</strong>.</li>
         <li>Open Codex Manager settings again and choose <strong>Start with system</strong>.</li></ol>
@@ -54,9 +55,15 @@ export function SystemStartupSetting(props: {
         <li>For a new clone, run <code>npm.cmd ci</code>, then <code>npm.cmd run compile</code>.</li>
         <li>Run <code>npm.cmd run standalone:restart</code> to start or restart the standalone host from this checkout, then reopen its browser dashboard and choose <strong>Start with system</strong>.</li></ol>
       <p>Choose <strong>Verify and enable</strong> below. Manager registers and checks Windows startup before enabling this setting. Administrator access allows startup before sign-in; Windows may otherwise allow only startup at sign-in.</p>
-      <p>Always Active keeps the host running after VS Code closes and works separately from Windows startup. A direct Node.js host runs without VS Code.</p>
+      </details>
+      <details><summary>macOS</summary>
+        <p><strong>Using the VS Code extension</strong>: open Manager settings on the Mac, choose <strong>Start with system</strong>, then <strong>Verify and enable</strong>. Use your normal signed-in account; administrator access and sudo are unnecessary.</p>
+        <p><strong>Using a Node.js clone</strong>: in Terminal, run <code>cd /path/to/codex-manager</code>. For a new clone, run <code>npm ci</code> and <code>npm run compile</code>, then start it with <code>npm start -- --background</code>. To restart an existing standalone host, use <code>npm run standalone:restart</code>. Requires Node.js 22.13 or newer.</p>
+        <p>Open the Mac's browser dashboard and choose <strong>Verify and enable</strong>. Manager saves a validated LaunchAgent in <code>~/Library/LaunchAgents</code> for your next sign-in. It does not start before sign-in. Allow Manager in macOS Login Items if prompted. Keep the clone and Node.js at their registered paths.</p>
+      </details>
+      <p>Always Active keeps the host running after VS Code closes and works separately from system startup. A direct Node.js host runs without VS Code.</p>
       {error ? <div class="settings-note settings-notice-warning" role="alert">{error}</div> : null}
-      {busy ? <p role="status">Registering and verifying Windows boot startup…</p> : null}
+      {busy ? <p role="status">Registering and verifying system startup…</p> : null}
       <div class="modal-actions"><button type="button" disabled={busy} onClick={cancel}>Cancel</button>
         <button type="button" class="primary" disabled={busy || !props.connected} onClick={verify}>{busy ? 'Verifying…' : 'Verify and enable'}</button></div>
     </ModalShell>

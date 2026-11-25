@@ -108,9 +108,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   }
 
   async enableSystemStartup(): Promise<void> {
-    if (process.platform !== 'win32') throw new Error('Start with system currently requires Windows.');
-    if (!getCodexManagerConfiguration().get<boolean>('webDashboardEnabled', false)) throw new Error('Enable Web Dashboard before setting up Windows startup.');
-    await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Start with system currently requires Windows or macOS.');
+    if (!getCodexManagerConfiguration().get<boolean>('webDashboardEnabled', false)) throw new Error('Enable Web Dashboard before setting up system startup.');
+    await runCrossWindowExclusive(STARTUP_OPERATION, 'System startup setup', async () => {
       await this.prepareRelay(await this.getLocalHostKey(true), true);
     });
   }
@@ -314,14 +314,14 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     this.preparedRelay = prepared;
     let startWithSystem = enableStartup;
     try {
-      await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+      await runCrossWindowExclusive(STARTUP_OPERATION, 'System startup setup', async () => {
         const config = getCodexManagerConfiguration();
         startWithSystem = enableStartup || config.get<boolean>('alwaysActiveStartWithSystem', false);
         await installRelayStartup(configPath, scriptTarget, executable, startWithSystem);
         if (enableStartup) await config.update('alwaysActiveStartWithSystem', true, vscode.ConfigurationTarget.Global);
       }, { background: !enableStartup });
       this.startupWarning = undefined;
-      recordPersistentEvent("info", "node-host", startWithSystem ? "Windows boot startup task registered" : "Windows boot startup task removed", {
+      recordPersistentEvent("info", "node-host", startWithSystem ? "System startup registration saved" : "System startup registration removed", {
         configPath, scriptTarget, executable, startWithSystem
       });
     } catch (error) {
@@ -329,12 +329,12 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       if (error instanceof CrossWindowOperationBusyError) return prepared;
       if (startWithSystem) {
         try { await getCodexManagerConfiguration().update('alwaysActiveStartWithSystem', false, vscode.ConfigurationTarget.Global); }
-        catch (updateError) { recordPersistentEvent('error', 'node-host', 'Failed to reset unverified Windows startup setting', undefined, updateError); }
+        catch (updateError) { recordPersistentEvent('error', 'node-host', 'Failed to reset unverified system startup setting', undefined, updateError); }
       }
-      recordPersistentEvent("error", "node-host", "Windows boot startup task registration failed", {
+      recordPersistentEvent("error", "node-host", "System startup registration failed", {
         configPath, scriptTarget, executable, startWithSystem
       }, error);
-      const message = `Start with system could not ${startWithSystem ? "register the Windows boot task. Run the Manager host (VS Code or standalone Node.js) as administrator and retry" : "remove the Windows boot task; it may still start at boot"}. Always Active can still keep the host running after VS Code closes. ${error instanceof Error ? error.message : String(error)}`;
+      const message = `Start with system could not ${startWithSystem ? "register startup. On Windows, run the Manager host (VS Code or standalone Node.js) as administrator; on macOS, use your signed-in user account without sudo, then retry" : "remove startup; it may still start at boot or sign-in"}. Always Active can still keep the host running after VS Code closes. ${error instanceof Error ? error.message : String(error)}`;
       if (message !== this.startupWarning) {
         this.startupWarning = message;
         void vscode.window.showWarningMessage(message);
@@ -517,7 +517,7 @@ function requestShutdown(port: number, token: string): Promise<void> {
 }
 
 async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<void> {
-  await runCrossWindowExclusive(STARTUP_OPERATION, 'Windows boot startup setup', async () => {
+  await runCrossWindowExclusive(STARTUP_OPERATION, 'System startup setup', async () => {
     if (!getCodexManagerConfiguration().get<boolean>('alwaysActiveStartWithSystem', false)) await removeRelayStartup();
   }, { background: true });
   void context;

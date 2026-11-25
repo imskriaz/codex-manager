@@ -74,6 +74,16 @@ it("stops the relay with SQLite's current token instead of the retained legacy f
   expect(result.processStub.exitCode).toBe(0);
 });
 
+it('removes the macOS LaunchAgent on final uninstall', async () => {
+  const agent = path.join(root, 'Library', 'LaunchAgents', 'com.codex-manager.always-online.plist');
+  fs.mkdirSync(path.dirname(agent), { recursive: true });
+  fs.writeFileSync(agent, 'fixture');
+  const result = await run('darwin');
+  expect(fs.existsSync(agent)).toBe(false);
+  expect(result.requests).toHaveLength(1);
+  expect(result.processStub.exitCode).toBe(0);
+});
+
 it("uses legacy config only when no migrated record exists", async () => {
   const result = await run();
   expect(result.requests[0]!.headers["X-Codex-Admin"]).toBe("legacy-token");

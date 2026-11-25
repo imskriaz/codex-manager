@@ -108,6 +108,8 @@ npm run compile
 
 ### Standalone PC (without VS Code)
 
+Windows and macOS can run a cloned checkout directly with Node.js. In Windows PowerShell use `npm.cmd` in place of `npm` in the commands below; on macOS use Terminal and `npm`.
+
 Node.js 22.13 or newer can run Codex Manager directly on a PC. From the checkout:
 
 ```bash
@@ -128,6 +130,8 @@ That command runs `npm install`, compiles the current source, then starts an ind
 Use `npm run standalone:update -- --data-dir <path>` for a custom data directory, or `--config <path>` for an existing host configuration. The saved port is retained; `--port <number>` overrides it. A failed install or compile leaves the current host running. Restart outcomes and startup errors are saved in `standalone-update.log` beside `manager.sqlite`.
 
 Removing an older extension version after an upgrade preserves the shared standalone host and startup settings while another registered Manager installation remains. With System Log enabled, authenticated shutdown requests record whether they came from standalone restart, VS Code host control, or extension uninstall.
+
+**Start with system** works with both the VS Code extension and standalone Node.js. On Windows, run the host as administrator to register startup before sign-in; Windows may otherwise permit only startup at sign-in. On macOS, choose **Verify and enable** from your normal signed-in user account, without `sudo`. Manager validates and saves a LaunchAgent in `~/Library/LaunchAgents` for the next user sign-in. Keep Node.js and the checkout at their registered paths and allow the background item in macOS Settings if prompted. Disabling startup removes the next sign-in trigger while active sessions continue running.
 
 To reload an already compiled checkout without reinstalling dependencies or opening VS Code:
 
