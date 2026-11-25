@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1-pre.12
+
+- Accept text questions without attempting to load unused image previews. Report invalid visual questions clearly instead of exhausting automatic recovery.
+- Apply User Workspace steering to the active request at its next response step, with saved feedback, duplicate protection and active-turn checks.
+- Allow optional tool fields to be omitted and assemble PowerPoints from saved slide parts when the model also supplies inline placeholders.
+
 ## 3.0.1-pre.9
 
 - Save confirmed tool results and task context so User Workspace work resumes automatically after recoverable response failures and host restarts without repeating preparation or completed writes.

@@ -469,3 +469,17 @@ it('allows explicit resume of preserved work without another accepted message an
  await vi.waitFor(()=>expect(service.result(user.id,accepted.cliSession!.id).status).toBe('completed'));expect(generate).toHaveBeenCalledTimes(2);expect(readOfficeUsage(user.id).requests).toBe(1);
  expect(service.inspect(user.id,accepted.cliSession!.id).messages.filter(message=>message.role==='user')).toHaveLength(1);
 });
+it('steers the active workspace request once and rejects a stale turn',async()=>{
+ let finish!:(value:string)=>void;let continuation:any;
+ const generate=vi.fn(async(...args:any[])=>{continuation=args[9];return new Promise<string>(resolve=>{finish=resolve;});});
+ const {service}=setup(generate as any);const first=await service.handle(user,start());await vi.waitFor(()=>expect(continuation).toBeTruthy());
+ const turn=service.list(user.id)[0].steerTurnId!;expect(turn).toBeTruthy();
+ const action={type:'dashboard:action' as const,action:'steerCodexCliSessionTurn' as const,requestId:'steer-six',payload:{sessionId:first.cliSession!.id,expectedTurnId:turn,text:'6 slides'}};
+ expect((await service.handle(user,action)).notice?.message).toContain('Steer saved');await service.handle(user,action);
+ expect(continuation.takeSteering()).toEqual(['6 slides']);expect(continuation.takeSteering()).toEqual([]);expect(generate).toHaveBeenCalledOnce();
+ await expect(service.handle(user,{...action,payload:{...action.payload,text:'Changed duplicate'}})).rejects.toThrow('request changed');
+ continuation.save({messages:[],sideEffects:false,failedActions:[],deliverables:[],researchSources:[]});expect(storage.get<any>(`office-sessions:${user.id}`,first.cliSession!.id).turns[0].checkpoint.steeringIds).toEqual(['steer-six']);
+ await expect(service.handle(user,{...action,requestId:'stale-steer',payload:{...action.payload,expectedTurnId:'old'}})).rejects.toThrow('active request changed');
+ finish('Six slides ready');await vi.waitFor(()=>expect(service.list(user.id)[0].status).toBe('idle'));
+ expect(service.inspect(user.id,first.cliSession!.id).messages.filter(message=>message.text==='6 slides')).toHaveLength(1);
+});

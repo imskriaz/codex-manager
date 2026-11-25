@@ -8,8 +8,11 @@ import {readOfficeImage} from './officeFiles';
 export async function officeQuestionPreviews(user:OfficeUser,project:string,raw:unknown,questions:NonNullable<DashboardCliSessionMessage['questions']>):Promise<void>{
   if(!Array.isArray(raw))return;
   for(let index=0;index<raw.length;index++){
+    // Text lists do not use images; models may populate optional preview fields with empty paths.
+    if ((raw[index] as {view?:unknown})?.view === 'list') continue;
     const previews=(raw[index] as {previews?:unknown})?.previews;
     if(previews===undefined)continue;
+    if((raw[index] as {view?:unknown})?.view!=='grid'&&(previews===null||Array.isArray(previews)&&!previews.length))continue;
     if(!user.features.includes('files')||!project||!Array.isArray(previews)||previews.length>6||previews.length<2)throw new Error('Choose a project and two to six visual options.');
     const root=await fs.realpath(user.workspacePath),canonical=await fs.realpath(project);
     if(canonical===root)throw new Error('Choose a saved project for visual review.');

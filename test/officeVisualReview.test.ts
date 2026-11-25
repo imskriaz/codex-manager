@@ -12,6 +12,9 @@ beforeEach(async()=>{root=await fs.mkdtemp(path.join(os.tmpdir(),'office-visual-
 afterEach(async()=>{await removeTestDirectory(root);});
 const questions=():NonNullable<DashboardCliSessionMessage['questions']>=>[{title:'Choose',options:['Minimal','Editorial']}];
 const previews=()=>[{title:'Choose',previews:[{option:'Minimal',imagePath:'one.png'},{option:'Editorial',imagePath:'two.png',description:'More detail'}]}];
+it('treats empty optional previews as a text question without requiring file access',async()=>{
+ for(const previews of [null,[]])await expect(officeQuestionPreviews({...user,features:['generalChat']},'', [{title:'Choose',previews}],questions())).resolves.toBeUndefined();
+});
 it('verifies actual project images before publishing authenticated thumbnails',async()=>{const value=questions();await officeQuestionPreviews(user,project,previews(),value);expect(value[0].previews).toHaveLength(2);expect(value[0].previews?.[0].image).toMatch(/^\/api\/workspace\/image\?filePath=project/);expect(value[0].previews?.[1].description).toBe('More detail');});
 it('rejects the user root, traversal, wrong labels and unavailable file permissions',async()=>{
  await expect(officeQuestionPreviews(user,root,previews(),questions())).rejects.toThrow('saved project');

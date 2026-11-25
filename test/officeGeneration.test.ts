@@ -27,6 +27,12 @@ beforeEach(async()=>{
 afterEach(async()=>{server.dispose();vi.restoreAllMocks();configureSqliteStateStore(undefined);store.close();await removeTestDirectory(root);});
 const generate=()=> (server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Hi'}],new AbortController().signal,user.workspacePath,vi.fn());
 const toolResponse = (name:string,args:unknown) => new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+it('displays text questions with empty optional image fields without retrying',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('request_user_input',{questions:[{title:'Which country?',options:['Bangladesh','India'],view:'list',previews:[{option:'Bangladesh',imagePath:''},{option:'India',imagePath:''}]}]}) as never);
+ const report=vi.fn();await expect((server as any).teamSessions().options.generate(user,'fast',[{role:'user',content:'Create a presentation'}],new AbortController().signal,user.workspacePath,report)).resolves.toContain('Reply to the question');
+ expect(report.mock.calls.at(-1)?.[0].questions[0]).toMatchObject({title:'Which country?',view:'list'});expect(vi.mocked(upstream)).toHaveBeenCalledOnce();
+});
 it('continues after a real file save and lost model response without duplicating the file or accepted request',async()=>{
  const actor={...user,workspacePath:path.join(root,'private'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
  await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
@@ -470,12 +476,12 @@ it('assembles native editable slide parts without runtime permission and reports
  const actor={...user,workspacePath:path.join(root,'native'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
  await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
  await fs.writeFile(path.join(actor.workspacePath,'part.json'),JSON.stringify([{title:'Wage comparison',layout:'chart',chart:{labels:['Current','Proposed'],values:[12500,30000],unit:'BDT per month'}}]));
- vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('create_document',{path:'native.pptx',slideFiles:['part.json']}))
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('create_document',{path:'native.pptx',slideFiles:['part.json'],slides:[{title:'placeholder'}]}))
  .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:'Saved.'}}],usage:{total_tokens:1}})) as never);
  const report=vi.fn();const result=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,report);
  expect(result).toContain('native.pptx?download=1');expect((await fs.readFile(path.join(actor.workspacePath,'native.pptx'))).readUInt32LE(0)).toBe(0x04034b50);
  expect(report).toHaveBeenCalledWith(expect.objectContaining({role:'assistant',text:expect.stringContaining('visual layout has not been verified')}));
- const next=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(next.messages.at(-1).content).toContain('visualReview');
+ const next=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(next.messages.at(-1).content).toContain('visualReview');expect(next.tools.every((tool:any)=>tool.function.strict===false)).toBe(true);
 });
 
 it('automatically resumes malformed model output from durable source results without repeating research',async()=>{
@@ -517,4 +523,28 @@ it('reports host restart separately from revoked workspace access',async()=>{
  await expect((server as any).teamSessions().options.readUser('alex')).rejects.toThrow('service is restarting');
  (server as any).shuttingDown=false;(server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:false})};
  await expect((server as any).teamSessions().options.readUser('alex')).rejects.toThrow('Chat is disabled');
+});
+it('applies a steer received during a final response before delivering completion',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);
+ let ready=false;vi.mocked(upstream).mockClear().mockImplementationOnce(async()=>{ready=true;return new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Original answer'}}]})) as never;}).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Six slides'}}]})) as never);
+ const save=vi.fn();const takeSteering=vi.fn(()=>{if(!ready)return [];ready=false;return ['6 slides'];});
+ await expect((server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,user.workspacePath,vi.fn(),false,'session',undefined,{save,takeSteering})).resolves.toBe('Six slides');
+ const sent=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(sent.messages.at(-1)).toEqual({role:'user',content:'6 slides'});
+});
+it('stops identical document validation failures instead of repeating the same action',async()=>{
+ const actor={...user,workspacePath:root,features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ vi.mocked(upstream).mockClear().mockImplementation(async()=>toolResponse('create_document',{path:'invalid.pptx',slides:[{title:''}]} ) as never);
+ const report=vi.fn();await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,root,report)).rejects.toThrow('Repeated document attempts stopped');expect(vi.mocked(upstream)).toHaveBeenCalledTimes(2);
+ expect(report).toHaveBeenCalledWith(expect.objectContaining({title:'Create document',status:'failed',arguments:expect.stringContaining('invalid.pptx')}));
+});
+it('reports invalid visual questions as an explicit failure without generic recovery',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('request_user_input',{questions:[{title:'Choose',view:'grid',options:['A','B'],previews:[{option:'A',imagePath:''},{option:'B',imagePath:''}]}]}) as never);
+ await expect(generate()).rejects.toThrow('visual question could not be displayed');expect(vi.mocked(upstream)).toHaveBeenCalledOnce();
+});
+it('applies a late steer before executing an already-generated document action',async()=>{
+ vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(user);let ready=false;
+ vi.mocked(upstream).mockClear().mockImplementationOnce(async()=>{ready=true;return toolResponse('create_document',{path:'stale.pptx',slides:[{title:'Old request'}]}) as never;}).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Applied the new direction'}}]})) as never);
+ const takeSteering=()=>{if(!ready)return [];ready=false;return ['Do not create a file; answer here'];};
+ await expect((server as any).teamSessions().options.generate(user,'fast',[],new AbortController().signal,user.workspacePath,vi.fn(),false,'session',undefined,{save:vi.fn(),takeSteering})).resolves.toContain('new direction');
+ expect(vi.mocked(upstream)).toHaveBeenCalledTimes(2);
 });

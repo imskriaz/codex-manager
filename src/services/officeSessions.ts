@@ -60,7 +60,7 @@ function store() { const value = getSqliteStateStore(); if (!value) throw new Er
 function summary(session: Session): DashboardCliSessionSummary {
   const pending = session.turns.find(turn => ["queued", "working", "waiting"].includes(turn.state));
   return { recommendedSkills:readOfficeRecommendations(session.owner,readTeamSettings().presentation), id: session.id, title: session.title, projectPath: session.projectPath, model: session.model, modelProfile:session.profile, modelSelection:session.selection, reasoningEffort:session.reasoningEffort, interrupted:!pending&&!!session.turns.at(-1)&&!session.turns.at(-1)!.assistant&&!!(session.turns.at(-1)!.checkpoint||session.turns.at(-1)!.error||session.turns.at(-1)!.state==='uncertain'), updatedAt: session.updatedAt, archived: false,
-    status: pending ? "running" : "idle", canStop: !!pending, autoResumeEnabled: false,
+    status: pending ? "running" : "idle", canStop: !!pending, steerTurnId:pending?.state==='working'?pending.id:undefined, autoResumeEnabled: false,
     queueEnabled: pending?.state === "waiting" || pending?.state === "queued", queueRetryAt: pending && pending.state !== "working" ? pending.retryAt : undefined, queueError: pending && pending.state !== "working" ? pending.recoveryAttempts ? (pending.retryError ? pending.retryError + ' ' : '') + recoveryMessage(pending) : pending.retryAt ? officeCapacityMessage(pending.retryAt) : WAITING : undefined };
 }
 function messages(session: Session): DashboardCliSessionMessage[] {
@@ -213,7 +213,27 @@ export class OfficeSessionService {
       return { cliSessions: sessions, cliComposerConfig: { workspaceSkills:settings.defaultSkills, presentation:publicOfficePresentation(settings.presentation), recommendedSkills:readOfficeRecommendations(user.id,settings.presentation), models, modelMode:settings.modelMode,profilePicker:settings.profilePicker, defaultModel: settings.modelMode==='auto'?'auto':configured && allowed(configured) ? configured : undefined, projects: [{ id: user.id, label: "My workspace", path: user.workspacePath },...projects], defaultSandboxMode: "workspace-write", terminalSupported:false } };
     }
     if (action.action === "getCodexSkills") return { cliSkills: [] };
-    if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage" || action.action === "steerCodexCliSessionTurn") {
+    if(action.action==='steerCodexCliSessionTurn'){
+      const text=typeof p.text==='string'?p.text.trim():'';
+      if(!text||text.length>32000||!action.requestId||action.requestId.length>256)throw new OfficeActionError('Send a message of up to 32,000 characters.');
+      if(validateChatAttachments(p.attachments).length)throw new OfficeActionError('Queue attachments as a follow-up message. Steer accepts text while work is running.');
+      let session!:Session;
+      store().transaction(()=>{
+        session=this.read(user.id,p.sessionId!);
+        const previous=session.turns.flatMap(turn=>turn.activities??[]).find(activity=>activity.id===action.requestId&&activity.role==='user');
+        if(previous){if(previous.text!==text)throw new OfficeActionError('This request changed. Your message was kept; send it as a new follow-up.');return;}
+        const turn=session.turns.find(turn=>turn.state==='working');
+        if(!turn||turn.id!==p.expectedTurnId)throw new OfficeActionError('The active request changed. Your message was kept; send it as a follow-up.');
+        if((turn.activities??[]).filter(activity=>activity.role==='user').length>=20)throw new OfficeActionError('Wait for the current request before sending more steering messages. Your message was kept.');
+        checkOfficeEntitlement(user,turn.model??session.model);claimOfficeRequest(user);
+        turn.activities??=[];turn.activities.push({id:action.requestId,role:'user',text,timestamp:new Date().toISOString()});
+        if(user.limits?.storageMb&&officeStateBytes(user.id)+Buffer.byteLength(text,'utf8')+512>user.limits.storageMb*1048576)throw new OfficeQuotaError('Your storage allowance is full. Your message was kept.');
+        this.save(session);
+      });
+      this.publish(session);
+      return {cliSession:summary(session),cliSessionMessages:messages(session),cliSessions:this.list(user.id),notice:{level:'info',message:'Steer saved. The assistant will apply it at its next response step.'}};
+    }
+    if (action.action === "startCodexCliSession" || action.action === "sendCodexCliSessionMessage") {
       const text = typeof p.text === "string" ? p.text.trim() : "";
       if(p.model !== undefined && (typeof p.model !== "string" || p.model.length > 128)) throw new Error("Choose an available model.");
       if (text.length > 32_000 || !action.requestId || action.requestId.length > 256) throw new Error("Send a message of up to 32,000 characters.");
@@ -382,9 +402,16 @@ export class OfficeSessionService {
         if(value.state==='cancelled')return [];
         const text=[value.state==='uncertain'?'An earlier reply was not confirmed. Do not assume an action completed. Inspect saved work only if it is relevant to the current request; greetings and general chat do not need file checks.':'',value.user.text,...(value.attachmentContext??value.user.textAttachments??[]).map(file=>`<attached_file name=${JSON.stringify(file.name)} chars=${file.text.length}>\n${file.text}\n</attached_file>`)].filter(Boolean).join('\n\n');
         const content:OfficeChatMessage['content']=value.id===turn.id&&images.length?[{type:'text',text},...images.map(url=>({type:'image_url' as const,image_url:{url}}))]:text;
-        return [{role:'user' as const,content},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant').map(activity=>({role:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:'assistant' as const,content:value.assistant.text}]:[])];
+        return [{role:'user' as const,content},...(value.activities??[]).filter(activity=>messageSessionPlan(activity)||activity.role==='assistant'||value.id!==turn.id&&activity.role==='user').map(activity=>({role:activity.role==='user'?'user' as const:'assistant' as const,content:activity.questions?.length?JSON.stringify({message:activity.text,questions:activity.questions}):activity.text})),...(value.assistant?[{role:'assistant' as const,content:value.assistant.text}]:[])];
       });
-      const continuation:OfficeGenerationContinuation={checkpoint:turn.checkpoint,save:value=>{
+      const deliveredSteering=new Set<string>(turn.checkpoint?.steeringIds);
+      const continuation:OfficeGenerationContinuation={checkpoint:turn.checkpoint,takeSteering:()=>{
+        controller.signal.throwIfAborted();
+        const current=this.read(session.owner,session.id).turns.find(value=>value.id===turn.id);
+        if(current?.state!=='working'||current.lease!==turn.lease)throw new OfficeActionError('The active request changed. Saved work was preserved.');
+        return (current.activities??[]).filter(activity=>activity.role==='user'&&!deliveredSteering.has(activity.id)).map(activity=>{deliveredSteering.add(activity.id);return activity.text;});
+      },save:value=>{
+        value.steeringIds=[...deliveredSteering];
         controller.signal.throwIfAborted();
         store().transaction(()=>{
           const saved=this.read(session.owner,session.id),current=saved.turns.find(value=>value.id===turn.id);

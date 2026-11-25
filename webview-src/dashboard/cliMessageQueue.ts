@@ -270,6 +270,12 @@ export function useCliMessageQueue(props: { webview?: boolean; scope?: string; m
     steerNow: (id: string) => {
       const item = current.current.find(entry => entry.id === id);
       if (!owned.current || !ready || !item || item.state !== 'queued' || item.steerRequested) return;
+      if (options.current.canDispatchDraft?.(item.draft) === false) {
+        options.current.feedback('This message changes active task settings. It stays queued until the task finishes.'); return;
+      }
+      if (options.current.connected === false) {
+        options.current.feedback('Reconnecting. Your message stays queued; try Steer after reconnecting.'); return;
+      }
       const epoch = generation.current;
       update(current.current.map(entry => entry.id === id ? { ...entry, steerRequested: true, durable: false } : entry));
       void save(current.current).catch(() => false).then(saved => {

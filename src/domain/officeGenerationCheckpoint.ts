@@ -1,4 +1,5 @@
 export type OfficeGenerationCheckpoint = {
+  steeringIds?:string[];
   planId?:string;
   messages:Record<string,unknown>[];
   sideEffects:boolean;
@@ -7,6 +8,7 @@ export type OfficeGenerationCheckpoint = {
   researchSources:Array<[string,string]>;
 };
 export type OfficeGenerationContinuation = {
+  takeSteering?:()=>string[];
   checkpoint?:OfficeGenerationCheckpoint;
   save:(value:OfficeGenerationCheckpoint)=>void;
 };

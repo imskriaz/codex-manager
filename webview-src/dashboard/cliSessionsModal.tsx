@@ -1417,10 +1417,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     canSteer: queueDispatchReady,
     dispatchReason: queueDispatchReason,
     turnId: canSteer ? steeringTurnId : undefined,
-    send: value => !props.officeUser && followUpMode === 'steer' && canSteer && steeringTurnId
+    send: value => followUpMode === 'steer' && canSteer && steeringTurnId
       ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
       : props.onSend({ ...value, sandboxMode: undefined, projectPath: props.selectedSession?.projectPath }),
-    steer: value => !props.officeUser && steeringTurnId && canSteer
+    steer: value => steeringTurnId && canSteer
       ? props.onSteer?.({ text: value.text, attachments: value.attachments, expectedTurnId: steeringTurnId })
       : props.onSend({ ...value, sandboxMode: undefined, projectPath: props.selectedSession?.projectPath }),
     restore: value => {

@@ -568,3 +568,7 @@ it('recheck next-turn settings after the asynchronous storage fence', async()=>{
   finishWrite(true); await flush();
   expect(send).not.toHaveBeenCalled();
 });
+it('explains a blocked manual steer instead of silently waiting on changed settings',async()=>{
+ render({canDispatch:false,canSteer:true,canDispatchDraft:()=>false,steer});await flush();const id=queue.enqueue(draft('Six slides'));await flush();queue.steerNow(id);await flush();
+ expect(feedback).toHaveBeenCalledWith(expect.stringContaining('changes active task settings'));expect(steer).not.toHaveBeenCalled();expect(queue.items[0]?.steerRequested).toBeFalsy();
+});
