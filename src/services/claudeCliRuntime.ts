@@ -48,7 +48,7 @@ export function claudeEnvironment(): NodeJS.ProcessEnv {
 
 type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'subscriptionType' | 'apiProvider'> };
 const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], apiAccountIdentity('anthropic')]);
-let cached: ClaudeConnection & { key: string; at: number } | undefined;
+let cached: ClaudeConnection & { key: string } | undefined;
 let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
 export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage>): Promise<void> {
   await waitWithin((async () => {
@@ -64,7 +64,7 @@ export function cachedClaudeConnection(): ClaudeConnection | undefined { return 
 export async function discoverClaudeModels(refresh = false): Promise<ClaudeConnection> {
   const key = connectionKey();
   if (refresh) cached = undefined;
-  if (cached?.key === key && Date.now() - cached.at < (cached.models.length ? 60_000 : 5_000)) return cached;
+  if (cached?.key === key) return cached;
   if (discovery?.key === key) return discovery.pending;
   const pending = (async () => {
     const controller = new AbortController();
@@ -82,6 +82,6 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
     finally { controller.abort(); connection?.close(); }
   })();
   discovery = { key, pending };
-  try { const result = await pending; cached = { ...result, key, at: Date.now() }; return result; }
+  try { const result = await pending; cached = { ...result, key }; return result; }
   finally { if (discovery?.key === key) discovery = undefined; }
 }
