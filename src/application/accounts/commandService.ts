@@ -1,5 +1,5 @@
 import { isAutoSwitchLocked } from "../../presentation/workbench/autoSwitchState";
-import { clearApiAccountSelection, importCurrentApiAccounts } from '../../services/apiAccounts';
+import { clearApiAccountSelection, importCurrentApiAccounts, refreshApiAccounts } from '../../services/apiAccounts';
 import { runAccountBatch } from "./batch";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -400,6 +400,7 @@ export class AccountsCommandService {
       );
     let batchResult: DashboardBatchResult = { kind: "batch_refresh", successCount: 0, failedCount: 0, failures: [] };
     const refreshAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
+      const apiRefresh = refreshApiAccounts(undefined, respectQuotaCheckGap ? quotaCheckGapMs : 0);
       batchResult = await runAccountBatch(this.repo, accounts.map(account => account.id), async id => {
         if (options?.silent) {
           await refreshSingleQuotaSafely(this.repo, this.view, id, {
@@ -416,6 +417,10 @@ export class AccountsCommandService {
         onStart: (id, started, total) => progress?.report({ message: copy.refreshingStep(started, total, accounts.find(account => account.id === id)?.email ?? id) }),
         onComplete: () => this.view.refresh()
       });
+      const apiResult = await apiRefresh;
+      batchResult.successCount += apiResult.successCount;
+      batchResult.failedCount += apiResult.failedCount;
+      batchResult.failures.push(...apiResult.failures);
     };
 
     if (options?.silent) {

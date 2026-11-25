@@ -44,6 +44,33 @@ const until=async(predicate:()=>boolean)=>{await vi.waitFor(()=>expect(predicate
 const start=()=>sessions.startClaudeSession({text:'Hello',projectPath:root,model:'claude-code/opus',reasoningEffort:'high',sandboxMode:'danger-full-access',autoApprove:false});
 
 describe('Claude native sessions',()=>{
+  it.each(['assistant', 'stream_event', 'result'])('accepts a matching %s reply without waiting for user replay',async type=>{
+    mocks.query.mockImplementation(({prompt,options})=>({
+      initializationResult:async()=>({models:[{value:'opus',supportedEffortLevels:['high']}]}),
+      close:vi.fn(),
+      async *[Symbol.asyncIterator](){
+        const user=await prompt[Symbol.asyncIterator]().next();
+        yield {type,session_id:options.sessionId,parent_tool_use_id:null,user_message_uuids:[randomUUID(),user.value.uuid],event:{type:'message_start',message:{id:'reply',usage:{}}},message:{content:[]},is_error:false,usage:{},modelUsage:{},queued_turn_count:0};
+        yield {type:'result',session_id:options.sessionId,is_error:false,usage:{},modelUsage:{},queued_turn_count:0};
+      }
+    }));
+    const id=await start();await until(()=>sessions.readClaudeSession(id)?.status==='idle');
+    expect(getCodexSessionLiveState(id)?.status).toBe('completed');
+  });
+  it('preserves the startup abort reason when the SDK throws a generic abort',async()=>{
+    const controller=new AbortController();
+    mocks.query.mockImplementation(({prompt,options})=>({
+      initializationResult:async()=>({models:[{value:'opus',supportedEffortLevels:['high']}]}),close:vi.fn(),
+      async *[Symbol.asyncIterator](){
+        await prompt[Symbol.asyncIterator]().next();
+        controller.abort(new Error('Startup confirmation timed out. Check history before retrying.'));
+        throw new Error('Operation aborted');
+      }
+    }));
+    let id='';
+    await expect(sessions.startClaudeSession({text:'Hello',projectPath:root,model:'claude-code/opus',signal:controller.signal,onCreated:value=>{id=value;}})).rejects.toThrow('Startup confirmation timed out');
+    expect((await sessions.readClaudeHistory(id)).messages).toContainEqual(expect.objectContaining({text:'Startup confirmation timed out. Check history before retrying.'}));
+  });
   it('starts without opening an editor, streams, saves provider identity and records native quota',async()=>{
     const id=await start();await until(()=>sessions.readClaudeSession(id)?.nativeQuota?.limits.length===1);
     expect(nativeOptions).toMatchObject({model:'opus',sessionId:id,permissionMode:'default',allowDangerouslySkipPermissions:false,settingSources:['user','project','local']});

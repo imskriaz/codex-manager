@@ -43,10 +43,15 @@ try {
           }
           if (message.action === 'toggleAccountEnabled') { account.enabled = message.payload.enabled; if (!account.enabled) account.isActive = false; payload.notice = { level: 'info', message: `API account ${account.enabled ? 'enabled' : 'disabled'}.` }; }
           if (message.action === 'switch') { account.isActive = true; payload.notice = { level: 'info', message: 'Selected API account.' }; }
-          if (message.action === 'refresh') { status = 'failed'; error = 'Fixture API verification could not connect or timed out. The saved account was kept.'; }
+          if (message.action === 'refresh') { account.healthKind = 'refresh_failed'; account.healthLabel = 'API key check failed'; account.healthMessage = 'HTTP 401. Check the key.'; status = 'failed'; error = account.healthMessage; }
+          if (message.action === 'saveApiAccount') {
+            const previous=state.accounts.find(item=>item.id===message.payload.apiAccountId);
+            if(message.payload.apiAccount.apiKey==='bad-key'){status='failed';error='API validation failed (HTTP 401).';}
+            else {Object.assign(previous,{displayName:message.payload.apiAccount.name,healthKind:'healthy',healthLabel:'API key verified',healthMessage:undefined});payload.apiAccountSaved={id:previous.id};}
+          }
           if (message.action === 'getUsageGraph') payload.usageGraph = { capturedAt: Date.now(), rows: [] };
           dispatch({ type: 'dashboard:snapshot', state });
-          dispatch({ type: 'dashboard:action-result', action: message.action, requestId: message.requestId, status, error, payload });
+          dispatch({ type: 'dashboard:action-result', action: message.action, accountId: message.accountId, requestId: message.requestId, status, error, payload });
         }, 20);
       } });
     }, { state });
@@ -55,6 +60,7 @@ try {
     const api = page.getByRole('article', { name: 'API Key: OpenAI · Work API', exact: true });
     await api.waitFor();
     const loadMs = Date.now() - started;
+    assert.equal(await page.evaluate(()=>window.__apiLayout.actions.filter(action=>action.action==='refresh').length),0,'Dashboard load does not test API keys');
     for (const view of ['cards', 'list']) {
       if (view === 'list') await page.locator('.dashboard-view-toggle').first().click();
       for (const provider of ['OpenAI · Work API', 'Anthropic · Claude API']) {
@@ -89,7 +95,19 @@ try {
     await api.getByRole('button', { name: 'Select API account', exact: true }).click();
     await api.getByRole('button', { name: 'Selected API account', exact: true }).waitFor();
     await api.getByRole('button', { name: 'Verify API key', exact: true }).click();
-    await page.getByText('Fixture API verification could not connect or timed out.', { exact: false }).first().waitFor();
+    await api.getByRole('button',{name:'Check or change API key',exact:true}).click();
+    const editor=page.getByRole('dialog',{name:'API account details',exact:true});await editor.waitFor();
+    assert.equal(await editor.getByLabel('Provider API key',{exact:true}).inputValue(),'','The saved key is never sent to the editor');
+    await editor.getByLabel('Provider API key',{exact:true}).fill('bad-key');
+    await editor.getByRole('button',{name:'Test and save changes',exact:true}).click();
+    await editor.getByRole('alert').filter({hasText:'HTTP 401'}).waitFor();
+    assert.equal(await editor.getByLabel('Provider API key',{exact:true}).inputValue(),'bad-key');
+    await page.screenshot({path:`output/playwright/api-account-key-editor-${width}.png`});
+    await editor.getByLabel('Provider API key',{exact:true}).fill('replacement-key');
+    await editor.getByRole('button',{name:'Test and save changes',exact:true}).click();
+    await editor.waitFor({state:'hidden'});
+    assert.equal(await api.locator('.saved-reauthorize-control').count(),0,'Successful verification clears the reauthorization icon');
+    assert.equal(await page.locator('.dashboard-notice').filter({hasText:'HTTP 401'}).count(),0,'Invalid key feedback stays in the account card');
     await api.getByRole('button', { name: 'More account actions', exact: true }).click();
     const menu = page.locator('.saved-overflow-menu[role="menu"]');
     await menu.getByText('sk-••••1234', { exact: false }).waitFor();

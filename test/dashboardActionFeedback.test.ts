@@ -233,3 +233,10 @@ describe("dashboard action feedback", () => {
     });
   });
 });
+
+it('keeps API verification results on their account cards', () => {
+  for (const status of ['completed','failed'] as const) expect(noticeFromActionResult({type:'dashboard:action-result',requestId:'verify-api',action:'refresh',accountId:'api:anthropic:'+'a'.repeat(64),status,error:'HTTP 401'})).toBeUndefined();
+});
+it('keeps API-only batch failures on their account cards', () => {
+  expect(noticeFromActionResult({type:'dashboard:action-result',requestId:'verify-api-batch',action:'batchRefresh',status:'completed',payload:{batchResult:{kind:'batch_refresh',successCount:0,failedCount:1,failures:[{accountId:'api:anthropic:'+'a'.repeat(64),message:'HTTP 401'}]}}})).toBeUndefined();
+});

@@ -1,5 +1,5 @@
 import type { DashboardAccountViewModel } from "../../domain/dashboard/types";
-import { activeApiAccount, apiAccountCredential, listApiAccounts } from "../../services/apiAccounts";
+import { activeApiAccount, apiAccountCredential, apiAccountValidation, listApiAccounts } from "../../services/apiAccounts";
 import { getSqliteStateStore } from '../../storage/sqliteState';
 import { readApiAccountTokenUsage } from '../../storage/sqliteSessions';
 
@@ -17,6 +17,7 @@ export function apiDashboardAccounts(): DashboardAccountViewModel[] {
   const store = getSqliteStateStore();
   const usage = accounts.length && store ? readApiAccountTokenUsage(store) : undefined;
   return accounts.map((account) => {
+    const validation = apiAccountValidation(account);
     const isCurrent = account.enabled !== false && activeApiAccount(account.provider)?.id === account.id;
     return {
       id: account.id,
@@ -49,8 +50,9 @@ export function apiDashboardAccounts(): DashboardAccountViewModel[] {
       canToggleStatusBar: false,
       statusToggleTitle: "API account",
       hasQuota402: false,
-      healthKind: "healthy",
-      healthLabel: "API key saved",
+      healthKind: validation?.error ? "refresh_failed" : "healthy",
+      healthLabel: validation?.error ? "API key check failed" : validation ? "API key verified" : "API key not checked",
+      healthMessage: validation?.error,
       dismissedHealth: false,
       metrics: []
     };

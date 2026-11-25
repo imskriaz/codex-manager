@@ -6,6 +6,10 @@ export function noticeFromActionResult(
   automatic = false
 ): DashboardNotice | undefined {
   if (automatic) return undefined;
+  if (message.action === 'saveApiAccount') return undefined;
+  if (message.action === 'refresh' && message.accountId?.startsWith('api:')) return undefined;
+  if (['refreshAll', 'batchRefresh'].includes(message.action) && message.payload?.batchResult?.failedCount &&
+    message.payload.batchResult.failures.every(failure => failure.accountId?.startsWith('api:'))) return undefined;
   // These actions own feedback in the initiating workspace or request panel.
   if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "respondCodexServerRequest",
     "getWorkspaceEnvironment", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal",

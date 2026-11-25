@@ -6,7 +6,7 @@ import * as path from 'path';
 import { getSqliteStateStore } from '../storage/sqliteState';
 import { getCodexHome, readAuthFile } from '../codex/authFile';
 import { normalizeApiAccount, type ApiAccount, type ApiAccountInput, type ApiAccountProvider } from '../domain/apiAccounts';
-import { waitWithin } from '../utils/concurrency';
+import { runWithConcurrencyLimit, waitWithin } from '../utils/concurrency';
 
 const namespace = 'api-accounts';
 const runtime = new AsyncLocalStorage<{ accounts: Partial<Record<ApiAccountProvider, ApiAccount>>; keys: Map<string, string> }>();
@@ -89,15 +89,67 @@ export function removeApiAccount(id: string): void {
 
 /** Validation never follows redirects or includes upstream text that could echo a key. */
 export async function validateApiAccount(account: ApiAccount, signal = AbortSignal.timeout(10_000)): Promise<void> {
-  const key = apiAccountCredential(account);
+  try {
+    const key = apiAccountCredential(account);
+    await testApiAccount(account, key, signal);
+    storage().set('api-account-validation', account.id, { revision: account.updatedAt, checkedAt: Date.now() });
+  } catch (error) {
+    storage().set('api-account-validation', account.id, { revision: account.updatedAt, checkedAt: Date.now(), error: error instanceof Error ? error.message : 'API key verification failed.' });
+    throw error;
+  }
+}
+
+export function apiAccountValidation(account: ApiAccount): { checkedAt: number; error?: string } | undefined {
+  const result = getSqliteStateStore()?.get<{ revision: number; checkedAt: number; error?: string }>('api-account-validation', account.id);
+  return result?.revision === account.updatedAt ? result : undefined;
+}
+
+export async function refreshApiAccounts(ids?: string[], gapMs = 0): Promise<import('../domain/dashboard/types').DashboardBatchResult> {
+  const accounts = listApiAccounts().filter(account => ids ? ids.includes(account.id) : account.enabled !== false);
+  const result: import('../domain/dashboard/types').DashboardBatchResult = { kind: 'batch_refresh', successCount: 0, failedCount: 0, failures: [] };
+  await runWithConcurrencyLimit(accounts.filter(account => Date.now() - (apiAccountValidation(account)?.checkedAt ?? 0) >= gapMs), 3, async account => {
+    try { await validateApiAccount(account); result.successCount++; }
+    catch (error) {
+      if (!apiAccountValidation(account)?.error) throw error;
+      result.failedCount++;
+      result.failures.push({ accountId: account.id, message: apiAccountValidation(account)!.error! });
+    }
+  });
+  return result;
+}
+
+export async function saveValidatedApiAccount(input: ApiAccountInput, previousId?: string, revision?: number): Promise<ApiAccount> {
+  const store = storage(), previous = previousId ? store.get<ApiAccount>(namespace, previousId) : undefined;
+  if (previousId && (!previous || previous.updatedAt !== revision)) throw new Error('This API account changed. Reopen its details before saving.');
+  if (previous && input.provider !== previous.provider) throw new Error('Add a new account to change providers.');
+  const account = normalizeApiAccount(previous && !input.apiKey ? { ...input, apiKey: apiAccountCredential(previous) } : input);
+  await testApiAccount(account, account.apiKey, AbortSignal.timeout(10_000));
+  return store.transaction(() => {
+    if (previous && store.get<ApiAccount>(namespace, previous.id)?.updatedAt !== previous.updatedAt) throw new Error('This API account changed during verification. Reopen its details before saving.');
+    const newId = `api:${account.provider}:` + createHash('sha256').update(JSON.stringify([account.apiKey, account.baseUrl])).digest('hex');
+    if (previous && newId !== previous.id && store.get(namespace, newId)) throw new Error('These credentials already belong to another API account. Select that account instead.');
+    const selection = store.get<string>('api-account-selection', activeKey(account.provider));
+    let saved = saveApiAccount(account);
+    if (previous) {
+      saved = { ...saved, enabled: previous.enabled, queuePriority: previous.queuePriority, createdAt: previous.createdAt };
+      store.set(namespace, saved.id, saved);
+      store.set('api-account-selection', activeKey(saved.provider), selection === previous.id ? saved.id : selection);
+      if (saved.id !== previous.id) removeApiAccount(previous.id);
+    }
+    store.set('api-account-validation', saved.id, { revision: saved.updatedAt, checkedAt: Date.now() });
+    return saved;
+  });
+}
+
+async function testApiAccount(account: Pick<ApiAccount, 'provider' | 'baseUrl'>, key: string, signal: AbortSignal): Promise<void> {
   const modelsPath = account.provider === 'openai'
     ? '/models'
     : account.baseUrl.toLowerCase().endsWith('/v1') ? '/models' : '/v1/models';
   let response: Response;
   try { response = await fetch(`${account.baseUrl}${modelsPath}`, { signal, redirect: 'error', headers: account.provider === 'openai' ? { Authorization: `Bearer ${key}` } : { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }); }
-  catch { throw new Error('API validation could not connect or timed out. The saved account was kept; check the endpoint and retry.'); }
+  catch { throw new Error('API validation could not connect or timed out. Check the endpoint and retry.'); }
   await response.body?.cancel();
-  if (!response.ok) throw new Error(`API validation failed (HTTP ${response.status}). Check the key, endpoint and provider permissions. The saved account was kept.`);
+  if (!response.ok) throw new Error(`API validation failed (HTTP ${response.status}). Check the key, endpoint and provider permissions.`);
 }
 
 async function optionalJson(file: string): Promise<Record<string, unknown>> {

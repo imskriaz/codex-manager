@@ -50,6 +50,16 @@ type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; a
 const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], apiAccountIdentity('anthropic')]);
 let cached: ClaudeConnection & { key: string; at: number } | undefined;
 let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
+export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage>): Promise<void> {
+  await waitWithin((async () => {
+    for await (const message of connection) {
+      if (message.type !== 'result') continue;
+      if (message.is_error) throw new Error('Claude Haiku verification failed. Check the Claude login or API key and refresh.');
+      return;
+    }
+    throw new Error('Claude Haiku verification ended without a confirmed response.');
+  })(), 15_000, 'Claude Haiku verification timed out. Refresh to retry.');
+}
 export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.key === connectionKey() ? cached : undefined; }
 export async function discoverClaudeModels(refresh = false): Promise<ClaudeConnection> {
   const key = connectionKey();
@@ -63,12 +73,10 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
       const executable = await waitWithin(resolveClaudeCliExecutable(), 1_000, 'Claude detection timed out.');
       if (!executable) return { models: [] };
       const native = await claudeSdk();
-      async function* idle(): AsyncGenerator<SDK.SDKUserMessage> {
-        await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
-      }
-      connection = native.query({ prompt: idle(), options: { pathToClaudeCodeExecutable: executable, cwd: process.cwd(),
+      connection = native.query({ prompt: 'Reply with OK only.', options: { pathToClaudeCodeExecutable: executable, cwd: process.cwd(), model: 'haiku', maxTurns: 1, tools: [],
         env: claudeEnvironment(), abortController: controller, persistSession: false, settingSources: ['user','project','local'] } });
       const info = await waitWithin(connection.initializationResult(), 5_000, 'Claude model discovery timed out. Refresh to retry.');
+      await verifyClaudeHaiku(connection);
       return { models: createClaudeModelOptions(info.models), account: { email: info.account?.email, organization: info.account?.organization, subscriptionType: info.account?.subscriptionType, apiProvider: info.account?.apiProvider } };
     } catch (error) { return { models: [], warning: `Claude models unavailable: ${error instanceof Error ? error.message : String(error)}` }; }
     finally { controller.abort(); connection?.close(); }

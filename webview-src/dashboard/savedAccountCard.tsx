@@ -124,6 +124,7 @@ export function SavedAccountCard(props: {
   onToggleSelected: () => void;
   onExportAuth: () => void;
   onEditTags?: () => void;
+  sendAction?: import('./hookTypes').SendAction;
   onAction: (
     action:
       | "details"

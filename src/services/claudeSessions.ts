@@ -169,13 +169,16 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
       };
       for await (const raw of connection) {
         if (raw.session_id !== id) throw new Error('Claude returned a different session identity. No further input was sent.');
-        if (raw.type === 'user' && raw.uuid === input.uuid && !inputAccepted) {
+        const reply = raw.type === 'assistant' || raw.type === 'stream_event' || raw.type === 'result' ? raw : undefined;
+        const confirmed = raw.type === 'user' && raw.uuid ? [raw.uuid] : reply && (reply.type === 'result' || !reply.parent_tool_use_id)
+          ? reply.user_message_uuids ?? (reply.user_message_uuid ? [reply.user_message_uuid] : []) : [];
+        if (confirmed.includes(input.uuid!) && !inputAccepted) {
           inputAccepted = true; clearTimeout(timer);
           options.signal?.removeEventListener('abort', abortStartup);
           live.started(turnId); accepted();
           timer = setTimeout(() => controller.abort(new Error('The Claude connection did not complete within 30 minutes. Its outcome is unconfirmed; refresh before retrying.')), 30 * 60_000);
         }
-        if (raw.type === 'user' && raw.uuid) { running.pendingInputs.delete(raw.uuid); running.acknowledgements.get(raw.uuid)?.resolve(); running.acknowledgements.delete(raw.uuid); }
+        for (const uuid of confirmed) { running.pendingInputs.delete(uuid); running.acknowledgements.get(uuid)?.resolve(); running.acknowledgements.delete(uuid); }
         if (raw.type === 'assistant' || raw.type === 'user') for (const message of claudeMessage(raw)) publish(message);
         if (raw.type === 'stream_event') {
           const event = object(raw.event);
@@ -215,10 +218,11 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
       if (!inputAccepted) throw new Error('Claude ended before confirming the message. Refresh history before retrying.');
       if (!resultReceived) throw new Error(`Claude disconnected before completion was confirmed.${stderr ? ' ' + stderr : ''}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const failure = signal.aborted && signal.reason instanceof Error ? signal.reason : error;
+      const message = failure instanceof Error ? failure.message : String(failure);
       entry.failure = stopped ? undefined : message;
       entry.summary.interrupted = true;
-      if (!stopped) throw error;
+      if (!stopped) throw failure;
     } finally {
       const failureStatus = signal.aborted ? 'disconnected' as const : 'failed' as const;
       clearTimeout(timer); signal.removeEventListener('abort', abort);

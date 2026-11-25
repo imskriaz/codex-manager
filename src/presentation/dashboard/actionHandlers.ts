@@ -1,6 +1,6 @@
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
 import { localDictation } from '../../services/localDictation';
-import { clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, setApiAccountQueuePriority, validateApiAccount } from '../../services/apiAccounts';
+import { apiAccountValidation, clearApiAccountSelection, importCurrentApiAccounts, isApiAccountId, listApiAccounts, removeApiAccount, selectApiAccount, setApiAccountEnabled, setApiAccountQueuePriority, refreshApiAccounts, saveValidatedApiAccount } from '../../services/apiAccounts';
 import { isClaudeAccount, refreshClaudeDashboardAccount } from '../../application/dashboard/claudeAccount';
 import { readClaudeProxyMapping, saveClaudeProxyMapping } from '../../services/aiProxyModelMapping';
 import { requestLocalTeamSettings } from '../../services/teamSettingsRequest';
@@ -410,8 +410,11 @@ async function executeDashboardActionMessageCore(
         removeApiAccount(account.id);
         notice = { level: 'info', message: `Removed ${account.name}.` };
       } else if (message.action === 'refresh') {
-        await validateApiAccount(account);
-        notice = { level: 'info', message: 'API key verified. API billing and limits are managed by the provider.' };
+        await refreshApiAccounts([account.id]);
+        ctx.schedulePublishState();
+        const error = apiAccountValidation(account)?.error;
+        if (error) return { status: 'failed', errorMessage: error };
+        return { status: 'completed', payload: {} };
       } else throw new Error('This API account supports selection, starring, enable/disable, key verification and removal from the account list.');
       ctx.schedulePublishState();
       return { status: 'completed', payload: { notice } };
@@ -484,9 +487,9 @@ async function runDashboardAction(
   switch (action) {
     case 'saveApiAccount': {
       if (!payload?.apiAccount) throw new Error('Enter the API account details.');
-      const saved = saveApiAccount(payload.apiAccount);
+      const saved = await saveValidatedApiAccount(payload.apiAccount, payload.apiAccountId, payload.apiAccountRevision);
       ctx.schedulePublishState();
-      return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Saved ${saved.name}. The first account for this provider is selected automatically; use Select to switch accounts. Refresh verifies its key.` } };
+      return { apiAccountSaved: { id: saved.id }, notice: { level: 'info', message: `Key verified and saved ${saved.name}. The first account for this provider is selected automatically; use Select to switch accounts.` } };
     }
     case "localDictation":
       if (!getCodexManagerConfiguration().get<boolean>('localWhisperEnabled', false)) throw new Error('Enable Local Whisper in Settings before using local dictation.');
@@ -1813,12 +1816,20 @@ async function handleBatchRefresh(
   payload: DashboardActionPayload | undefined,
   translate: ReturnType<typeof t>
 ) {
-  const batchResult = await runAccountBatch(repo, payload?.accountIds ?? [], async id => {
+  const apiIds = payload?.accountIds?.filter(isApiAccountId) ?? [];
+  await refreshApiAccounts(apiIds);
+  const batchResult = await runAccountBatch(repo, payload?.accountIds?.filter(id => !isApiAccountId(id)) ?? [], async id => {
         const result = await refreshSingleQuota(repo, { refresh() {} }, id, {
           announce: false, forceRefresh: true, refreshView: false, warnQuota: false
         });
         if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
   }, { kind: "batch_refresh", onComplete: schedulePublishState });
+  for (const id of apiIds) {
+    const account = listApiAccounts().find(item => item.id === id);
+    const error = account ? apiAccountValidation(account)?.error : 'API account not found.';
+    if (error) { batchResult.failedCount++; batchResult.failures.push({ accountId: id, message: error }); }
+    else batchResult.successCount++;
+  }
   const success = batchResult.successCount;
   const failed = batchResult.failedCount;
   schedulePublishState();

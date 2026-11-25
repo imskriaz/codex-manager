@@ -712,6 +712,8 @@ export interface DashboardOAuthSessionDescriptor {
 export interface DashboardActionPayload {
   dictationRequest?: import('../../services/localDictation').LocalDictationRequest;
   apiAccount?: import('../apiAccounts').ApiAccountInput;
+  apiAccountId?: string;
+  apiAccountRevision?: number;
   coordinationRequest?: import('../sessionCoordination').SessionCoordinationRequest;
   masterUsername?: string;
   teamSettingsRequest?: { path: string; method: string; body?: unknown };

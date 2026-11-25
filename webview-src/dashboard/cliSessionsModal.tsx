@@ -632,6 +632,15 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<DashboardCliSessionSummary>();
   const [composerFeedback, setComposerFeedback] = useState<DashboardNotice>();
+  const toastedSessionErrors = useRef(new Set<string>());
+  useEffect(() => {
+    const failure = props.messages.filter(message => message.kind === 'error' || message.role === 'user' || message.role === 'assistant').at(-1);
+    if (failure?.kind !== 'error') return;
+    const key = JSON.stringify([props.selectedSession?.deviceId, props.selectedSession?.id, failure.id, failure.text]);
+    if (toastedSessionErrors.current.has(key)) return;
+    toastedSessionErrors.current.add(key);
+    props.onActionFeedback({ level: 'error', message: failure.text });
+  }, [props.messages, props.selectedSession?.id, props.selectedSession?.deviceId]);
   const [startsStorageReady, setStartsStorageReady] = useState(false);
   const startsStorageValid = useRef(true);
   useEffect(() => {
@@ -641,7 +650,18 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         const clearedDraft = acknowledgeCliComposerDraft(item.draft, item.draft);
         submittedDrafts.current.set(item.requestId, { ...item.draft, key: item.key, projectPath: item.projectPath, clearedDraft, failedDraft: clearedDraft, seenIds: new Set() });
       }
-      setPendingMessages(current => [...saved.filter(item => !current.some(candidate => candidate.requestId === item.requestId)).map(item => ({ requestId: item.requestId, key: item.key, failed: true, error: 'This tab reopened before creation was confirmed. Check sessions before resending; the prompt may already have been accepted.', message: { id: `pending-${item.requestId}`, role: 'user' as const, kind: 'message' as const, text: item.draft.text, images: item.draft.attachments.filter(file => file.kind === 'image').map(file => ({ src: file.data, alt: file.name })), textAttachments: chatAttachmentPreviews(item.draft.attachments) } })), ...current]);
+      setComposerDrafts(current => {
+        const next = { ...current };
+        for (const item of saved) {
+          const previous = next[item.key];
+          next[item.key] = previous ? { ...previous,
+            text: previous.text === item.draft.text ? previous.text : [previous.text, item.draft.text].filter(Boolean).join('\n\n'),
+            attachments: [...previous.attachments, ...item.draft.attachments.filter(file => !previous.attachments.some(existing => existing.id === file.id))] } : item.draft;
+          dirtyDraftFields.current.set(item.key, new Set(['text', 'attachments']));
+        }
+        return next;
+      });
+      if (saved.length) props.onActionFeedback({ level: 'warning', message: 'The previous session start was not confirmed. Your message is back in the composer. Check sessions before sending again.' });
     } catch (error) {
       startsStorageValid.current = false;
       props.onActionFeedback({ level: 'warning', message: `Session start recovery is unavailable: ${(error as Error).message}` });
@@ -660,7 +680,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   }, [pendingMessages, startsStorageReady]);
   useEffect(() => { if (props.connected !== false) setComposerFeedback(value => value && /reconnect|offline|connection lost/i.test(value.message) ? undefined : value); }, [props.connected]);
-  const reportLocalFeedback = (notice: DashboardLocalNotice, sourceKey = draftKey): void => { if(props.officeUser)notice={...notice,message:userWorkspaceNotice(notice.message)};if (currentDraftKey.current === sourceKey) setComposerFeedback(notice); props.onActionFeedback(notice); };
+  const reportLocalFeedback = (notice: DashboardLocalNotice, sourceKey = draftKey): void => { if(props.officeUser)notice={...notice,message:userWorkspaceNotice(notice.message)};if (currentDraftKey.current === sourceKey) setComposerFeedback(notice.level === 'error' ? undefined : notice); props.onActionFeedback(notice); };
   useEffect(() => setComposerFeedback(undefined), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   useEffect(() => {
     if (composerFeedback?.level !== 'info') return;
@@ -740,10 +760,16 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           return entry?.draft?.trim() === terminal.text ? { ...current, [terminal.key]: { ...entry, draft: '' } } : current;
         });
       }
-      setPendingMessages(current => current.map(item => item.requestId === result.requestId ? { ...item, sent: result.status === "completed", failed: result.status !== "completed", session: result.session ?? item.session, error: result.message } : item));
+      setPendingMessages(current => result.status === 'completed'
+        ? current.map(item => item.requestId === result.requestId ? { ...item, sent: true, session: result.session ?? item.session } : item)
+        : current.filter(item => item.requestId !== result.requestId));
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       if (result.session) submitted.session = result.session;
+      if (result.status !== 'completed' && !submitted.failedDraft) {
+        if (activeNewRequestRef.current === result.requestId) selectNewRequest();
+        props.onActionFeedback({ level: result.status === 'cancelled' ? 'warning' : 'error', message: result.message ?? 'Session could not start. Your message is back in the composer. Check sessions before retrying.' });
+      }
       if (result.status === 'completed' && result.session && activeNewRequestRef.current === result.requestId && (JSON.parse(submitted.key) as unknown[])[0] === (selectedDevice ?? 'local') && !props.selectedSession && !props.dashboardMode && !props.taskBoardActive) {
         const session = props.sessions.find(candidate => sameCliSessionTarget(candidate, result.session));
         if (session) { selectNewRequest(); props.onSelect(session, result.messages); }
@@ -755,7 +781,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         if (!draft) return current;
         const next = result.status === "completed"
           ? submitted.failedDraft === draft ? acknowledgeCliComposerDraft(draft, submitted) : { ...draft }
-          : { ...draft };
+          : restoreFailedCliComposerDraft(draft, submitted);
         if (result.status !== "completed") submitted.failedDraft = next;
         return { ...current, [submitted.key]: next };
       });
@@ -1397,7 +1423,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </div>;
     })()
   );
-  const renderStartingSession = (): preact.ComponentChildren => pendingMessages.filter(item => !item.sent && (JSON.parse(item.key) as unknown[])[0] === (selectedDevice ?? 'local')).map(item => <div key={item.requestId} role="listitem" class="cli-session-row is-starting" aria-live="polite">
+  const renderStartingSession = (): preact.ComponentChildren => pendingMessages.filter(item => !item.sent && !item.failed && !props.sessions.some(session => sameCliSessionTarget(item.session, session)) && (JSON.parse(item.key) as unknown[])[0] === (selectedDevice ?? 'local')).map(item => <div key={item.requestId} role="listitem" class="cli-session-row is-starting" aria-live="polite">
     <button type="button" class="cli-session-row-select" onClick={() => { props.onBackToList(); selectNewRequest(item.requestId); setNewChatProject(submittedDrafts.current.get(item.requestId)?.projectPath ?? ''); if (mobileLayout) setRailCollapsed(true); }}>
       <span class="cli-session-row-main has-project"><strong>{item.message.text || 'New session'}</strong><small class="cli-session-row-meta">{item.failed ? 'Session creation unconfirmed' : 'Starting new session…'}</small></span>
     </button><span class="cli-session-row-status">{item.failed ? 'Review' : <span class="cli-session-spinner" aria-hidden="true" />}</span></div>);
@@ -1802,7 +1828,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     const agent = relatedAgents.find(session => session.id === id);
                     if (!agent) { props.onActionFeedback({ level: 'warning', message: 'This agent is not in the saved session list. Refresh sessions and try again.' }); return; }
                     openContextTab('agents', id);
-                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items)} openQuestionId={props.openQuestionId} onQuestionOpened={props.onQuestionOpened} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={transcriptRunning} logoUri={props.officeUser?undefined:props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={openDeliverable} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
+                  }} messages={withAcceptedQueuedMessages(props.messages, messageQueue.items).filter(message => message.kind !== 'error')} openQuestionId={props.openQuestionId} onQuestionOpened={props.onQuestionOpened} onQuestionReply={!selectedArchived ? text => messageQueue.enqueue({ text, attachments: [] }) : undefined} questionDisabled={!messageQueue.ready} questionScope={draftKey} queuedAnswers={messageQueue.items.filter(item => item.state !== 'failed').map(queuedMessageView)} running={transcriptRunning} logoUri={props.officeUser?undefined:props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={openDeliverable} onOpenReviews={filePath => openContextTab('reviews', filePath)} /></SessionLinkContext.Provider>
                    {renderPendingMessages()}
                   {showWorking ? <WorkingMessage /> : null}
                   {quotaWaiting ? sessionNotice(quotaWaiting, quotaError ? sessionErrorDiagnostics(quotaError) : undefined) : null}

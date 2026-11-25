@@ -2284,6 +2284,7 @@ function App() {
                     setTagEditor({ account: { ...account, tags: [...(account.tags ?? [])] }, targetDeviceId, initialTags: tagDrafts.current.get(`${targetDeviceId ?? 'local'}:${account.id}`) });
                   }}
                   onAction={handleAccountAction}
+                  sendAction={sendAction}
                 />
   );
 

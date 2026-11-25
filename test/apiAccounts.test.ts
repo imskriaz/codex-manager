@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { normalizeApiAccount } from '../src/domain/apiAccounts';
-import { activeApiAccount, apiAccountCodexArgs, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity, clearApiAccountSelection, importCurrentApiAccounts, listApiAccounts, removeApiAccount, saveApiAccount, selectApiAccount, setApiAccountEnabled, validateApiAccount } from '../src/services/apiAccounts';
+import { activeApiAccount, apiAccountCodexArgs, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity, clearApiAccountSelection, importCurrentApiAccounts, listApiAccounts, removeApiAccount, refreshApiAccounts, saveApiAccount, saveValidatedApiAccount, selectApiAccount, setApiAccountEnabled, validateApiAccount } from '../src/services/apiAccounts';
 import { apiDashboardAccounts } from '../src/application/dashboard/apiAccounts';
 import { withApiAccountRuntime } from '../src/services/apiAccounts';
 
@@ -137,4 +137,35 @@ it('validates Anthropic accounts against the provider base path without double-p
   const gateway = saveApiAccount({ provider: 'anthropic', name: 'Claude gateway', apiKey: 'test-claude-gateway', baseUrl: 'https://gateway.example.test/v1/' });
   await expect(validateApiAccount(gateway)).resolves.toBeUndefined();
   expect(fetch).toHaveBeenLastCalledWith('https://gateway.example.test/v1/models', expect.objectContaining({ headers: { 'x-api-key': 'test-claude-gateway', 'anthropic-version': '2023-06-01' } }));
+});
+
+it('shows failed verification on the API card and clears it after a successful retry', async () => {
+  const account = saveApiAccount(input);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('private upstream body', {status:401})).mockResolvedValueOnce(new Response('{}')));
+  await expect(validateApiAccount(account)).rejects.toThrow('HTTP 401');
+  expect(apiDashboardAccounts()[0]).toMatchObject({healthKind:'refresh_failed',healthLabel:'API key check failed',healthMessage:expect.stringContaining('HTTP 401')});
+  expect(JSON.stringify(apiDashboardAccounts())).not.toContain('private upstream body');
+  await validateApiAccount(account);
+  expect(apiDashboardAccounts()[0]).toMatchObject({healthKind:'healthy',healthLabel:'API key verified',healthMessage:undefined});
+});
+
+it('uses the existing automatic refresh gap and skips disabled API accounts', async () => {
+  saveApiAccount(input);
+  const disabled = saveApiAccount({...input, apiKey:'disabled-test-key'});
+  setApiAccountEnabled(disabled.id,false);
+  const request=vi.fn().mockResolvedValue(new Response('{}'));
+  vi.stubGlobal('fetch',request);
+  await refreshApiAccounts(undefined,60000);
+  expect(request).toHaveBeenCalledTimes(1);
+  await refreshApiAccounts(undefined,60000);
+  expect(request).toHaveBeenCalledTimes(1);
+  await refreshApiAccounts();
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
+it('editing a disabled API account does not implicitly select or enable it',async()=>{
+  const account=saveApiAccount(input);const disabled=setApiAccountEnabled(account.id,false);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}')));
+  const edited=await saveValidatedApiAccount({...input,apiKey:'replacement-disabled-key'},disabled.id,disabled.updatedAt);
+  expect(edited.enabled).toBe(false);expect(activeApiAccount('openai')).toBeUndefined();
 });
