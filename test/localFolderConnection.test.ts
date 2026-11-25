@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('../webview-src/dashboard/teamSettingsRequest', () => ({ request: vi.fn() }));
-import { bindLocalFolderConnections, selectLocalFolderProject, forgetLocalFolder, chooseLocalFolder, performLocalFolderCommand, type LocalDirectory } from '../webview-src/dashboard/localFolderConnection';
+import { request } from '../webview-src/dashboard/teamSettingsRequest';
+import { bindLocalFolderConnections, ensureLocalFolderConnection, selectLocalFolderProject, forgetLocalFolder, chooseLocalFolder, performLocalFolderCommand, type LocalDirectory } from '../webview-src/dashboard/localFolderConnection';
 
 function directory(name = 'Project') {
   const entries = new Map<string, any>();
@@ -29,18 +30,27 @@ function directory(name = 'Project') {
   return { handle, entries, add };
 }
 afterEach(() => vi.unstubAllGlobals());
-it('checks permission only for the opened session and ignores removed or inactive saved folders',async()=>{
+it('keeps passive permission checks silent and requires access only when sending',async()=>{
   const root=directory('Outlook'),permission=vi.spyOn(root.handle,'queryPermission').mockResolvedValue('prompt');
   const records=new Map([['["alex","/outlook"]',{owner:'alex',project:'/outlook',handle:root.handle}]]);
   const get=vi.fn((key:string)=>{const reading={result:records.get(key),onsuccess:undefined as (()=>void)|undefined};queueMicrotask(()=>reading.onsuccess?.());return reading;});
-  const opening=vi.fn(()=>{const db={result:{transaction:()=>{const transaction={objectStore:()=>({get,delete:(key:string)=>{records.delete(key);queueMicrotask(()=>transaction.oncomplete?.());}}),oncomplete:undefined as (()=>void)|undefined};return transaction;},close:vi.fn()},onsuccess:undefined as (()=>void)|undefined};queueMicrotask(()=>db.onsuccess?.());return db;});
+  const opening=vi.fn(()=>{const db={result:{transaction:()=>{const transaction={objectStore:()=>({get,put:()=>queueMicrotask(()=>transaction.oncomplete?.()),delete:(key:string)=>{records.delete(key);queueMicrotask(()=>transaction.oncomplete?.());}}),oncomplete:undefined as (()=>void)|undefined};return transaction;},close:vi.fn()},onsuccess:undefined as (()=>void)|undefined};queueMicrotask(()=>db.onsuccess?.());return db;});
   vi.stubGlobal('indexedDB',{open:opening});const notice=vi.fn(),unbind=bindLocalFolderConnections('alex',notice);
   try {
     await Promise.resolve();expect(opening).not.toHaveBeenCalled();expect(notice).not.toHaveBeenCalled();
     selectLocalFolderProject('/other');await vi.waitFor(()=>expect(get).toHaveBeenCalledWith('["alex","/other"]'));expect(permission).not.toHaveBeenCalled();
-    selectLocalFolderProject('/outlook');await vi.waitFor(()=>expect(notice).toHaveBeenCalledWith(expect.objectContaining({message:expect.stringContaining('Reconnect Outlook')})));
-    notice.mockClear();await forgetLocalFolder('/outlook');selectLocalFolderProject('/outlook');await Promise.resolve();await Promise.resolve();expect(notice).not.toHaveBeenCalled();expect(permission).toHaveBeenCalledTimes(1);
-    records.set('["alex","/outlook"]',{owner:'alex',project:'/outlook',handle:root.handle});selectLocalFolderProject('/outlook');selectLocalFolderProject(undefined);await Promise.resolve();await Promise.resolve();expect(notice).not.toHaveBeenCalled();
+    selectLocalFolderProject('/outlook');await vi.waitFor(()=>expect(permission).toHaveBeenCalledOnce());expect(notice).not.toHaveBeenCalled();
+    await expect(ensureLocalFolderConnection('/outlook')).rejects.toThrow('Folder access is needed');expect(notice).not.toHaveBeenCalled();
+    await forgetLocalFolder('/outlook');await expect(ensureLocalFolderConnection('/outlook')).rejects.toThrow('draft has been kept');expect(notice).not.toHaveBeenCalled();expect(permission).toHaveBeenCalledTimes(2);
+    records.set('["alex","/outlook"]',{owner:'alex',project:'/outlook',handle:root.handle});permission.mockResolvedValue('granted');vi.stubGlobal('window',{dispatchEvent:vi.fn()});
+    vi.mocked(request).mockImplementation(async(_url,_method,body)=>{
+      const operation=(body as {operation:string}).operation;
+      if(operation==='poll')return new Promise(()=>{});
+      return operation==='connect'?{project:{id:'outlook',path:'/outlook',label:'Outlook',localFolder:{name:'Outlook'}}}:{};
+    });
+    await Promise.all([ensureLocalFolderConnection('/outlook'),ensureLocalFolderConnection('/outlook')]);
+    expect(vi.mocked(request).mock.calls.filter(([, ,body])=>(body as {operation:string}).operation==='connect')).toHaveLength(1);
+    await ensureLocalFolderConnection('/outlook');expect(notice).not.toHaveBeenCalled();
   } finally {unbind();}
 });
 

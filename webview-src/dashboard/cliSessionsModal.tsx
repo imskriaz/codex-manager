@@ -1,4 +1,5 @@
-import { localFolderConnectedEvent } from './localFolderConnection';
+import { ensureLocalFolderConnection, localFolderConnectedEvent } from './localFolderConnection';
+import type { DashboardCliProject } from '../../src/domain/dashboard/types';
 import { UserMessageText } from './userMessageText';
 import {CorporateHome} from './corporateHome';
 import {VoiceDictation} from './voiceDictation';
@@ -515,6 +516,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sessionRunningOrder = useRef(new Map<string, boolean>());
   const [search, setSearch] = useState("");
   const [projectEditTarget, setProjectEditTarget] = useState<{ project: { id: string; label: string; path: string }; deviceId?: string }>();
+  const [folderAccessRequest, setFolderAccessRequest] = useState<{project:DashboardCliProject;message:string;key:string}>();
+  const folderCheckPending = useRef(false);
+  const [folderChecking, setFolderChecking] = useState(false);
   const [draggedSession, setDraggedSession] = useState<DashboardCliSessionSummary>();
   const [dropProject, setDropProject] = useState<string>();
   const [moveTarget, setMoveTarget] = useState<DashboardCliSessionSummary>();
@@ -1541,6 +1545,20 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
     return requestId;
   };
+  const submitWithFolderAccess = (): void => {
+    const targetPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
+    const project = props.officeUser && projects.find(value => value.localFolder && canonicalWebPath(value.path) === canonicalWebPath(targetPath ?? ''));
+    if (!project || !model || !draft.trim() && !attachments.length || attachmentReading || !draftReadyKeys.has(draftKey)) { submit(); return; }
+    if (folderCheckPending.current) return;
+    folderCheckPending.current = true; setFolderChecking(true);
+    const sourceKey = draftKey;
+    let timer: ReturnType<typeof setTimeout>;
+    void Promise.race([ensureLocalFolderConnection(project.path), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Folder access could not be confirmed. Your message has not been sent. Reconnect the folder to continue.')), 12_000); })]).then(() => {
+      if (currentDraftKey.current === sourceKey) submit();
+    }, error => {
+      if (currentDraftKey.current === sourceKey) setFolderAccessRequest({project,message:error instanceof Error ? error.message : 'Folder access is required. Your draft has been kept.',key:sourceKey});
+    }).finally(() => { clearTimeout(timer); folderCheckPending.current = false; setFolderChecking(false); });
+  };
   const resendNewMessage = (requestId: string): void => {
     const saved = submittedDrafts.current.get(requestId);
     if (!saved || !saved.failedDraft || props.connected === false) return;
@@ -1754,6 +1772,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {!props.loading && !props.error && visibleSessions.length === 0 ? <EmptySessions simple={!!props.officeUser} search={Boolean(search)} section={section} /> : null}
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
           {projectEditTarget ? <EditProjectModal simple={!!props.officeUser} project={projectEditTarget.project} deviceId={projectEditTarget.deviceId} disabled={props.connected === false || props.mutating} onClose={() => setProjectEditTarget(undefined)} onChanged={() => { setProjectEditTarget(undefined); props.onProjectChanged?.(); }} onFeedback={props.onActionFeedback} /> : null}
+          {folderAccessRequest?.key === draftKey ? <EditProjectModal simple reconnectOnly project={folderAccessRequest.project} initialNotice={folderAccessRequest.message} disabled={props.connected === false} onClose={() => setFolderAccessRequest(undefined)} onChanged={() => {}} onFeedback={() => {}} onReconnected={() => { setFolderAccessRequest(undefined); if (currentDraftKey.current === folderAccessRequest.key) submit(); }} /> : null}
           <ModalShell open={Boolean(moveTarget)} title="Move session" closeLabel="Cancel session move" className="dashboard-modal-compact" onClose={() => { setMoveTarget(undefined); props.onActionFeedback({ level: 'info', message: 'Session move cancelled.' }); }}>
             <div class="workspace-dialog-fields"><p>Future work in this conversation will use the destination project folder.</p><div>Destination project<ProjectPicker label="Destination project" value={moveDestination} projects={composerProjects.filter(project => canonicalWebPath(project.path) !== canonicalWebPath(moveTarget?.projectPath ?? ''))} scope={moveTarget?.deviceId} disabled={props.connected === false} onChange={setMoveDestination} /></div><footer class="workspace-dialog-footer"><button type="button" disabled={!moveDestination || props.connected === false} onClick={() => { if (moveTarget) props.onMoveSession?.(moveTarget, moveDestination); setMoveTarget(undefined); }}>Move session</button></footer></div>
           </ModalShell>
@@ -1882,7 +1901,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   resumeDisabled={props.connected === false || props.mutating || access.pending || !messageQueue.ready || messageQueue.items.length > 0}
                   tokenUsage={props.liveState?.tokenUsage ?? props.selectedSession?.tokenUsage}
                   canSteer={canSteer}
-                  submitDisabled={!messageQueue.ready || !draftReadyKeys.has(draftKey)}
+                  submitDisabled={folderChecking || !messageQueue.ready || !draftReadyKeys.has(draftKey)}
                   stopDisabled={props.connected === false}
                   unavailableReason={props.connected === false ? "Reconnecting…" : props.selectedSession.status === "unknown" ? "Running state will be checked when sending" : composerBlockedByOwner ? "Running state will be checked when sending" : undefined}
                   stopping={props.stopping}
@@ -1895,7 +1914,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   onReasoning={setReasoningEffort}
                   onSandbox={access.change}
                   onProject={setProjectPath}
-                  onSubmit={() => { submit(); }}
+                  onSubmit={submitWithFolderAccess}
                   composerHeight={layout.composerHeight}
                   onResize={beginComposerResize}
                   onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)}
@@ -1909,7 +1928,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.officeUser?<AssistantMark/>:props.logoUri?<img src={props.logoUri} alt="" aria-hidden="true"/>:<CodexSessionIcon/>}</span><h2>{props.officeUser?presentation.welcomeTitle:<>What should we build in {composerProjects.find(project=>project.path===(newChatProject ?? projectPath))?.label??'your workspace'}?</>}</h2>{!props.officeUser||presentation.welcomeSubtitle?<p>{props.officeUser?presentation.welcomeSubtitle:'Describe the task and Codex will work directly in this project.'}</p>:null}{props.officeUser && officeOffline ? <p class="team-request-state user-welcome-availability" role="status">{quotaOfflineMessage(props.officeUser.availability!)}</p> : null}{props.officeUser?<CorporateHome cards={presentation.catalog} skills={recommendedSkills} onChoose={text=>{setDraft(text);requestAnimationFrame(()=>document.querySelector<HTMLTextAreaElement>('.cli-composer textarea')?.focus());}}/>:null}</div></section>
 
               {legacyDraftWarning}
-              <Composer dictationScope={draftKey} presentation={presentation} automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false}  simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject ?? projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={() => { submit(); }} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
+              <Composer dictationScope={draftKey} presentation={presentation} automaticModels={automaticModels} autoLocked={automaticModels&&props.composerConfig?.profilePicker===false}  simple={!!props.officeUser} onFeedback={props.onActionFeedback} feedback={composerFeedback ?? (messageQueue.error ? { level: "warning", message: messageQueue.error } : undefined) ?? (draftStorageError?.key === draftKey ? draftStorageError.notice : undefined)} attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} deviceId={props.selectedPeerId === "local" || props.selectedPeerId === localPeerId ? undefined : props.selectedPeerId} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} autoApprove={autoApprove} onAutoApprove={enabled => updateDraftSettings({ autoApprove: enabled })} followUpMode={followUpMode} onFollowUpMode={mode => updateDraftSettings({ followUpMode: mode })} projectPath={newChatProject ?? projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} fullAccessOnly={standaloneLocal} accessStatus={standaloneLocal ? "Standalone uses Full access. Auto approve defaults to On." : undefined} submitDisabled={props.connected === false || folderChecking || newChatSubmitPending || !draftReadyKeys.has(draftKey)} onDraft={value => { setComposerFeedback(undefined); setDraft(value); }} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submitWithFolderAccess} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
             </>
           )}
         </main>

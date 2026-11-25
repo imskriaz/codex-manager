@@ -14,6 +14,9 @@ function TrashIcon() {
 
 export function EditProjectModal(props: {
   simple?: boolean;
+  reconnectOnly?: boolean;
+  initialNotice?: string;
+  onReconnected?: () => void;
   project: DashboardCliProject;
   deviceId?: string;
   disabled?: boolean;
@@ -24,12 +27,12 @@ export function EditProjectModal(props: {
   const [name, setName] = useState(props.project.label);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState<DashboardNotice>();
+  const [notice, setNotice] = useState<DashboardNotice | undefined>(props.initialNotice ? {level:'warning',message:props.initialNotice} : undefined);
   const request = useRef<{ id: string; timer: ReturnType<typeof setTimeout> }>();
   const current = useRef(props);
   current.current = props;
-  const feedback = (value: DashboardNotice) => { setNotice(value); current.current.onFeedback(value); };
-  const cancel = () => { props.onFeedback({ level: 'info', message: 'Project editing cancelled.' }); props.onClose(); };
+  const feedback = (value: DashboardNotice) => { setNotice(value); if (!props.reconnectOnly) current.current.onFeedback(value); };
+  const cancel = () => { if (!props.reconnectOnly) props.onFeedback({ level: 'info', message: 'Project editing cancelled.' }); props.onClose(); };
 
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
@@ -80,22 +83,22 @@ export function EditProjectModal(props: {
     }
   };
 
-  return <><ModalShell open={!confirmDelete} title={`Edit ${props.project.label}`} closeLabel="Close project editor" className="edit-project-modal dashboard-modal-compact" closeDisabled={pending} closeOnBackdrop={false} onClose={cancel}>
+  return <><ModalShell open={!confirmDelete} title={props.reconnectOnly ? `Reconnect ${props.project.localFolder?.name ?? props.project.label}` : `Edit ${props.project.label}`} closeLabel="Close project editor" className="edit-project-modal dashboard-modal-compact" closeDisabled={pending} closeOnBackdrop={false} onClose={cancel}>
     <div class="workspace-dialog-fields">
-      <p class="workspace-dialog-description">Update the project label or remove this saved project from the list. The folder and conversations stay on the system.</p>
+      {props.reconnectOnly ? null : <p class="workspace-dialog-description">Update the project label or remove this saved project from the list. The folder and conversations stay on the system.</p>}
       {notice ? <p role="alert" class="edit-project-notice">{notice.message}</p> : null}
-      <label>Project name<input autoFocus value={name} maxLength={120} disabled={pending || props.disabled} onInput={event => setName(event.currentTarget.value)} /></label>
+      {props.reconnectOnly ? null : <label>Project name<input autoFocus value={name} maxLength={120} disabled={pending || props.disabled} onInput={event => setName(event.currentTarget.value)} /></label>}
       {props.simple && props.project.localFolder ? <div class="create-project-local-folder"><span>Local folder <small>{props.project.localFolder.name}</small></span><button type="button" disabled={pending || props.disabled} onClick={() => {
         if (pending) return;
         setPending(true); setNotice(undefined);
         void chooseLocalFolder().then(handle => {
           if (handle.name !== props.project.localFolder!.name) throw new Error(`Choose the original folder ${props.project.localFolder!.name}. Create a new project to connect a different folder.`);
           return connectLocalFolder(handle, name, props.project.path);
-        }).then(() => feedback({ level: 'info', message: 'Local folder reconnected.' }), error => feedback({ level: error instanceof Error && error.name === 'AbortError' ? 'info' : 'error', message: error instanceof Error && error.name === 'AbortError' ? 'Folder selection cancelled.' : error instanceof Error ? error.message : 'The folder could not reconnect.' })).finally(() => setPending(false));
+        }).then(() => { feedback({ level: 'info', message: 'Local folder reconnected.' }); props.onReconnected?.(); }, error => feedback({ level: error instanceof Error && error.name === 'AbortError' ? 'info' : 'error', message: error instanceof Error && error.name === 'AbortError' ? 'Folder selection cancelled.' : error instanceof Error ? error.message : 'The folder could not reconnect.' })).finally(() => setPending(false));
       }}>Reconnect folder…</button><small>Keep this browser open while using the folder.</small></div> : null}
       {!props.simple ? <div class="create-project-destination"><small>PROJECT FOLDER</small><code title={props.project.path}>{props.project.path}</code></div> : null}
 
-      <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => {setNotice(undefined);setConfirmDelete(true);}}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></footer>
+      <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button>{props.reconnectOnly ? null : <><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => {setNotice(undefined);setConfirmDelete(true);}}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></>}</footer>
     </div>
   </ModalShell>
   <ModalShell open={confirmDelete} title="Remove project?" closeLabel="Cancel project removal" className="dashboard-modal-compact dashboard-confirm-modal" closeDisabled={pending} closeOnBackdrop={false} onClose={()=>{setConfirmDelete(false);setNotice({level:'info',message:'Project removal cancelled.'});}}>

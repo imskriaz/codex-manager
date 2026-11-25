@@ -647,14 +647,15 @@ function App() {
   }, [sendAction]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
+  const localFolderFeedback = useRef(showNotice); localFolderFeedback.current = showNotice;
   useEffect(() => {
     if (!isBrowserDashboard || snapshot?.office?.role !== 'user' || !snapshot.office.features.includes('files')) return;
-    return bindLocalFolderConnections(snapshot.office.id, showNotice);
-  }, [snapshot?.office?.id, snapshot?.office?.role, snapshot?.office?.features.includes('files'), isBrowserDashboard, showNotice]);
+    return bindLocalFolderConnections(snapshot.office.id, notice => localFolderFeedback.current(notice));
+  }, [snapshot?.office?.id, snapshot?.office?.role, snapshot?.office?.features.includes('files'), isBrowserDashboard]);
   useEffect(() => {
-    if (isBrowserDashboard && snapshot?.office?.role === 'user' && snapshot.office.features.includes('files')) selectLocalFolderProject(getCliSessionIdFromPath(browserPath) === selectedCliSession?.id ? selectedCliSession?.projectPath : undefined);
+    if (isBrowserDashboard && snapshot?.office?.role === 'user' && snapshot.office.features.includes('files') && getCliSessionIdFromPath(browserPath) === selectedCliSession?.id) selectLocalFolderProject(cliComposerConfig?.projects?.find(project => project.localFolder && project.path === selectedCliSession?.projectPath)?.path);
     return () => selectLocalFolderProject(undefined);
-  }, [browserPath, selectedCliSession?.id, selectedCliSession?.projectPath, snapshot?.office?.id, snapshot?.office?.role, snapshot?.office?.features.includes('files'), isBrowserDashboard]);
+  }, [browserPath, cliComposerConfig?.projects, selectedCliSession?.id, selectedCliSession?.projectPath, snapshot?.office?.id, snapshot?.office?.role, snapshot?.office?.features.includes('files'), isBrowserDashboard]);
   useEffect(()=>{
     if(snapshot?.office?.role!=="user")return;
     const receive=(event:MessageEvent<DashboardHostMessage>)=>{
