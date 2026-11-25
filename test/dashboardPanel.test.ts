@@ -289,7 +289,7 @@ it('acknowledges saved settings only after the write succeeds in the webview', a
 
 it('coalesces session changes during a read and its cooldown, then remains idle and cancels on hide', async () => {
   vi.useFakeTimers();
-  vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as never);
+  vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as never);
   let finish!: (rows: never[]) => void;
   const read = vi.spyOn(sessionEditor, 'readCodexCliSessions').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue([]);
   const panel = { visible: true }, post = vi.fn();

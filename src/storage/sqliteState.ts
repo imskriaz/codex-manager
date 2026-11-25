@@ -16,6 +16,10 @@ export type Database = {
 };
 
 export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "session-preferences" | "state" | "auth" | "secrets";
+export function isSqliteBusy(error: unknown): boolean {
+  const code = (error as { errcode?: number } | undefined)?.errcode;
+  return typeof code === 'number' && [5, 6].includes(code & 255);
+}
 type ChangeListener = { topics: ReadonlySet<SqliteTopic>; changed: (topics: ReadonlySet<SqliteTopic>) => void };
 
 export class SqliteStateStore {
@@ -212,8 +216,12 @@ export class SqliteStateStore {
   }
 
   transaction<T>(write: () => T, mode: "write" | "read" = "write"): T {
+    return this.finishTransaction(write, mode);
+  }
+
+  private finishTransaction<T>(write: () => T, mode: "write" | "read", acquired = false): T {
     const savepoint = `manager_nested_${this.depth}`;
-    this.database.exec(this.depth ? `SAVEPOINT ${savepoint}` : mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE");
+    if (!acquired) this.database.exec(this.depth ? `SAVEPOINT ${savepoint}` : mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE");
     this.depth++;
     try {
       const result = write();
@@ -234,6 +242,20 @@ export class SqliteStateStore {
       if (!this.depth) { this.officeDepth = 0; this.officeTransaction = undefined; }
       if (mode !== "read") this.changed();
     }
+  }
+
+  /** Retry only lock acquisition, before the callback can change any state. */
+  async writeTransaction<T>(write: () => T, timeoutMs = 1_000): Promise<T> {
+    if (this.depth) return this.transaction(write);
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      try { this.database.exec('BEGIN IMMEDIATE'); break; }
+      catch (error) {
+        if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+        await new Promise<void>(resolve => setTimeout(resolve, 25));
+      }
+    }
+    return this.finishTransaction(write, 'write', true);
   }
 
   close(): void {
@@ -285,7 +307,7 @@ export function createSqliteMemento(store: SqliteStateStore, namespace: string, 
     },
     update: async (key: string, value: unknown) => {
       if (syncKeys.has(key)) await legacy.update(key, value);
-      store.set(namespace, key, value);
+      await store.writeTransaction(() => store.set(namespace, key, value));
     },
     setKeysForSync: (keys: readonly string[]) => {
       legacy.setKeysForSync?.(keys);

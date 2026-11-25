@@ -269,6 +269,23 @@ describe("dashboard tab persistence", () => {
     expect(group.tabs).toEqual([other]);expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
   });
 
+  it('opens immediately when optional recovery state cannot be written', async () => {
+    const module = await import('../src/presentation/dashboard/panel'), state = context(true);
+    state.workspaceState.update.mockRejectedValue(new Error('database is locked'));
+    await expect(module.openQuotaSummaryPanel(state as never, {} as never)).resolves.toBeUndefined();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('recovery state could not be saved')));
+  });
+
+  it('does not wait for optional recovery state when opening the dashboard', async () => {
+    const module = await import('../src/presentation/dashboard/panel'), state = context(true);
+    let finish!: () => void;
+    state.workspaceState.update.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    await module.openQuotaSummaryPanel(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+    finish();
+  });
+
   it.each(['dirty','refused','storage'])('does not open over stale tabs when cleanup is %s', async failure=>{
     const module=await import("../src/presentation/dashboard/panel"), state=context();
     const old={input:{viewType:'codexQuotaSummary'},isDirty:failure==='dirty'};

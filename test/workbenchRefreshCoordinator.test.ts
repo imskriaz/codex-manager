@@ -6,7 +6,8 @@ import { refreshImportedAccountQuota } from "../src/commands";
 import { readAuthFile } from "../src/codex";
 import { autoReloadWindowForAccount, promptWindowReloadForAccount } from "../src/application/accounts/switchEffects";
 import { readCurrentAuthAccountStorageId } from "../src/utils/accountIdentity";
-import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
+import { getCurrentWindowRuntimeAccountId, setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
+import { CrossWindowOperationBusyError } from "../src/utils/crossWindowOperations";
 
 vi.mock("../src/application/accounts/switchEffects", () => ({
   autoReloadWindowForAccount: vi.fn(),
@@ -199,6 +200,26 @@ describe("workbench external account synchronization", () => {
       pattern: path.basename(accountsIndexPath)
     });
     disposable.dispose();
+  });
+
+  it.each([Object.assign(new Error('database is locked'), { errcode: 5 }), new CrossWindowOperationBusyError('Codex credentials')])("defers a busy startup identity read without changing the runtime account: %s", async error => {
+    vi.mocked(readCurrentAuthAccountStorageId).mockRejectedValueOnce(error).mockResolvedValue('current-account');
+    const update = vi.fn().mockResolvedValue(undefined);
+    const repo = { listAccounts: vi.fn().mockResolvedValue([{ id: 'current-account', isActive: true }]) };
+    const coordinator = new WorkbenchRefreshCoordinator({ workspaceState: { get: () => undefined, update } } as never, repo as never, {} as never);
+    await expect(coordinator.initializeObservedAuthIdentity()).resolves.toBeUndefined();
+    expect(getCurrentWindowRuntimeAccountId()).toBe('old-account');
+    expect(update).not.toHaveBeenCalled();
+    await coordinator.initializeObservedAuthIdentity();
+    expect(getCurrentWindowRuntimeAccountId()).toBe('current-account');
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves non-contention startup identity errors", async () => {
+    const error = new Error('Credential storage unavailable');
+    vi.mocked(readCurrentAuthAccountStorageId).mockRejectedValueOnce(error);
+    const coordinator = new WorkbenchRefreshCoordinator({} as never, {} as never, {} as never);
+    await expect(coordinator.initializeObservedAuthIdentity()).rejects.toBe(error);
   });
 
   it("does not reload again when startup already matches the account in auth.json", async () => {

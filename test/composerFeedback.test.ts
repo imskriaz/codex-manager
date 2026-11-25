@@ -32,6 +32,8 @@ it('keeps queue rows collapsed with error details on the warning icon', () => {
   } as Parameters<typeof QueuedMessages>[0]['queue'], onRefresh() {} }));
   expect(tree.find(node => node.type === 'details')?.props.open).toBeUndefined();
   expect(tree.find(node => node.props.role === 'alert')?.props.title).toBe('The owner disconnected.');
+  expect(tree.find(node => node.props.class === 'cli-queued-message-error')?.props.children).toBe('The owner disconnected.');
+  expect(tree.some(node => node.props.title === 'Expand message, attachments, and error details')).toBe(true);
   expect(tree.some(node => node.props.role === 'status')).toBe(false);
   expect(tree.some(node => node.props['aria-label'] === 'Resend queued message')).toBe(true);
 });
@@ -140,18 +142,19 @@ it('keeps account center resize success and cancellation silent while reporting 
   expect(source).toContain("notice && notice.level !== 'info'");
 });
 
-it('keeps Stop available alongside a follow-up draft and attachments, with pending and connection guards', () => {
+it('shows Stop only without a follow-up draft or attachments, with pending and connection guards', () => {
   const onStop = vi.fn();
   const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], models: [], reasoningOptions: [], sending: true, stopping: false, stopDisabled: false, composerHeight: 160,
     onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop, onResize() {}, onResizeKeyDown() {} };
   for (const state of [{ draft: '' }, { draft: 'Follow up' }, { draft: '', attachments: [{ id: 'note', name: 'note.txt', kind: 'text' as const, mimeType: 'text/plain', size: 4, data: 'test' }] }]) {
     const tree = nodes(Composer({ ...config, ...state }));
     const stop = tree.find(node => node.props['aria-label'] === 'Stop')!;
-    expect(stop).toBeDefined();
-    expect(stop.props.disabled).toBe(false);
-    stop.props.onClick();
+    const hasMessage = Boolean(state.draft || state.attachments?.length);
+    expect(Boolean(stop)).toBe(!hasMessage);
+    expect(tree.some(node => node.type === 'button' && node.props.type === 'submit')).toBe(hasMessage);
+    if (stop) { expect(stop.props.disabled).toBe(false); stop.props.onClick(); }
   }
-  expect(onStop).toHaveBeenCalledTimes(3);
+  expect(onStop).toHaveBeenCalledTimes(1);
   for (const state of [{ stopping: true }, { stopDisabled: true }]) {
     const stop = nodes(Composer({ ...config, ...state })).find(node => node.props.class === 'cli-stop-button')!;
     expect(stop.props.disabled).toBe(true);

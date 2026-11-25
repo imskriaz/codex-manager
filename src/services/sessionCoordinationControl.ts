@@ -26,7 +26,7 @@ export function controlCoordinatedSession(store: SqliteStateStore, scope: { home
       if (!previous) throw new Error('This coordination operation was not found.');
       return result(previous.control);
     }
-    if (!request.toSessionId || request.toSessionId === sessionId) throw new Error('Choose another session to control.');
+    if (!request.toSessionId || request.toSessionId === sessionId && request.operation !== 'handover') throw new Error('Choose another session to control.');
     if (request.expectedTurnId !== undefined && (!request.expectedTurnId.trim() || request.expectedTurnId.length > 256)) throw new Error('Provide a valid expectedTurnId.');
     if (request.text !== undefined && (!request.text.trim() || request.text.length > 3500)) throw new Error('Use a task summary of 1–3,500 characters.');
     if (request.operation === 'handover' && (!request.handoverToSessionId || request.handoverToSessionId === request.toSessionId || !request.text?.trim())) throw new Error('Handover needs a different destination session and a task summary in text.');
@@ -49,8 +49,17 @@ export function controlCoordinatedSession(store: SqliteStateStore, scope: { home
       return summary;
     };
     const source = await read(targetSessionId);
+    if (request.operation !== 'resume' && request.expectedTurnId && source.status === 'running' && source.steerTurnId && source.steerTurnId !== request.expectedTurnId) throw new Error('The active turn changed. Refresh before stopping or handing over.');
+    // A caller can deliver its own checkpoint without interrupting the tool call carrying it.
+    if (request.operation === 'handover' && targetSessionId === sessionId && request.start !== true) {
+      await read(request.handoverToSessionId!);
+      markCodexSessionManualStop(nativeHome, targetSessionId, source.steerTurnId);
+      coordinateStoredSessions(store, scope, sessionId, { operation: 'send', toSessionId: request.handoverToSessionId!,
+        messageId: `handover-${createHash('sha256').update(key).digest('hex')}`, text: `Task handover from ${targetSessionId}:\n${request.text}` });
+      return save('completed', 'Task summary queued in the destination inbox. Automatic recovery is held; end this source turn at the checkpoint. Delivery has not been acknowledged and no destination turn was started.');
+    }
+    if (targetSessionId === sessionId && source.status !== 'idle') throw new Error('End this source turn before starting the destination, or use start:false to deliver its checkpoint without starting another turn.');
     if (request.operation !== 'resume') {
-      if (request.expectedTurnId && source.status === 'running' && source.steerTurnId && source.steerTurnId !== request.expectedTurnId) throw new Error('The active turn changed. Refresh before stopping or handing over.');
       markCodexSessionManualStop(nativeHome, targetSessionId, source.steerTurnId);
       if (source.status !== 'idle') {
         if (!previous && source.canStop && source.steerTurnId) {

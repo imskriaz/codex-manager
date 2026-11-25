@@ -16,7 +16,8 @@ import { buildWorkbenchRefreshSignature } from "./refreshSignature";
 import { getTokenAutomationSnapshot } from "./tokenAutomationState";
 import { autoReloadWindowForAccount } from "../../application/accounts/switchEffects";
 import { isCrossWindowAccountModeEnabled } from "../../services/windowAccountMode";
-import { runCrossWindowExclusive } from "../../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
+import { isSqliteBusy } from "../../storage/sqliteState";
 
 type RefreshView = {
   refresh: () => void;
@@ -36,6 +37,16 @@ export class WorkbenchRefreshCoordinator {
   ) {}
 
   async initializeObservedAuthIdentity(): Promise<void> {
+    try {
+      await this.initializeObservedAuthIdentityCore();
+    } catch (error) {
+      if (!(error instanceof CrossWindowOperationBusyError) && !isSqliteBusy(error)) throw error;
+      // The auth watcher reconciles this snapshot after startup contention clears.
+      console.info("[codexManager] startup account identity check deferred while storage is busy", error);
+    }
+  }
+
+  private async initializeObservedAuthIdentityCore(): Promise<void> {
     const detectedAccountId = await this.readObservedAuthIdentity();
     const runtimeAccountKey = getCurrentWindowRuntimeAccountKey();
     const persistedAccountId = this.context.workspaceState.get<string>(runtimeAccountKey);

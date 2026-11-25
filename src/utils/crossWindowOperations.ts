@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "async_hooks";
 import * as crypto from "crypto";
 import * as os from "os";
 import * as path from "path";
-import { getSqliteStateStore, SqliteStateStore } from "../storage/sqliteState";
+import { getSqliteStateStore, isSqliteBusy, SqliteStateStore } from "../storage/sqliteState";
 import { createSharedInspection } from "./concurrency";
 import { peekManagerCacheId, readManagerCacheEntry, writeManagerCacheEntry } from '../storage/managerCache';
 
@@ -74,7 +74,7 @@ export class CrossWindowOperationCoordinator {
         let deadline = startedAt + Math.min(120_000, Math.max(0, options.waitMs ?? 0));
         let acquired = false;
         do {
-          acquired = store.transaction(() => {
+          acquired = await store.writeTransaction(() => {
             const current = store.get<LockOwner>("operation-leases", key);
             if (current && !this.isStale(current, localKey)) {
               if (!options.background && current.background) {
@@ -96,6 +96,7 @@ export class CrossWindowOperationCoordinator {
         const controller = new AbortController();
         activeOwners.set(localKey, { token: owner.token, controller, background: owner.background });
         let leaseError: unknown;
+        let lastRenewedAt = Date.now();
         const renew = (): void => {
           try {
             const observed = store.get<LockOwner>("operation-leases", key);
@@ -109,7 +110,11 @@ export class CrossWindowOperationCoordinator {
               if (current.yieldRequested) controller.abort(new Error("Background ownership renewal yielded to an account switch."));
               store.set("operation-leases", key, { ...current, heartbeatAt: Date.now() });
             });
-          } catch (error) { leaseError = error; controller.abort(error); }
+            lastRenewedAt = Date.now();
+          } catch (error) {
+            if (isSqliteBusy(error) && Date.now() - lastRenewedAt < this.staleAfterMs) return;
+            leaseError = error; controller.abort(error);
+          }
         };
         const heartbeat = setInterval(renew, owner.background ? Math.min(50, this.heartbeatMs) : this.heartbeatMs);
         heartbeat.unref?.();
@@ -127,7 +132,7 @@ export class CrossWindowOperationCoordinator {
           clearInterval(heartbeat);
           activeOwners.delete(localKey);
           try {
-            store.transaction(() => {
+            await store.writeTransaction(() => {
               if (store.get<LockOwner>("operation-leases", key)?.token !== owner.token) throw new Error("The operation lease changed unexpectedly.");
               store.set("operation-leases", key, undefined);
             });

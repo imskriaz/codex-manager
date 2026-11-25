@@ -58,8 +58,12 @@ export function canResumeCodexSession(session: DashboardCliSessionSummary | unde
     !session.subAgent && !session.parentSessionId && (!session.goal || ['active','paused','usage_limited'].includes(session.goal.status)));
 }
 
-export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "status" | "archived" | "interrupted" | "queueEnabled" | "queueError" | "goal" | "subAgent" | "parentSessionId">): boolean {
-  return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' && session.goal?.status !== 'paused' && (session.status === "running" ||
+export function canConfigureCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "provider" | "archived" | "subAgent" | "parentSessionId">): boolean {
+  return session.provider !== 'claude' && !session.archived && !session.subAgent && !session.parentSessionId;
+}
+
+export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "provider" | "status" | "archived" | "interrupted" | "queueEnabled" | "queueError" | "goal" | "subAgent" | "parentSessionId">): boolean {
+  return canConfigureCodexSessionAutoResume(session) && session.goal?.status !== 'complete' && session.goal?.status !== 'paused' && (session.status === "running" ||
     (session.status === "idle" && session.interrupted === true && !session.queueEnabled && !session.queueError));
 }
 

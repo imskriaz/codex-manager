@@ -24,7 +24,7 @@ import {
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
-import { isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
+import { canConfigureCodexSessionAutoResume, isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
   it("uses the compact browser toolbar and anchored three-dot menu", () => {
@@ -155,9 +155,19 @@ describe("sessions sidebar layout", () => {
     expect(showsCodexSessionAutoResume({ status: "idle" })).toBe(false);
     for (const patch of [{ subAgent: true }, { parentSessionId: 'parent' }, { goal: { objective: 'Done', status: 'complete' } }, { goal: { objective: 'Paused', status: 'paused' } }])
       expect(showsCodexSessionAutoResume({ ...interrupted, ...patch })).toBe(false);
-    for (const file of ["main.tsx", "cliSessionsModal.tsx"]) {
-      expect(readFileSync(`webview-src/dashboard/${file}`, "utf8")).toContain("showsCodexSessionAutoResume(session) ?");
+    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("showsCodexSessionAutoResume(session) ?");
+    expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("canConfigureCodexSessionAutoResume(session) ?");
+    expect(readFileSync("webview-src/dashboard/taskBoard.tsx", "utf8")).toContain("canConfigureCodexSessionAutoResume(task.session) ?");
+  });
+
+  it("keeps Auto Resume preferences available for idle sessions without changing resume eligibility", () => {
+    const idle = { status: 'idle' as const, id: 'session', title: 'Session', projectPath: '/project', updatedAt: 1 };
+    for (const patch of [{}, { interrupted: false }, { status: 'unknown' as const }, { queueEnabled: true }, { goal: { objective: 'Done', status: 'complete' } }, { goal: { objective: 'Paused', status: 'paused' } }]) {
+      expect(canConfigureCodexSessionAutoResume({ ...idle, ...patch })).toBe(true);
+      expect(showsCodexSessionAutoResume({ ...idle, ...patch })).toBe(false);
     }
+    for (const patch of [{ archived: true }, { subAgent: true }, { parentSessionId: 'parent' }, { provider: 'claude' as const }])
+      expect(canConfigureCodexSessionAutoResume({ ...idle, ...patch })).toBe(false);
   });
 
   it("blocks unverified access changes and checks running state when sending", () => {
@@ -172,7 +182,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('onRetryFeedback={messageQueue.error ? messageQueue.retryLoad : sessionReadError ? props.onRefreshMessages : undefined}');
     expect(source).not.toContain('class="cli-workspace-feedback is-warning"');
     expect(source).toContain('accessDisabled={props.connected === false || access.pending || props.selectedSession.status === "unknown"}');
-    expect(source).toContain('stopDisabled={props.connected === false || !ownedLiveTurn && !props.selectedSession.canStop}');
+    expect(source).toContain('stopDisabled={props.connected === false}');
   });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
@@ -219,7 +229,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("function CopySnippet");
     expect(main).not.toContain('if (feedback.level === "info") return;');
     expect(source).toContain("if (notice.level !== 'info') props.onActionFeedback(notice)");
-    expect(source).toContain("setComposerFeedback(notice); props.onActionFeedback(notice);");
+    expect(source).toContain("setComposerFeedback(notice.level === 'error' ? undefined : notice); props.onActionFeedback(notice);");
     expect(main).toContain("onActionFeedback={showNotice}");
     expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
     expect(css).toContain("touch-action: pan-x");
@@ -660,7 +670,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain('class="cli-binary-file-state"');
-    expect(source).toContain("This file is ready to download from the selected system.");
+    expect(source).toContain("A visual preview is not available for this file type. Download the original file to view it.");
     expect(source).toContain("Downloads save a local copy and do not modify the project.");
     expect(css).toContain(".cli-binary-file-state");
     expect(css).toContain(".cli-binary-file-actions > button");

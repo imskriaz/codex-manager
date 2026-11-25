@@ -642,13 +642,14 @@ export async function openQuotaSummaryPanel(context: vscode.ExtensionContext, re
   if (!dashboardOpening) {
     const task = (async () => {
       await closeQuotaSummaryTabsForExtensionHostRestart(context);
-      if (reopenAfterRestart && !context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false))
-        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
       dashboardPanelController ??= new DashboardPanelController(context, repo);
       dashboardPanelController.open(preserveFocus);
       if (reopenAfterRestart || context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
-        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
         reopenAfterRestart = false;
+        void Promise.resolve().then(() => context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false)).catch((error: unknown) => {
+          recordPersistentEvent('warning', 'dashboard-state', 'Dashboard opened, but its recovery state could not be saved', undefined, error);
+          void vscode.window.showWarningMessage('Codex Manager opened, but recovery state could not be saved. It may reopen after restarting VS Code.');
+        });
       }
     })();
     dashboardOpening = task;

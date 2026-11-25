@@ -132,7 +132,7 @@ import {
   releaseCrossWindowAccount
 } from "../services/windowAccountMode";
 import { cancelCodexSessionAutoResume } from "../services/codexSessionAutoResume";
-import { getSqliteStateStore, isSqliteError, sqliteStoreForFile } from "./sqliteState";
+import { getSqliteStateStore, isSqliteBusy, isSqliteError, sqliteStoreForFile } from "./sqliteState";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -266,7 +266,7 @@ export class AccountsRepository {
         // Another VS Code window may legitimately own the startup auth sync.
         // Do not fail activation in that case: the shared index remains usable,
         // and the workbench will schedule the existing deferred retry path.
-        if (cause instanceof CrossWindowOperationBusyError) {
+        if (cause instanceof CrossWindowOperationBusyError || isSqliteBusy(cause)) {
           console.info("[codexManager] startup account auth sync is owned by another window; deferring retry");
           return { authSyncCompleted: false };
         }

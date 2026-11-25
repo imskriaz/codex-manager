@@ -101,3 +101,20 @@ it('rejects locked destinations, foreign projects and archived sessions before l
     await expect(control('resume')).rejects.toThrow(); expect(mocks.send).not.toHaveBeenCalled();
   }
 });
+
+it('delivers a running caller checkpoint once without interrupting itself or starting a competing writer', async () => {
+  mocks.summary.mockImplementation(async id => ({ id, projectPath: '/project', status: 'running', canStop: true, steerTurnId: 'live' }));
+  const args = { toSessionId: self, handoverToSessionId: destination, text: 'Finish the verified checkpoint' };
+  expect(await control('handover', args)).toMatchObject({ control: { status: 'completed', message: expect.stringContaining('end this source turn') } });
+  await control('handover', args);
+  const inbox = await coordinateCodexSessions('/project', destination, { operation: 'read' });
+  expect(inbox.messages).toHaveLength(1);
+  expect(readCodexSessionPreferences(mocks.home, [self]).get(self)?.manualStop).toBe(true);
+  expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.send).not.toHaveBeenCalled();
+});
+
+it('rejects starting a destination from a running caller without interrupting itself', async () => {
+  mocks.summary.mockImplementation(async id => ({ id, projectPath: '/project', status: 'running' }));
+  await expect(control('handover', { toSessionId: self, handoverToSessionId: destination, text: 'Checkpoint', start: true })).rejects.toThrow('End this source turn');
+  expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.send).not.toHaveBeenCalled();
+});

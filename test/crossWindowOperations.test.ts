@@ -3,6 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import { describe, expect, it, vi } from "vitest";
 import { SqliteStateStore } from "../src/storage/sqliteState";
+import { Worker } from 'node:worker_threads';
+import { DatabaseSync } from 'node:sqlite';
 import { removeTestDirectory } from "./testFilesystem";
 import {
   CrossWindowOperationBusyError,
@@ -15,6 +17,41 @@ import {
 } from "../src/utils/crossWindowOperations";
 
 describe("CrossWindowOperationCoordinator", () => {
+  it('recovers lease acquisition and release after a competing writer without replaying the action', async () => {
+    const directory = await createTestDirectory('lease-contention');
+    const coordinator = new CrossWindowOperationCoordinator(directory);
+    await coordinator.initialize();
+    const workers: Worker[] = [];
+    const hold = async () => {
+      const worker = new Worker(`const {parentPort,workerData}=require('node:worker_threads');const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(workerData);db.exec('BEGIN IMMEDIATE');parentPort.postMessage('locked');setTimeout(()=>{db.exec('ROLLBACK');db.close();},300);`, { eval: true, workerData: path.join(directory, 'manager.sqlite') });
+      workers.push(worker);
+      await new Promise(resolve => worker.once('message', resolve));
+    };
+    const task = vi.fn(async () => { await hold(); return 'done'; });
+    try {
+      await hold();
+      await expect(coordinator.runExclusive('account', 'Account sync', task)).resolves.toBe('done');
+      expect(task).toHaveBeenCalledOnce();
+      await expectReleased(directory);
+    } finally { await Promise.all(workers.map(worker => worker.terminate())); await removeTestDirectory(directory); }
+  });
+
+  it('keeps a valid lease alive during brief database contention at renewal', async () => {
+    const directory = await createTestDirectory('lease-heartbeat-contention');
+    const coordinator = new CrossWindowOperationCoordinator(directory, 10);
+    const timers = vi.spyOn(globalThis, 'setInterval');
+    const work = coordinator.runExclusive('account', 'Account sync', async signal => {
+      const peer = new DatabaseSync(path.join(directory, 'manager.sqlite'));
+      try {
+        peer.exec('BEGIN IMMEDIATE');
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const renew = timers.mock.calls.find(([, ms]) => ms === 10)![0] as () => void;
+        renew(); expect(signal.aborted).toBe(false);
+      } finally { peer.exec('ROLLBACK'); peer.close(); }
+    });
+    try { await work; await expectReleased(directory); }
+    finally { timers.mockRestore(); await removeTestDirectory(directory); }
+  });
   it('checks background yields without writing until the heartbeat is due, and recovers a backwards clock', async () => {
     const directory = await createTestDirectory('lease-write-budget');
     const coordinator = new CrossWindowOperationCoordinator(directory);

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
+import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   configureSqliteStateStore, createSqliteMemento, deleteSqliteStateFile, listSqliteStateFiles,
@@ -30,6 +31,36 @@ async function open() {
   stores.add(store);
   return store;
 }
+
+it('retries acquisition without blocking the event loop or replaying writes', async () => {
+  const store = await open();
+  const worker = new Worker(`const {parentPort,workerData}=require('node:worker_threads');const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(workerData);db.exec('BEGIN IMMEDIATE');parentPort.postMessage('locked');setTimeout(()=>{db.exec('ROLLBACK');db.close();parentPort.postMessage('released');},400);`, { eval: true, workerData: store.file });
+  try {
+    await new Promise(resolve => worker.once('message', resolve));
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 10);
+    const write = vi.fn(() => store.set('global', 'retry', 'saved'));
+    try { await store.writeTransaction(write); } finally { clearInterval(timer); }
+    expect(write).toHaveBeenCalledOnce();
+    expect(ticks).toBeGreaterThan(0);
+    expect(store.get('global', 'retry')).toBe('saved');
+  } finally { await worker.terminate(); }
+});
+
+it('bounds persistent contention before entering the mutation and never retries callback failures', async () => {
+  const store = await open(), peer = new DatabaseSync(store.file);
+  const write = vi.fn(() => store.set('global', 'retry', 'saved'));
+  try {
+    peer.exec('BEGIN IMMEDIATE');
+    await expect(store.writeTransaction(write, 150)).rejects.toThrow(/locked|busy/);
+    expect(write).not.toHaveBeenCalled();
+    peer.exec('ROLLBACK');
+    const failure = vi.fn(() => { store.set('global', 'retry', 'partial'); throw new Error('write failed'); });
+    await expect(store.writeTransaction(failure)).rejects.toThrow('write failed');
+    expect(failure).toHaveBeenCalledOnce();
+    expect(store.get('global', 'retry')).toBeUndefined();
+  } finally { peer.close(); }
+});
 
 it('opens an initialized database while the standalone host holds a write transaction', async () => {
   const writer = await open();

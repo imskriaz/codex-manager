@@ -290,7 +290,7 @@ describe("AccountsRepository token persistence", () => {
     repo.dispose();
   });
 
-  it("keeps startup usable when another window owns the initial auth sync", async () => {
+  it.each([new CrossWindowOperationBusyError('Account auth sync'), Object.assign(new Error('database is locked'), { errcode: 5 })])("keeps startup usable when another window owns the initial auth sync: %s", async failure => {
     const secrets = new Map<string, string>();
     const context = {
       globalStorageUri: { fsPath: tempDir },
@@ -301,7 +301,7 @@ describe("AccountsRepository token persistence", () => {
       }
     } as unknown as vscode.ExtensionContext;
     const runExclusive = vi.spyOn(crossWindowOperations, "runCrossWindowExclusive").mockImplementation(async () => {
-      throw new CrossWindowOperationBusyError("Account auth sync");
+      throw failure;
     });
 
     const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
