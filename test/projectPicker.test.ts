@@ -29,6 +29,17 @@ beforeEach(() => {
   render(); open();
 });
 afterEach(() => { fixture.slots.forEach(slot => slot?.cleanup?.()); vi.unstubAllGlobals(); vi.useRealTimers(); });
+it('omits generated chat workspaces from recents and search while keeping named folders', () => {
+  render({ projects: [...props.projects,
+    { path: 'D:/workspace/Chat-0c4a40a4-807d-49ac-abcd-0123456789ab/', label: 'Renamed chat' },
+    { path: 'D:\\workspace\\Chat-8e533199-ff29-4307-abcd-0123456789ab', label: 'Chat workspace' },
+    { path: 'D:/Chat-project', label: 'Chat project' }
+  ] });
+  expect(options().map(node => node.props['data-value'])).toEqual([undefined, 'D:/Alpha', 'D:/Beta', 'D:/Chat-project']);
+  find(node => node.type === 'input').props.onInput({ currentTarget: { value: 'chat' } });
+  expect(options().map(node => node.props['data-value'])).toEqual([undefined, 'D:/Chat-project']);
+  expect(props.onChange).not.toHaveBeenCalled();
+});
 it('searches project labels and paths without losing the no-folder choice', () => {
   const input = find(node => node.type === 'input');
   (input.props.onInput ?? input.props.oninput)({ currentTarget: { value: 'd:/beta' } });

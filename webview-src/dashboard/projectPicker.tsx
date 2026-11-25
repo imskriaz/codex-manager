@@ -38,7 +38,7 @@ export function ProjectPicker(props: {
   }, [scope]);
   const projects = [...new Map(props.projects.map(project => [canonicalWebPath(project.path), project])).values()];
   const selected = projects.find(project => canonicalWebPath(project.path) === canonicalWebPath(props.value));
-  const matches = projects.filter(project => (query.trim() || !removed.includes(canonicalWebPath(project.path))) && `${project.label} ${project.path}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const matches = projects.filter(project => !/^Chat-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(project.path.split(/[\\/]/).filter(Boolean).pop() ?? '') && (query.trim() || !removed.includes(canonicalWebPath(project.path))) && `${project.label} ${project.path}`.toLowerCase().includes(query.trim().toLowerCase()));
   const close = (restore = false) => { setOpen(false); if (restore) trigger.current?.focus({ preventScroll: true }); };
   const choose = (path: string) => { if (!props.disabled) { props.onChange(path); close(true); } };
   const remove = (project: Project) => {

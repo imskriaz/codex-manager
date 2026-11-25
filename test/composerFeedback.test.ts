@@ -1,10 +1,22 @@
 import { expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { VNode } from 'preact';
-vi.mock('preact/hooks', () => ({ useState: (value: unknown) => [value, vi.fn()], useRef: (value: unknown) => ({ current: value ?? null }), useId: () => 'composer-fixture', useLayoutEffect: () => undefined, useEffect: () => undefined }));
+vi.mock('preact/hooks', () => ({ useState: vi.fn((value: unknown) => [value, vi.fn()]), useRef: (value: unknown) => ({ current: value ?? null }), useId: () => 'composer-fixture', useLayoutEffect: () => undefined, useEffect: () => undefined }));
+import { useState } from 'preact/hooks';
+import { ProjectPicker } from '../webview-src/dashboard/projectPicker';
 import { Composer, QueuedMessages, TurnUsageStrip } from '../webview-src/dashboard/cliSessionsModal';
 import { VoiceDictation } from '../webview-src/dashboard/voiceDictation';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
+
+it('keeps the entered local project name when session discovery supplies its internal folder name', () => {
+  const path = 'D:/workspace/Local-720e12a6-9647-4170-a789-001bd78538f1';
+  vi.mocked(useState).mockReturnValueOnce([false, vi.fn()]).mockReturnValueOnce([[{ path, label: 'My project' }], vi.fn()]);
+  const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [{ path, label: 'Local-720e12a6-9647-4170-a789-001bd78538f1' }], projectPath: path, simple: true, models: [], reasoningOptions: [], sending: false, stopping: false, composerHeight: 160,
+    onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
+  const picker = nodes(Composer(config)).find(node => node.type === ProjectPicker)!;
+  expect(picker.props.projects).toEqual([{ path, label: 'My project' }]);
+  expect(picker.props.title).toBe('My project');
+});
 
 it('appends local speech to the current textarea without losing edits or dropping successive segments', () => {
   const onDraft = vi.fn(), onFeedback = vi.fn();
