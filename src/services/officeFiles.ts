@@ -9,6 +9,7 @@ import {extractOfficeDocument} from './officeDocuments';
 import {preserveOfficeFile} from './officeFileHistory';
 import {officeSessionFolder} from './officeWorkspaceCleanup';
 import {getSqliteStateStore} from '../storage/sqliteState';
+import {officeLocalFolders,officeLocalProject} from './officeLocalFolders';
 
 /** Read small saved slide batches; generation never evaluates user-provided code. */
 export async function readOfficeSlideParts(user:OfficeUser,project:string,files:unknown):Promise<unknown[]> {
@@ -16,6 +17,11 @@ export async function readOfficeSlideParts(user:OfficeUser,project:string,files:
  if(!Array.isArray(files)||!files.length||files.length>10||new Set(files).size!==files.length||files.some(file=>typeof file!=='string'||!file.endsWith('.json')))throw new Error('Choose one to ten saved JSON slide parts.');
  const root=await fs.realpath(user.workspacePath),slides:unknown[]=[];let bytes=0;
  for(const file of files as string[]) {
+  if(officeLocalProject(user.id,project)){
+    const value=await officeLocalFolders.request(user.id,project,{operation:'read',path:file});
+    const data=Buffer.from(value.data??'','base64');if(data.length>64000||(bytes+=data.length)>256000)throw new Error('Keep each slide part under 64 KB and all parts under 256 KB.');
+    const part:unknown=JSON.parse(data.toString('utf8'));if(!Array.isArray(part)||!part.length||part.length>6)throw new Error('Save one to six slides in each part.');slides.push(...part as unknown[]);continue;
+  }
   const target=await resolveOfficePath(root,project,file),stat=await fs.stat(target);
   if(!stat.isFile()||stat.size>64000||(bytes+=stat.size)>256000)throw new Error('Keep each slide part under 64 KB and all parts under 256 KB.');
   let part:unknown;try{part=JSON.parse(await fs.readFile(target,'utf8'));}catch{throw new Error('Each saved slide part must contain a JSON array of slide objects.');}
@@ -27,6 +33,12 @@ export async function readOfficeSlideParts(user:OfficeUser,project:string,files:
 
 export async function writeOfficeBinary(user:OfficeUser,project:string,file:string,data:Buffer,revision?:string){
  if(!user.enabled||user.role!=='user'||!user.features.includes('files'))throw new Error('File access is unavailable.');
+ if(officeLocalProject(user.id,project)){
+  if(data.length>10*1048576)throw new Error('Keep connected-folder files under 10 MB.');
+  const value=await officeLocalFolders.request(user.id,project,{operation:'write',path:file,data:data.toString('base64'),revision});
+  if(typeof value.revision!=='string'||typeof value.size!=='number')throw new Error('Saving to the local folder was not confirmed. Inspect the file before retrying.');
+  return {path:file,revision:value.revision,size:value.size,message:'Saved to your local folder.'};
+ }
  if(data.length>50*1048576)throw new Error('Keep each file under 50 MB.');const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file,true);
  if(target===root)throw new Error('Choose a file inside your workspace.');
  let previous:Buffer|undefined;try{previous=await fs.readFile(target);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
@@ -53,6 +65,11 @@ export async function importOfficeAttachment(user:OfficeUser,file:ChatAttachment
  return {path:relative,name:file.name,text:text.length>30000?text.slice(0,30000)+'\n[Excerpt. Read the saved file for more.]':text,...(file.kind==='image'?{image:file.data,mimeType:file.mimeType}:{}),extension};
 }
 export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text'){
+ if(officeLocalProject(user.id,project)){
+  const value=await officeLocalFolders.request(user.id,project,{operation:'read',path:file});
+  const data=Buffer.from(value.data??'','base64');if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
+  return extractOfficeDocument(file,data,format);
+ }
  const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>10*1048576)throw new Error('Keep each Office document under 10 MB.');const data=await fs.readFile(target);
  if(format==='html'&&/\.(docx|pptx|xlsx)$/i.test(file))return (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal);
  return extractOfficeDocument(file,data,format);

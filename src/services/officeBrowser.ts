@@ -10,6 +10,7 @@ import {getOfficeUser, type OfficeUser} from './officeUsers';
 import { workspaceBrowser } from './workspaceBrowser';
 import { validateBrowserRequest } from '../domain/workspaceBrowser';
 import { waitWithin } from '../utils/concurrency';
+import {officeLocalFolders,officeLocalProject} from './officeLocalFolders';
 
 export const OFFICE_BROWSER_ORIGIN = 'https://workspace.invalid';
 export function officeBrowserUrl(value: string): string {
@@ -30,9 +31,16 @@ export async function routeOfficeBrowser(route: Route, user: OfficeUser, project
     if (url.origin === OFFICE_BROWSER_ORIGIN) {
       if (!user.features.includes('files')) throw new Error('File access is unavailable.');
       const relative = decodeURIComponent(url.pathname.slice(1));
-      const target = await resolveOfficePath(user.workspacePath, project, relative);
-      if ((await stat(target)).size > 16 * 1048576) throw new Error('File is too large to preview.');
-      const body = await readFile(target);
+      let body: Buffer;
+      if (officeLocalProject(user.id, project)) {
+        const result = await officeLocalFolders.request(user.id, project, { operation: 'read', path: relative });
+        if (typeof result.data !== 'string') throw new Error('The local file could not be read.');
+        body = Buffer.from(result.data, 'base64');
+      } else {
+        const target = await resolveOfficePath(user.workspacePath, project, relative);
+        if ((await stat(target)).size > 16 * 1048576) throw new Error('File is too large to preview.');
+        body = await readFile(target);
+      }
       const extension = relative.split('.').at(-1)?.toLowerCase() ?? '';
       const types: Record<string,string> = {html:'text/html',htm:'text/html',js:'text/javascript',css:'text/css',json:'application/json',svg:'image/svg+xml',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',txt:'text/plain',pdf:'application/pdf',woff:'font/woff',woff2:'font/woff2'};
       await route.fulfill({status:200,contentType:types[extension] ?? 'application/octet-stream',body});

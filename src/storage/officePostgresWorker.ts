@@ -67,7 +67,7 @@ async function execute(operation: string, args: unknown[]): Promise<unknown> {
     case 'recent': return (await db.query<{value:unknown}>('SELECT value FROM codex_manager_office_state WHERE namespace=$1 ORDER BY key DESC LIMIT $2', [namespace,args[1]])).rows.map(row=>row.value).reverse();
     case 'deleteBefore': await db.query('DELETE FROM codex_manager_office_state WHERE namespace=$1 AND key<$2', [namespace,key]); return;
     case 'bytes': {
-      const namespaces = ['office-sessions','office-session-requests','office-session-revisions','office-preferences','office-projects','office-schedules','office-usage'].map(value => `${value}:${namespace}`);
+      const namespaces = ['office-sessions','office-session-requests','office-session-revisions','office-preferences','office-projects','office-local-folders','office-schedules','office-usage'].map(value => `${value}:${namespace}`);
       const result = await db.query<{bytes:string}>("SELECT COALESCE(SUM(octet_length(value::text)),0) AS bytes FROM codex_manager_office_state WHERE namespace=ANY($1::text[]) OR (namespace IN ('office-memory','office-recommendations') AND key=$2) OR (namespace='office-schedules' AND value->>'owner'=$2)", [namespaces, namespace]);
       return Number(result.rows[0]?.bytes ?? 0);
     }

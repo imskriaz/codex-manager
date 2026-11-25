@@ -1,4 +1,12 @@
 .create-project-form { display: grid; gap: 20px; padding-top: 4px; }
+.create-project-local-folder { display: grid; gap: 6px; min-width: 0; }
+.create-project-local-folder > span { font-weight: 600; }
+.create-project-local-folder small { color: var(--text-muted); font-weight: 400; line-height: 1.4; }
+.create-project-local-folder .create-project-location-field button:first-child { flex: 1; min-width: 0; justify-content: flex-start; }
+.create-project-local-folder .create-project-location-field button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-user-theme .create-project-form { gap: 14px; }
+.office-user-theme .create-project-form input { min-height: 36px; padding: 7px 10px; }
+.office-user-theme .create-project-form button { min-height: 34px; padding: 6px 10px; }
 .create-project-form > label { display: grid; gap: 8px; font-weight: 600; }
 .create-project-form input { width: 100%; box-sizing: border-box; min-height: 42px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text); background: var(--bg-base); font: inherit; }
 .create-project-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

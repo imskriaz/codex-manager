@@ -20,7 +20,7 @@ export function workspaceProjectLabels(projects: DashboardCliProject[]): Dashboa
     .filter(project => !hidden.has(projectStorageKey(project.path)));
 }
 
-function validateProjectName(name: unknown, kind = 'project'): string {
+export function validateProjectName(name: unknown, kind = 'project'): string {
   if (
     typeof name !== "string" ||
     name !== name.trim() ||

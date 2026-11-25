@@ -996,6 +996,7 @@ export interface DashboardCliProject {
   id: string;
   label: string;
   path: string;
+  localFolder?: { name: string };
 }
 
 export interface DashboardWorkspaceGitRequest { offset?: number; ref?: string; commit?: string }

@@ -1,4 +1,5 @@
 import type { UserWorkspaceNavigation } from './userWorkspacePages';
+import { bindLocalFolderConnections } from './localFolderConnection';
 import { retainOfflineAccounts } from './offlinePolicy';
 import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
@@ -646,6 +647,10 @@ function App() {
   }, [sendAction]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
+  useEffect(() => {
+    if (!isBrowserDashboard || snapshot?.office?.role !== 'user' || !snapshot.office.features.includes('files')) return;
+    return bindLocalFolderConnections(snapshot.office.id, showNotice);
+  }, [snapshot?.office?.id, snapshot?.office?.role, snapshot?.office?.features.includes('files'), isBrowserDashboard, showNotice]);
   useEffect(()=>{
     if(snapshot?.office?.role!=="user")return;
     const receive=(event:MessageEvent<DashboardHostMessage>)=>{

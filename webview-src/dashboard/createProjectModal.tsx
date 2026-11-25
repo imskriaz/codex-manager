@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardActionResultPayload, DashboardCliProject, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
 import { ModalShell } from "./primitives";
+import { chooseLocalFolder, connectLocalFolder, type LocalDirectory } from './localFolderConnection';
 
 export const CREATE_PROJECT_OPTION = "__create_workspace_project__";
 
@@ -20,6 +21,9 @@ export function CreateProjectModal(props: {
 }) {
   const [folder, setFolder] = useState(props.initialFolder ?? '');
   const [projectName,setProjectName]=useState('');
+  const [localFolder, setLocalFolder] = useState<LocalDirectory>();
+  const [pickingLocal, setPickingLocal] = useState(false), [localNotice, setLocalNotice] = useState<DashboardNotice>();
+  const localBusy = useRef(false);
   const [pending, setPending] = useState(false), [browserOpen, setBrowserOpen] = useState(false);
   const [browsing, setBrowsing] = useState(false), [location, setLocation] = useState('');
   const [listing, setListing] = useState<DashboardActionResultPayload['workspaceFolders']>();
@@ -99,6 +103,16 @@ export function CreateProjectModal(props: {
     }
   };
   const blocked = browsing || creatingFolder || props.disabled;
+  const chooseLocal = async () => {
+    if (localBusy.current || pending || props.disabled) return;
+    localBusy.current = true; setPickingLocal(true); setLocalNotice(undefined);
+    try {
+      const handle = await chooseLocalFolder(); setLocalFolder(handle);
+      setLocalNotice({ level: 'info', message: `Selected folder: ${handle.name}` });
+    } catch (error) {
+      setLocalNotice({ level: error instanceof Error && error.name === 'AbortError' ? 'info' : 'warning', message: error instanceof Error && error.name === 'AbortError' ? 'Folder selection cancelled.' : error instanceof Error ? error.message : 'The local folder could not be selected.' });
+    } finally { localBusy.current = false; setPickingLocal(false); }
+  };
   const createFolder = () => {
     if (blocked || folderRequest.current || !listing || location.trim() !== listing.path || !newFolder?.trim()) return;
     const id = createActionRequestId(true);
@@ -116,10 +130,19 @@ export function CreateProjectModal(props: {
     }
   };
   return <>
-    <ModalShell open title="Add Project" closeLabel="Close add project" className="create-project-modal dashboard-modal-compact" closeDisabled={pending || browserOpen} closeOnBackdrop={false} onClose={() => { props.onClose(); }}>
+    <ModalShell open title="Add Project" closeLabel="Close add project" className="create-project-modal dashboard-modal-compact" closeDisabled={pending || browserOpen || pickingLocal} closeOnBackdrop={false} onClose={() => { props.onClose(); }}>
       <form class="workspace-dialog-fields create-project-form" onSubmit={event => {
         event.preventDefault();
-        if (request.current || browserOpen || props.disabled || (props.simple ? !projectName.trim() : !folder.trim())) return;
+        if (request.current || localBusy.current || browserOpen || props.disabled || (props.simple ? !projectName.trim() : !folder.trim())) return;
+        if (props.simple && localFolder) {
+          localBusy.current = true; setPending(true); setLocalNotice(undefined);
+          void connectLocalFolder(localFolder, projectName.trim()).then(project => {
+            current.current.onCreated(project);
+            current.current.onFeedback({ level: 'info', message: 'Project connected to your local folder.' });
+            current.current.onClose();
+          }, error => setLocalNotice({ level: 'error', message: error instanceof Error ? error.message : 'The local connection was not confirmed. Check the project list before retrying.' })).finally(() => { localBusy.current = false; setPending(false); });
+          return;
+        }
         const id = createActionRequestId(true); setPending(true);
         const timer = setTimeout(() => {
           if (request.current?.id !== id) return;
@@ -130,10 +153,12 @@ export function CreateProjectModal(props: {
         try { postMessageToHost({ type: 'dashboard:action', requestId: id, action: 'createWorkspaceProject', payload: { ...(props.simple ? {projectName:projectName.trim(),parentFolder:props.initialFolder} : {parentFolder:folder.trim()}), targetDeviceId: props.deviceId, automatic: true } }); }
         catch (failure) { clearTimeout(timer); request.current = undefined; setPending(false); props.onFeedback({ level: 'error', message: failure instanceof Error ? failure.message : 'The request could not be sent.' }); }
       }}>
-        {props.simple ? <><p class="workspace-dialog-description">Create a project in your workspace.</p><label>Project name<input autoFocus aria-label="Project name" required value={projectName} maxLength={120} disabled={pending} placeholder="Project name" onInput={event=>setProjectName(event.currentTarget.value)} /></label></> : <><p class="workspace-dialog-description">Choose an existing folder on the selected system to add it as a project.</p>
+        {props.simple ? <><label>Project name<input autoFocus aria-label="Project name" required value={projectName} maxLength={120} disabled={pending || pickingLocal} placeholder="Project name" onInput={event=>setProjectName(event.currentTarget.value)} /></label>
+          <div class="create-project-local-folder"><span id="local-project-folder-label">Local folder <small>(optional)</small></span><div class="create-project-location-field"><button type="button" aria-labelledby="local-project-folder-label" disabled={pending || pickingLocal || props.disabled} onClick={() => void chooseLocal()}><FolderIcon /><span>{pickingLocal ? 'Choosing folder…' : localFolder?.name || 'Choose folder…'}</span></button>{localFolder ? <button type="button" aria-label="Remove local folder" disabled={pending || pickingLocal} onClick={() => { setLocalFolder(undefined); setLocalNotice({ level: 'info', message: 'Local folder removed. The project will use your workspace.' }); }}>Remove</button> : null}</div><small>Connects through this browser. Keep it open to read and save in the folder.</small></div>
+          {localNotice ? <p class="folder-picker-notice" role={localNotice.level === 'error' ? 'alert' : 'status'}>{localNotice.message}</p> : null}</> : <><p class="workspace-dialog-description">Choose an existing folder on the selected system to add it as a project.</p>
         <label>Project folder<div class="create-project-location-field"><input autoFocus aria-label="Project folder" aria-describedby="create-project-folder-help" required value={folder} maxLength={4096} disabled={pending} placeholder="Choose a folder" spellcheck={false} autoComplete="off" onInput={event => setFolder(event.currentTarget.value)} /><button type="button" aria-label="Browse folders…" disabled={pending || props.disabled} onClick={() => { if (browserOpen) return; setBrowserOpen(true); setListing(undefined); browse(folder.trim() || undefined); }}><FolderIcon /><span>Browse…</span></button></div><small id="create-project-folder-help">The folder name becomes the project name. Existing files are kept.</small></label>
         <div class="create-project-destination"><small>PROJECT FOLDER</small><code>{folder.trim() || 'Choose a project folder'}</code></div></>}
-        <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={() => { props.onClose(); }}>Cancel</button><button type="submit" class="primary" disabled={pending || props.disabled || (props.simple ? !projectName.trim() : !folder.trim())}>{pending ? 'Adding…' : 'Add project'}</button></footer>
+        <footer class="workspace-dialog-footer"><button type="button" disabled={pending || pickingLocal} onClick={() => { props.onClose(); }}>Cancel</button><button type="submit" class="primary" disabled={pending || pickingLocal || props.disabled || (props.simple ? !projectName.trim() : !folder.trim())}>{pending ? 'Adding…' : 'Add project'}</button></footer>
       </form>
     </ModalShell>
     {browserOpen ? <ModalShell open title="Select project folder" closeLabel="Close folder picker" className="project-folder-picker dashboard-modal-compact" closeDisabled={creatingFolder} closeOnBackdrop={false} onClose={closeBrowser}>

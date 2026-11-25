@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { VNode } from 'preact';
 const fixture = vi.hoisted(() => ({ slots: [] as any[], cursor: 0, nextId: 0, effects: [] as Array<() => void>, send: vi.fn(), receive: undefined as undefined | ((event: any) => void) }));
+const local = vi.hoisted(() => ({ choose: vi.fn(), connect: vi.fn() }));
+vi.mock('../webview-src/dashboard/localFolderConnection', () => ({ chooseLocalFolder: local.choose, connectLocalFolder: local.connect }));
 vi.mock('preact/hooks', () => ({
   useState(initial: unknown) { const index = fixture.cursor++; fixture.slots[index] ??= { value: typeof initial === 'function' ? initial() : initial }; return [fixture.slots[index].value, (next: unknown) => { fixture.slots[index].value = typeof next === 'function' ? next(fixture.slots[index].value) : next; }]; },
   useRef(initial: unknown) { const index = fixture.cursor++; return fixture.slots[index] ??= { current: initial }; },
@@ -15,6 +17,7 @@ const find = (type: string) => nodes(render()).filter(node => node.type === type
 const submit = () => find('form')[0]!.props.onSubmit({ preventDefault() {} });
 beforeEach(() => {
   vi.useFakeTimers(); fixture.slots = []; fixture.cursor = 0; fixture.nextId = 0; fixture.effects = []; fixture.send.mockReset();
+  local.choose.mockReset(); local.connect.mockReset();
   vi.stubGlobal('navigator', { onLine: true });
   vi.stubGlobal('window', { addEventListener: (_name: string, listener: typeof fixture.receive) => { fixture.receive = listener; }, removeEventListener: () => { fixture.receive = undefined; } });
   props = { deviceId: 'selected-pc', initialFolder: 'D:\\Projects', onClose: vi.fn(), onCreated: vi.fn(), onFeedback: vi.fn() };
@@ -27,6 +30,43 @@ const button = (label: string, title?: string) => nodes(title ? modal(title) : r
 const input = (label: string) => find('input').find(node => node.props['aria-label'] === label)!;
 const reply = (requestId: string, payload: unknown, status = 'completed', error?: string) => fixture.receive!({ data: { type: 'dashboard:action-result', requestId, status, payload, error } });
 const listing = (path = 'D:\\Selected') => ({ workspaceFolders: { path, parent: 'D:\\', folders: [], roots: ['D:\\'] } });
+const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+const projectName = (value: string) => { const node = input('Project name'); (node.props.onInput ?? node.props.oninput)({ currentTarget: { value } }); };
+
+it('shows the optional folder connection only after the user workspace project name', () => {
+  expect(button('Local folder (optional)')).toBeUndefined();
+  render({ simple: true });
+  expect(find('input')).toHaveLength(1); expect(input('Project name')).toBeDefined();
+  expect(find('input').some(node => node.props.type === 'file')).toBe(false);
+  expect(text(modal())).toContain('Local folder (optional)');
+  projectName('My project'); submit();
+  expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ action: 'createWorkspaceProject', payload: expect.objectContaining({ projectName: 'My project' }) }));
+  expect(local.connect).not.toHaveBeenCalled();
+});
+const localButton = () => nodes(render()).find(node => node.type === 'button' && node.props['aria-labelledby'] === 'local-project-folder-label')!;
+it('connects a chosen directory without uploading it and prevents duplicate creation', async () => {
+  render({ simple: true }); const handle = { name: 'Local project' };
+  local.choose.mockResolvedValue(handle); localButton().props.onClick(); await flush();
+  projectName('My project');
+  let done: (value: any) => void = () => {};
+  local.connect.mockReturnValue(new Promise(resolve => { done = resolve; }));
+  submit(); submit(); expect(local.connect).toHaveBeenCalledOnce();
+  expect(local.connect).toHaveBeenCalledWith(handle, 'My project'); expect(fixture.send).not.toHaveBeenCalled();
+  const project = { id: 'local-project', label: 'My project', path: '/scoped-marker', localFolder: { name: 'Local project' } };
+  done(project); await flush();
+  expect(props.onCreated).toHaveBeenCalledWith(project); expect(props.onClose).toHaveBeenCalledOnce();
+  expect(props.onFeedback).toHaveBeenCalledWith(expect.objectContaining({ message: 'Project connected to your local folder.' }));
+});
+it('keeps the project draft after cancelled folder selection or failed connection', async () => {
+  render({ simple: true }); projectName('My project');
+  local.choose.mockRejectedValue(new DOMException('Cancelled', 'AbortError')); localButton().props.onClick(); await flush();
+  expect(text(modal())).toContain('Folder selection cancelled.'); expect(input('Project name').props.value).toBe('My project');
+  local.choose.mockResolvedValue({ name: 'Local project' }); localButton().props.onClick(); await flush();
+  local.connect.mockRejectedValue(new Error('Connection unavailable')); submit(); await flush();
+  expect(text(modal())).toContain('Connection unavailable'); expect(props.onClose).not.toHaveBeenCalled();
+  expect(button('Add project').props.disabled).toBeFalsy(); expect(input('Project name').props.value).toBe('My project');
+  button('Remove local folder').props.onClick(); submit(); expect(fixture.send).toHaveBeenCalledOnce();
+});
 
 it('sends once and silently selects only the confirmed created folder', () => {
   submit(); submit(); expect(fixture.send).toHaveBeenCalledOnce();

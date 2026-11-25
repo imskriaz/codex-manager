@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardCliProject, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
 import { ModalShell } from "./primitives";
+import { chooseLocalFolder, connectLocalFolder, forgetLocalFolder } from './localFolderConnection';
 
 function PencilIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4 20 4.2-1 10.4-10.4a2 2 0 0 0-2.8-2.8L5.4 16.2 4 20Z" /><path d="m14.5 5.1 4.4 4.4" /></svg>;
@@ -38,6 +39,7 @@ export function EditProjectModal(props: {
       request.current = undefined;
       setPending(false);
       if (message.status === "completed" && (message.action === 'removeWorkspaceProject' || message.payload?.workspaceProject)) {
+        if (message.action === 'removeWorkspaceProject' && current.current.project.localFolder) void forgetLocalFolder(current.current.project.path).catch(() => current.current.onFeedback({ level: 'warning', message: 'Project removed. Its saved browser permission could not be cleared; revoke it in browser site settings.' }));
         current.current.onFeedback(message.payload?.notice ?? { level: "info", message: message.action === "removeWorkspaceProject" ? "Project removed from the list." : "Project renamed." });
         current.current.onChanged();
         current.current.onClose();
@@ -83,6 +85,14 @@ export function EditProjectModal(props: {
       <p class="workspace-dialog-description">Update the project label or remove this saved project from the list. The folder and conversations stay on the system.</p>
       {notice ? <p role="alert" class="edit-project-notice">{notice.message}</p> : null}
       <label>Project name<input autoFocus value={name} maxLength={120} disabled={pending || props.disabled} onInput={event => setName(event.currentTarget.value)} /></label>
+      {props.simple && props.project.localFolder ? <div class="create-project-local-folder"><span>Local folder <small>{props.project.localFolder.name}</small></span><button type="button" disabled={pending || props.disabled} onClick={() => {
+        if (pending) return;
+        setPending(true); setNotice(undefined);
+        void chooseLocalFolder().then(handle => {
+          if (handle.name !== props.project.localFolder!.name) throw new Error(`Choose the original folder ${props.project.localFolder!.name}. Create a new project to connect a different folder.`);
+          return connectLocalFolder(handle, name, props.project.path);
+        }).then(() => feedback({ level: 'info', message: 'Local folder reconnected.' }), error => feedback({ level: error instanceof Error && error.name === 'AbortError' ? 'info' : 'error', message: error instanceof Error && error.name === 'AbortError' ? 'Folder selection cancelled.' : error instanceof Error ? error.message : 'The folder could not reconnect.' })).finally(() => setPending(false));
+      }}>Reconnect folder…</button><small>Keep this browser open while using the folder.</small></div> : null}
       {!props.simple ? <div class="create-project-destination"><small>PROJECT FOLDER</small><code title={props.project.path}>{props.project.path}</code></div> : null}
 
       <footer class="workspace-dialog-footer"><button type="button" disabled={pending} onClick={cancel}>Cancel</button><button type="button" class="is-danger edit-project-remove" disabled={pending || props.disabled} onClick={() => {setNotice(undefined);setConfirmDelete(true);}}><TrashIcon /> Remove</button><button type="button" class="primary" disabled={pending || props.disabled || !name.trim()} onClick={() => submit("renameWorkspaceProject", { projectName: name.trim() })}><PencilIcon /> {pending ? "Saving…" : "Save"}</button></footer>
