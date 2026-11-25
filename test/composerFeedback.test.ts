@@ -139,3 +139,25 @@ it('keeps account center resize success and cancellation silent while reporting 
   expect(source.match(/onReload=\{\(\) => window.location.reload\(\)\}/g)).toHaveLength(2);
   expect(source).toContain("notice && notice.level !== 'info'");
 });
+
+it('keeps Stop available alongside a follow-up draft and attachments, with pending and connection guards', () => {
+  const onStop = vi.fn();
+  const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], models: [], reasoningOptions: [], sending: true, stopping: false, stopDisabled: false, composerHeight: 160,
+    onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop, onResize() {}, onResizeKeyDown() {} };
+  for (const state of [{ draft: '' }, { draft: 'Follow up' }, { draft: '', attachments: [{ id: 'note', name: 'note.txt', kind: 'text' as const, mimeType: 'text/plain', size: 4, data: 'test' }] }]) {
+    const tree = nodes(Composer({ ...config, ...state }));
+    const stop = tree.find(node => node.props['aria-label'] === 'Stop')!;
+    expect(stop).toBeDefined();
+    expect(stop.props.disabled).toBe(false);
+    stop.props.onClick();
+  }
+  expect(onStop).toHaveBeenCalledTimes(3);
+  for (const state of [{ stopping: true }, { stopDisabled: true }]) {
+    const stop = nodes(Composer({ ...config, ...state })).find(node => node.props.class === 'cli-stop-button')!;
+    expect(stop.props.disabled).toBe(true);
+  }
+  for (const file of ['cliSessionsModal.tsx', 'taskSessionConversation.tsx']) {
+    const source = readFileSync(`webview-src/dashboard/${file}`, 'utf8');
+    expect(source).toMatch(/stopDisabled=\{(?:props.connected === false|!props.connected)\}/);
+  }
+});
