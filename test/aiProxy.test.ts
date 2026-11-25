@@ -1007,3 +1007,13 @@ it('accepts an ephemeral internal credential with public key storage unavailable
  expect(response.status).toBe(200);await response.text();expect(secrets).not.toHaveBeenCalled();
  internalEnabled=false;secrets.mockResolvedValue(undefined);const denied=await fetch(origin+'/v1/models',{headers:{Authorization:'Bearer '+credential}});expect(denied.status).toBe(401);
 });
+
+it('preserves usage and a distinct failure code when the backend returns an invalid tool action',async()=>{
+ vi.mocked(upstream).mockResolvedValue(events({type:'response.completed',response:{...completed,output:[{type:'function_call',call_id:'invalid',name:'save_file',arguments:'{"path":"partial'}]}}) as never);
+ const response=await post('/v1/chat/completions',chat());expect(response.status).toBe(502);expect(await response.json()).toMatchObject({error:{code:'invalid_tool_call'}});
+ expect(readApiProxyHistory().requests.find(row=>row.id===response.headers.get('x-request-id'))).toMatchObject({status:'failed',inputTokens:11,outputTokens:4,errorDetail:expect.stringContaining('invalid tool arguments')});
+});
+it('passes the backend rate-limit retry delay through to the workspace client',async()=>{
+ vi.mocked(upstream).mockResolvedValue(new Response('limited',{status:429,headers:{'Retry-After':'120'}}) as never);
+ const response=await post('/v1/chat/completions',chat());expect(response.status).toBe(429);expect(response.headers.get('retry-after')).toBe('120');await response.text();
+});

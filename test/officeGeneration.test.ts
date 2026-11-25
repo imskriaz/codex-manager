@@ -399,7 +399,7 @@ it('creates stable process-only workspace credentials without consuming public A
  const [first,second]=await Promise.all([(server as any).officeProxyToken('one'),(server as any).officeProxyToken('one')]);
  expect(first).toMatch(/^cm_[a-f0-9]{64}$/);expect(second).toBe(first);expect(await (server as any).officeProxyToken('two')).not.toBe(first);expect(secrets.get).not.toHaveBeenCalled();
 });
-it.each([502,503,504])('queues a confirmed temporary rejection (%s) before workspace actions',async status=>{
+it.each([503])('queues a confirmed temporary rejection (%s) before workspace actions',async status=>{
  vi.mocked(upstream).mockResolvedValueOnce(new Response('Unavailable',{status}) as never);await expect(generate()).rejects.toBeInstanceOf(OfficeCapacityError);
 });
 
@@ -449,4 +449,72 @@ it('saves only configured LLM workflow tags for the requesting user and applies 
  vi.mocked(upstream).mockResolvedValueOnce(toolResponse('suggest_workflows',{tags:['document-drafting']}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Here is the draft.'}}]})) as never);
  await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,'',vi.fn());expect(store.get<any[]>('office-recommendations',actor.id)?.[0].id).toBe('document-drafting');expect(store.get('office-recommendations','another-user')).toBeUndefined();
  vi.mocked(upstream).mockResolvedValueOnce(toolResponse('suggest_workflows',{tags:['terminal']}) as never);await expect((server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,'',vi.fn())).rejects.toThrow('configured');
+});
+
+it.each([502,504,402])('does not classify a failed generation (%s) as assistant capacity',async status=>{
+ vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'api_error'}}),{status}) as never);
+ await expect(generate()).rejects.not.toBeInstanceOf(OfficeCapacityError);
+});
+it('preserves a malformed action reason and refuses truncated tool calls before any action',async()=>{
+ vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'invalid_tool_call'}}),{status:502}) as never);
+ await expect(generate()).rejects.toThrow('incomplete or invalid action');
+ const action=vi.spyOn(server as any,'processOfficeMessage');
+ vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({choices:[{finish_reason:'length',message:{tool_calls:[{id:'partial',type:'function',function:{name:'save_file',arguments:'{"path":"never.html","content":"partial'}}]}}]})) as never);
+ await expect(generate()).rejects.toThrow('output limit');expect(action).not.toHaveBeenCalled();
+});
+it('honors rate-limit Retry-After instead of polling every five seconds',async()=>{
+ vi.mocked(upstream).mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'rate_limit_error'}}),{status:429,headers:{'Retry-After':'120'}}) as never);
+ try{await generate();expect.fail('Expected a rate limit');}catch(error){expect(error).toBeInstanceOf(OfficeCapacityError);expect(error).toMatchObject({retryAfterMs:120000,message:'The assistant is rate limited.'});}
+});
+it('assembles native editable slide parts without runtime permission and reports unavailable rendering',async()=>{
+ const actor={...user,workspacePath:path.join(root,'native'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
+ await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ await fs.writeFile(path.join(actor.workspacePath,'part.json'),JSON.stringify([{title:'Wage comparison',layout:'chart',chart:{labels:['Current','Proposed'],values:[12500,30000],unit:'BDT per month'}}]));
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('create_document',{path:'native.pptx',slideFiles:['part.json']}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({choices:[{message:{content:'Saved.'}}],usage:{total_tokens:1}})) as never);
+ const report=vi.fn();const result=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,report);
+ expect(result).toContain('native.pptx?download=1');expect((await fs.readFile(path.join(actor.workspacePath,'native.pptx'))).readUInt32LE(0)).toBe(0x04034b50);
+ expect(report).toHaveBeenCalledWith(expect.objectContaining({role:'assistant',text:expect.stringContaining('visual layout has not been verified')}));
+ const next=JSON.parse(vi.mocked(upstream).mock.calls[1][1]!.body as string);expect(next.messages.at(-1).content).toContain('visualReview');
+});
+
+it('automatically resumes malformed model output from durable source results without repeating research',async()=>{
+ const actor={...user,workspacePath:path.join(root,'resume-source'),features:['generalChat','files','browser'] as OfficeUser['features'],limits:{dailyTokens:0}};
+ await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true}),resolveLanguage:()=> 'en'};
+ const source=vi.spyOn(officeSources,'readOfficeWebPage').mockResolvedValue({url:'https://example.test/article',title:'Confirmed source',text:'Previously confirmed evidence.'} as never);
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_web_page',{url:'https://example.test/article'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'invalid_tool_call'}}),{status:502}))
+ .mockResolvedValueOnce(toolResponse('save_file',{path:'part.json',content:'[{"title":"Verified evidence","bullets":["Previously confirmed evidence."]}]'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'The saved draft is ready.'}}]})) as never);
+ const first=(server as any).teamSessions(),accepted=await first.handle(actor,{type:'dashboard:action',action:'startCodexCliSession',requestId:'resume-research',payload:{text:'Prepare the presentation',model:'fast'}});
+ const id=accepted.cliSession.id;await vi.waitFor(()=>expect(first.list(actor.id)[0]?.queueError).toContain('invalid action'),{timeout:15000});
+ const saved=store.get<any>(`office-sessions:${actor.id}`,id);expect(JSON.stringify(saved.turns[0].checkpoint)).toContain('Previously confirmed evidence.');
+ first.stop();(server as any).officeConversations=undefined;const next=(server as any).teamSessions();saved.turns[0].retryAt=0;store.set(`office-sessions:${actor.id}`,id,saved);next.start();
+ await vi.waitFor(()=>expect(next.result(actor.id,id).status).toBe('completed'),{timeout:15000});
+ expect(source).toHaveBeenCalledOnce();expect(readOfficeUsage(actor.id).requests).toBe(1);
+ const request=JSON.parse(vi.mocked(upstream).mock.calls[2][1]!.body as string);expect(request.messages).toContainEqual(expect.objectContaining({role:'tool',content:expect.stringContaining('Previously confirmed evidence.')}));
+ expect((await fs.readFile(path.join(next.project(actor.id,id),'part.json'),'utf8'))).toContain('Verified evidence');
+ expect(store.get<any>(`office-sessions:${actor.id}`,id).turns[0].checkpoint).toBeUndefined();
+});
+it('resumes after a rate limit following a saved file without replaying the completed save',async()=>{
+ const actor={...user,workspacePath:path.join(root,'resume-save'),features:['generalChat','files'] as OfficeUser['features'],limits:{dailyTokens:0}};
+ await fs.mkdir(actor.workspacePath);vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true}),resolveLanguage:()=> 'en'};
+ vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('save_file',{path:'draft.txt',content:'Preserved work'}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'rate_limit_error'}}),{status:429,headers:{'Retry-After':'60'}}))
+ .mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'Your file is ready.'}}]})) as never);
+ const sessions=(server as any).teamSessions(),accepted=await sessions.handle(actor,{type:'dashboard:action',action:'startCodexCliSession',requestId:'resume-save',payload:{text:'Save the draft',model:'fast'}});
+ const id=accepted.cliSession.id;await vi.waitFor(()=>expect(sessions.list(actor.id)[0]?.queueError).toContain('rate limited'),{timeout:15000});
+ const file=path.join(sessions.project(actor.id,id),'draft.txt'),before=(await fs.stat(file)).mtimeMs;
+ const saved=store.get<any>(`office-sessions:${actor.id}`,id);expect(saved.turns[0].retryAt-Date.now()).toBeGreaterThan(55000);saved.turns[0].retryAt=0;store.set(`office-sessions:${actor.id}`,id,saved);sessions.pump();
+ await vi.waitFor(()=>expect(sessions.result(actor.id,id).status).toBe('completed'),{timeout:15000});
+ expect((await fs.stat(file)).mtimeMs).toBe(before);expect(await fs.readFile(file,'utf8')).toBe('Preserved work');expect(readOfficeUsage(actor.id).requests).toBe(1);
+ const request=JSON.parse(vi.mocked(upstream).mock.calls[2][1]!.body as string);expect(JSON.stringify(request.messages)).toContain('File saved');
+});
+it('reports host restart separately from revoked workspace access',async()=>{
+ (server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:true})};(server as any).shuttingDown=true;
+ await expect((server as any).teamSessions().options.readUser('alex')).rejects.toThrow('service is restarting');
+ (server as any).shuttingDown=false;(server as any).settingsStore={getDashboardSettings:()=>({teamWorkspaceEnabled:false})};
+ await expect((server as any).teamSessions().options.readUser('alex')).rejects.toThrow('Chat is disabled');
 });

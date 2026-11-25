@@ -190,7 +190,7 @@ export class AiProxy {
   stop(): void {
     this.stopped = true;
     for (const controller of this.running)
-      controller.abort(new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "api_error"));
+      controller.abort(new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "host_restarting"));
     this.models = undefined;
   }
 
@@ -220,7 +220,7 @@ export class AiProxy {
     request.once("aborted", disconnect);
     response.once("close", disconnect);
     try {
-      if (this.stopped) throw new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "api_error");
+      if (this.stopped) throw new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "host_restarting");
       const auth = request.headers.authorization;
       const bearer = auth?.match(/^Bearer (cm_[a-f0-9]{64})$/i)?.[1];
       const apiKey = typeof request.headers["x-api-key"] === "string" ? request.headers["x-api-key"] : undefined;
@@ -248,14 +248,14 @@ export class AiProxy {
           "This key needs host-wide aiProxy permission or all operations.",
           "permission_error"
         );
-      if (this.stopped) throw new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "api_error");
+      if (this.stopped) throw new AiProxyError(503, "The host is restarting. Retry after reconnecting.", "host_restarting");
       if (this.running.size >= 8) {
         response.setHeader("Retry-After", "1");
         throw new AiProxyError(429, "The AI proxy is busy. Retry shortly.", "rate_limit_error");
       }
       this.running.add(controller);
       timer = setTimeout(
-        () => controller.abort(new AiProxyError(504, "The AI request timed out.", "api_error")),
+        () => controller.abort(new AiProxyError(504, "The AI request timed out.", "request_timeout")),
         180_000
       );
       const path = url.pathname;
@@ -382,6 +382,29 @@ export class AiProxy {
             "The AI backend could not complete the response. No retry was attempted.",
             "api_error"
           );
+        if (type === "response.completed" || type === "response.incomplete") {
+          const usage = object(event["response"], "AI response")["usage"] as Record<string, unknown> | undefined;
+          for (const [source, target] of [
+            ["input_tokens", "inputTokens"],
+            ["output_tokens", "outputTokens"]
+          ] as const) {
+            const value = usage?.[source];
+            if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) log[target] = value;
+          }
+          const details = usage?.["input_tokens_details"];
+          const cached =
+            details && typeof details === "object" ? (details as Record<string, unknown>)["cached_tokens"] : undefined;
+          if (
+            typeof cached === "number" &&
+            Number.isSafeInteger(cached) &&
+            cached >= 0 &&
+            log.inputTokens !== undefined
+          )
+            log.cachedInputTokens = Math.min(log.inputTokens, cached);
+          // Some backends deliver content only in the final event, without deltas.
+          if (log.firstOutputMs === undefined && log.outputTokens !== undefined && log.outputTokens > 0)
+            log.firstOutputMs = Math.max(0, Date.now() - log.startedAt);
+        }
         const final =
           !normalized.stream && (type === "response.completed" || type === "response.incomplete")
             ? completedAiResponse(
@@ -408,27 +431,6 @@ export class AiProxy {
             log.httpStatus = response.statusCode;
             log.error = "The backend returned an incomplete response.";
           }
-          const usage = object(event["response"], "AI response")["usage"] as Record<string, unknown> | undefined;
-          for (const [source, target] of [
-            ["input_tokens", "inputTokens"],
-            ["output_tokens", "outputTokens"]
-          ] as const) {
-            const value = usage?.[source];
-            if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) log[target] = value;
-          }
-          const details = usage?.["input_tokens_details"];
-          const cached =
-            details && typeof details === "object" ? (details as Record<string, unknown>)["cached_tokens"] : undefined;
-          if (
-            typeof cached === "number" &&
-            Number.isSafeInteger(cached) &&
-            cached >= 0 &&
-            log.inputTokens !== undefined
-          )
-            log.cachedInputTokens = Math.min(log.inputTokens, cached);
-          // Some backends deliver content only in the final event, without deltas.
-          if (log.firstOutputMs === undefined && log.outputTokens !== undefined && log.outputTokens > 0)
-            log.firstOutputMs = Math.max(0, Date.now() - log.startedAt);
           if (!normalized.stream) this.json(response, final);
           completed = true;
           break;
@@ -467,6 +469,7 @@ export class AiProxy {
         if (response.headersSent) response.end(`event: error\ndata: ${JSON.stringify(envelope)}\n\n`);
         else {
           response.statusCode = failure.status;
+          if(failure.retryAfter&&/^(?:\d+(?:\.\d+)?|[A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9:]{8} GMT)$/.test(failure.retryAfter))response.setHeader('Retry-After',failure.retryAfter);
           this.json(response, envelope);
         }
       }
@@ -583,6 +586,7 @@ export class AiProxy {
         });
         if (result.ok) return result;
         const status = result.status;
+        const retryAfter=result.headers.get('retry-after');
         await result.body?.cancel();
         if (status === 401 && renewal === 0 && account.tokenRefreshEnabled === true && tokens.refreshToken) {
           tokens = await waitWithin(
@@ -640,7 +644,9 @@ export class AiProxy {
           throw new AiProxyError(
             429,
             "The active account is rate limited. Account switching was unavailable or blocked by its normal rules.",
-            "rate_limit_error"
+            "rate_limit_error",
+            undefined,
+            retryAfter ?? undefined
           );
         throw new AiProxyError(
           status === 400 || status === 404 ? status : status === 401 || status === 403 ? 503 : 502,
@@ -651,7 +657,7 @@ export class AiProxy {
               : status === 401 || status === 403
                 ? "The saved account was rejected. Reauthorize it in Account Center."
                 : "The Codex backend is unavailable. Retry later.",
-          status === 400 ? "invalid_request_error" : "api_error"
+          status === 400 ? "invalid_request_error" : status === 401 || status === 403 ? "authentication_required" : "api_error"
         );
       }
     }

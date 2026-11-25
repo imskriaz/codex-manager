@@ -10,6 +10,21 @@ import {preserveOfficeFile} from './officeFileHistory';
 import {officeSessionFolder} from './officeWorkspaceCleanup';
 import {getSqliteStateStore} from '../storage/sqliteState';
 
+/** Read small saved slide batches; generation never evaluates user-provided code. */
+export async function readOfficeSlideParts(user:OfficeUser,project:string,files:unknown):Promise<unknown[]> {
+ if(!user.enabled||user.role!=='user'||!user.features.includes('files'))throw new Error('File access is unavailable.');
+ if(!Array.isArray(files)||!files.length||files.length>10||new Set(files).size!==files.length||files.some(file=>typeof file!=='string'||!file.endsWith('.json')))throw new Error('Choose one to ten saved JSON slide parts.');
+ const root=await fs.realpath(user.workspacePath),slides:unknown[]=[];let bytes=0;
+ for(const file of files as string[]) {
+  const target=await resolveOfficePath(root,project,file),stat=await fs.stat(target);
+  if(!stat.isFile()||stat.size>64000||(bytes+=stat.size)>256000)throw new Error('Keep each slide part under 64 KB and all parts under 256 KB.');
+  let part:unknown;try{part=JSON.parse(await fs.readFile(target,'utf8'));}catch{throw new Error('Each saved slide part must contain a JSON array of slide objects.');}
+  if(!Array.isArray(part)||!part.length||part.length>6)throw new Error('Save one to six slides in each part.');
+  slides.push(...part as unknown[]);
+ }
+ return slides;
+}
+
 export async function writeOfficeBinary(user:OfficeUser,project:string,file:string,data:Buffer,revision?:string){
  if(!user.enabled||user.role!=='user'||!user.features.includes('files'))throw new Error('File access is unavailable.');
  if(data.length>50*1048576)throw new Error('Keep each file under 50 MB.');const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file,true);

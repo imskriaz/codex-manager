@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1-pre.9
+
+- Save confirmed tool results and task context so User Workspace work resumes automatically after recoverable response failures and host restarts without repeating preparation or completed writes.
+- Honor rate-limit retry delays, share the recovery budget across interruptions, preserve failure reasons, and distinguish restarting services from revoked access. Keep saved work available through the Resume action when automatic recovery cannot finish.
+- Generate editable PowerPoint charts, comparisons, timelines, processes, metrics and section slides. Assemble larger decks from small saved slide parts and report unavailable visual rendering honestly.
+
 ## 3.0.1-pre.7
 
 - Keep browser dictation and its review modal as the default. Add an optional Local Whisper setting with a model download notice and setup status.

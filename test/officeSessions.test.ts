@@ -152,7 +152,7 @@ it('persists a single updated plan and questions through reload and includes the
 it("stores private sessions and messages, rejects another user's identifiers, and keeps identity across service restarts",async()=>{
  const {service,generate}=setup();const first=await service.handle(user,start());const id=first.cliSession!.id;
  await vi.waitFor(()=>expect(service.list(user.id)[0]?.status).toBe("idle"));
- expect(generate).toHaveBeenCalledWith(user,"configured-model",expect.arrayContaining([{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}]),expect.any(AbortSignal),path.join(user.workspacePath,`Chat-${id}`),expect.any(Function),undefined,id,undefined);
+ expect(generate).toHaveBeenCalledWith(user,"configured-model",expect.arrayContaining([{role:"system",content:teamSettings.readTeamSettings().globalPrompt},{role:"system",content:user.defaultPrompt},{role:"user",content:"Hello"}]),expect.any(AbortSignal),path.join(user.workspacePath,`Chat-${id}`),expect.any(Function),undefined,id,undefined,expect.objectContaining({save:expect.any(Function)}));
  expect(service.list("sam")).toEqual([]);
  await expect(service.handle({...user,id:"sam"},{type:"dashboard:action",action:"getCodexCliSessionMessages",requestId:"other",payload:{sessionId:id}})).rejects.toThrow("unavailable");
  service.stop();const next=setup().service;
@@ -411,4 +411,61 @@ it('soft deletes only on explicit deletion, hides retained chats, and never expi
  const id=first.cliSession!.id,saved=storage.get<any>(`office-sessions:${user.id}`,id);saved.updatedAt='2000-01-01T00:00:00Z';storage.set(`office-sessions:${user.id}`,id,saved);service.pump();expect(service.list(user.id)).toHaveLength(1);
  await service.handle(user,{type:'dashboard:action',action:'deleteCodexCliSession',requestId:'remove',payload:{sessionId:id,confirmed:true}});expect(service.list(user.id)).toEqual([]);expect(storage.get<any>(`office-sessions:${user.id}`,id)).toMatchObject({deletedAt:expect.any(Number),turns:expect.any(Array)});
  await expect(service.handle(user,{type:'dashboard:action',action:'getCodexCliSessionMessages',requestId:'read-deleted',payload:{sessionId:id}})).rejects.toThrow('unavailable');service.pump();expect(service.list(user.id)).toEqual([]);
+});
+
+it('bounds rate-limit retries across service restarts and retains the actual failure in both UI messages and notices',async()=>{
+ const generate=vi.fn(async()=>{throw new OfficeCapacityError('The assistant is rate limited.',120000);});
+ const first=setup(generate),accepted=await first.service.handle(user,start());
+ await vi.waitFor(()=>expect(first.service.list(user.id)[0]?.queueError).toContain('rate limited'));
+ const id=accepted.cliSession!.id,ns=`office-sessions:${user.id}`;
+ let saved=storage.get<any>(ns,id)!;expect(saved.turns[0].retryAt-Date.now()).toBeGreaterThan(110000);
+ const originalStart=saved.turns[0].startedAt;first.service.stop();const next=setup(generate);
+ for(let attempt=1;attempt<=2;attempt++){
+  saved=storage.get<any>(ns,id)!;saved.turns[0].retryAt=0;storage.set(ns,id,saved);next.service.pump();
+  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(attempt+1));await vi.waitFor(()=>expect((next.service as any).running.size).toBe(0));
+ }
+ next.service.pump();expect(generate).toHaveBeenCalledTimes(3);expect(storage.get<any>(ns,id)!.turns[0].startedAt).toBe(originalStart);
+ expect(next.service.result(user.id,id)).toMatchObject({status:'failed',error:expect.stringContaining('Automatic retries stopped')});
+ expect(next.changed.mock.calls.flatMap(call=>call[1])).toContainEqual(expect.objectContaining({type:'dashboard:notice',level:'error',message:expect.stringContaining('rate limited')}));
+ expect(next.service.inspect(user.id,id).messages).toContainEqual(expect.objectContaining({kind:'error',text:expect.stringContaining('rate limited')}));
+ expect(readOfficeUsage(user.id).requests).toBe(1);
+});
+it('shares the retry budget between capacity and interrupted responses',async()=>{
+ const generate=vi.fn<()=>Promise<string>>().mockRejectedValueOnce(new OfficeCapacityError()).mockRejectedValueOnce(new Error('Interrupted')).mockRejectedValueOnce(new OfficeCapacityError());
+ const {service}=setup(generate),accepted=await service.handle(user,start());await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueEnabled).toBe(true));
+ for(let i=0;i<2;i++){
+  const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);service.pump();
+  await vi.waitFor(()=>expect(generate).toHaveBeenCalledTimes(i+2));await vi.waitFor(()=>expect((service as any).running.size).toBe(0));
+ }
+ expect(service.result(user.id,accepted.cliSession!.id).status).toBe('failed');service.pump();expect(generate).toHaveBeenCalledTimes(3);
+});
+it('enforces a total request deadline while waiting without starting a fresh generation',async()=>{
+ const generate=vi.fn(async()=>{throw new OfficeCapacityError();}),{service}=setup(generate),accepted=await service.handle(user,start());
+ await vi.waitFor(()=>expect(service.list(user.id)[0]?.queueEnabled).toBe(true));
+ const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;saved.turns[0].startedAt=Date.now()-600001;saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);service.pump();
+ expect(generate).toHaveBeenCalledOnce();expect(service.result(user.id,saved.id)).toMatchObject({status:'failed',error:expect.stringContaining('total time limit')});
+});
+it('supplies valid bounded checkpoint data and reuses confirmed sources during a capacity retry',async()=>{
+ const generate=vi.fn(async(_u:unknown,_m:unknown,_messages:unknown,_s:unknown,_p:unknown,report:(message:any)=>void)=>{
+  report({id:'source',kind:'tool-call',title:'Browse website',status:'completed',text:'Source read.',arguments:'{"url":"https://example.test/article"}',result:JSON.stringify({url:'https://example.test/article',text:'Confirmed wage evidence.'})});
+  for(let i=0;i<40;i++)report({id:'file-'+i,kind:'tool-call',title:'Read file',status:'completed',text:'Checked',result:'x'.repeat(4000)});
+  throw new OfficeCapacityError();
+ });
+ const first=setup(generate as any),accepted=await first.service.handle(user,start());await vi.waitFor(()=>expect(first.service.list(user.id)[0]?.queueEnabled).toBe(true));first.service.stop();
+ const saved=storage.get<any>(`office-sessions:${user.id}`,accepted.cliSession!.id)!;
+ // Keep the source as the latest confirmed step, alongside enough large results to exercise the bound.
+ saved.turns[0].activities.push(saved.turns[0].activities.find((a:any)=>a.id==='source'));saved.turns[0].retryAt=0;storage.set(`office-sessions:${user.id}`,saved.id,saved);
+ const next=setup();next.service.pump();await vi.waitFor(()=>expect(next.generate).toHaveBeenCalledOnce());
+ const context=next.generate.mock.calls[0][2].find((m:any)=>typeof m.content==='string'&&m.content.includes('Saved activity: ')).content;
+ const data=context.split('Saved activity: ')[1];expect(data.length).toBeLessThanOrEqual(24000);expect(()=>JSON.parse(data)).not.toThrow();expect(data).toContain('Confirmed wage evidence');expect(context).toContain('Reuse confirmed source results');
+});
+
+it('allows explicit resume of preserved work without another accepted message and rejects another owner',async()=>{
+ const generate=vi.fn<()=>Promise<string>>().mockRejectedValueOnce(new OfficeActionError('Previous service interruption')).mockResolvedValueOnce('Resumed work');
+ const {service}=setup(generate),accepted=await service.handle(user,start());await vi.waitFor(()=>expect(service.result(user.id,accepted.cliSession!.id).status).toBe('failed'));
+ expect(service.list(user.id)[0]?.interrupted).toBe(true);
+ await expect(service.handle({...user,id:'other'},{type:'dashboard:action',action:'resumeCodexSessions',requestId:'wrong-owner',payload:{sessionId:accepted.cliSession!.id}})).rejects.toThrow('unavailable');
+ await service.handle(user,{type:'dashboard:action',action:'resumeCodexSessions',requestId:'resume',payload:{sessionId:accepted.cliSession!.id}});
+ await vi.waitFor(()=>expect(service.result(user.id,accepted.cliSession!.id).status).toBe('completed'));expect(generate).toHaveBeenCalledTimes(2);expect(readOfficeUsage(user.id).requests).toBe(1);
+ expect(service.inspect(user.id,accepted.cliSession!.id).messages.filter(message=>message.role==='user')).toHaveLength(1);
 });

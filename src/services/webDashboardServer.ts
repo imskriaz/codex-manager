@@ -8,7 +8,10 @@ import {officeBrowser} from './officeBrowser';
 import {officeProfiles, officeReasoning, type OfficeModelChoice} from '../domain/officeModels';
 import {preserveOfficeFile,listOfficeFileHistory,restoreOfficeFile,discardOfficeFile} from './officeFileHistory';
 import {createOfficeDocument} from './officeDocuments';
-import {importOfficeAttachment,writeOfficeBinary,readOfficeDocument,readOfficeImage} from './officeFiles';
+import {officeSlideSchema} from './officePowerPoint';
+import {officeGenerationCheckpoint,resumeOfficeGeneration} from '../domain/officeGenerationCheckpoint';
+import {officeGenerationFailure} from '../domain/officeGenerationFailure';
+import {importOfficeAttachment,writeOfficeBinary,readOfficeDocument,readOfficeImage,readOfficeSlideParts} from './officeFiles';
 import {createOfficeArchive} from './officeArchives';
 import {readWorkspaceFileRevision} from './workspaceTools';
 import { OfficeQuotaError, readOfficeUsage, beginOfficeTokens, recordOfficeTokens, checkOfficeStorage, officeStorageBytes, unlimitedOfficeLimits, reconcileOfficeTokens } from "./officeQuota";
@@ -21,7 +24,7 @@ import { createOfficeWorkspaceFile } from "./officeWorkspaceFile";
 import { getSystemStatus } from './systemStatus';
 import { userWorkspaceNotice, userWorkspacePathText } from '../domain/teamWorkspacePresentation';
 import { quotaAvailability } from '../domain/quotaAvailability';
-import { OfficeActionError, OfficeCapacityError, OfficeModelSelectionError, OfficeSessionService } from './officeSessions';
+import { OfficeActionError, OfficeCapacityError, OfficeModelSelectionError, OfficeSessionService, OfficeResponseError } from './officeSessions';
 import { OfficeScheduleService } from './officeSchedules';
 import { readSessionPlan, sessionPlanMessage } from '../domain/sessionPlan';
 import { readSessionQuestions } from '../domain/sessionQuestions';
@@ -1775,8 +1778,12 @@ export class WebDashboardServer implements vscode.Disposable {
       }),
       models: user => this.userWorkspaceModels(user),
       selectModel:(user,messages,signal,catalogue,previous,requested)=>this.selectOfficeModel(user,messages,signal,catalogue,previous,requested),
-      readUser: async id => this.settingsStore.getDashboardSettings().teamWorkspaceEnabled ? getOfficeUser(id) : undefined,
-      generate: async (user, model, messages, signal, projectPath, report, scheduledRun, sessionId, reasoningEffort) => {
+      readUser: async id => {
+        if(this.shuttingDown)throw new OfficeCapacityError('The workspace service is restarting.',30_000);
+        if(!this.settingsStore.getDashboardSettings().teamWorkspaceEnabled)throw new OfficeActionError('Chat is disabled for this workspace. Saved work was preserved. Contact your administrator to continue.');
+        return getOfficeUser(id);
+      },
+      generate: async (user, model, messages, signal, projectPath, report, scheduledRun, sessionId, reasoningEffort, continuation) => {
         const token = await this.officeProxyToken(user.id);
         const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
         model ||= readTeamSettings().defaultModel;
@@ -1809,7 +1816,7 @@ export class WebDashboardServer implements vscode.Disposable {
           {type:'function',function:{name:'manage_files',description:'Manage files and folders inside this workspace. inspect returns a revision and exact contents; use that revision for delete, copy_file or move_file. Delete can remove an explicitly requested project folder and its contents, including the current project via path dot. The workspace root is protected. create_folder creates nested folders. copy_file and move_file never overwrite an existing destination, and return the destination revision for subsequent actions. Never reuse the source revision for the copied file. Perform authorized cleanup using this tool, without asking the user to use server folders or a terminal.',parameters:{type:'object',properties:{operation:{type:'string',enum:['inspect','create_folder','copy_file','move_file','delete']},path:{type:'string'},revision:{type:'string'},destination:{type:'string'}},required:['operation','path'],additionalProperties:false}}},
           {type:"function",function:{name:"list_files",description:"List files in this private workspace.",parameters:{type:"object",properties:{},additionalProperties:false}}},
           {type:"function",function:{name:"read_file",description:"Read a workspace file and its revision before editing.",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}}},
-          {type:'function',function:{name:'create_document',description:'Create a real XLSX, DOCX, PPTX or PDF. PPTX uses slides with title, bullets and optional speaker notes, plus optional theme colours (six hex digits). Use render_document for page thumbnails when available; otherwise offer the original download without a content preview. Use text for documents; sheets with named rows of text, numbers or {formula:"SUM(A2:A5)"} for XLSX. Include the latest revision to replace a file. Formula results recalculate in Excel; do not claim recalculation was checked.',parameters:{type:'object',properties:{path:{type:'string'},revision:{type:'string'},text:{type:'string'},title:{type:'string'},theme:{type:'object',properties:{background:{type:'string'},foreground:{type:'string'},accent:{type:'string'}},additionalProperties:false},slides:{type:'array',minItems:1,maxItems:60,items:{type:'object',properties:{title:{type:'string',maxLength:140},bullets:{type:'array',maxItems:8,items:{type:'string',maxLength:260}},notes:{type:'string',maxLength:4000}},required:['title','bullets'],additionalProperties:false}},sheets:{type:'array',items:{type:'object',properties:{name:{type:'string'},rows:{type:'array',items:{type:'array',items:{anyOf:[{type:'string'},{type:'number'},{type:'null'},{type:'object',properties:{formula:{type:'string'}},required:['formula'],additionalProperties:false}]}}}},required:['name','rows'],additionalProperties:false}}},required:['path'],additionalProperties:false}}},
+          {type:'function',function:{name:'create_document',description:'Create a real XLSX, DOCX, PPTX or PDF. PPTX supports native editable title, section, bullets, comparison, timeline, process, metrics and chart layouts. Items supply labelled cards or steps; chart supplies labels, values and units. Choose varied layouts for the content. For more than six slides, save JSON arrays of one to six slide objects with save_file and pass their paths in slideFiles, in order. Reuse saved parts after an interruption. Use either slides or slideFiles, never both. Theme colours use six hex digits. Use render_document for page thumbnails when available; otherwise offer the original download without a content preview. Use text for documents; sheets with named rows of text, numbers or {formula:"SUM(A2:A5)"} for XLSX. Include the latest revision to replace a file. Formula results recalculate in Excel; do not claim recalculation was checked.',parameters:{type:'object',properties:{path:{type:'string'},revision:{type:'string'},text:{type:'string'},title:{type:'string'},theme:{type:'object',properties:{background:{type:'string'},foreground:{type:'string'},accent:{type:'string'}},additionalProperties:false},slides:{type:'array',minItems:1,maxItems:60,items:officeSlideSchema},slideFiles:{type:'array',minItems:1,maxItems:10,items:{type:'string'}},sheets:{type:'array',items:{type:'object',properties:{name:{type:'string'},rows:{type:'array',items:{type:'array',items:{anyOf:[{type:'string'},{type:'number'},{type:'null'},{type:'object',properties:{formula:{type:'string'}},required:['formula'],additionalProperties:false}]}}}},required:['name','rows'],additionalProperties:false}}},required:['path'],additionalProperties:false}}},
           {type:"function",function:{name:"save_file",description:"Save a workspace text file. Use the revision from read_file for existing files.",parameters:{type:"object",properties:{path:{type:"string"},content:{type:"string"},revision:{type:"string"}},required:["path","content"],additionalProperties:false}}},
           {type:"function",function:{name:"create_zip",description:"Bundle two or more confirmed workspace files into a ZIP for download. Use relative paths and include only files relevant to the requested deliverable.",parameters:{type:"object",properties:{path:{type:"string"},files:{type:"array",minItems:2,maxItems:500,items:{type:"string"}},revision:{type:"string"}},required:["path","files"],additionalProperties:false}}}
           ,...(workspaceFilesEnabled && user.features.includes('browser') ? [{type:'function',function:{name:'open_preview',description:'Open an existing HTML website in the right panel Browser tab. Use this when asked to run or open a saved website. Inline CSS and JavaScript work; no server processes or external network are available.',parameters:{type:'object',properties:{path:{type:'string'}},required:['path'],additionalProperties:false}}}] : [])
@@ -1822,27 +1829,31 @@ export class WebDashboardServer implements vscode.Disposable {
         conversation[0]!['content'] = String(conversation[0]!['content']) + ' When multiple related deliverable files are ready, use create_zip to offer a single bundle as well as individual downloads. Users access deliverables only through this workspace. After saving a file, provide [Open file](relative/path) and [Download file](relative/path?download=1) links using URL-encoded paths. For simple websites, create a self-contained HTML file with inline CSS and JavaScript. For a saved HTML website, use open_preview to show it in the right panel Browser, then provide [Open preview](relative/page.html). Never ask users to open physical folders, double-click server files, or use a local terminal. Only claim a preview opened after the tool confirms it. A server application needs an isolated execution service; do not claim it is running.';
         if (workspaceFilesEnabled) conversation[0]!['content'] = String(conversation[0]!['content']) + ' This conversation already has a workspace, created automatically if no project was selected. Perform requested file work here without asking the user to choose or create a project, including when earlier replies asked for one. Files stay saved until the user deletes them.';
         conversation[0]!['content']=String(conversation[0]!['content'])+` Current UTC time: ${new Date().toISOString()}. `+(scheduledRun?'This is a scheduled execution. Perform only the saved task now; scheduling tools are unavailable.':'When asked to schedule future work, use the scheduling tools to actually save it. Ask for a missing time or time zone instead of guessing. Explain the confirmed local time, recurrence, and model. Never claim a schedule exists without confirmation. Scheduled runs cannot send email or access sources unavailable in this workspace.');
-        let sideEffects=false;const planId=crypto.randomUUID(),failedActions=new Map<string,string>(),deliverables=new Map<string,boolean>(),researchSources=new Map<string,string>();
+        conversation[0]!['content']=String(conversation[0]!['content'])+' Keep the requested deliverable format. For PowerPoint use the native editable layouts in create_document; advanced layouts do not require an external runtime. For decks over six slides, save small JSON slide arrays under presentation-parts/ then assemble with slideFiles. Keep each model action small. Reuse confirmed research and saved parts; do not restart preparation after a failure. An incomplete response is a failure, not a reason to repeat the whole task.';
+        const checkpoint=continuation?.checkpoint,contextLength=conversation.length;
+        if(checkpoint){conversation.push(...resumeOfficeGeneration(checkpoint));conversation.push({role:'system',content:'Resume this same accepted request from the saved tool results. Do not restart completed research or plans. Inspect unknown action outcomes before writing. Use small saved slide parts or short file edits to avoid another output limit. Current permissions and tools still apply.'});}
+        let sideEffects=checkpoint?.sideEffects??false;const planId=checkpoint?.planId??crypto.randomUUID(),failedActions=new Map<string,string>(checkpoint?.failedActions),deliverables=new Map<string,boolean>(checkpoint?.deliverables),researchSources=new Map<string,string>(checkpoint?.researchSources);
+        const saveCheckpoint=()=>continuation?.save(officeGenerationCheckpoint({planId,messages:conversation.slice(contextLength),sideEffects,failedActions:[...failedActions],deliverables:[...deliverables],researchSources:[...researchSources]}));
+        const pushResult=(result:Record<string,unknown>)=>{conversation.push(result);saveCheckpoint();};
         for(let step=0;step<32;step++){
-        signal.throwIfAborted();
+        signal.throwIfAborted();saveCheckpoint();
         const authorized=await getOfficeUser(user.id);
         if(authorized)checkOfficeEntitlement(authorized,model);
         const claim=beginOfficeTokens(user,Math.ceil(Buffer.byteLength(JSON.stringify(conversation),'utf8')/3)+8192);
         let settled=false;
-        let body: {usage?:{total_tokens?:number};choices?:Array<{message?:{content?:unknown;tool_calls?:Array<{id:string;type:string;function:{name:string;arguments:string}}>}}>};
+        let body: {usage?:{total_tokens?:number};choices?:Array<{finish_reason?:string;message?:{content?:unknown;tool_calls?:Array<{id:string;type:string;function:{name:string;arguments:string}}>}}>};
         try {
           const upstream = await undiciFetch(this.getUrl("/v1/chat/completions"), { method:"POST", headers, signal, body:JSON.stringify({model,messages:conversation,...(tools.length?{tools}:{}),...(reasoningEffort?{reasoning_effort:reasoningEffort}:{}),max_tokens:8192,stream:false}) });
           if (!upstream.ok) {
             recordOfficeTokens(user.id,0,claim);settled=true;
-            await upstream.body?.cancel();
-            if(!sideEffects&&[402,429,500,502,503,504].includes(upstream.status))throw new OfficeCapacityError();
-            if(!sideEffects&&[400,404].includes(upstream.status))throw new OfficeModelSelectionError('Choose another available model to continue. Your message is saved.');
-            throw new Error('The response could not be confirmed.');
+            const rejection=await upstream.json().catch(()=>undefined) as {error?:{code?:unknown}}|undefined;
+            throw officeGenerationFailure(upstream.status,rejection?.error?.code,upstream.headers.get('retry-after'),sideEffects&&!continuation);
           }
           body=await upstream.json() as typeof body;
           recordOfficeTokens(user.id,body.usage?.total_tokens,claim);settled=true;
         } finally { if(!settled)recordOfficeTokens(user.id,undefined,claim); }
         signal.throwIfAborted();
+        if(body.choices?.[0]?.finish_reason==='length')throw new OfficeResponseError('The assistant response reached its output limit. The incomplete action was not run. Saved work was preserved. Retry using small saved slide parts or a shorter file.');
         const message=body.choices?.[0]?.message;
         if(message?.tool_calls!==undefined&&!Array.isArray(message.tool_calls))throw new OfficeActionError('The requested action could not be read. Please try again.');
         if(!message?.tool_calls?.length){
@@ -1871,7 +1882,7 @@ export class WebDashboardServer implements vscode.Disposable {
           report({id:crypto.randomUUID(),role:'assistant',text:'A quick question before I continue.',questions});
           return 'Reply to the question above and I will continue.';
         }
-        conversation.push({role:"assistant",content:typeof message.content==='string'?message.content:null,tool_calls:message.tool_calls});
+        conversation.push({role:"assistant",content:typeof message.content==='string'?message.content:null,tool_calls:message.tool_calls});saveCheckpoint();
         if(typeof message.content==="string"&&message.content.trim())report({id:crypto.randomUUID(),role:"assistant",text:message.content});
         for(const call of message.tool_calls){
           signal.throwIfAborted();
@@ -1895,12 +1906,12 @@ export class WebDashboardServer implements vscode.Disposable {
               }
               if (!result.memory.enabled) result = { ...result, memory:{...result.memory,entries:[]}, message:result.message ?? 'Memory is off. Review saved entries in User settings.' };
               report({id:activityId,kind:'tool-call',title:'Memory',text:result.message ?? 'Saved memory reviewed.',status:'completed'});
-              conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             } catch (error) {
               const detail = userWorkspaceNotice(error instanceof Error ? error.message : 'Memory could not be updated.');
               report({id:activityId,kind:'tool-call',title:'Memory',text:detail,status:'failed'});
               failedActions.set('memory',detail);
-              conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'List memories again before retrying. Use add for a new memory. For update or remove, copy the exact ID from list. Never invent IDs. Do not claim this action succeeded.'})});
+              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'List memories again before retrying. Use add for a new memory. For update or remove, copy the exact ID from list. Never invent IDs. Do not claim this action succeeded.'})});
             }
             continue;
           }
@@ -1916,7 +1927,7 @@ export class WebDashboardServer implements vscode.Disposable {
               if(typeof args.message!=='string'||!args.message.trim()||args.message.length>2000)throw new Error('Use a short progress update.');
               report({id:crypto.randomUUID(),role:'assistant',text:args.message});
             }
-            conversation.push({role:'tool',tool_call_id:call.id,content:'Update shared with the user. Continue the task.'});continue;
+            pushResult({role:'tool',tool_call_id:call.id,content:'Update shared with the user. Continue the task.'});continue;
           }
           if(['list_schedules','create_schedule','update_schedule','manage_schedule'].includes(call.function.name)){
             const current=await getOfficeUser(user.id);
@@ -1951,7 +1962,7 @@ export class WebDashboardServer implements vscode.Disposable {
               }
               if(result&&typeof result==='object'&&!Array.isArray(result)){const {projectPath:_project,...safe}=result as Record<string,unknown>;result=safe;}
               report({id:activityId,kind:'tool-call',title,text:'Scheduled tasks updated.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});
-              conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             }catch(error){report({id:activityId,kind:'tool-call',title,text:'This schedule action could not be completed.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This schedule action could not be completed.'));}
             continue;
           }
@@ -1959,8 +1970,8 @@ export class WebDashboardServer implements vscode.Disposable {
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!tools.some(tool=>tool.function.name===call.function.name))throw new OfficeActionError('This workspace capability is unavailable.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID(),title=call.function.name==='render_document'?'Render document':'Run isolated script';report({id:activityId,kind:'tool-call',title,text:title,arguments:call.function.arguments,status:'inProgress'});
             try{signal.throwIfAborted();sideEffects=true;const result=call.function.name==='render_document'?await renderOfficeThumbnails(current,projectPath,args,signal):await runOfficeRuntime(current,projectPath,args,signal);const failed='status' in result&&result.status!=='completed';report({id:activityId,kind:'tool-call',title,text:result.message,arguments:call.function.arguments,result:JSON.stringify(result),status:failed?'failed':'completed'});if(failed)failedActions.set(call.function.name,result.message);else failedActions.delete(call.function.name);
-              if('files' in result)for(const file of result.files)deliverables.set(file,false);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This action could not be confirmed.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(call.function.name,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Report this limitation truthfully. Do not claim completion or replay uncertain execution. Offer supported file or content alternatives.'})});}continue;
+              if('files' in result)for(const file of result.files)deliverables.set(file,false);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This action could not be confirmed.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(call.function.name,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Report this limitation truthfully. Do not claim completion or replay uncertain execution. Offer supported file or content alternatives.'})});}continue;
           }
           if(['read_web_page','search_web','list_connections','read_connection'].includes(call.function.name)){
             const current=await getOfficeUser(user.id);
@@ -1973,8 +1984,8 @@ export class WebDashboardServer implements vscode.Disposable {
               if(['read_web_page','search_web'].includes(call.function.name)&&!current.features.includes('browser'))throw new Error('Website research is unavailable.');
               const value=call.function.name==='search_web'?await searchOfficeWeb(args['query'],signal):call.function.name==='read_web_page'?await readOfficeWebPage(args['url'],signal):call.function.name==='list_connections'?await listOfficeConnections(current):await readOfficeConnection(current,args['connectionId'],args['tool'],args['arguments'],signal);
               if(call.function.name==='read_web_page'&&value&&typeof value==='object'&&'url' in value&&'title' in value&&typeof value.url==='string'&&typeof value.title==='string')researchSources.set(value.url,value.title);
-              report({id:activityId,kind:'tool-call',title,text:'Source read.',arguments:sourceArguments,result:JSON.stringify(value),status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This source could not be read.');report({id:activityId,kind:'tool-call',title,text:detail,arguments:sourceArguments,status:'failed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Explain this limitation. Do not invent facts or citations.'})});}
+              report({id:activityId,kind:'tool-call',title,text:'Source read.',arguments:sourceArguments,result:JSON.stringify(value),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value).slice(0,100000)});
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'This source could not be read.');report({id:activityId,kind:'tool-call',title,text:detail,arguments:sourceArguments,status:'failed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Explain this limitation. Do not invent facts or citations.'})});}
             continue;
           }
           if(call.function.name==='manage_recovery'){
@@ -1988,7 +1999,7 @@ export class WebDashboardServer implements vscode.Disposable {
                 if(args['operation']==='restore')return restoreOfficeFile(current,args['id'],typeof args['revision']==='string'?args['revision']:undefined);
                 if(args['operation']==='discard'&&args['confirmed']===true)return discardOfficeFile(current,args['id']);
                 throw new Error('Choose restore, or explicitly confirmed permanent removal.');
-              });report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
+              });report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'Saved file action completed.',arguments:call.function.arguments,result:JSON.stringify(result),status:'completed'});pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(result)});
             }catch(error){report({id:activityId,kind:'tool-call',title:'Manage saved files',text:'This saved file action did not finish.',status:'failed'});throw new OfficeActionError(userWorkspaceNotice(error instanceof Error?error.message:'This saved file action did not finish.'));}
             continue;
           }
@@ -2015,8 +2026,8 @@ export class WebDashboardServer implements vscode.Disposable {
               failedActions.delete(actionKey);
               const {deletedPath:_deleted,...safe}=value;
               report({id:activityId,kind:'tool-call',title,text:value.message??'Files inspected.',arguments:call.function.arguments,result:JSON.stringify(safe),status:'completed'});
-              conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(safe)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(actionKey,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.'})});}
+              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(safe)});
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'File management did not complete.');report({id:activityId,kind:'tool-call',title,text:detail,status:'failed'});failedActions.set(actionKey,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Inspect the exact target for its current revision before retrying. Do not claim success while this action is unresolved.'})});}
             continue;
           }
           if(call.function.name==='create_document'){
@@ -2025,13 +2036,20 @@ export class WebDashboardServer implements vscode.Disposable {
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>;
             const activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Create document',text:'Preparing document',arguments:call.function.arguments,status:'inProgress'});
             try{
+              if(args['slideFiles']!==undefined){
+                if(typeof args['path']!=='string'||!args['path'].toLowerCase().endsWith('.pptx')||args['slides']!==undefined)throw new Error('Use slideFiles only for PowerPoint, without inline slides.');
+                args['slides']=await readOfficeSlideParts(current,projectPath,args['slideFiles']);
+              }
               const data=await createOfficeDocument(args);signal.throwIfAborted();sideEffects=true;
               const value=await runCrossWindowExclusive(`office-storage:${current.id}`,'Save document',()=>writeOfficeBinary(current,projectPath,String(args['path']),data,typeof args['revision']==='string'?args['revision']:undefined));
               report({id:activityId,kind:'tool-call',title:'Create document',text:'Document saved.',arguments:call.function.arguments,result:JSON.stringify(value),status:'completed'});
               report({id:crypto.randomUUID(),kind:'file-change',title:'Updated files',text:'Document saved.',status:'completed',changes:[{path:value.path,kind:args['revision']?'update':'add'}]});
               failedActions.delete(`write_file:${String(args['path'])}`);
-              deliverables.set(value.path,false);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});
-            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'Document could not be saved.');report({id:activityId,kind:'tool-call',title:'Create document',text:detail,status:'failed'});failedActions.set(`write_file:${String(args['path'])}`,detail);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Use create_document only for XLSX, DOCX, PPTX or PDF. Use save_file for CSV, text and HTML. Inspect an existing file for its current revision before retrying. Do not claim success until the file is saved.'})});}
+              deliverables.set(value.path,false);
+              const review=/\.pptx$/i.test(value.path)&&!integrations.rendererUrl?'Slide rendering is not configured. The editable PowerPoint is saved; visual layout has not been verified.':undefined;
+              if(review)report({id:crypto.randomUUID(),role:'assistant',text:review});
+              pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({...value,...(review?{visualReview:review}:{})})});
+            }catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'Document could not be saved.');report({id:activityId,kind:'tool-call',title:'Create document',text:detail,status:'failed'});failedActions.set(`write_file:${String(args['path'])}`,detail);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:detail,instruction:'Use create_document only for XLSX, DOCX, PPTX or PDF. Use save_file for CSV, text and HTML. Large PowerPoints should use small saved JSON slideFiles. Inspect an existing file for its current revision before retrying. Do not claim success until the file is saved.'})});}
             continue;
           }
           if(call.function.name==='use_office_skill'){
@@ -2040,7 +2058,7 @@ export class WebDashboardServer implements vscode.Disposable {
             const skill=readTeamSettings().presentation.catalog.find(card=>card.id===args.id);if(!skill)throw new OfficeActionError('Choose an available workspace skill.');
             signal.throwIfAborted();
             report({id:crypto.randomUUID(),kind:'tool-call',title:'Use skill · '+skill.label,text:skill.description||'Skill guidance applied.',arguments:JSON.stringify({id:skill.id,label:skill.label}),status:'completed'});
-            conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({id:skill.id,label:skill.label,guidance:skill.prompt,instruction:'Apply this guidance within workspace permissions. Use source-reading tools for technical claims; report unverifiable details. Do not claim unsupported file operations.'})});
+            pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({id:skill.id,label:skill.label,guidance:skill.prompt,instruction:'Apply this guidance within workspace permissions. Use source-reading tools for technical claims; report unverifiable details. Do not claim unsupported file operations.'})});
             continue;
           }
           if(call.function.name==='suggest_workflows'){
@@ -2048,7 +2066,7 @@ export class WebDashboardServer implements vscode.Disposable {
             if(!current?.enabled||current.role!=='user'||current.id!==user.id||scheduledRun)throw new OfficeActionError('Workspace suggestions are unavailable.');
             signal.throwIfAborted();
             const tags=saveOfficeRecommendations(current.id,args.tags,readTeamSettings().presentation);
-            conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({tags,saved:true})});
+            pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({tags,saved:true})});
             continue;
           }
           if(call.function.name==='show_workspace_panel'){
@@ -2060,7 +2078,7 @@ export class WebDashboardServer implements vscode.Disposable {
             const listed=await workspaceSurface(projectPath,{operation:'list',sessionId},true,allowed),surfaces=listed.surfaces.filter(surface=>surface.sessionId===sessionId&&surface.visible);
             let opened=false;
             if(surfaces.length===1){try{const result=await workspaceSurface(projectPath,{operation:'open',surfaceId:surfaces[0]!.surfaceId,sessionId,tab:args.tab as 'env'|'files'|'browser'},true,allowed,5000);opened=!!result.surfaces[0]?.panelOpen&&result.surfaces[0]?.activeTab===args.tab;}catch{/* An unavailable viewer must not stop the task. */}}
-            conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({panel:args.tab,status:opened?'opened':'ready',message:opened?'Panel opened.':'Continue the task. The panel can be opened from workspace tools.'})});
+            pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify({panel:args.tab,status:opened?'opened':'ready',message:opened?'Panel opened.':'Continue the task. The panel can be opened from workspace tools.'})});
             continue;
           }
           if(call.function.name==='create_zip'){
@@ -2068,7 +2086,7 @@ export class WebDashboardServer implements vscode.Disposable {
             signal.throwIfAborted();
             const current=await getOfficeUser(user.id);if(!current?.enabled||current.role!=='user'||current.workspacePath!==user.workspacePath||!current.features.includes('files'))throw new OfficeActionError('File access changed.');
             const args=JSON.parse(call.function.arguments) as Record<string,unknown>,activityId=crypto.randomUUID();report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'Bundling files',status:'inProgress'});
-            try{sideEffects=true;const value=await createOfficeArchive(current,projectPath,args);report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'ZIP ready to download.',status:'completed'});report({id:crypto.randomUUID(),kind:'file-change',title:'Generated files',text:'ZIP ready to download.',status:'completed',changes:[{path:value.path,kind:'add'}]});deliverables.set(value.path,false);conversation.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});}catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'The ZIP could not be created.');report({id:activityId,kind:'tool-call',title:'Create ZIP',text:detail,status:'failed'});throw new OfficeActionError(detail);}
+            try{sideEffects=true;const value=await createOfficeArchive(current,projectPath,args);report({id:activityId,kind:'tool-call',title:'Create ZIP',text:'ZIP ready to download.',status:'completed'});report({id:crypto.randomUUID(),kind:'file-change',title:'Generated files',text:'ZIP ready to download.',status:'completed',changes:[{path:value.path,kind:'add'}]});deliverables.set(value.path,false);pushResult({role:'tool',tool_call_id:call.id,content:JSON.stringify(value)});}catch(error){const detail=userWorkspaceNotice(error instanceof Error?error.message:'The ZIP could not be created.');report({id:activityId,kind:'tool-call',title:'Create ZIP',text:detail,status:'failed'});throw new OfficeActionError(detail);}
             continue;
           }
           const activityId=crypto.randomUUID(),title=call.function.name==="list_files"?"Browse files":call.function.name==="read_file"?"Read file":call.function.name==="save_file"?"Update file":call.function.name==='open_preview'?'Open preview':"Workspace action";
@@ -2102,7 +2120,7 @@ export class WebDashboardServer implements vscode.Disposable {
               }catch{toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. Opening the viewer could not be confirmed. Provide its Open preview link without claiming it opened.'};}
             }else toolResult={preview:{path:args.path,status:'ready',panel:'Browser'},message:'The HTML file is verified and ready. No single active viewer is available for confirmation. Provide its Open preview link.'};
           }
-          conversation.push({role:"tool",tool_call_id:call.id,content:JSON.stringify(toolResult).slice(0,160_000)});
+          pushResult({role:"tool",tool_call_id:call.id,content:JSON.stringify(toolResult).slice(0,160_000)});
           } catch(error){report({id:activityId,kind:"tool-call",title,text:"This action could not be completed.",status:"failed",arguments:call.function.arguments});throw error;}
         }
         }
@@ -2136,12 +2154,12 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       assertOfficeHostIsolation(message.action);
       if (!user.enabled || !this.officeActionAllowed(user, message)) throw new Error('This feature is not enabled for your workspace.');
-      const sessionActions = ["listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"];
+      const sessionActions = ["listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","resumeCodexSessions","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"];
       if(sessionActions.includes(message.action)) {
         const scoped = await this.scopePrivateOfficeAction(user,message);
         return reply(await this.teamSessions().handle(user,scoped));
       }
-      if(["resumeCodexSessions","forkCodexCliSession","openCodexCliSession","setCodexSessionAccess","setCodexSessionGoalStatus","getCodexSubAgentMessages","respondCodexServerRequest","setCodexSessionAutoResume","getProjectBoard","startProjectTask","startProjectSubtask"].includes(message.action)) throw new Error("This action is unavailable in your workspace.");
+      if(["forkCodexCliSession","openCodexCliSession","setCodexSessionAccess","setCodexSessionGoalStatus","getCodexSubAgentMessages","respondCodexServerRequest","setCodexSessionAutoResume","getProjectBoard","startProjectTask","startProjectSubtask"].includes(message.action)) throw new Error("This action is unavailable in your workspace.");
       const scoped = await this.scopePrivateOfficeAction(user,message);
       if (message.action === 'workspaceBrowser') {
         return reply({workspaceBrowser:await officeBrowser(user,scoped.payload!.projectPath!,scoped.payload?.browserRequest)});
@@ -2257,7 +2275,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if(payload.browserRequest?.sessionId)this.teamSessions().project(user.id,payload.browserRequest.sessionId);
     if(payload.terminalId){const terminal=listWorkspaceTerminals().find(value=>value.id===payload.terminalId);if(!terminal?.cwd||!within(await fs.realpath(terminal.cwd)))throw new Error("This terminal is unavailable.");}
-    if(!["getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue"].includes(message.action))delete payload.sessionId;
+    if(!["getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","resumeCodexSessions","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue"].includes(message.action))delete payload.sessionId;
     return {...message,payload};
   }
 
@@ -2529,7 +2547,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (!user.enabled) return false;
     if (message.type === "dashboard:setting") return message.key === "dashboardTheme" || message.key === "displayLanguage";
     if (message.type !== "dashboard:action") return ["dashboard:ready","dashboard:workspace-presence","dashboard:workspace-surface","dashboard:workspace-command-result"].includes(message.type);
-    if (["localDictation","listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"].includes(message.action)) return user.features.includes("generalChat") || user.features.includes("tasks");
+    if (["localDictation","listCodexCliSessions","getCodexCliSessionMessages","startCodexCliSession","sendCodexCliSessionMessage","steerCodexCliSessionTurn","cancelCodexCliSessionTurn","resumeCodexSessions","renameCodexCliSession","archiveCodexCliSession","unarchiveCodexCliSession","deleteCodexCliSession","setCodexSessionQueue","getCodexSkills"].includes(message.action)) return user.features.includes("generalChat") || user.features.includes("tasks");
     if (["listWorkspaceFiles","readWorkspaceFile","saveWorkspaceFile","deleteWorkspaceFile"].includes(message.action)) return user.features.includes("files");
     if (message.action === "workspaceBrowser") return user.features.includes("browser");
     if (message.action === "createWorkspaceFolder") return user.features.includes("files");

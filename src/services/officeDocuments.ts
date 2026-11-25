@@ -33,23 +33,7 @@ export async function createOfficeDocument(input:Record<string,unknown>):Promise
    sheet.getRow(1).font={bold:true};sheet.views=[{state:'frozen',ySplit:1}];sheet.columns.forEach(column=>{column.width=22;});
   }return Buffer.from(await book.xlsx.writeBuffer());
  }
- if(extension==='.pptx'){
-  const {default:PptxGenJS}=await import('pptxgenjs');
-  if(!Array.isArray(input['slides'])||!input['slides'].length||input['slides'].length>60)throw new Error('Add one to sixty presentation slides.');
-  const deck=new PptxGenJS();deck.layout='LAYOUT_WIDE';deck.author='';deck.subject='';deck.title=typeof input['title']==='string'?input['title'].slice(0,160):'';
-  const theme=input['theme'] as Record<string,unknown>|undefined;
-  const color=(key:string,fallback:string)=>{const value=theme?.[key]??fallback;if(typeof value!=='string'||!/^[a-f0-9]{6}$/i.test(value))throw new Error('Use six-digit hexadecimal presentation colours.');return value;};
-  const background=color('background','FFFFFF'),foreground=color('foreground','172033'),accent=color('accent','2563EB');
-  for(const [index,raw] of input['slides'].entries()){
-   if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Provide slide titles and bullet text.');const value=raw as Record<string,unknown>;
-   if(typeof value['title']!=='string'||!value['title'].trim()||value['title'].length>140||!Array.isArray(value['bullets'])||value['bullets'].length>8||value['bullets'].some(item=>typeof item!=='string'||item.length>260)||value['notes']!==undefined&&(typeof value['notes']!=='string'||value['notes'].length>4000))throw new Error('Use slide titles under 140 characters, up to eight short bullets and optional speaker notes.');
-   const slide=deck.addSlide();slide.background={color:background};slide.addShape(deck.ShapeType.rect,{x:0,y:0,w:0.12,h:7.5,line:{color:accent},fill:{color:accent}});
-   slide.addText(value['title'],{x:0.65,y:0.55,w:12,h:1.1,fontFace:'Aptos Display',fontSize:30,bold:true,color:foreground,margin:0,isTextBox:true});
-   const bullets=value['bullets'] as string[];bullets.forEach((bullet,position)=>slide.addText(bullet,{x:0.9,y:1.9+position*0.57,w:11.4,h:0.48,fontFace:'Aptos',fontSize:19,color:foreground,margin:0,bullet:{indent:16},isTextBox:true}));
-   slide.addText(String(index+1),{x:12,y:7,w:0.65,h:0.2,fontFace:'Aptos',fontSize:10,color:foreground,align:'right',margin:0,isTextBox:true});if(value['notes'])slide.addNotes(value['notes'] as string);
-  }
-  return Buffer.from(await deck.write({outputType:'nodebuffer'}) as Buffer);
- }
+ if(extension==='.pptx')return (await import('./officePowerPoint')).createOfficePowerPoint(input);
  if(typeof text!=='string'||!text.trim())throw new Error('Provide document text.');
  if(extension==='.docx'){const {Document,Packer,Paragraph,HeadingLevel}=await import('docx');const paragraphs=text.split(/\r?\n/).map(line=>new Paragraph({text:line.replace(/^#+\s*/,''),...(line.startsWith('# ')?{heading:HeadingLevel.HEADING_1}:{})}));return Packer.toBuffer(new Document({sections:[{children:paragraphs}]}));}
  if(extension==='.pdf'){

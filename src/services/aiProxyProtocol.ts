@@ -8,7 +8,8 @@ export class AiProxyError extends Error {
     public readonly status: number,
     message: string,
     public readonly code = "invalid_request_error",
-    public readonly diagnostic = message
+    public readonly diagnostic = message,
+    public readonly retryAfter?:string
   ) {
     super(message);
   }
@@ -490,7 +491,7 @@ export function completedAiResponse(response: Json, protocol: AiProtocol, fallba
         string(item["call_id"], "tool call id");
         string(item["name"], "tool name");
       } catch {
-        throw new AiProxyError(502, "The backend returned invalid tool arguments or identity.", "api_error");
+        throw new AiProxyError(502, "The backend returned invalid tool arguments or identity.", response["status"] === "incomplete" ? "incomplete_tool_call" : "invalid_tool_call");
       }
       claudeContent.push({ type: "tool_use", id: item["call_id"], name: item["name"], input });
     } else if (!omitThinking && item["type"] === "reasoning" && Array.isArray(item["summary"])) {
@@ -612,7 +613,7 @@ export class AiStream {
       string(item['call_id'], 'tool call id');
       string(item['name'], 'tool name');
     } catch {
-      throw new AiProxyError(502, 'The backend returned invalid tool arguments or identity.', 'api_error');
+      throw new AiProxyError(502, 'The backend returned invalid tool arguments or identity.', 'invalid_tool_call');
     }
     const previous = this.toolArguments.get(outputIndex);
     if (previous === undefined) return this.event({ type: "response.output_item.added", output_index: outputIndex, item: { ...item, arguments: "" } }) + this.event({ type: "response.function_call_arguments.delta", output_index: outputIndex, delta: full });
