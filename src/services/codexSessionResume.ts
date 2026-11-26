@@ -54,7 +54,7 @@ import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings"
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { sendCodexQuestionReply } from './codexQuestionReply';
 import { bundledCodexCli, discoverBundledCodexCli, managedCodexCli, resolveCodexNpmBinary } from './codexCliRuntime';
-import { discoverClaudeApiModels, discoverClaudeModels } from './claudeCliRuntime';
+import { discoverClaudeModels } from './claudeCliRuntime';
 import { isRuntimeModuleEnabled, assertRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 import { isClaudeModel } from '../domain/dashboard/claudeModels';
 import * as claude from './claudeSessions';
@@ -976,9 +976,7 @@ export function readCodexCliComposerConfig(codexHome = resolveCodexHome(), inclu
   return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces, codexEnabled])}`, () => readCliComposerConfig(codexHome, codexEnabled))
     .then(async config => {
       const native = includeClaude && path.resolve(codexHome) === path.resolve(resolveCodexHome()) ? await discoverClaudeModels() : { models: [] };
-      const gateway = includeClaude ? await discoverClaudeApiModels() : { models: [] };
-      const models = [...new Map([...native.models, ...gateway.models].map(model => [model.id, model])).values()];
-      return { ...config, models: [...config.models, ...models], ...((config.modelDiscoveryWarning || native.warning || gateway.warning) ? { modelDiscoveryWarning: [config.modelDiscoveryWarning, native.warning, gateway.warning].filter(Boolean).join(' ') } : {}), projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }; });
+      return { ...config, models: [...config.models, ...native.models], ...((config.modelDiscoveryWarning || native.warning) ? { modelDiscoveryWarning: [config.modelDiscoveryWarning, native.warning].filter(Boolean).join(' ') } : {}), projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }; });
 }
 
 async function readCliComposerConfig(codexHome: string, codexEnabled: boolean): Promise<DashboardCliComposerConfig> {

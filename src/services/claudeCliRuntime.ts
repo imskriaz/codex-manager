@@ -7,7 +7,7 @@ import type * as SDK from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeModelOptions } from '../domain/dashboard/claudeModels';
 import type { DashboardCliModelOption } from '../domain/dashboard/types';
 import { waitWithin } from '../utils/concurrency';
-import { activeApiAccount, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity } from './apiAccounts';
+import { apiAccountEnvironment } from './apiAccounts';
 import { managedClaudeCli } from './codexCliRuntime';
 import { isRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 
@@ -49,8 +49,39 @@ export function claudeEnvironment(): NodeJS.ProcessEnv {
 }
 
 type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'subscriptionType' | 'apiProvider'> };
-const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], managedClaudeCli(), isRuntimeModuleEnabled('claude'), apiAccountIdentity('anthropic')]);
-let cached: ClaudeConnection & { key: string } | undefined;
+const infrastructureKeys = ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD'];
+const customInfrastructureWarning = 'Custom Claude infrastructure is excluded from native Claude models. Add it as an API account instead.';
+export function isCustomClaudeInfrastructure(env: Record<string, unknown>, provider?: string): boolean {
+  if (provider && provider !== 'firstParty') return true;
+  if (infrastructureKeys.slice(1).some(key => env[key] === '1' || env[key] === 'true')) return true;
+  const base = env['ANTHROPIC_BASE_URL'];
+  if (typeof base !== 'string' || !base.trim()) return false;
+  try { const url = new URL(base); return url.origin !== 'https://api.anthropic.com' || !!url.username || !!url.password; }
+  catch { return true; }
+}
+async function claudeInfrastructure(): Promise<{custom: boolean; signature: string}> {
+  const files = [path.join(claudeConfigHome(), 'settings.json')], folders: string[] = [];
+  for (let folder = process.cwd();; folder = path.dirname(folder)) {
+    folders.unshift(folder);
+    if (path.dirname(folder) === folder) break;
+  }
+  for (const folder of folders) for (const name of ['settings.json', 'settings.local.json']) files.push(path.join(folder, '.claude', name));
+  const markers: Array<Record<string, unknown>> = [Object.fromEntries(infrastructureKeys.map(key => [key, process.env[key]]))];
+  for (const file of new Set(files)) {
+    try {
+      if ((await fs.stat(file)).size > 1024 * 1024) throw new Error('Too large');
+      const value: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid settings');
+      const env = (value as {env?: Record<string, unknown>}).env;
+      if (env && typeof env === 'object') markers.push(Object.fromEntries(infrastructureKeys.map(key => [key, env[key]])));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Claude infrastructure settings could not be checked. Review Claude settings and refresh models.');
+    }
+  }
+  return {custom: markers.some(env => isCustomClaudeInfrastructure(env)), signature: createHash('sha256').update(JSON.stringify(markers)).digest('hex')};
+}
+const connectionKey = () => JSON.stringify([claudeConfigHome(), process.cwd(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], ...infrastructureKeys.map(key => process.env[key]), managedClaudeCli(), isRuntimeModuleEnabled('claude')]);
+let cached: ClaudeConnection & { key: string; baseKey: string } | undefined;
 let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
 export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage>): Promise<void> {
   await waitWithin((async () => {
@@ -62,10 +93,18 @@ export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage
     throw new Error('Claude Haiku verification ended without a confirmed response.');
   })(), 15_000, 'Claude Haiku verification timed out. Refresh to retry.');
 }
-export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.key === connectionKey() ? cached : undefined; }
+export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.baseKey === connectionKey() ? cached : undefined; }
 export async function discoverClaudeModels(refresh = false): Promise<ClaudeConnection> {
   if (!isRuntimeModuleEnabled('claude')) return { models: [] };
-  const key = connectionKey();
+  const baseKey = connectionKey();
+  let infrastructure: Awaited<ReturnType<typeof claudeInfrastructure>>;
+  try { infrastructure = await waitWithin(claudeInfrastructure(), 1_000, 'Claude infrastructure detection timed out. Refresh models to retry.'); }
+  catch (error) { cached = undefined; return {models: [], warning: error instanceof Error ? error.message : 'Claude infrastructure detection failed.'}; }
+  const key = JSON.stringify([baseKey, infrastructure.signature]);
+  if (infrastructure.custom) {
+    cached = {key, baseKey, models: [], warning: customInfrastructureWarning};
+    return cached;
+  }
   if (refresh) cached = undefined;
   if (cached?.key === key) return cached;
   if (discovery?.key === key) return discovery.pending;
@@ -76,9 +115,12 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
       const executable = await waitWithin(resolveClaudeCliExecutable(), 1_000, 'Claude detection timed out.');
       if (!executable) return { models: [] };
       const native = await claudeSdk();
+      const env: NodeJS.ProcessEnv = {...process.env, ELECTRON_RUN_AS_NODE: '1'};
+      delete env['CLAUDECODE'];
       connection = native.query({ prompt: 'Reply with OK only.', options: { pathToClaudeCodeExecutable: executable, cwd: process.cwd(), model: 'haiku', maxTurns: 1, tools: [],
-        env: claudeEnvironment(), abortController: controller, persistSession: false, settingSources: ['user','project','local'] } });
+        env, abortController: controller, persistSession: false, settingSources: ['user','project','local'] } });
       const info = await waitWithin(connection.initializationResult(), 5_000, 'Claude model discovery timed out. Refresh to retry.');
+      if (isCustomClaudeInfrastructure({}, info.account?.apiProvider)) return {models: [], warning: customInfrastructureWarning};
       // Model discovery only needs the initialization catalogue. A failed probe
       // turn must not hide models that the native runtime already reported.
       return { models: createClaudeModelOptions(info.models), account: { email: info.account?.email, organization: info.account?.organization, subscriptionType: info.account?.subscriptionType, apiProvider: info.account?.apiProvider } };
@@ -86,33 +128,6 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
     finally { controller.abort(); connection?.close(); }
   })();
   discovery = { key, pending };
-  try { const result = await pending; cached = { ...result, key }; return result; }
+  try { const result = await pending; cached = { ...result, key, baseKey }; return result; }
   finally { if (discovery?.key === key) discovery = undefined; }
-}
-
-/** Discover models from a configured Anthropic-compatible gateway without requiring native Claude login. */
-export async function discoverClaudeApiModels(): Promise<ClaudeConnection> {
-  const account = activeApiAccount('anthropic');
-  if (!account) return { models: [] };
-  try {
-    const key = apiAccountCredential(account);
-    const path = account.baseUrl.toLowerCase().endsWith('/v1') ? '/models' : '/v1/models';
-    const response = await fetch(`${account.baseUrl}${path}`, {
-      signal: AbortSignal.timeout(5_000), redirect: 'error',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
-    });
-    if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}.`);
-    const payload: unknown = await response.json();
-    const rows = payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data) ? (payload as { data: unknown[] }).data : [];
-    const models = createClaudeModelOptions(rows.flatMap(row => {
-      if (!row || typeof row !== 'object') return [];
-      const value = (row as { id?: unknown }).id;
-      if (typeof value !== 'string') return [];
-      const displayName = (row as { display_name?: unknown; name?: unknown }).display_name ?? (row as { name?: unknown }).name;
-      return [{ value, displayName: typeof displayName === 'string' && displayName.trim() ? displayName : value }];
-    }));
-    return { models };
-  } catch (error) {
-    return { models: [], warning: `Claude gateway model discovery unavailable: ${error instanceof Error ? error.message : String(error)}` };
-  }
 }

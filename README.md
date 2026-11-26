@@ -81,7 +81,7 @@ Enable **Auto Switch → Auto resume sessions** to recover eligible work after a
 - VS Code 1.101 or newer for the extension, or Node.js 22.13 or newer for standalone.
 - Node.js 22.13 or newer for **Always Active** background hosting.
 - A writable `CODEX_HOME` and saved signed-in accounts. Workspace sessions use the official Codex app-server/CLI; the AI proxy uses saved accounts directly.
-- Claude sessions are optional and use Claude Code installed on the host PC. Manager does not bundle Claude Code. Without it, Claude models are unavailable; install and sign in separately to enable them. Set `CLAUDE_CLI_PATH` for a custom executable location.
+- Claude sessions are optional and use Claude Code installed on the host PC. Manager does not bundle Claude Code. Without it, Claude models are unavailable; install and sign in separately to enable them. Set `CLAUDE_CLI_PATH` for a custom executable location. Native Claude discovery excludes custom endpoints and cloud providers configured in Claude Code; add those separately through **Add API key**.
 - Node.js 22.13 or newer when building and testing from source.
 - A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
