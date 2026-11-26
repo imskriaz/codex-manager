@@ -19595,3 +19595,10 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
 .startup-readiness-heading > span { font-weight: 600; }
 .startup-readiness p { margin: 10px 0; }
 .startup-readiness .modal-actions { margin-bottom: 0; flex-wrap: wrap; }
+
+.startup-check-results { margin: 14px 0; }
+.startup-check-results > div { padding: 8px 0; border-bottom: 1px solid var(--border-default); }
+.startup-check-results dt { font-weight: 600; }
+.startup-check-results dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.startup-check-instructions ul { padding-left: 20px; }
+.startup-check-instructions li + li { margin-top: 8px; }

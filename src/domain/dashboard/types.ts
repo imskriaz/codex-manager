@@ -571,6 +571,7 @@ export type DashboardActionName =
   | "manageWorkspaceRuntime"
   | "manageCodexModels"
   | "saveApiAccount"
+  | "checkSystemStartup"
   | "enableSystemStartup"
   | "workspaceBrowser"
   | "workspacePanel"
@@ -1232,6 +1233,7 @@ export interface DashboardWorkspaceTerminalInfo {
 export type WorkspaceRuntime = { provider: 'codex' | 'claude'; available: boolean; enabled?: boolean; executable?: string; version?: string; loginCommand?: string; message: string };
 
 export interface DashboardActionResultPayload {
+  systemStartupCheck?: import('../systemStartup').SystemStartupCheck;
   workspaceRuntime?: WorkspaceRuntime;
   codexModels?: { ids?: string; message: string };
   apiAccountSaved?: { id: string };

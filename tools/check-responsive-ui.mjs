@@ -174,6 +174,7 @@ const mockHost = `(() => {
         dispatch({type:'dashboard:snapshot',state});
         window.__uiSettingResults.push({key:message.key,value:message.value});
       } else if(message.type === 'dashboard:action') {
+        if(window.__startupFixture && message.action==='checkSystemStartup') {window.__startupCheckRequest=message;return;}
         if(window.__startupFixture && message.action==='enableSystemStartup') {window.__startupRequest=message;return;}
         if(window.__holdMetadata && ['setAccountQueuePriority','setAccountTags'].includes(message.action)) { window.__heldMetadata = message; return; }
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }

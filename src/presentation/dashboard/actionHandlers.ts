@@ -1,3 +1,4 @@
+import { checkSystemStartup } from '../../services/systemStartupCheck';
 import { ClaudeTurnCancelledError } from '../../services/claudeSessions';
 import { saveCodexFallbackCatalog } from '../../services/codexFallbackCatalog';
 import { loadCodexModels, testCodexModel } from '../../services/codexSessionResume';
@@ -135,6 +136,7 @@ import { readApiProxyHistory, clearApiProxyHistory } from '../../services/aiProx
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   'manageWorkspaceRuntime',
   "teamSettingsRequest",
+  "checkSystemStartup",
   "enableSystemStartup",
   "addAccount",
   "saveApiAccount",
@@ -516,6 +518,8 @@ async function runDashboardAction(
     }
     case 'workspacePanel':
       return { workspacePanel: await workspaceSurface(payload?.projectPath, payload?.panelRequest, payload?.panelLocalOnly) };
+    case 'checkSystemStartup':
+      return { systemStartupCheck: await checkSystemStartup() };
     case 'enableSystemStartup':
       await new AlwaysOnlineServer(ctx.context).enableSystemStartup();
       ctx.schedulePublishState();

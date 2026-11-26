@@ -1,3 +1,4 @@
+import * as startupCheck from '../src/services/systemStartupCheck';
 import * as proxyMapping from "../src/services/aiProxyModelMapping";
 import * as fallbackCatalog from '../src/services/codexFallbackCatalog';
 import * as runtimeSetup from '../src/services/workspaceRuntimes';
@@ -2727,3 +2728,15 @@ describe("routine dashboard logging exclusions", () => {
   repo.refreshAccountTokens.mockRejectedValueOnce(new Error('Token was revoked. Reauthorize this account.'));
   expect(await executeDashboardActionMessage(ctx, { ...request, requestId: 'refresh-failure' })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('revoked') });
  });
+
+it.each(['browser', 'webview'] as const)('checks startup prerequisites on the initiating %s without enabling startup', async hostKind => {
+  const result = { ready: false, platform: 'win32', host: 'vscode' as const, checks: [{ label: 'Node.js runtime', status: 'blocked' as const, detail: 'Missing runtime', instruction: 'Install Node.js.' }] };
+  const check = vi.spyOn(startupCheck, 'checkSystemStartup').mockResolvedValue(result);
+  const enable = vi.spyOn(AlwaysOnlineServer.prototype, 'enableSystemStartup').mockResolvedValue(undefined);
+  const ctx = { ...createContext(), hostKind };
+  const request = { type: 'dashboard:action', action: 'checkSystemStartup', requestId: 'startup-preflight' } as const;
+  expect(await executeDashboardActionMessage(ctx, request)).toMatchObject({ status: 'completed', payload: { systemStartupCheck: result } });
+  expect(enable).not.toHaveBeenCalled();
+  check.mockRejectedValueOnce(new Error('Probe failed'));
+  expect(await executeDashboardActionMessage(ctx, { ...request, requestId: 'startup-preflight-failed' })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('Probe failed') });
+});
