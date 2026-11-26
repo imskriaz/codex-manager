@@ -1,6 +1,6 @@
 import { request as requestFolderPermission } from './teamSettingsRequest';
 import type { LocalFolderPermission } from '../../src/domain/localFolder';
-import { LocalFolderPermissionControl } from './localFolderPermission';
+import { folderPermissionChanged, LocalFolderPermissionControl } from './localFolderPermission';
 import { ensureLocalFolderConnection, localFolderConnectedEvent } from './localFolderConnection';
 import type { DashboardCliProject } from '../../src/domain/dashboard/types';
 import { UserMessageText } from './userMessageText';
@@ -2208,9 +2208,13 @@ export function Composer(props: {
   const localFolderProject = props.simple ? props.projects.find(project=>project.localFolder && project.path===props.projectPath)?.path : undefined;
   const [folderPermission,setFolderPermission]=useState<LocalFolderPermission>();
   useEffect(()=>{
-    let active=true;setFolderPermission(undefined);
-    if(localFolderProject) void requestFolderPermission<{permission:LocalFolderPermission}>('/api/workspace/local-folder','POST',{operation:'permission',project:localFolderProject,client:crypto.randomUUID()}).then(value=>{if(active)setFolderPermission(value.permission);},()=>{});
-    return()=>{active=false;};
+    let active=true,reading=0;setFolderPermission(undefined);
+    const refresh=()=>{
+      const revision=++reading;
+      if(localFolderProject) void requestFolderPermission<{permission:LocalFolderPermission}>('/api/workspace/local-folder','POST',{operation:'permission',project:localFolderProject,client:crypto.randomUUID()}).then(value=>{if(active&&revision===reading)setFolderPermission(value.permission);},()=>{if(active&&revision===reading)setFolderPermission(undefined);});
+    };
+    refresh();window.addEventListener('focus',refresh);window.addEventListener(folderPermissionChanged,refresh);
+    return()=>{active=false;window.removeEventListener('focus',refresh);window.removeEventListener(folderPermissionChanged,refresh);};
   },[localFolderProject]);
   const folderPermissionLabel=folderPermission==='read-only'?'Read only':folderPermission==='full'?'Full':folderPermission==='write'?'Write':'Permission unavailable';
   const accessLabel = props.permissionProfile && !props.permissionProfile.startsWith(":") ? `${runtimeName} profile: ${props.permissionProfile}` : props.sandboxMode === "danger-full-access" ? "Full access" : props.sandboxMode === "read-only" ? "Read only" : props.sandboxMode === "workspace-write" ? "Workspace write" : `${runtimeName} permissions`;

@@ -36,7 +36,7 @@ if (dependencies.includes('node-pty')) {
   for (const binary of binaries) if (!paths.has(`extension/node_modules/node-pty/prebuilds/${binary}`)) throw new Error(`VSIX terminal backend is incomplete: ${binary}`);
   if ([...paths].some(name => name.startsWith('extension/node_modules/node-pty/') && name.endsWith('.pdb'))) throw new Error('VSIX contains unnecessary terminal debug symbols.');
 }
-if(dependencies.includes('pdf-parse'))for(const file of ['out/services/officeDocumentWorker.js','media/fonts/NotoSans-Regular.ttf','media/fonts/NotoSansBengali-Regular.ttf','media/fonts/LICENSE-Noto.txt'])if(!listing.split('\n').includes('extension/'+file))throw new Error('VSIX document support is missing: '+file);
+if(dependencies.includes('pdf-parse'))for(const file of ['out/services/officeDocumentWorker.js','out/services/officeWorkbook.js','media/fonts/NotoSans-Regular.ttf','media/fonts/NotoSansBengali-Regular.ttf','media/fonts/LICENSE-Noto.txt'])if(!listing.split('\n').includes('extension/'+file))throw new Error('VSIX document support is missing: '+file);
 if (dependencies.includes('pg') && !listing.split('\n').includes('extension/out/storage/officePostgresWorker.js')) throw new Error('VSIX PostgreSQL driver worker is missing.');
 for (const file of ['docx/dist/index.cjs', 'exceljs/excel.js', 'pdf-lib/cjs/index.js', '@pdf-lib/fontkit/dist/fontkit.umd.js', 'pptxgenjs/dist/pptxgen.cjs.js', 'pdf-parse/dist/pdf-parse/cjs/index.cjs', 'pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs', '@anthropic-ai/claude-agent-sdk/sdk.mjs']) {
   if (!paths.has(`extension/node_modules/${file}`)) throw new Error(`VSIX runtime entry point is missing: ${file}`);

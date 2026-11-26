@@ -20,7 +20,7 @@ export async function createOfficeLocalProject(user: OfficeUser, client: string,
   return value;
 }
 
-type Pending = { command: LocalFolderCommand; delivered: boolean; resolve: (value: LocalFolderResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { command: LocalFolderCommand; delivered: boolean; timedOut?: boolean; resolve: (value: LocalFolderResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 type Connection = { owner: string; project: string; client: string; seen: number; pending: Map<string, Pending> };
 export function officeLocalProject(owner: string, project: string): DashboardCliProject | undefined {
   return readWorkspaceProjects(`office-projects:${owner}`).find(value => value.path === project && value.localFolder)
@@ -89,6 +89,7 @@ export class OfficeLocalFolderConnections {
           }
         } else if (!['read','write'].includes(pending.command.operation)) {
           if (typeof result.message !== 'string' || result.message.length > 600 || result.revision !== undefined && !/^[a-f0-9]{64}$/.test(result.revision)) throw new Error('Invalid management result.');
+          if (pending.command.operation === 'inspect' && (typeof result.revision !== 'string' || !['file','folder'].includes(result.kind ?? '') || !Array.isArray(result.entries))) throw new Error('Incomplete inspection.');
           if (result.entries !== undefined && (!Array.isArray(result.entries) || result.entries.length > 2000)) throw new Error('Invalid inspection.');
           for (const entry of result.entries ?? []) { localFolderPath(entry.path); if (!['file','folder'].includes(entry.kind)) throw new Error('Invalid entry.'); }
         } else {
@@ -96,7 +97,7 @@ export class OfficeLocalFolderConnections {
           const size = pending.command.offset === undefined ? result.size : Math.min(262144, result.size! - pending.command.offset);
           if (pending.command.operation === 'read' && (typeof result.data !== 'string' || result.data.length > 13981016 || result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) || Buffer.byteLength(result.data, 'base64') !== size)) throw new Error('Invalid content.');
         }
-        pending.resolve(result);
+        pending.resolve(pending.command.operation === 'list' ? {files:result.files,warning:result.warning} : ['read','write'].includes(pending.command.operation) ? {data:result.data,revision:result.revision,size:result.size} : {message:result.message,revision:result.revision,kind:result.kind,entries:result.entries});
       } catch { pending.reject(new Error('The local folder returned an invalid result. Inspect the folder before retrying.')); }
     }
   }
@@ -108,11 +109,14 @@ export class OfficeLocalFolderConnections {
     if (input.destination !== undefined) localFolderPath(input.destination);
     if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0)) throw new Error('Choose a valid download offset.');
     const connection = this.connection(owner, project);
+    if ([...connection.pending.values()].some(pending => pending.timedOut) && !['list','read','inspect'].includes(input.operation)) throw new Error('A previous folder action has not confirmed completion. Inspect the folder and wait for its result before changing files.');
     if (connection.pending.size >= 16) throw new Error('The local folder is busy. Wait for the current action to finish.');
     return new Promise((resolve, reject) => {
       const command = { ...input, permission, id: randomUUID(), expiresAt: Date.now() + 12_000 };
       const timer = setTimeout(() => {
-        connection.pending.delete(command.id);
+        const pending=connection.pending.get(command.id);
+        if (pending?.delivered && !['list','read','inspect'].includes(command.operation)) pending.timedOut=true;
+        else connection.pending.delete(command.id);
         reject(new Error('The local folder did not confirm completion. Check the folder before retrying; changes were not replayed.'));
       }, 12_000);
       connection.pending.set(command.id, { command, delivered: false, resolve, reject, timer });

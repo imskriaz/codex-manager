@@ -7,6 +7,7 @@ function directory(name = 'Project') {
   const entries = new Map<string, any>();
   const handle = {
     name, kind: 'directory', queryPermission: async () => 'granted',
+    isSameEntry:async (other:FileSystemHandle)=>other===handle,
     async *values() { yield* entries.values(); },
     getDirectoryHandle: vi.fn(async (name: string, options?: { create?: boolean }) => {
       if (!entries.has(name) && options?.create) entries.set(name, directory(name).handle);
@@ -132,4 +133,28 @@ it('creates and copies with Write and moves with Full without overwriting',async
  await expect(performLocalFolderCommand(root.handle,{id:'c',operation:'copy_file',path:'a.txt',destination:'saved/b.txt',revision:before.revision})).rejects.toThrow('already exists');
  await performLocalFolderCommand(root.handle,{id:'m',operation:'move_file',path:'a.txt',destination:'renamed.txt',revision:before.revision,permission:'full'});
  expect(root.entries.has('a.txt')).toBe(false);expect(root.entries.has('renamed.txt')).toBe(true);
+});
+it('keeps the source when the destination changes during a move',async()=>{
+ const root=directory();root.add('source.txt','one');
+ const before=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'source.txt'});
+ const lookup=vi.mocked(root.handle.getFileHandle).getMockImplementation()!;let reads=0;
+ vi.spyOn(root.handle,'getFileHandle').mockImplementation(async(name,options)=>{
+   const handle=await lookup(name,options);
+   if(name==='target.txt'&&!options&&++reads===1)return root.add('target.txt','changed') as unknown as FileSystemFileHandle;
+   return handle;
+ });
+ await expect(performLocalFolderCommand(root.handle,{id:'m',operation:'move_file',path:'source.txt',destination:'target.txt',revision:before.revision,permission:'full'})).rejects.toThrow('Both locations');
+ expect(root.entries.has('source.txt')).toBe(true);
+});
+it('rejects expired requests and invalid writes before changing the folder',async()=>{
+ const root=directory();
+ await expect(performLocalFolderCommand(root.handle,{id:'c',operation:'create_folder',path:'new',expiresAt:Date.now()-1})).rejects.toThrow('expired');
+ await expect(performLocalFolderCommand(root.handle,{id:'w',operation:'write',path:'new/file.txt',data:'invalid'})).rejects.toThrow('valid file content');
+ expect(root.entries.size).toBe(0);
+});
+it('rejects copying into the source through another directory-handle spelling',async()=>{
+ const root=directory(),source=directory('Source');source.add('keep.txt','keep');root.entries.set('Source',source.handle);root.entries.set('source',source.handle);
+ const before=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'Source'});
+ await expect(performLocalFolderCommand(root.handle,{id:'c',operation:'copy_file',path:'Source',destination:'source/nested',revision:before.revision})).rejects.toThrow('outside the source folder');
+ expect(source.entries.has('nested')).toBe(false);
 });

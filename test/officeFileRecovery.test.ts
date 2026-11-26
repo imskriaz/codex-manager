@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {configureSqliteStateStore,SqliteStateStore} from '../src/storage/sqliteState';
 import {configureCrossWindowOperationCoordinator} from '../src/utils/crossWindowOperations';
-import {writeOfficeBinary,importOfficeAttachment} from '../src/services/officeFiles';
+import {writeOfficeBinary,importOfficeAttachment,readOfficeDocumentSnapshot} from '../src/services/officeFiles';
 import {listOfficeFileHistory,restoreOfficeFile,discardOfficeFile} from '../src/services/officeFileHistory';
 import {manageOfficeWorkspacePaths} from '../src/services/officeWorkspacePaths';
 import {createOfficeDocument,extractOfficeDocument} from '../src/services/officeDocuments';
@@ -40,6 +40,22 @@ it('imports large text idempotently, and rejects changing an existing upload, pr
  await expect(importOfficeAttachment(user,{...file,data:'different'})).rejects.toThrow('changed');
  for(const file of ['../escape.txt','.workspace-trash/secret.txt','.workspace-history/secret.txt'])await expect(writeOfficeBinary(user,user.workspacePath,file,Buffer.from('no'))).rejects.toThrow();
  await expect(writeOfficeBinary({...user,limits:{storageMb:1,dailyTokens:0,dailyRequests:0}},user.workspacePath,'large.txt',Buffer.alloc(1048576))).rejects.toThrow('storage');
+});
+it('keeps the original upload when document extraction fails and reports the failed read',async()=>{
+ const data=Buffer.from('invalid xlsx content'),file={id:'bad-workbook',name:'source.xlsx',kind:'file' as const,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',size:data.length,data:'data:application/octet-stream;base64,'+data.toString('base64')};
+ const uploaded=await importOfficeAttachment(user,file);
+ expect(await fs.readFile(path.join(user.workspacePath,uploaded.path))).toEqual(data);
+ expect(uploaded.text).toContain('Automatic document reading failed');
+ expect(uploaded.text).toContain('Use read_file on the saved path');
+});
+it('reads saved workbook uploads from the current conversation regardless of the selected project',async()=>{
+ const id=crypto.randomUUID(),data=await createOfficeDocument({path:'source.xlsx',sheets:[{name:'Detail',rows:[['Value'],['original workbook']]}]});
+ store.set(`office-sessions:${user.id}`,id,{owner:user.id});
+ const file={id:'saved-source',name:'source.xlsx',kind:'file' as const,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',size:data.length,data:'data:application/octet-stream;base64,'+data.toString('base64')};
+ const uploaded=await importOfficeAttachment(user,file,false,id),project=path.join(user.workspacePath,'project');await fs.mkdir(project);
+ const result=await readOfficeDocumentSnapshot(user,project,uploaded.path,'text',{worksheet:'Detail',startRow:2,rowCount:1},id);
+ expect(result.content).toContain('original workbook');expect(result.revision).toBeTruthy();
+ await expect(readOfficeDocumentSnapshot(user,project,uploaded.path,'text',undefined,crypto.randomUUID())).rejects.toThrow('another conversation');
 });
 it.each(['xlsx','docx','pptx','pdf'])('creates a real %s document and reads it in a bounded worker',async(extension)=>{
  const data=await createOfficeDocument({path:'costing.'+extension,text:'# Buyer follow-up\nLab dip approval needed',slides:[{title:'Buyer follow-up',bullets:['Lab dip approval needed'],notes:'Confirm with buyer.'}],sheets:[{name:'Costing',rows:[['Style','Quantity','Unit cost','Order value'],['ST100',2400,2.75,{formula:'B2*C2'}]]}]});

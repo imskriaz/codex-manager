@@ -44,6 +44,29 @@ it('expires undelivered writes without replay and ignores late results', async (
   expect(service.poll('alex', '/project', client)).toEqual([]);
   service.complete('alex', '/project', client, 'late', { revision: 'a'.repeat(64), size: 1 });
 });
+it('keeps delivered mutations fenced after timeout until the browser confirms completion', async () => {
+  service.connect('alex','/project',client);
+  const result=service.request('alex','/project',{operation:'write',path:'report.txt',data:'eA=='});
+  const [command]=service.poll('alex','/project',client);
+  const failed=expect(result).rejects.toThrow('not confirm completion');
+  await vi.advanceTimersByTimeAsync(12000);await failed;
+  expect(()=>service.assertIdle('alex','/project')).toThrow('still in progress');
+  expect(()=>service.request('alex','/project',{operation:'write',path:'report.txt',data:'eQ=='})).toThrow('previous folder action');
+  expect(service.poll('alex','/project',client)).toEqual([]);
+  service.complete('alex','/project',client,command.id,{revision:'a'.repeat(64),size:1});
+  expect(()=>service.assertIdle('alex','/project')).not.toThrow();
+});
+it('requires a complete inspection and strips unrecognized browser result fields', async () => {
+  service.connect('alex','/project',client);
+  const result=service.request('alex','/project',{operation:'inspect',path:'reports'});
+  const [command]=service.poll('alex','/project',client);
+  service.complete('alex','/project',client,command.id,{message:'OK'});
+  await expect(result).rejects.toThrow('invalid result');
+  const reading=service.request('alex','/project',{operation:'read',path:'report.txt'});
+  const [next]=service.poll('alex','/project',client);
+  service.complete('alex','/project',client,next.id,{data:'eA==',revision:'a'.repeat(64),size:1,deletedPath:'untrusted'} as never);
+  expect(await reading).not.toHaveProperty('deletedPath');
+});
 it('reports disconnected or expired connections without moving actions to the host', async () => {
   service.connect('alex', '/project', client);
   const result = service.request('alex', '/project', { operation: 'list' });

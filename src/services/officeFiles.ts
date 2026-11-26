@@ -57,22 +57,34 @@ export async function importOfficeAttachment(user:OfficeUser,file:ChatAttachment
  const extension=path.extname(file.name).slice(1).toLowerCase();let text='';
  if(file.kind==='text')text=file.data;
  else if(file.kind==='image'){if(data.length>8*1048576)throw new Error('Keep each image under 8 MB.');}
- else if(extract)text=await extractOfficeDocument(file.name,data);
  const relative=(sessionId?officeSessionFolder(sessionId)+'/uploads/':'uploads/')+createHash('sha256').update(file.id).digest('hex').slice(0,12)+'-'+file.name.replace(/[^\p{L}\p{N}._ -]/gu,'-');
  const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,root,relative,true);
  let exists=false;try{const saved=await fs.readFile(target);if(!saved.equals(data))throw new Error('This upload changed. Attach the original file again.');exists=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
  if(!exists)await writeOfficeBinary(user,root,relative,data);
+ if(extract&&file.kind==='file') {
+  try{text=await extractOfficeDocument(file.name,data);}
+  catch(error){text='The original upload is saved. Automatic document reading failed: '+(error instanceof Error?error.message:'Reading could not be confirmed.')+' Use read_file on the saved path to retry; for XLSX choose a worksheet and row/column range. Do not claim the file contents were read.';}
+ }
  return {path:relative,name:file.name,text:text.length>30000?text.slice(0,30000)+'\n[Excerpt. Read the saved file for more.]':text,...(file.kind==='image'?{image:file.data,mimeType:file.mimeType}:{}),extension};
 }
-export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text'){
+export async function readOfficeDocument(user:OfficeUser,project:string,file:string,format:'text'|'html'='text',range?:import('./officeWorkbook').WorkbookReadRange){
+ return (await readOfficeDocumentSnapshot(user,project,file,format,range)).content;
+}
+export async function readOfficeDocumentSnapshot(user:OfficeUser,project:string,file:string,format:'text'|'html'='text',range?:import('./officeWorkbook').WorkbookReadRange,sessionId?:string){
+ if(!user.enabled||user.role!=='user'||!user.features.includes('files'))throw new Error('File access is unavailable.');
+ if(file.replace(/\\/g,'/').split('/').some(part=>part.toLowerCase()==='.workspace-sessions')){
+  const session=sessionId?getSqliteStateStore()?.get<{owner:string;deletedAt?:number}>(`office-sessions:${user.id}`,sessionId):undefined;
+  if(!session||session.owner!==user.id||session.deletedAt!==undefined||!file.replace(/\\/g,'/').startsWith(officeSessionFolder(sessionId!)+'/uploads/'))throw new Error('This upload belongs to another conversation or is unavailable.');
+  project=user.workspacePath;
+ }
  if(officeLocalProject(user.id,project)){
   const value=await officeLocalFolders.request(user.id,project,{operation:'read',path:file});
   const data=Buffer.from(value.data??'','base64');if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
-  return extractOfficeDocument(file,data,format);
+  return {content:await extractOfficeDocument(file,data,format,range),revision:value.revision!,size:data.length};
  }
  const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>10*1048576)throw new Error('Keep each Office document under 10 MB.');const data=await fs.readFile(target);
- if(format==='html'&&/\.(docx|pptx|xlsx)$/i.test(file))return (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal);
- return extractOfficeDocument(file,data,format);
+ const content=format==='html'&&/\.(docx|pptx|xlsx)$/i.test(file)?await (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal):await extractOfficeDocument(file,data,format,range);
+ return {content,revision:createHash('sha256').update(data).digest('base64url'),size:data.length};
 }
 
 export async function readOfficeImage(user:OfficeUser,file:string,mimeType:string){

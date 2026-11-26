@@ -89,7 +89,7 @@ it('persists Write by default, enforces user permission and rejects changes duri
  expect((await call({operation:'permission',project,client,permission:'write'})).status).toBe(400);
  const inspecting=await command(project);
  expect(inspecting.permission).toBe('full');
- await call({operation:'result',project,client,id:inspecting.id,result:{message:'Files inspected.',revision:'a'.repeat(64),entries:[{path:'old',kind:'folder'}]}});
+ await call({operation:'result',project,client,id:inspecting.id,result:{message:'Files inspected.',kind:'folder',revision:'a'.repeat(64),entries:[{path:'old',kind:'folder'}]}});
  await expect(pending).resolves.toMatchObject({message:'Files inspected.'});
  expect((await call({operation:'permission',project,client,permission:'write'})).value.permission).toBe('write');
 });

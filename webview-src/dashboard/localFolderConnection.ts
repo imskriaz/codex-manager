@@ -32,11 +32,20 @@ function encode(bytes: Uint8Array): string {
   for (let offset = 0; offset < bytes.length; offset += 32768) value += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
   return btoa(value);
 }
-async function parent(root: LocalDirectory, path: string, create = false) {
+async function parent(root: LocalDirectory, path: string, create = false, checkDeadline=()=>{}) {
   const parts = localFolderPath(path).split('/'), name = parts.pop()!;
   let directory: FileSystemDirectoryHandle = root;
-  for (const part of parts) directory = await directory.getDirectoryHandle(part, { create });
+  for (const part of parts) {checkDeadline();directory = await directory.getDirectoryHandle(part, { create });}
   return { directory, name };
+}
+async function entryExists(directory: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try { await directory.getFileHandle(name); return true; }
+  catch (error) {
+    if (!(error instanceof DOMException)) throw error;
+    if (error.name === 'NotFoundError') return false;
+    if (error.name !== 'TypeMismatchError') throw error;
+    await directory.getDirectoryHandle(name); return true;
+  }
 }
 
 /** Only the chosen directory handle can resolve paths; no server path reaches the OS. */
@@ -60,12 +69,12 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
     return { files };
   }
   if (['inspect','create_folder','copy_file','move_file','delete'].includes(command.operation)) {
-    const { directory, name } = await parent(root, command.path!, command.operation === 'create_folder');
+    const { directory, name } = await parent(root, command.path!, command.operation === 'create_folder',checkDeadline);
     if (command.operation === 'create_folder') {
       checkDeadline(); await directory.getDirectoryHandle(name, { create: true });
       return { message: 'Folder created.' };
     }
-    const inspect = async () => {
+    const inspect = async (sourceDirectory=directory, sourceName=name) => {
       const entries: NonNullable<LocalFolderResult['entries']> = [], stamps: unknown[] = [];
       const visit = async (dir: FileSystemDirectoryHandle, entryName: string, path: string, depth: number): Promise<void> => {
         checkDeadline();
@@ -83,7 +92,7 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
         if (data.size > limit) throw new Error('Keep connected-folder files under 10 MB for this action.');
         entries.push({path,kind:'file'}); stamps.push([path,await revision(data)]);
       };
-      await visit(directory,name,command.path!,0);
+      await visit(sourceDirectory,sourceName,command.path!,0);
       stamps.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
       return {entries,revision:await revision(new File([JSON.stringify(stamps)],'revision')),kind:entries[0]!.kind as 'file'|'folder'};
     };
@@ -97,41 +106,57 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
     }
     const destination = localFolderPath(command.destination);
     if (destination === command.path || destination.startsWith(command.path!+'/')) throw new Error('Choose a different destination outside the source folder.');
+    if(before.kind==='folder'){
+      const source=await directory.getDirectoryHandle(name);
+      let ancestor:FileSystemDirectoryHandle=root;
+      for(const part of destination.split('/').slice(0,-1)){
+        checkDeadline();ancestor=await ancestor.getDirectoryHandle(part);
+        if(await source.isSameEntry(ancestor))throw new Error('Choose a destination outside the source folder.');
+      }
+    }
     const target = await parent(root,destination);
-    for await (const item of (target.directory as LocalDirectory).values()) if (item.name === target.name) throw new Error('The destination already exists. Choose another name.');
+    if (await entryExists(target.directory,target.name)) throw new Error('The destination already exists. Choose another name.');
     // Browser folder handles have no exclusive rename; verify the source again before removing it.
-    const copy = async (sourceDir: FileSystemDirectoryHandle, sourceName: string, destDir: FileSystemDirectoryHandle, destName: string, kind: string) => {
+    let copiedEntries=0;
+    const copy = async (sourceDir: FileSystemDirectoryHandle, sourceName: string, destDir: FileSystemDirectoryHandle, destName: string, kind: string, depth=0) => {
       checkDeadline();
+      if (++copiedEntries>2000 || depth>8) throw new Error('The source folder grew while copying. Inspect both locations before retrying.');
+      if (await entryExists(destDir,destName)) throw new Error('A destination entry appeared. Both locations were kept.');
       if (kind === 'folder') {
         const source = await sourceDir.getDirectoryHandle(sourceName) as LocalDirectory;
         const dest = await destDir.getDirectoryHandle(destName,{create:true});
-        for await (const child of source.values()) await copy(source,child.name,dest,child.name,child.kind === 'directory'?'folder':'file');
+        for await (const child of source.values()) await copy(source,child.name,dest,child.name,child.kind === 'directory'?'folder':'file',depth+1);
       } else {
         const file = await (await sourceDir.getFileHandle(sourceName)).getFile();
         if (file.size > limit) throw new Error('Keep connected-folder files under 10 MB.');
         const dest = await destDir.getFileHandle(destName,{create:true});
         if ((await dest.getFile()).size) throw new Error('A destination file appeared. Inspect both locations before retrying.');
         const writable = await dest.createWritable();
-        try { await writable.write(file); await writable.close(); } catch(error) { await writable.abort().catch(()=>{}); throw error; }
+        try { checkDeadline();await writable.write(file);checkDeadline();await writable.close(); } catch(error) { await writable.abort().catch(()=>{}); throw error; }
         if (await revision(await dest.getFile()) !== await revision(file)) throw new Error('The copied file could not be verified. Inspect both locations.');
       }
     };
     try {
       await copy(directory,name,target.directory,target.name,before.kind);
+      if ((await inspect()).revision !== before.revision || (await inspect(target.directory,target.name)).revision !== before.revision) throw new Error('The source or destination changed during copying. Both locations were kept.');
       if (command.operation === 'move_file') {
-        if ((await inspect()).revision !== before.revision) throw new Error('The source changed. Both locations were kept.');
         checkDeadline(); await directory.removeEntry(name,{recursive:true});
       }
     } catch(error) { throw new Error('The action may have saved some destination files. Inspect both locations before retrying. '+(error instanceof Error?error.message:'Copy failed.')); }
     return {message:command.operation === 'move_file'?'Moved successfully.':'Copied successfully.'};
   }
   if (command.operation !== 'read' && command.operation !== 'write') throw new Error('This local folder action is unavailable.');
-  const { directory, name } = await parent(root, command.path!, command.operation === 'write');
+  if(command.operation==='write'&&(typeof command.data!=='string'||command.data.length>Math.ceil(limit/3)*4||command.data.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(command.data))) throw new Error('Choose valid file content under 10 MB.');
+  if(command.operation==='write'&&command.revision!==undefined&&(typeof command.revision!=='string'||!/^[a-f0-9]{64}$/.test(command.revision)))throw new Error('This file exists or changed. Read its latest revision before saving.');
+  const bytes=command.operation==='write'?Uint8Array.from(atob(command.data!), character=>character.charCodeAt(0)):undefined;
+  if(bytes&&bytes.length>limit)throw new Error('Keep connected-folder files under 10 MB.');
+  const { directory, name } = await parent(root, command.path!, command.operation === 'write'&&!command.revision,checkDeadline);
   let handle: FileSystemFileHandle | undefined;
   try { handle = await directory.getFileHandle(name); } catch (error) { if (!(error instanceof DOMException) || error.name !== 'NotFoundError' || command.operation !== 'write') throw error; }
   const existing = handle ? await handle.getFile() : undefined;
   if (existing && existing.size > limit) throw new Error('Keep connected-folder files under 10 MB.');
   if (command.operation === 'read') {
+    checkDeadline();
     if (command.offset !== undefined && (!Number.isSafeInteger(command.offset) || command.offset < 0 || command.offset > existing!.size)) throw new Error('The file download offset is invalid.');
     const stamp = await revision(existing!);
     if (command.revision && command.revision !== stamp) throw new Error('This file changed during download. Start the download again.');
@@ -141,8 +166,6 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
   if (typeof command.data !== 'string' || command.data.length > Math.ceil(limit / 3) * 4) throw new Error('Keep connected-folder files under 10 MB.');
   if (existing ? !command.revision || await revision(existing) !== command.revision : !!command.revision)
     throw new Error('This file exists or changed. Read its latest revision before saving.');
-  const bytes = Uint8Array.from(atob(command.data), character => character.charCodeAt(0));
-  if (bytes.length > limit) throw new Error('Keep connected-folder files under 10 MB.');
   checkDeadline();
   handle ??= await directory.getFileHandle(name, { create: true });
   // Recheck after opening: another program may have changed the file while permission was checked.
@@ -150,7 +173,7 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
   if (!existing && (await handle.getFile()).size !== 0) throw new Error('A file appeared while saving. Read it before retrying.');
   checkDeadline();
   const writable = await handle.createWritable();
-  try { await writable.write(bytes); await writable.close(); }
+  try { checkDeadline(); await writable.write(bytes!); checkDeadline(); await writable.close(); }
   catch (error) { await writable.abort().catch(() => {}); throw error; }
   const saved = await handle.getFile();
   return { revision: await revision(saved), size: saved.size };

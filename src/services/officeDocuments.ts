@@ -4,7 +4,7 @@ import {fork} from 'node:child_process';
 import type {PDFFont} from 'pdf-lib';
 import * as fs from 'node:fs/promises';
 
-export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text'):Promise<string>{
+export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text',range?:import('./officeWorkbook').WorkbookReadRange):Promise<string>{
  const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
  if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
  if(data.length<8)throw new Error('The document is empty or incomplete.');
@@ -15,11 +15,15 @@ export async function extractOfficeDocument(name:string,data:Buffer,format:'text
   const finish=(error?:Error,text?:string)=>{if(done)return;done=true;clearTimeout(timer);worker.kill();if(error)reject(error);else resolve(text!);};
   // ZIP validation and Office parsers load large runtimes on first use; keep a
   // bounded deadline without rejecting valid workbooks on slower hosts.
-  const timer=setTimeout(()=>finish(new Error('Document reading timed out. Try a smaller document.')),30000);
-  worker.once('message',(value:{text?:string;error?:string})=>finish(value.error?new Error(value.error):typeof value.text!=='string'?new Error('Document reading did not finish.'):undefined,value.text));
-  worker.once('error',()=>finish(new Error('This document is too complex to read. Try a smaller document.')));
-  worker.once('exit',()=>{if(!done)finish(new Error('Document reading stopped. Try a smaller document.'));});
-  worker.send({extension,data,format},error=>{if(error)finish(new Error('Document reading could not start. Please try again.'));});
+  const timer=setTimeout(()=>finish(new Error(extension==='xlsx'?'Workbook reading did not finish within 30 seconds. Retry a specific worksheet and row range; the original file is unchanged.':'Document reading did not finish within 30 seconds. The original file is unchanged.')),30000);
+  worker.once('message',(value:unknown)=>{
+   if(!value||typeof value!=='object')return finish(new Error('Document reading did not finish. The original file is unchanged.'));
+   const result=value as {text?:unknown;error?:unknown};
+   finish(typeof result.error==='string'?new Error(result.error):typeof result.text!=='string'?new Error('Document reading did not finish. The original file is unchanged.'):undefined,typeof result.text==='string'?result.text:undefined);
+  });
+  worker.once('error',()=>finish(new Error('The document reader could not run. The original file is unchanged. Retry reading the saved file.')));
+  worker.once('exit',()=>{if(!done)finish(new Error('The document reader stopped before completion. The original file is unchanged.'));});
+  worker.send({extension,data,format,range},error=>{if(error)finish(new Error('Document reading could not start. Please try again.'));});
  });
 }
 export async function createOfficeDocument(input:Record<string,unknown>):Promise<Buffer>{

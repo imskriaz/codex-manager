@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.10",
+  "version": "3.0.1-pre.11",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -618,6 +618,7 @@
     "playwright-core": "1.63.0",
     "pptxgenjs": "4.0.1",
     "regenerator-runtime": "0.14.1",
+    "saxes": "5.0.1",
     "undici": "6.29.1",
     "web-push": "^3.6.7",
     "ws": "^8.18.3"

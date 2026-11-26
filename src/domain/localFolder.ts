@@ -34,6 +34,7 @@ export function localFolderPermission(value: unknown): LocalFolderPermission {
   return value;
 }
 export function assertLocalFolderPermission(permission: LocalFolderPermission, operation: LocalFolderCommand['operation']): void {
+  if (!['list','read','write','inspect','create_folder','copy_file','move_file','delete'].includes(operation)) throw new Error('Choose a supported folder action.');
   if (['list','read','inspect'].includes(operation)) return;
   if (permission === 'read-only') throw new Error('This folder is read only. Select Write or Full in message settings to change files.');
   if (['move_file','delete'].includes(operation) && permission !== 'full') throw new Error('This action requires Full permission. Select Full in message settings to move, rename or delete.');
