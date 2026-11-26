@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.1-pre.27
+## 3.0.0
 
 - Manage connected systems, account quotas, remote sessions, terminals, files, Git, and task boards from the dashboard.
 - Improve session recovery, tool failure feedback, local folder access, browser dictation, and editable fallback models.
@@ -8,24 +8,13 @@
 - Avoid repeated Claude model discovery and keep optional system information, automatic MCP setup, and workspace presentation disabled by default while preserving saved choices.
 - Preserve exhausted-quota borders when an account is active or selected across dashboard themes.
 
-## 3.0.1-pre.12
-
 - Accept text questions without attempting to load unused image previews. Report invalid visual questions clearly instead of exhausting automatic recovery.
 - Apply User Workspace steering to the active request at its next response step, with saved feedback, duplicate protection and active-turn checks.
 - Allow optional tool fields to be omitted and assemble PowerPoints from saved slide parts when the model also supplies inline placeholders.
 
-## 3.0.1-pre.9
-
 - Save confirmed tool results and task context so User Workspace work resumes automatically after recoverable response failures and host restarts without repeating preparation or completed writes.
 - Honor rate-limit retry delays, share the recovery budget across interruptions, preserve failure reasons, and distinguish restarting services from revoked access. Keep saved work available through the Resume action when automatic recovery cannot finish.
 - Generate editable PowerPoint charts, comparisons, timelines, processes, metrics and section slides. Assemble larger decks from small saved slide parts and report unavailable visual rendering honestly.
-
-## 3.0.1-pre.7
-
-- Keep browser dictation and its review modal as the default. Add an optional Local Whisper setting with a model download notice and setup status.
-- Local Whisper detects spoken languages automatically and inserts short transcribed segments directly into the composer. Audio stays on the host, with recording recovery on failures and cancellation.
-
-## 3.0.1-pre.6
 
 - Use the account email for User Workspace notifications and move the per-session email switch into the three-dot menu.
 - Add confirmed clear-all controls for chats and Library files, with ownership, active-work and revision checks.
@@ -34,12 +23,8 @@
 - Improve narrow file previews, visible preview failures, and usage refresh after workspace changes.
 - Group related settings, restore sidebar scrolling, and default optional modules off while honoring saved choices.
 
-## 3.0.1-pre.5
-
 - Automatically resume interrupted User Workspace responses from saved plans and tool results, with two bounded recovery attempts and visible progress.
 - Keep pending questions paused and honor cancellation, access checks, allowance limits and unknown action outcomes during recovery.
-
-## 3.0.1-pre.3
 
 - Set User Workspace defaults for deliberate tool and skill selection, complete deliverables, evidence-based answers, and self-checks before delivery.
 - Add visual design guidance and strengthen the PowerPoint workflow with varied layouts, capability checks, and honest rendering coverage.
@@ -47,12 +32,8 @@
 - Add Excel workbook, spreadsheet formula, interface design, and fact-checking workflows with explicit verification limits.
 - Use actual Office page renders in file tabs when rendering is configured; otherwise show a download action without extracted content or slide outlines. Report media playback failures in the viewer.
 
-## 3.0.1-pre.2
-
 - Open session web links in the user browser by default; keep localhost and explicitly AI-marked links in the workspace Browser.
 - Preserve browser-side popup failure feedback without opening links on the session host.
-
-## 3.0.1-pre.1
 
 - Show actual generated filenames and folders with separate Open and Download controls, download progress, duplicate-click protection, and offline guidance.
 - Open files from older general chats through Library when no project workspace is selected.
@@ -60,8 +41,6 @@
 - Show numbered task steps and clearer current-step progress in User Workspace.
 - Keep failure messages truthful without claiming unconfirmed work was saved.
 - Reserve time for the verified VS Code runtime during bounded Node.js discovery so slow PATH probes cannot prevent Always Active startup.
-
-## 3.0.0
 
 - Restore the mobile sidebar toggle when a deferred workspace view finishes loading after the dashboard shell.
 - Keep session questions available until answered or resolved, reopen them from reminders, and clear reminders when the conversation moves on.

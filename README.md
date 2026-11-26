@@ -14,7 +14,7 @@ Use the [AI control and browser guide](docs/ai-control.md) for MCP setup, browse
 
 Download the final [3.0.0 release](https://github.com/imskriaz/codex-manager/releases/tag/v3.0.0) or install [codex-manager-3.0.0.vsix](https://github.com/imskriaz/codex-manager/releases/download/v3.0.0/codex-manager-3.0.0.vsix). See the [changelog](CHANGELOG.md) for the full release history.
 
-This release includes OpenAI and Anthropic API-key accounts, native Claude sessions, SMTP session notifications, browser voice dictation, and PostgreSQL storage for Team workspaces. It also improves account controls, session questions, and standalone startup recovery.
+This release includes OpenAI and Anthropic API-key accounts, native Claude sessions, SMTP session notifications, browser voice dictation, and PostgreSQL storage for Team workspaces. It also improves account controls, session questions, standalone startup recovery, User Workspace recovery and deliverables, and optional feature defaults.
 
 ## What it provides
 
