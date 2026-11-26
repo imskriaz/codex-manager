@@ -2,6 +2,7 @@ import './verify-dashboard-modules.mjs';
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+import JSZip from 'jszip';
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const dependencies = Object.keys(packageJson.dependencies ?? {});
@@ -9,13 +10,17 @@ if (dependencies.length === 0) {
   process.exit(0);
 }
 
-const vsixPath = fileURLToPath(new URL(`../${packageJson.name}-${packageJson.version}.vsix`, import.meta.url));
+const vsixPath = process.argv[2] ?? fileURLToPath(new URL(`../${packageJson.name}-${packageJson.version}.vsix`, import.meta.url));
 if (!existsSync(vsixPath)) {
   console.error(`VSIX dependency check failed. Package not found: ${vsixPath}`);
   process.exit(1);
 }
 
-const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+const archive = await JSZip.loadAsync(readFileSync(vsixPath));
+const packagedManifest = archive.file('extension/package.json');
+if (!packagedManifest || JSON.parse(await packagedManifest.async('string')).version !== packageJson.version) throw new Error('VSIX version does not match package.json. Rebuild before installing.');
+const paths = new Set(Object.keys(archive.files));
+const listing = [...paths].join("\n");
 if (/^extension\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+\//m.test(listing)) throw new Error('VSIX contains a bundled Claude runtime. Claude sessions must use the locally installed CLI.');
 if (listing.split('\n').some(file => /(?:localDictation\.|local-whisper\.py)/.test(file))) throw new Error('VSIX contains the removed local dictation runtime. Clean stale build output and package again.');
 for (const file of ['start-node.cjs', 'standalone-config.cjs', 'standalone-supervisor.cjs', 'update-standalone.cjs', 'local-mcp.cjs', 'codex-owner-bridge.cjs', 'codex-owner-launcher.cs'])
@@ -27,13 +32,22 @@ for (const file of ["extension/tools/inspect-session-writers.ps1", "extension/to
 for (const panel of ["workspaceCodeEditor", "workspaceTerminal", "workspaceBrowser"])
   if (!listing.split("\n").some(name => name.startsWith(`extension/media/webview/dashboard/chunks/${panel}-`) && name.endsWith(".js"))) throw new Error(`VSIX lazy panel is missing: ${panel}`);
 if (dependencies.includes('node-pty')) {
-  const paths = new Set(listing.split('\n'));
   const binaries = ['win32-x64/conpty.node','win32-x64/conpty_console_list.node','win32-x64/conpty/conpty.dll','win32-x64/conpty/OpenConsole.exe','win32-arm64/conpty.node','win32-arm64/conpty_console_list.node','win32-arm64/conpty/conpty.dll','win32-arm64/conpty/OpenConsole.exe','darwin-x64/pty.node','darwin-x64/spawn-helper','darwin-arm64/pty.node','darwin-arm64/spawn-helper'];
   for (const binary of binaries) if (!paths.has(`extension/node_modules/node-pty/prebuilds/${binary}`)) throw new Error(`VSIX terminal backend is incomplete: ${binary}`);
   if ([...paths].some(name => name.startsWith('extension/node_modules/node-pty/') && name.endsWith('.pdb'))) throw new Error('VSIX contains unnecessary terminal debug symbols.');
 }
 if(dependencies.includes('pdf-parse'))for(const file of ['out/services/officeDocumentWorker.js','media/fonts/NotoSans-Regular.ttf','media/fonts/NotoSansBengali-Regular.ttf','media/fonts/LICENSE-Noto.txt'])if(!listing.split('\n').includes('extension/'+file))throw new Error('VSIX document support is missing: '+file);
 if (dependencies.includes('pg') && !listing.split('\n').includes('extension/out/storage/officePostgresWorker.js')) throw new Error('VSIX PostgreSQL driver worker is missing.');
+for (const file of ['docx/dist/index.cjs', 'exceljs/excel.js', 'pdf-lib/cjs/index.js', '@pdf-lib/fontkit/dist/fontkit.umd.js', 'pptxgenjs/dist/pptxgen.cjs.js', 'pdf-parse/dist/pdf-parse/cjs/index.cjs', 'pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs', '@anthropic-ai/claude-agent-sdk/sdk.mjs']) {
+  if (!paths.has(`extension/node_modules/${file}`)) throw new Error(`VSIX runtime entry point is missing: ${file}`);
+}
+const redundant = [...paths].find(file => [
+  /\/node_modules\/(?:pdfjs-dist\/|node-pty\/build\/|exceljs\/dist\/|pdf-lib\/(?:dist|es)\/)/,
+  /\/node_modules\/docx\/dist\/(?!index\.cjs$)/,
+  /\/node_modules\/pdf-parse\/dist\/(?!pdf-parse\/cjs\/(?:index\.cjs|pdf\.worker\.mjs)$)/,
+  /\/node_modules\/.*\.(?:d\.cts|d\.mts|tsbuildinfo)$/
+].some(pattern => pattern.test(file)));
+if (redundant) throw new Error(`VSIX contains an unused dependency build: ${redundant}`);
 const missing = dependencies.filter((dependency) => {
   const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return !new RegExp(`^extension/node_modules/${escaped}/`, "m").test(listing);
@@ -45,37 +59,3 @@ if (missing.length > 0) {
 }
 
 console.log(`VSIX dependency check passed: ${dependencies.join(", ")}`);
-
-function listZipEntries(archive) {
-  const endSignature = 0x06054b50;
-  const directorySignature = 0x02014b50;
-  const minimumEndOffset = Math.max(0, archive.length - 65_557);
-  let endOffset = -1;
-  for (let offset = archive.length - 22; offset >= minimumEndOffset; offset -= 1) {
-    if (archive.readUInt32LE(offset) === endSignature) {
-      endOffset = offset;
-      break;
-    }
-  }
-  if (endOffset < 0) throw new Error("VSIX dependency check failed. ZIP end record was not found.");
-
-  const entryCount = archive.readUInt16LE(endOffset + 10);
-  let offset = archive.readUInt32LE(endOffset + 16);
-  const entries = [];
-  for (let index = 0; index < entryCount; index += 1) {
-    if (offset + 46 > archive.length || archive.readUInt32LE(offset) !== directorySignature) {
-      throw new Error(`VSIX dependency check failed. Invalid ZIP directory entry ${index + 1}.`);
-    }
-    const nameLength = archive.readUInt16LE(offset + 28);
-    const extraLength = archive.readUInt16LE(offset + 30);
-    const commentLength = archive.readUInt16LE(offset + 32);
-    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
-    if (nextOffset > archive.length) {
-      throw new Error(`VSIX dependency check failed. Truncated ZIP directory entry ${index + 1}.`);
-    }
-    entries.push(archive.subarray(offset + 46, offset + 46 + nameLength).toString("utf8"));
-    offset = nextOffset;
-  }
-  if (offset !== endOffset) throw new Error("VSIX dependency check failed. ZIP directory is incomplete.");
-  return entries;
-}

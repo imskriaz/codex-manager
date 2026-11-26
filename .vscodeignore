@@ -64,10 +64,56 @@ node_modules/**/__tests__/**
 node_modules/**/README*
 node_modules/**/CHANGELOG*
 
+# The backend uses the Node/CommonJS entry points, not alternate browser builds.
+node_modules/docx/dist/**
+!node_modules/docx/dist/index.cjs
+node_modules/exceljs/dist/**
+node_modules/pdf-lib/dist/**
+node_modules/pdf-lib/es/**
+node_modules/@pdf-lib/fontkit/dist/**
+!node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
+node_modules/@pdf-lib/standard-fonts/dist/**
+node_modules/@pdf-lib/standard-fonts/es/**
+node_modules/@pdf-lib/upng/dist/**
+node_modules/@pdf-lib/upng/UPNG.js
+node_modules/pptxgenjs/dist/**
+!node_modules/pptxgenjs/dist/pptxgen.cjs.js
+node_modules/jszip/dist/**
+node_modules/mammoth/mammoth.browser*.js
+node_modules/pako/dist/**
+node_modules/async/dist/**
+!node_modules/async/dist/async.js
+node_modules/dayjs/esm/**
+node_modules/@babel/runtime/helpers/esm/**
+
+# pdf-parse's CJS build already includes PDF.js and its matching worker.
+node_modules/pdf-parse/dist/**
+!node_modules/pdf-parse/dist/pdf-parse/cjs/index.cjs
+!node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs
+node_modules/pdf-parse/bin/**
+node_modules/pdfjs-dist/**
+
+# Manager uses the SDK's bundled Node entry point with an external Claude CLI.
+node_modules/@anthropic-ai/claude-agent-sdk/core*.mjs
+node_modules/@anthropic-ai/claude-agent-sdk/bridge.mjs
+node_modules/@anthropic-ai/claude-agent-sdk/browser-sdk.js
+node_modules/@anthropic-ai/claude-agent-sdk/extractFromBunfs.js
+node_modules/@anthropic-ai/claude-agent-sdk/manifest*.json
+
+# node-pty falls back to its retained platform prebuilds without this duplicate.
+node_modules/node-pty/build/**
+node_modules/**/*.d.cts
+node_modules/**/*.d.mts
+node_modules/**/*.tsbuildinfo
+node_modules/**/yarn.lock
+node_modules/**/package-lock.json
+node_modules/**/.github/**
+
 tools/benchmark-sqlite.mjs
 tools/workspace-dashboard-assets.mjs
 tools/email-ui-fixture.mjs
 tools/verify-dashboard-modules.mjs
+tools/verify-vsix-layout.mjs
 tools/check-*.mjs
 tools/capture-docs-ui.mjs
 RELEASE-1.4.3-PENDING.md

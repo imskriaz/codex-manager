@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.6
+
+- Reduce the extension package by retaining the backend's active library builds and removing duplicate browser bundles, document runtimes, terminal build output and development artifacts. Preserve document creation and reading, PDF page rendering, browser automation and terminals.
+- Use the existing ZIP library for package inspection. Add an isolated test of the actual packaged document, terminal, browser and Claude SDK runtimes, including Bengali PDF shaping.
+
 ## 3.0.1-pre.3
 
 - Move Codex and Claude session setup into separate modules under Settings > Workspace > Session modules. Reuse verified host installations, or download missing runtimes separately before enabling. Include sign-in instructions and setup error feedback.
