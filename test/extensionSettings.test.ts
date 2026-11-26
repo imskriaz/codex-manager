@@ -33,7 +33,7 @@ describe("5-hour quota control defaults", () => {
     const manifest = require("../package.json").contributes.configuration.properties;
     const expected = {
       codexAppRestartEnabled: false, codexAppRestartMode: "auto", autoRefreshMinutes: 10, usageHistoryRetentionDays: 30,
-      cliIntegrationEnabled: false, apiAccessEnabled: false, autoSwitchEnabled: true,
+      cliIntegrationEnabled: false, apiAccessEnabled: false, systemInfoEnabled: false, autoSwitchEnabled: true,
       autoSwitchWaitForSessionsEnabled: false, autoSwitchReloadWindowEnabled: true,
       modelCapacityAutoSwitchEnabled: true, modelCapacityFailureCount: 3,
       autoResumeEnabled: true, autoSwitchRefreshAllBeforeSwitchEnabled: true,

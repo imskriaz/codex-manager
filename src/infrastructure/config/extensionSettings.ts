@@ -74,7 +74,7 @@ export class ExtensionSettingsStore {
       codexAppPath: config.get<string>("codexAppPath", ""),
       resolvedCodexAppPath: "",
       codexCliPath: config.get<string>("codexCliPath", ""),
-      systemInfoEnabled: config.get<boolean>("systemInfoEnabled", true),
+      systemInfoEnabled: config.get<boolean>("systemInfoEnabled", false),
       quotaWarningEnabled: config.get<boolean>("quotaWarningEnabled", true),
       quotaWarningThreshold: warningThresholds.hourly,
       quotaWarningWeeklyThreshold: warningThresholds.weekly,

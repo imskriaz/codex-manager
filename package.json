@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.26",
+  "version": "3.0.1-pre.27",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -72,7 +72,7 @@
         },
         "codexManager.systemInfoEnabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "markdownDescription": "Show System Info in Account Center and the system picker: battery, network, CPU, RAM, disk space, and uptime when available."
         },
         "codexManager.privacyMode": {
@@ -147,7 +147,7 @@
         },
         "codexManager.mcpAutoSetupEnabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "scope": "machine",
           "markdownDescription": "Automatically register Codex Manager MCP for new Codex sessions. First setup enables the local dashboard API and creates a workspace-operation token. Existing user-managed or disabled MCP entries are preserved."
         },
@@ -421,7 +421,7 @@
         },
         "codexManager.officeAutoPresentation": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "scope": "machine",
           "markdownDescription": "Allow the assistant to show relevant permitted project panels in User Workspace."
         },

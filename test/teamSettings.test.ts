@@ -54,7 +54,7 @@ describe("Team storage settings", () => {
       modelMode:'manual',profilePicker:true,routerModel:'gpt-6-luna',regularModel:'gpt-6-luna',professionalModel:'gpt-6.1-sol',expertModel:'gpt-6.1-terra',
       defaultSkills:['project-planning','document-drafting','spreadsheet-analysis','meeting-follow-up','research-briefs','operations-tracking'],
       sessionRetentionDays: 30,
-      autoPresentation:true,
+      autoPresentation:false,
       presentation:DEFAULT_OFFICE_PRESENTATION,
       maxActiveRequests: 2,
       workspaceRoot: "C:/new-users",

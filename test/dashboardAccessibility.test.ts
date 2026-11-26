@@ -177,7 +177,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("function SessionRowMenu");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("Pause Auto Resume");
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("cli-icon-button is-auto-resume ${autoResume ? \"is-enabled is-active\" : \"is-disabled\"}");
-    expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("showsCodexSessionAutoResume(session)");
+    expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("canConfigureCodexSessionAutoResume(session)");
     const settingsSource = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     expect(settingsSource).toContain('data-setting="webview-zoom"');
     expect(settingsSource).toContain('description={(value) => `Dashboard zoom ${value}%`}');

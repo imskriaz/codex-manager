@@ -21,7 +21,7 @@ export function readTeamSettings() {
     globalPrompt: config.get<string>("officeGlobalPrompt", DEFAULT_USER_WORKSPACE_PROMPT),
     defaultModel: config.get<string>("officeDefaultModel", "gpt-6-luna"),
     modelMode: config.get<string>('officeModelMode', 'manual') === 'auto' ? 'auto' as const : 'manual' as const,
-    autoPresentation:config.get<boolean>('officeAutoPresentation',true),
+    autoPresentation:config.get<boolean>('officeAutoPresentation',false),
     profilePicker:config.get<boolean>('officeProfilePicker',true),
     routerModel: config.get<string>('officeRouterModel', 'gpt-6-luna'),
     regularModel: config.get<string>('officeRegularModel', 'gpt-6-luna'),

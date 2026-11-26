@@ -19580,7 +19580,7 @@ body:has(.session-question-modal) .codex-request-background { display:none; }
 .dashboard-content .saved-progress { gap: 4px; }
 .cli-queued-message-expanded .cli-queued-message-error { color: var(--warning); overflow-wrap: anywhere; }
 
-html[data-theme] body .dashboard-content .saved-card.active { border-color: var(--accent-blue); --saved-card-selected-border: var(--accent-blue); box-shadow: inset 3px 0 0 var(--accent-blue); }
+html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted) { border-color: var(--accent-blue); --saved-card-selected-border: var(--accent-blue); box-shadow: inset 3px 0 0 var(--accent-blue); }
 
 .codex-models-setting fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .codex-model-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }

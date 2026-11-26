@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1-pre.27
+
+- Manage connected systems, account quotas, remote sessions, terminals, files, Git, and task boards from the dashboard.
+- Improve session recovery, tool failure feedback, local folder access, browser dictation, and editable fallback models.
+- Add User Workspace recovery, saved deliverables, Office document workflows, and administration controls.
+- Avoid repeated Claude model discovery and keep optional system information, automatic MCP setup, and workspace presentation disabled by default while preserving saved choices.
+- Preserve exhausted-quota borders when an account is active or selected across dashboard themes.
+
 ## 3.0.1-pre.12
 
 - Accept text questions without attempting to load unused image previews. Report invalid visual questions clearly instead of exhausting automatic recovery.

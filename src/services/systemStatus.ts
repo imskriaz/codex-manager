@@ -52,7 +52,7 @@ async function battery(): Promise<SystemStatus['battery']> {
 
 /** Optional telemetry never blocks dashboard snapshots or explicit account actions. */
 export function getSystemStatus(): SystemStatus | undefined {
-  if (!getCodexManagerConfiguration().get<boolean>("systemInfoEnabled", true)) return undefined;
+  if (!getCodexManagerConfiguration().get<boolean>("systemInfoEnabled", false)) return undefined;
   if (!pending && Date.now() - lastAttempt >= SYSTEM_STATUS_REFRESH_MS) {
     pending = true;
     lastAttempt = Date.now();

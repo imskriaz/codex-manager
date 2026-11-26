@@ -169,7 +169,7 @@ describe("Settings Sync request budget", () => {
   it("accumulates events for the configured VS Code gap without periodic sync when idle", async () => {
     vi.useFakeTimers();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => key === "encryptedSyncVsCodeHeartbeatMinutes" ? 2 : fallback
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncVsCodeHeartbeatMinutes" ? 2 : key === "encryptedSyncEnabled" ? true : fallback
     } as never);
     const { manager, state } = fixture();
     const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);

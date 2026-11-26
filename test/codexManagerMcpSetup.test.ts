@@ -26,8 +26,14 @@ function owned(local = false) {
   entries = [{ name: 'codex-manager', transport: { ...registration, env: local ? {} : { CODEX_MANAGER_TOKEN: 'old-token' } } }];
 }
 describe('local Codex Manager MCP setup', () => {
+  it('does not discover or modify MCP configuration before automatic setup is enabled', async () => {
+    expect(await setupCodexManagerMcp(context, true)).toBe('Automatic MCP setup is disabled.');
+    expect(mocks.discover).not.toHaveBeenCalled();
+    expect(mocks.mkdir).not.toHaveBeenCalled();
+    expect(mocks.cli).not.toHaveBeenCalled();
+  });
   it('registers without a token, without enabling external API access, using bounded subprocesses', async () => {
-    expect(await setupCodexManagerMcp(context, true)).toContain('No API token');
+    expect(await setupCodexManagerMcp(context)).toContain('No API token');
     const args = mocks.cli.mock.calls[1][1];
     expect(args).toContain('CODEX_MANAGER_TRANSPORT=local');
     expect(args.join(' ')).not.toMatch(/CODEX_MANAGER_TOKEN|CODEX_MANAGER_URL/);
@@ -36,7 +42,7 @@ describe('local Codex Manager MCP setup', () => {
     expect(state.get(key)).toMatchObject({ transport: 'local' });
   });
   it.each([false, true])('migrates owned registrations, local=%s, while external API is disabled', async local => {
-    owned(local); mocks.config.get.mockImplementation((key, fallback) => key === 'apiAccessEnabled' ? false : fallback);
+    owned(local); mocks.config.get.mockImplementation((key, fallback) => key === 'apiAccessEnabled' ? false : key === 'mcpAutoSetupEnabled' ? true : fallback);
     await setupCodexManagerMcp(context, true);
     expect(mocks.cli.mock.calls[1][1]).toContain('CODEX_MANAGER_TRANSPORT=local');
     expect(mocks.config.update).not.toHaveBeenCalled();

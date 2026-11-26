@@ -164,7 +164,7 @@ describe("extension manifest configuration", () => {
       contributes?: { configuration?: { properties?: Record<string, { type?: string; default?: unknown }> } };
     };
 
-    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: true });
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: false });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageIntervalMinutes"]).toMatchObject({ type: "number", default: 60, minimum: 1, maximum: 1440 });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.usageHistoryRetentionDays"]).toMatchObject({
       type: "number",
@@ -186,7 +186,7 @@ describe("extension manifest configuration", () => {
     expect(manifest.contributes?.configuration?.properties?.["codexManager.alwaysActive"]).toMatchObject({ type: "boolean", scope: "machine", default: false });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.alwaysActiveStartWithSystem"]).toMatchObject({ type: "boolean", scope: "machine", default: false });
     const property = manifest.contributes?.configuration?.properties?.["codexManager.webSocketServerEnabled"];
-    expect(property).toMatchObject({ type: "boolean", default: true });
+    expect(property).toMatchObject({ type: "boolean", default: false });
     expect(fs.existsSync(path.resolve(path.dirname(manifestPath), "tools", "always-online-server.js"))).toBe(true);
   });
 

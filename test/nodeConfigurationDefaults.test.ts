@@ -2,6 +2,16 @@ import { createRequire } from "node:module";
 import { expect, it } from "vitest";
 const shim = createRequire(import.meta.url)("../tools/node-vscode-shim/vscode.js");
 
+it.each(["systemInfoEnabled", "mcpAutoSetupEnabled", "officeAutoPresentation"])("keeps optional %s disabled until explicitly enabled", async setting => {
+  const config = shim.workspace.getConfiguration("codexManager");
+  expect(config.get(setting, true)).toBe(false);
+  try {
+    await config.update(setting, true);
+    expect(config.get(setting, false)).toBe(true);
+  } finally { await config.update(setting, undefined); }
+  expect(config.get(setting, true)).toBe(false);
+});
+
 it("uses the same Automation defaults as VS Code before caller fallbacks", async () => {
   const config = shim.workspace.getConfiguration("codexManager");
   expect(config.get("autoResumeEnabled", false)).toBe(true);

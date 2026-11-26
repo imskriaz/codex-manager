@@ -2483,11 +2483,11 @@ describe("executeDashboardActionMessage", () => {
     expect(context.repo.getTokens).not.toHaveBeenCalled();
   });
 
-  it("enables automatic token history by default while preserving credential failures", async () => {
+  it("preserves credential failures when automatic token history is explicitly enabled", async () => {
     const context = createContext();
     context.context = { globalState: { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) } } as never;
     context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "default-history" }), getTokens: vi.fn().mockResolvedValue(undefined) } as never;
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageEnabled" ? true : fallback } as never);
     const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "default-history", requestId: "default-automatic-history", payload: { automatic: true } });
     expect(context.repo.getTokens).toHaveBeenCalledOnce();
     expect(result.status).toBe("failed"); expect(result.errorMessage).toMatch(/access token/i);

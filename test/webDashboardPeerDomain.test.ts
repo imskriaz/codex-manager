@@ -30,7 +30,7 @@ beforeEach(() => {
   sockets.length = 0;
   fetchMock.mockReset().mockResolvedValue({ ok: true, json: async () => ({ type: "peer:aggregate", peers: [] }) });
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? domain : key === "webDashboardEnabled" ? true : fallback
+    get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? domain : key === "webDashboardEnabled" || key === "webSocketServerEnabled" ? true : fallback
   } as never);
   sync = { isCrossPcEnabled: vi.fn(() => true), setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn(), getRealtimeEnablementRegistry: vi.fn(() => []),
     verifyRealtimePeerPayload: vi.fn(async () => true), signRealtimePeerPayload: vi.fn(async () => "signed"),

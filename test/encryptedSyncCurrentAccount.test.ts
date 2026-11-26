@@ -40,7 +40,7 @@ beforeEach(async () => {
     get: (key: string, fallback?: unknown) =>
       key === "encryptedSyncClaimAllAccountsEnabled"
         ? false
-        : key === "cloudflaredDomain"
+        : key === "encryptedSyncEnabled" ? true : key === "cloudflaredDomain"
           ? "https://dashboard.example"
           : fallback
   } as never);
@@ -167,7 +167,7 @@ describe("current account only sync", () => {
     await reconcile();
     const claim = manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)!;
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => key === "encryptedSyncClaimAllAccountsEnabled" ? true : key === "cloudflaredDomain" ? "https://dashboard.example" : fallback
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : key === "cloudflaredDomain" ? "https://dashboard.example" : fallback
     } as never);
     await manager.completeAccountEnablement(active, true);
     expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)).toEqual(claim);
@@ -314,7 +314,7 @@ describe("current account only sync", () => {
   });
   it("never releases another PC's claim when that account is disabled locally", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback
     } as never);
     const foreign = createSyncAccountEnablement({
       accountId: "next",

@@ -21,7 +21,7 @@ function runCli(command: string, args: string[], home: string): Promise<string> 
 /** Use Codex's own config writer so other servers, comments and settings survive. */
 export async function setupCodexManagerMcp(context: vscode.ExtensionContext, automatic = false): Promise<string> {
   const config = getCodexManagerConfiguration();
-  if (automatic && !config.get<boolean>('mcpAutoSetupEnabled', true)) return 'Automatic MCP setup is disabled.';
+  if (automatic && !config.get<boolean>('mcpAutoSetupEnabled', false)) return 'Automatic MCP setup is disabled.';
   const home = getCodexHome();
   const key = `codexManager.mcp.${getCodexHomeStateKey(home)}`;
   return runCrossWindowExclusive('config:codex-manager-mcp', 'Codex Manager MCP setup', async () => {
