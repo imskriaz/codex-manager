@@ -1,6 +1,6 @@
 export type ChatAttachment = { id: string; name: string; kind: "image" | "text" | "file"; mimeType: string; data: string; size: number };
-export const MAX_CHAT_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-export const MAX_CHAT_WIRE_BYTES = 128 * 1024 * 1024;
+export const MAX_CHAT_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_CHAT_WIRE_BYTES = 256 * 1024 * 1024;
 export const MAX_CHAT_ATTACHMENTS = 32;
 export const MAX_CHAT_TEXT_ATTACHMENT_BYTES = 32 * 1024;
 
@@ -35,7 +35,7 @@ export function withoutChatTextAttachments(text: string): string {
 /** Validate on both sides of the bridge; never trust browser size/type claims. */
 export function validateChatAttachments(value: unknown): ChatAttachment[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > MAX_CHAT_ATTACHMENTS) throw new Error("Attach up to 32 files, totaling at most 50 MB.");
+  if (!Array.isArray(value) || value.length > MAX_CHAT_ATTACHMENTS) throw new Error("Attach up to 32 files, totaling at most 100 MB.");
   let total = 0;
   const ids = new Set<string>();
   return value.map((item: unknown) => {
@@ -50,7 +50,7 @@ export function validateChatAttachments(value: unknown): ChatAttachment[] {
       const match = data.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
       if (!match || match[1] !== mimeType || match[2]!.length % 4 !== 0) throw new Error(`${name}: use a PNG, JPEG, or WebP image.`);
       size = match[2]!.length / 4 * 3 - (match[2]!.endsWith("==") ? 2 : match[2]!.endsWith("=") ? 1 : 0);
-      if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error(`${name}: keep attachments under 50 MB in total.`);
+      if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error(`${name}: keep attachments under 100 MB in total.`);
       const prefix = atob(match[2]!.slice(0, 32));
       const valid = mimeType === "image/png" ? prefix.startsWith("\x89PNG\r\n\x1a\n")
         : mimeType === "image/jpeg" ? prefix.startsWith("\xff\xd8\xff")
@@ -59,14 +59,14 @@ export function validateChatAttachments(value: unknown): ChatAttachment[] {
     } else if (kind === "text") {
       size = new TextEncoder().encode(data).length;
       if (data.includes("\0")) throw new Error(`${name}: the text file contains binary data.`);
-      if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error(`${name}: attach a text file under 50 MB.`);
+      if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error(`${name}: attach a text file under 100 MB.`);
     } else if (kind === "file") {
       const match = data.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]*={0,2})$/i);
       if (!match || mimeType.length > 200 || match[1] !== mimeType || match[2]!.length % 4 !== 0) throw new Error(`${name}: the file data is invalid. Attach the original file again.`);
       size = match[2]!.length / 4 * 3 - (match[2]!.endsWith("==") ? 2 : match[2]!.endsWith("=") ? 1 : 0);
     } else throw new Error(`${name}: the attachment type is invalid.`);
     total += size;
-    if (total > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 50 MB in total. Remove a file and try again.");
+    if (total > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 100 MB in total. Remove a file and try again.");
     return { id, name: name.trim(), kind, mimeType: kind === "text" ? "text/plain" : mimeType, data, size };
   });
 }

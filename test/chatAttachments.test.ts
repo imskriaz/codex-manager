@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatUploadTimeoutMs, chatAttachmentPreviews, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, prepareChatInput, validateChatAttachments } from "../src/domain/chatAttachments";
+import { chatUploadTimeoutMs, chatAttachmentPreviews, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, MAX_CHAT_WIRE_BYTES, prepareChatInput, validateChatAttachments } from "../src/domain/chatAttachments";
 import { appServerChatInput, withCliImageAttachments } from "../src/services/codexChatAttachments";
 import { access, readFile } from "node:fs/promises";
 
@@ -42,14 +42,14 @@ describe("chat attachments", () => {
   });
 });
 
-it('accepts 32 files and 50 MB but rejects total bytes above the boundary, with compact large-text previews', () => {
-  expect(MAX_CHAT_ATTACHMENT_BYTES).toBe(50 * 1024 * 1024); expect(MAX_CHAT_ATTACHMENTS).toBe(32);
+it('accepts 32 files and 100 MB but rejects total bytes above the boundary, with compact large-text previews', () => {
+  expect(MAX_CHAT_ATTACHMENT_BYTES).toBe(100 * 1024 * 1024); expect(MAX_CHAT_ATTACHMENTS).toBe(32);
   const data = 'x'.repeat(MAX_CHAT_ATTACHMENT_BYTES);
   const files = validateChatAttachments([{ ...text, data }]);
   const prepared = prepareChatInput('Review', files);
   expect(prepared.text.length).toBeLessThan(300);
   expect(chatAttachmentPreviews(files)[0]?.text).toContain(`${MAX_CHAT_ATTACHMENT_BYTES} bytes`);
-  expect(() => validateChatAttachments([...files, { ...text, id: 'extra', data: 'x' }])).toThrow(/50 MB/);
+  expect(() => validateChatAttachments([...files, { ...text, id: 'extra', data: 'x' }])).toThrow(/100 MB/);
   expect(validateChatAttachments(Array.from({ length: 32 }, (_, id) => ({ ...text, id: String(id) })))).toHaveLength(32);
 });
 
@@ -65,4 +65,10 @@ it.each(['application/pdf','application/vnd.openxmlformats-officedocument.wordpr
 it('gives large file transfers a bounded five-minute confirmation window', () => {
   expect(chatUploadTimeoutMs()).toBe(0);
   expect(chatUploadTimeoutMs([{ ...text, size: 2 * 1024 * 1024 }])).toBe(300000);
+});
+it('accepts a binary 100 MB upload within the expanded JSON transport budget',()=>{
+ const data='data:application/octet-stream;base64,'+Buffer.alloc(MAX_CHAT_ATTACHMENT_BYTES).toString('base64');
+ const [file]=validateChatAttachments([{id:'large',name:'large.xlsx',kind:'file',mimeType:'application/octet-stream',data,size:0}]);
+ expect(file!.size).toBe(MAX_CHAT_ATTACHMENT_BYTES);
+ expect(Buffer.byteLength(JSON.stringify({attachments:[file]}))).toBeLessThan(MAX_CHAT_WIRE_BYTES);
 });

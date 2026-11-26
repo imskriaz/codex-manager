@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
 import type { DashboardCliProject } from '../domain/dashboard/types';
 import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../domain/localFolder';
 import { createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, validateProjectName } from './workspaceProjects';
@@ -31,11 +33,12 @@ export function officeLocalProject(owner: string, project: string): DashboardCli
 export class OfficeLocalFolderConnections {
   private connections = new Map<string, Connection>();
   private key(owner: string, project: string) { return JSON.stringify([owner, project]); }
+  private active(connection:Connection){return Date.now()-connection.seen<30000||[...connection.pending.values()].some(pending=>pending.delivered&&(pending.command.expiresAt??0)>Date.now());}
   connect(owner: string, project: string, client: string): void {
     if (!/^[a-f0-9-]{36}$/i.test(client)) throw new Error('Choose the folder again to connect.');
-    for (const connection of this.connections.values()) if (Date.now() - connection.seen >= 30_000) this.disconnect(connection.owner, connection.project, connection.client);
+    for (const connection of this.connections.values()) if (!this.active(connection)) this.disconnect(connection.owner, connection.project, connection.client);
     const key = this.key(owner, project), previous = this.connections.get(key);
-    if (previous && previous.client !== client && Date.now() - previous.seen < 30_000)
+    if (previous && previous.client !== client && this.active(previous))
       throw new Error('This project is connected in another browser tab. Close that connection before reconnecting.');
     if (previous?.client === client) { previous.seen = Date.now(); return; }
     if (previous) this.disconnect(owner, project, previous.client);
@@ -61,7 +64,7 @@ export class OfficeLocalFolderConnections {
   }
   private connection(owner: string, project: string, client?: string): Connection {
     const value = this.connections.get(this.key(owner, project));
-    if (!value || client && value.client !== client || Date.now() - value.seen >= 30_000)
+    if (!value || client && value.client !== client || !this.active(value))
       throw new Error('Local folder is offline. Its browser connection is not active. Keep the browser with folder access open; its saved permission will be reused when it reconnects.');
     return value;
   }
@@ -93,9 +96,9 @@ export class OfficeLocalFolderConnections {
           if (result.entries !== undefined && (!Array.isArray(result.entries) || result.entries.length > 2000)) throw new Error('Invalid inspection.');
           for (const entry of result.entries ?? []) { localFolderPath(entry.path); if (!['file','folder'].includes(entry.kind)) throw new Error('Invalid entry.'); }
         } else {
-          if (typeof result.revision !== 'string' || !/^[a-f0-9]{64}$/.test(result.revision) || !Number.isSafeInteger(result.size) || result.size! < 0 || result.size! > 10 * 1048576) throw new Error('Invalid file.');
-          const size = pending.command.offset === undefined ? result.size : Math.min(262144, result.size! - pending.command.offset);
-          if (pending.command.operation === 'read' && (typeof result.data !== 'string' || result.data.length > 13981016 || result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) || Buffer.byteLength(result.data, 'base64') !== size)) throw new Error('Invalid content.');
+          if (typeof result.revision !== 'string' || !/^[a-f0-9]{64}$/.test(result.revision) || !Number.isSafeInteger(result.size) || result.size! < 0 || result.size! > MAX_WORKSPACE_FILE_BYTES) throw new Error('Invalid file.');
+          const size = pending.command.offset === undefined ? result.size : Math.min(pending.command.length??DEFAULT_LOCAL_FILE_CHUNK_BYTES, result.size! - pending.command.offset);
+          if (pending.command.operation === 'read' && (typeof result.data !== 'string' || result.data.length > Math.ceil(MAX_WORKSPACE_FILE_BYTES/3)*4 || result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) || Buffer.byteLength(result.data, 'base64') !== size)) throw new Error('Invalid content.');
         }
         pending.resolve(pending.command.operation === 'list' ? {files:result.files,warning:result.warning} : ['read','write'].includes(pending.command.operation) ? {data:result.data,revision:result.revision,size:result.size} : {message:result.message,revision:result.revision,kind:result.kind,entries:result.entries});
       } catch { pending.reject(new Error('The local folder returned an invalid result. Inspect the folder before retrying.')); }
@@ -107,20 +110,38 @@ export class OfficeLocalFolderConnections {
     assertLocalFolderPermission(permission, input.operation);
     if (input.operation !== 'list') localFolderPath(input.path);
     if (input.destination !== undefined) localFolderPath(input.destination);
-    if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0)) throw new Error('Choose a valid download offset.');
+    if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0 || input.offset>MAX_WORKSPACE_FILE_BYTES)) throw new Error('Choose a valid download offset.');
+    if (input.length!==undefined&&(!Number.isSafeInteger(input.length)||input.length<1||input.length>LOCAL_FILE_CHUNK_BYTES||input.offset===undefined||input.operation!=='read'))throw new Error('Choose a valid file chunk size.');
     const connection = this.connection(owner, project);
     if ([...connection.pending.values()].some(pending => pending.timedOut) && !['list','read','inspect'].includes(input.operation)) throw new Error('A previous folder action has not confirmed completion. Inspect the folder and wait for its result before changing files.');
     if (connection.pending.size >= 16) throw new Error('The local folder is busy. Wait for the current action to finish.');
     return new Promise((resolve, reject) => {
-      const command = { ...input, permission, id: randomUUID(), expiresAt: Date.now() + 12_000 };
+      const timeoutMs=input.length||['inspect','copy_file','move_file','delete'].includes(input.operation)||input.operation==='write'&&(input.data?.length??0)>14*1048576?120000:12000;
+      const command = { ...input, permission, id: randomUUID(), expiresAt: Date.now() + timeoutMs };
       const timer = setTimeout(() => {
         const pending=connection.pending.get(command.id);
         if (pending?.delivered && !['list','read','inspect'].includes(command.operation)) pending.timedOut=true;
         else connection.pending.delete(command.id);
         reject(new Error('The local folder did not confirm completion. Check the folder before retrying; changes were not replayed.'));
-      }, 12_000);
+      }, timeoutMs);
       connection.pending.set(command.id, { command, delivered: false, resolve, reject, timer });
     });
+  }
+  async readFile(owner:string,project:string,file:string):Promise<{data:Buffer;revision:string;size:number}>{
+    const parts:Buffer[]=[],hash=createHash('sha256'),deadline=Date.now()+5*60000;
+    let offset=0,size:number|undefined,revision:string|undefined;
+    do{
+      if(Date.now()>=deadline)throw new Error('File transfer timed out. The original file is unchanged. Retry reading it.');
+      const result=await this.request(owner,project,{operation:'read',path:file,offset,length:LOCAL_FILE_CHUNK_BYTES,revision});
+      if(typeof result.data!=='string'||typeof result.revision!=='string'||typeof result.size!=='number')throw new Error('The file transfer was not confirmed.');
+      if(revision!==undefined&&(revision!==result.revision||size!==result.size))throw new Error('This file changed during transfer. Read it again before continuing.');
+      revision=result.revision;size=result.size;
+      const part=Buffer.from(result.data,'base64');
+      if(part.length!==Math.min(LOCAL_FILE_CHUNK_BYTES,size-offset))throw new Error('The file transfer was incomplete. Read it again.');
+      parts.push(part);hash.update(part);offset+=part.length;
+    }while(offset<size!);
+    if(hash.digest('hex')!==revision)throw new Error('This file changed during transfer. Read it again before continuing.');
+    return{data:Buffer.concat(parts,size),revision:revision!,size:size!};
   }
   close(): void {
     for (const connection of this.connections.values()) this.disconnect(connection.owner, connection.project, connection.client);

@@ -332,7 +332,7 @@ it('keeps the explanation of a confirmed read failure instead of discarding the 
 });
 it('returns document extraction exceptions as tool results so another supported source can be read',async()=>{
  const actor={...user,features:['generalChat' as const,'files' as const],limits:{dailyTokens:0}};vi.spyOn(officeUsers,'getOfficeUser').mockResolvedValue(actor);
- const documents=await import('../src/services/officeFiles');vi.spyOn(documents,'readOfficeDocument').mockRejectedValue(new Error('This PDF has no extractable text.'));
+ const documents=await import('../src/services/officeFiles');vi.spyOn(documents,'readOfficeDocumentSnapshot').mockRejectedValue(new Error('This PDF has no extractable text.'));
  const action=vi.spyOn(server as any,'processOfficeMessage').mockResolvedValue({messages:[{type:'dashboard:action-result',status:'completed',payload:{workspaceFile:{kind:'text',content:'Readable notes'}}}]});
  vi.mocked(upstream).mockClear().mockResolvedValueOnce(toolResponse('read_file',{path:'scan.pdf'}) as never).mockResolvedValueOnce(toolResponse('read_file',{path:'notes.txt'}) as never).mockResolvedValueOnce(new Response(JSON.stringify({usage:{total_tokens:1},choices:[{message:{content:'I used the readable notes. The scanned PDF needs text extraction first.'}}]})) as never);
  const answer=await (server as any).teamSessions().options.generate(actor,'fast',[],new AbortController().signal,actor.workspacePath,vi.fn());

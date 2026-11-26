@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import {createHash} from 'node:crypto';
 import { mkdtemp, mkdir, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,7 +40,7 @@ it('creates only an owned project marker and routes actual reads and writes thro
   expect((await connect()).value.project.path).toBe(project.path);
   const read = host.processOfficeMessage(user, { type: 'dashboard:action', action: 'readWorkspaceFile', requestId: 'read', payload: { projectPath: project.path, filePath: 'local.txt' } });
   const reading = await command(project.path);
-  await call({ operation: 'result', project: project.path, client, id: reading.id, result: { data: Buffer.from('Local content').toString('base64'), revision: 'a'.repeat(64), size: 13 } });
+  await call({ operation: 'result', project: project.path, client, id: reading.id, result: { data: Buffer.from('Local content').toString('base64'), revision: createHash('sha256').update('Local content').digest('hex'), size: 13 } });
   expect((await read).messages[0].payload.workspaceFile.content).toBe('Local content');
   const write = host.processOfficeMessage(user, { type: 'dashboard:action', action: 'saveWorkspaceFile', requestId: 'write', payload: { projectPath: project.path, filePath: 'local.txt', fileContent: 'New content', fileRevision: 'a'.repeat(64) } });
   const writing = await command(project.path);

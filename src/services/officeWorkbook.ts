@@ -1,6 +1,8 @@
 import type JSZip from 'jszip';
 import { SaxesParser } from 'saxes';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+import { Readable } from 'node:stream';
 
 export type WorkbookReadRange = { worksheet?: string; startRow?: number; rowCount?: number; startColumn?: number; columnCount?: number };
 
@@ -17,13 +19,20 @@ const localName = (name: string) => name.split(':').at(-1)!;
 const decodeText = (value: string) => value.replace(/_x([0-9a-f]{4})_/gi, (_, code: string) => String.fromCharCode(parseInt(code,16)));
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 
-async function parseXml(zip: JSZip, name: string, parser: SaxesParser<{ xmlns: false }>): Promise<void> {
+async function parseXml(zip: JSZip, name: string, parser: SaxesParser<{ xmlns: false }>, stop=()=>false): Promise<void> {
   const file = zip.file(name);
   if (!file) throw new Error('This workbook is missing required worksheet data.');
-  const xml = await file.async('string');
+  const decoder=new StringDecoder('utf8');let bytes=0;
   parser.on('doctype', () => { throw new Error('This workbook contains an unsupported XML document type.'); });
-  for (let offset = 0; offset < xml.length; offset += 32768) parser.write(xml.slice(offset, offset + 32768));
-  parser.close();
+  const source=file.nodeStream('nodebuffer'),stream=new Readable().wrap(source);
+  try{for await(const chunk of stream){
+      const buffer=chunk as Buffer;bytes+=buffer.length;
+      if(bytes>128*1048576)throw new Error('This workbook worksheet exceeds the expanded data limit.');
+      parser.write(decoder.write(buffer));
+      if(stop())return;
+    }
+  }finally{source.pause();(source as Readable).destroy();}
+  parser.write(decoder.end()).close();
 }
 
 export async function readWorkbook(zip: JSZip, format: 'text' | 'html', input?: WorkbookReadRange): Promise<string> {
@@ -79,7 +88,7 @@ export async function readWorkbook(zip: JSZip, format: 'text' | 'html', input?: 
   const lines: string[] = [], html: string[] = [];
   let cell: { address: string; type: string; style: number; value: string; formula: string; sharedFormula?: string } | undefined;
   let field = '', dimension = '', truncated = false, textLength = 0, cells = 0;
-  let row = 0, column = 0, rowValues: string[] = [], htmlValues: string[] = [], nextRow = range.startRow;
+  let row = 0, column = 0, rowValues: string[] = [], htmlValues: string[] = [], nextRow = range.startRow, finished=false;
   const endRow = Math.min(1048576, range.startRow + range.rowCount - 1), endColumn = Math.min(16384, range.startColumn + range.columnCount - 1);
   parser = new SaxesParser({ xmlns: false });
   parser.on('opentag', tag => {
@@ -117,8 +126,9 @@ export async function readWorkbook(zip: JSZip, format: 'text' | 'html', input?: 
       cell = undefined;
     }
     if (name === 'row' && rowValues.length) { lines.push(rowValues.join(' | ')); html.push('<tr>' + htmlValues.join('') + '</tr>'); }
+    if (name === 'row' && (row>=endRow||truncated)) finished=true;
   });
-  await parseXml(zip, target, parser);
+  await parseXml(zip, target, parser,()=>finished);
   const header = `Workbook worksheets: ${sheets.map(value => value.name).join(', ')}\nSheet: ${sheet.name}\nUsed range: ${dimension || 'not declared'}\nRead range: rows ${range.startRow}-${endRow}, columns ${range.startColumn}-${endColumn}. Values include saved formula results; formulas are not recalculated.\n`;
   const notice = truncated ? `\n[Excerpt reached the response limit at row ${nextRow}. Read this worksheet again from that row with fewer rows or columns. Do not treat this excerpt as the complete workbook.]` : `\n[Range complete. For remaining data, use read_file with worksheet ${JSON.stringify(sheet.name)}, startRow ${endRow + 1}, or startColumn ${endColumn + 1}. Read other worksheets by name. Blank and formatting-only cells are omitted.]`;
   return format === 'html' ? '<h1>Workbook</h1><pre>' + escapeHtml(header) + '</pre><table>' + html.join('') + '</table><p>' + escapeHtml(notice) + '</p>' : header + (lines.join('\n') || '[No populated cells in this range.]') + notice;

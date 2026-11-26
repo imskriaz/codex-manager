@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { readWorkbook, validateWorkbookRange } from '../src/services/officeWorkbook';
 import { extractOfficeDocument } from '../src/services/officeDocuments';
+import {MAX_WORKSPACE_FILE_BYTES} from '../src/domain/workspaceFileLimits';
 
 function workbook(sheetXml: string) {
   const zip = new JSZip();
@@ -66,3 +67,13 @@ it('extracts a formatting-heavy workbook within the worker deadline and supports
   const text = await extractOfficeDocument('TNA-FAL27.xlsx', data, 'text', { worksheet:'TNA & Dates',startRow:6000,rowCount:1,startColumn:57,columnCount:1 });
   expect(text).toContain('Last value');
 }, 30000);
+it('reads a real 100 MB workbook and rejects a file one byte above the limit', async () => {
+  const zip=workbook(cells);zip.file('xl/media/padding.bin',Buffer.alloc(0));
+  const overhead=(await zip.generateAsync({type:'nodebuffer',compression:'STORE'})).length;
+  zip.file('xl/media/padding.bin',Buffer.alloc(MAX_WORKSPACE_FILE_BYTES-overhead));
+  const data=await zip.generateAsync({type:'nodebuffer',compression:'STORE'});
+  expect(data.length).toBe(MAX_WORKSPACE_FILE_BYTES);
+  const text=await extractOfficeDocument('large.xlsx',data,'text',{worksheet:'Detail'});
+  expect(text).toContain('Detail TNA');
+  await expect(extractOfficeDocument('too-large.xlsx',Buffer.alloc(MAX_WORKSPACE_FILE_BYTES+1))).rejects.toThrow('100 MB');
+},120000);

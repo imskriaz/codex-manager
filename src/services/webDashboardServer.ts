@@ -1,6 +1,7 @@
 import {officeQuestionPreviews} from './officeVisualReview';
 import { getLocalFolderPermission, setLocalFolderPermission, createOfficeLocalProject, officeLocalFolders, officeLocalProject } from './officeLocalFolders';
 import type { LocalFolderResult } from '../domain/localFolder';
+import {MAX_LOCAL_FILE_WIRE_BYTES} from '../domain/workspaceFileLimits';
 import {saveOfficeRecommendations} from './officeRecommendations';
 import {readOfficeWebPage,searchOfficeWeb,listOfficeConnections,readOfficeConnection} from './officeSources';
 import {readOfficeIntegrations,checkOfficeIntegrations} from './officeIntegrations';
@@ -1377,7 +1378,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (path === '/api/workspace/local-folder') {
       if (method !== 'POST' || officeUser?.role !== 'user' || !officeUser.features.includes('files')) { response.statusCode = 403; this.sendJson(response, { error: 'Local folders are available only in User Workspace with file access enabled.' }); return; }
       try {
-        const body = JSON.parse(await readDashboardRequestBody(request, 15 * 1048576)) as Record<string, unknown>;
+        const body = JSON.parse(await readDashboardRequestBody(request, MAX_LOCAL_FILE_WIRE_BYTES)) as Record<string, unknown>;
         const client = typeof body['client'] === 'string' ? body['client'] : '';
         if (!/^[a-f0-9-]{36}$/i.test(client)) throw new Error('Choose the folder again to connect.');
         if (body['operation'] === 'connect') {
@@ -2271,14 +2272,14 @@ export class WebDashboardServer implements vscode.Disposable {
           return reply({ workspaceFile: { path: p.filePath!, content: p.fileContent, kind: 'text', language: 'text', mimeType: 'text/plain', size: result.size, revision: result.revision }, notice: { level: 'info', message: 'Saved to your local folder.' } });
         }
         if (message.action === 'readWorkspaceFile') {
-          const result = await officeLocalFolders.request(user.id, localProject.path, { operation: 'read', path: p.filePath, offset: p.fileDownloadOffset, revision: p.fileDownloadRevision });
-          if (typeof result.data !== 'string' || typeof result.revision !== 'string') throw new Error('The local file could not be read.');
-          const data = Buffer.from(result.data, 'base64');
-          if (p.fileDownloadOffset !== undefined) return reply({ workspaceFileDownload: { path: p.filePath!, revision: result.revision, offset: p.fileDownloadOffset, size: result.size!, data: result.data } });
+          const result = p.fileDownloadOffset===undefined?await officeLocalFolders.readFile(user.id,localProject.path,p.filePath!):await officeLocalFolders.request(user.id, localProject.path, { operation: 'read', path: p.filePath, offset: p.fileDownloadOffset, revision: p.fileDownloadRevision });
+          if ((!Buffer.isBuffer(result.data)&&typeof result.data !== 'string') || typeof result.revision !== 'string') throw new Error('The local file could not be read.');
+          const data = Buffer.isBuffer(result.data)?result.data:Buffer.from(result.data, 'base64');
+          if (p.fileDownloadOffset !== undefined) return reply({ workspaceFileDownload: { path: p.filePath!, revision: result.revision, offset: p.fileDownloadOffset, size: result.size!, data: typeof result.data==='string'?result.data:data.toString('base64') } });
           const document = /\.(docx|pptx|xlsx|pdf)$/i.test(p.filePath!);
           const image = /\.(png|jpe?g|webp|gif|svg)$/i.test(p.filePath!);
           const mime = image ? (/\.svg$/i.test(p.filePath!) ? 'image/svg+xml' : /\.jpe?g$/i.test(p.filePath!) ? 'image/jpeg' : `image/${p.filePath!.split('.').pop()!.toLowerCase()}`) : 'application/octet-stream';
-          return reply({ workspaceFile: { path: p.filePath!, content: document ? await extractOfficeDocument(p.filePath!, data) : image || data.includes(0) ? '' : data.toString('utf8'), kind: document ? 'text' : image ? 'image' : data.includes(0) ? 'binary' : 'text', language: /\.html?$/i.test(p.filePath!) ? 'html' : 'text', mimeType: image ? mime : document || data.includes(0) ? 'application/octet-stream' : 'text/plain', size: data.length, revision: result.revision, ...(image ? { dataUrl: `data:${mime};base64,${result.data}` } : {}) } });
+          return reply({ workspaceFile: { path: p.filePath!, content: document ? await extractOfficeDocument(p.filePath!, data) : image || data.includes(0) ? '' : data.toString('utf8'), kind: document ? 'text' : image ? 'image' : data.includes(0) ? 'binary' : 'text', language: /\.html?$/i.test(p.filePath!) ? 'html' : 'text', mimeType: image ? mime : document || data.includes(0) ? 'application/octet-stream' : 'text/plain', size: data.length, revision: result.revision, ...(image ? { dataUrl: `data:${mime};base64,${data.toString('base64')}` } : {}) } });
         }
         throw new Error('This action is unavailable for a connected local folder. Local files can be read and saved while its browser is connected.');
       }

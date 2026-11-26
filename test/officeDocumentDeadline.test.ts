@@ -36,3 +36,10 @@ it('preserves parser errors and does not report partial output as success', asyn
   child.emit('message', {error:'Worksheet not found. Available worksheets: Detail'});
   await expect(pending).rejects.toThrow('Worksheet not found');
 });
+it('gives files above 10 MB a bounded two-minute parser deadline',async()=>{
+ vi.useFakeTimers();const child=parser(),large=Buffer.alloc(11*1048576);data.copy(large);
+ let settled=false;const pending=extractOfficeDocument('large.xlsx',large).finally(()=>{settled=true;});
+ const failed=expect(pending).rejects.toThrow('120 seconds');
+ await vi.advanceTimersByTimeAsync(30000);expect(settled).toBe(false);
+ await vi.advanceTimersByTimeAsync(90000);await failed;expect(child.kill).toHaveBeenCalledOnce();
+});

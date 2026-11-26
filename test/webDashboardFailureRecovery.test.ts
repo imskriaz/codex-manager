@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import {MAX_CHAT_WIRE_BYTES} from '../src/domain/chatAttachments';
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import * as vscode from "vscode";
@@ -379,7 +380,7 @@ describe("browser action completion during state failure", () => {
     const { server, internal } = createServer();
     const socket = new EventEmitter();
     try {
-      expect(internal.webSocketServer.options.maxPayload).toBe(128 * 1024 * 1024);
+      expect(internal.webSocketServer.options.maxPayload).toBe(MAX_CHAT_WIRE_BYTES);
       internal.webSocketServer.emit("connection", socket, { url: "/ws?peer=1&deviceId=test" });
       expect(() => socket.emit("error", new Error("oversized message"))).not.toThrow();
     } finally { server.dispose(); }

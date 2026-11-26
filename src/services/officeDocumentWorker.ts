@@ -1,4 +1,4 @@
-const MAX_ZIP_ENTRIES=5000,MAX_ZIP_ENTRY_BYTES=20*1048576,MAX_ZIP_TOTAL_BYTES=80*1048576;
+const MAX_ZIP_ENTRIES=5000,MAX_ZIP_ENTRY_BYTES=128*1048576,MAX_ZIP_TOTAL_BYTES=512*1048576;
 async function boundedZip(data:Buffer){
  const {default:JSZip}=await import('jszip'),zip=await JSZip.loadAsync(data),entries=Object.values(zip.files);
  if(entries.length>MAX_ZIP_ENTRIES)throw new Error('Office archive has too many entries.');
@@ -11,7 +11,7 @@ async function boundedZip(data:Buffer){
  return zip;
 }
 async function work(input:{data:Uint8Array;extension:string;format?:'text'|'html'|'images'|'validate';range?:import('./officeWorkbook').WorkbookReadRange}){
- const data=Buffer.from(input.data),extension=input.extension;let text='';
+ const data=Buffer.isBuffer(input.data)?input.data:Buffer.from(input.data),extension=input.extension;let text='';
  const archive=extension==='pdf'?undefined:await boundedZip(data);
  if(input.format==='validate')return 'Document validated.';
  if(extension==='docx'){const mammoth=await import('mammoth');if(input.format==='html'){const html=(await mammoth.convertToHtml({buffer:data})).value;if(html.length<=500000)return html||'<p>This document has no readable content.</p>';}text=(await mammoth.extractRawText({buffer:data})).value;if(input.format==='html')return '<p>Document preview</p><pre style="white-space:pre-wrap;font:inherit">'+text.slice(0,120000).replace(/[&<>]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[char]!)+'</pre>';}

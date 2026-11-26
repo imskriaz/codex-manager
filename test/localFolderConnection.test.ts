@@ -27,7 +27,7 @@ function directory(name = 'Project') {
   function add(name: string, text: string) {
     let content = new TextEncoder().encode(text);
     const abort = vi.fn(async () => {}), close = vi.fn(async () => {});
-    const entry = { name, kind: 'file', getFile: async () => new File([content], name), createWritable: vi.fn(async () => ({ write: async (bytes: Uint8Array) => { content = bytes instanceof File ? new Uint8Array(await bytes.arrayBuffer()) : bytes; }, close, abort })) };
+    const entry = { name, kind: 'file', getFile: async () => new File([content], name,{lastModified:1}), createWritable: vi.fn(async () => ({ write: async (bytes: Uint8Array) => { content = bytes instanceof File ? new Uint8Array(await bytes.arrayBuffer()) : bytes; }, close, abort })) };
     entries.set(name, entry); return entry;
   }
   return { handle, entries, add };
@@ -157,4 +157,12 @@ it('rejects copying into the source through another directory-handle spelling',a
  const before=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'Source'});
  await expect(performLocalFolderCommand(root.handle,{id:'c',operation:'copy_file',path:'Source',destination:'source/nested',revision:before.revision})).rejects.toThrow('outside the source folder');
  expect(source.entries.has('nested')).toBe(false);
+});
+it('uses bounded chunks from one stable browser snapshot for large files',async()=>{
+ const root=directory(),entry=root.add('large.bin','x'.repeat(12*1048576)),digest=vi.spyOn(crypto.subtle,'digest');
+ const first=await performLocalFolderCommand(root.handle,{id:'r1',operation:'read',path:'large.bin',offset:0,length:4*1048576});
+ expect(first.size).toBe(12*1048576);expect(atob(first.data!).length).toBe(4*1048576);
+ const second=await performLocalFolderCommand(root.handle,{id:'r2',operation:'read',path:'large.bin',offset:4*1048576,length:4*1048576,revision:first.revision});
+ expect(second.revision).toBe(first.revision);expect(digest).toHaveBeenCalledTimes(1);
+ expect(entry.createWritable).not.toHaveBeenCalled();digest.mockRestore();
 });

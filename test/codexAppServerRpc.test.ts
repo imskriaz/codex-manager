@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import {MAX_CHAT_WIRE_BYTES} from '../src/domain/chatAttachments';
 import { PassThrough } from "node:stream";
 import path from "node:path";
 import { WebSocketServer } from "ws";
@@ -252,7 +253,7 @@ describe("app-server initialization recovery", () => {
     processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
     const rpc = await opening;
     const request = rpc.request("thread/read", {});
-    const size = vi.spyOn(Buffer, "byteLength").mockImplementationOnce(() => 128 * 1024 * 1024 + 1);
+    const size = vi.spyOn(Buffer, "byteLength").mockImplementationOnce(() => MAX_CHAT_WIRE_BYTES + 1);
     processChild.stdout.write("oversized-fixture");
     size.mockRestore();
     await expect(request).rejects.toThrow(/oversized unfinished/);

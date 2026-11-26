@@ -15,6 +15,7 @@ export type LocalFolderCommand = {
   data?: string;
   revision?: string;
   offset?: number;
+  length?: number;
 };
 export type LocalFolderResult = {
   files?: Array<{ path: string; name: string; type: 'file' | 'directory'; depth: number }>;

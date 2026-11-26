@@ -23,10 +23,10 @@ export function requestTeamSettingsFromWebview<T>(path: string, method: string, 
   });
 }
 
-export async function request<T>(url: string, method = "GET", body?: unknown): Promise<T> {
+export async function request<T>(url: string, method = "GET", body?: unknown, timeoutMs=15000): Promise<T> {
   if (typeof document !== "undefined" && document.documentElement.dataset["dashboardHost"] !== "browser") return requestTeamSettingsFromWebview<T>(url, method, body);
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 15_000);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method,

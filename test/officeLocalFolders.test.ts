@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { OfficeLocalFolderConnections } from '../src/services/officeLocalFolders';
+import {createHash} from 'node:crypto';
+import {LOCAL_FILE_CHUNK_BYTES} from '../src/domain/workspaceFileLimits';
 let service: OfficeLocalFolderConnections;
 const client = '11111111-1111-1111-1111-111111111111', other = '22222222-2222-2222-2222-222222222222';
 beforeEach(() => { vi.useFakeTimers(); service = new OfficeLocalFolderConnections(); });
@@ -43,6 +45,25 @@ it('expires undelivered writes without replay and ignores late results', async (
   await vi.advanceTimersByTimeAsync(12000); await assertion;
   expect(service.poll('alex', '/project', client)).toEqual([]);
   service.complete('alex', '/project', client, 'late', { revision: 'a'.repeat(64), size: 1 });
+});
+it('reads files larger than 10 MB in bounded chunks and verifies the complete hash',async()=>{
+ service.connect('alex','/project',client);
+ const data=Buffer.alloc(12*1048576+7,97),revision=createHash('sha256').update(data).digest('hex'),pending=service.readFile('alex','/project','large.xlsx');
+ for(let offset=0;offset<data.length;offset+=LOCAL_FILE_CHUNK_BYTES){
+   let command:ReturnType<typeof service.poll>[number]|undefined;
+   await vi.waitFor(()=>{command??=service.poll('alex','/project',client)[0];expect(command).toBeDefined();});
+   expect(command).toMatchObject({offset,length:LOCAL_FILE_CHUNK_BYTES});
+   service.complete('alex','/project',client,command!.id,{data:data.subarray(offset,offset+LOCAL_FILE_CHUNK_BYTES).toString('base64'),revision,size:data.length});
+ }
+ const result=await pending;expect(result.size).toBe(data.length);expect(result.data.equals(data)).toBe(true);
+});
+it('refuses corrupted chunk data and retains ownership while a long transfer is active',async()=>{
+ service.connect('alex','/project',client);
+ const pending=service.readFile('alex','/project','large.xlsx'),[command]=service.poll('alex','/project',client);
+ await vi.advanceTimersByTimeAsync(31000);
+ expect(()=>service.connect('alex','/project',other)).toThrow('another browser tab');
+ service.complete('alex','/project',client,command.id,{data:'eA==',revision:'a'.repeat(64),size:1});
+ await expect(pending).rejects.toThrow('changed during transfer');
 });
 it('keeps delivered mutations fenced after timeout until the browser confirms completion', async () => {
   service.connect('alex','/project',client);

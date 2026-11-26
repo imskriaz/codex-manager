@@ -72,7 +72,9 @@ it('rejects invalid document headers, external spreadsheet formulas and unsuppor
 });
 
 it('rejects compressed Office archives whose expanded contents exceed the parser budget',async()=>{
- const zip=new JSZip();zip.file('word/document.xml','x'.repeat(21*1048576));const data=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
+ const zip=new JSZip();zip.file('word/document.xml','bounded content');const data=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
+ const index=data.indexOf(Buffer.from([0x50,0x4b,0x01,0x02]));
+ data.writeUInt32LE(129*1048576,data.indexOf(Buffer.from('word/document.xml'),index)-46+24);
  expect(data.length).toBeLessThan(10*1048576);await expect(extractOfficeDocument('oversized.docx',data)).rejects.toThrow('too large');
 },30000);
 

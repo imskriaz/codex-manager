@@ -5,6 +5,7 @@ import {getSqliteStateStore} from '../storage/sqliteState';
 import type {OfficeUser} from './officeUsers';
 import {resolveOfficePath} from './officeWorkspacePaths';
 import {officeStorageBytes} from './officeQuota';
+import {MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
 
 export type OfficeFileRecord={id:string;path:string;kind:'version'|'trash';at:number;bytes:number;revision:string};
 const ns=(user:OfficeUser)=>`office-file-history:${user.id}`;
@@ -17,7 +18,7 @@ export async function preserveOfficeFile(user:OfficeUser,project:string,file:str
  const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file),stat=await fs.lstat(target);
  if(target===root)throw new Error('The workspace root is protected.');
  if(listOfficeFileHistory(user).length>=500)throw new Error('File recovery storage is full. Remove old versions or empty Trash in Library.');
- if(kind==='version'&&(!stat.isFile()||stat.size>50*1048576))throw new Error('This file is too large to version safely.');
+ if(kind==='version'&&(!stat.isFile()||stat.size>MAX_WORKSPACE_FILE_BYTES))throw new Error('This file exceeds the 100 MB version limit.');
   const growth=options?.replacementBytes??stat.size;
   if(!Number.isSafeInteger(growth)||growth<0)throw new Error('The replacement size could not be checked.');
   // A replacement retains the old bytes and adds only the new file's size.

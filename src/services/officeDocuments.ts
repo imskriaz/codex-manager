@@ -3,19 +3,21 @@ import * as path from 'node:path';
 import {fork} from 'node:child_process';
 import type {PDFFont} from 'pdf-lib';
 import * as fs from 'node:fs/promises';
+import {MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
 
 export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text',range?:import('./officeWorkbook').WorkbookReadRange):Promise<string>{
  const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
- if(data.length>10*1048576)throw new Error('Keep each Office document under 10 MB.');
+ if(data.length>MAX_WORKSPACE_FILE_BYTES)throw new Error('Keep each Office document at or below 100 MB.');
  if(data.length<8)throw new Error('The document is empty or incomplete.');
  if(extension==='pdf'&&!data.subarray(0,8).toString().startsWith('%PDF-')||extension!=='pdf'&&data.readUInt32LE(0)!==0x04034b50)throw new Error('The document contents do not match its format.');
  return new Promise((resolve,reject)=>{
   // Parser crashes and oversized archives must never take down the dashboard process.
-  const worker=fork(path.join(__dirname,'officeDocumentWorker'+path.extname(__filename)),[],{execArgv:['--max-old-space-size=192'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},...{windowsHide:true},stdio:['ignore','ignore','ignore','ipc'],serialization:'advanced'});let done=false;
+  const worker=fork(path.join(__dirname,'officeDocumentWorker'+path.extname(__filename)),[],{execArgv:['--max-old-space-size=512'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},...{windowsHide:true},stdio:['ignore','ignore','ignore','ipc'],serialization:'advanced'});let done=false;
   const finish=(error?:Error,text?:string)=>{if(done)return;done=true;clearTimeout(timer);worker.kill();if(error)reject(error);else resolve(text!);};
   // ZIP validation and Office parsers load large runtimes on first use; keep a
   // bounded deadline without rejecting valid workbooks on slower hosts.
-  const timer=setTimeout(()=>finish(new Error(extension==='xlsx'?'Workbook reading did not finish within 30 seconds. Retry a specific worksheet and row range; the original file is unchanged.':'Document reading did not finish within 30 seconds. The original file is unchanged.')),30000);
+  const timeoutMs=data.length>10*1048576?120000:30000;
+  const timer=setTimeout(()=>finish(new Error(extension==='xlsx'?`Workbook reading did not finish within ${timeoutMs/1000} seconds. Retry a specific worksheet and row range; the original file is unchanged.`:`Document reading did not finish within ${timeoutMs/1000} seconds. The original file is unchanged.`)),timeoutMs);
   worker.once('message',(value:unknown)=>{
    if(!value||typeof value!=='object')return finish(new Error('Document reading did not finish. The original file is unchanged.'));
    const result=value as {text?:unknown;error?:unknown};

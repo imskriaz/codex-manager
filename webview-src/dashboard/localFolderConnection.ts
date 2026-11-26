@@ -1,6 +1,7 @@
 import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../../src/domain/localFolder';
 import type { DashboardCliProject, DashboardNotice } from '../../src/domain/dashboard/types';
 import { request } from './teamSettingsRequest';
+import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,MAX_WORKSPACE_FILE_BYTES} from '../../src/domain/workspaceFileLimits';
 
 export type LocalDirectory = FileSystemDirectoryHandle & {
   values(): AsyncIterableIterator<FileSystemDirectoryHandle | FileSystemFileHandle>;
@@ -14,7 +15,8 @@ const newProjects = new WeakMap<LocalDirectory, { owner: string; id: string }>()
 let owner: string | undefined;
 let clientOwner: string | undefined, tabClient: string | undefined;
 let feedback: (notice: DashboardNotice) => void = () => {};
-const limit = 10 * 1024 * 1024;
+const limit = MAX_WORKSPACE_FILE_BYTES;
+const readSnapshots=new WeakMap<LocalDirectory,Map<string,{file:File;revision:string;at:number}>>();
 export const localFolderConnectedEvent = 'codex-manager:local-folder-connected';
 
 export function supportsLocalFolders(): boolean {
@@ -89,7 +91,7 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
           return;
         }
         const data = await file.getFile();
-        if (data.size > limit) throw new Error('Keep connected-folder files under 10 MB for this action.');
+        if (data.size > limit) throw new Error('Keep connected-folder files at or below 100 MB for this action.');
         entries.push({path,kind:'file'}); stamps.push([path,await revision(data)]);
       };
       await visit(sourceDirectory,sourceName,command.path!,0);
@@ -128,7 +130,7 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
         for await (const child of source.values()) await copy(source,child.name,dest,child.name,child.kind === 'directory'?'folder':'file',depth+1);
       } else {
         const file = await (await sourceDir.getFileHandle(sourceName)).getFile();
-        if (file.size > limit) throw new Error('Keep connected-folder files under 10 MB.');
+        if (file.size > limit) throw new Error('Keep connected-folder files at or below 100 MB.');
         const dest = await destDir.getFileHandle(destName,{create:true});
         if ((await dest.getFile()).size) throw new Error('A destination file appeared. Inspect both locations before retrying.');
         const writable = await dest.createWritable();
@@ -146,24 +148,36 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
     return {message:command.operation === 'move_file'?'Moved successfully.':'Copied successfully.'};
   }
   if (command.operation !== 'read' && command.operation !== 'write') throw new Error('This local folder action is unavailable.');
-  if(command.operation==='write'&&(typeof command.data!=='string'||command.data.length>Math.ceil(limit/3)*4||command.data.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(command.data))) throw new Error('Choose valid file content under 10 MB.');
+  if(command.operation==='write'&&(typeof command.data!=='string'||command.data.length>Math.ceil(limit/3)*4||command.data.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(command.data))) throw new Error('Choose valid file content at or below 100 MB.');
   if(command.operation==='write'&&command.revision!==undefined&&(typeof command.revision!=='string'||!/^[a-f0-9]{64}$/.test(command.revision)))throw new Error('This file exists or changed. Read its latest revision before saving.');
   const bytes=command.operation==='write'?Uint8Array.from(atob(command.data!), character=>character.charCodeAt(0)):undefined;
-  if(bytes&&bytes.length>limit)throw new Error('Keep connected-folder files under 10 MB.');
+  if(bytes&&bytes.length>limit)throw new Error('Keep connected-folder files at or below 100 MB.');
   const { directory, name } = await parent(root, command.path!, command.operation === 'write'&&!command.revision,checkDeadline);
   let handle: FileSystemFileHandle | undefined;
   try { handle = await directory.getFileHandle(name); } catch (error) { if (!(error instanceof DOMException) || error.name !== 'NotFoundError' || command.operation !== 'write') throw error; }
   const existing = handle ? await handle.getFile() : undefined;
-  if (existing && existing.size > limit) throw new Error('Keep connected-folder files under 10 MB.');
+  if (existing && existing.size > limit) throw new Error('Keep connected-folder files at or below 100 MB.');
   if (command.operation === 'read') {
     checkDeadline();
     if (command.offset !== undefined && (!Number.isSafeInteger(command.offset) || command.offset < 0 || command.offset > existing!.size)) throw new Error('The file download offset is invalid.');
-    const stamp = await revision(existing!);
+    if(command.length!==undefined&&(!Number.isSafeInteger(command.length)||command.length<1||command.length>LOCAL_FILE_CHUNK_BYTES||command.offset===undefined))throw new Error('The file chunk size is invalid.');
+    const snapshots=readSnapshots.get(root)??new Map<string,{file:File;revision:string;at:number}>();readSnapshots.set(root,snapshots);
+    const saved=command.offset&&command.revision?snapshots.get(command.path!):undefined;
+    if(saved&&(Date.now()-saved.at>5*60000||saved.file.size!==existing!.size||saved.file.lastModified!==existing!.lastModified)){
+      snapshots.delete(command.path!);throw new Error('This file changed during download. Start the download again.');
+    }
+    const stamp=saved?.revision??await revision(existing!);
     if (command.revision && command.revision !== stamp) throw new Error('This file changed during download. Start the download again.');
-    const blob = command.offset === undefined ? existing! : existing!.slice(command.offset, command.offset + 262144);
+    const snapshot=saved?.file??existing!,length=command.length??DEFAULT_LOCAL_FILE_CHUNK_BYTES;
+    const blob = command.offset === undefined ? snapshot : snapshot.slice(command.offset, command.offset + length);
+    if(command.offset!==undefined){
+      if(snapshots.size>=4&&!snapshots.has(command.path!))snapshots.delete(snapshots.keys().next().value!);
+      snapshots.set(command.path!,{file:snapshot,revision:stamp,at:Date.now()});
+      if(command.offset+length>=existing!.size)snapshots.delete(command.path!);
+    }
     return { data: encode(new Uint8Array(await blob.arrayBuffer())), revision: stamp, size: existing!.size };
   }
-  if (typeof command.data !== 'string' || command.data.length > Math.ceil(limit / 3) * 4) throw new Error('Keep connected-folder files under 10 MB.');
+  if (typeof command.data !== 'string' || command.data.length > Math.ceil(limit / 3) * 4) throw new Error('Keep connected-folder files at or below 100 MB.');
   if (existing ? !command.revision || await revision(existing) !== command.revision : !!command.revision)
     throw new Error('This file exists or changed. Read its latest revision before saving.');
   checkDeadline();
@@ -200,13 +214,13 @@ async function serve(project: string, connection: Connection) {
   let failures = 0, lastPollAt = Date.now();
   while (!connection.stopped) {
     try {
-      const { commands } = await request<{ commands: LocalFolderCommand[] }>(endpoint, 'POST', { operation: 'poll', project, client: connection.client });
+      const { commands } = await request<{ commands: LocalFolderCommand[] }>(endpoint, 'POST', { operation: 'poll', project, client: connection.client },120000);
       for (const command of commands) {
         if (connection.stopped || owner !== connection.owner) return;
         let result: LocalFolderResult | undefined, error: string | undefined;
         try { result = await performLocalFolderCommand(connection.handle, command); }
         catch (failure) { error = failure instanceof Error ? failure.message : 'The local folder action failed.'; }
-        await request(endpoint, 'POST', { operation: 'result', project, client: connection.client, id: command.id, result, error });
+        await request(endpoint, 'POST', { operation: 'result', project, client: connection.client, id: command.id, result, error },120000);
       }
       if (failures || Date.now() - lastPollAt >= 25_000) {
         window.dispatchEvent(new CustomEvent(localFolderConnectedEvent, { detail: project }));

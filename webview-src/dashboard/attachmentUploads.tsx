@@ -3,12 +3,12 @@ import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES, validateChatAttachment
 
 export async function readChatAttachmentFiles(files: File[], existing = 0): Promise<ChatAttachment[]> {
   if (files.length + existing > MAX_CHAT_ATTACHMENTS) throw new Error("Attach up to 32 files.");
-  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 50 MB in total. Remove a file and try again.");
+  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 100 MB in total. Remove a file and try again.");
   const added: ChatAttachment[] = [];
   for (const file of files) {
     const image = ["image/png", "image/jpeg", "image/webp"].includes(file.type);
     if (file.size > MAX_CHAT_ATTACHMENT_BYTES)
-      throw new Error(`${file.name} is too large. 50 MB total per message.`);
+      throw new Error(`${file.name} is too large. 100 MB total per message.`);
     const text = !image && (file.type.startsWith('text/') || /\.(txt|md|json|csv|ts|tsx|js|jsx|py|html|css|xml|yml|yaml|toml|log|rs|go|java|c|cpp|h|sh|sql)$/i.test(file.name));
     const data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -127,7 +127,7 @@ export function AttachmentPicker({
         disabled={disabled || reading}
         onClick={() => input.current?.click()}
         aria-label={label}
-        title="Any files or documents · 32 files, 50 MB total"
+        title="Any files or documents · 32 files, 100 MB total"
       >
         <AttachmentIcon />
         {reading ? "Reading…" : "Attach"}
