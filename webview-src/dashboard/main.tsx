@@ -1,3 +1,4 @@
+import type { AccountFilter } from './preferences';
 import type { UserWorkspaceNavigation } from './userWorkspacePages';
 import { bindLocalFolderConnections, selectLocalFolderProject } from './localFolderConnection';
 import { retainOfflineAccounts } from './offlinePolicy';
@@ -2591,6 +2592,22 @@ function App() {
   const renderAccountSection = (compact = false) => {
     const view = compact ? accountCenterView : uiPreferences.view;
     const tagFilter = availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter" title={`Filter by tag: ${uiPreferences.accountTag || 'All tags'}`}><span class="account-filter-icon"><TagIcon /></span><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null;
+    const statusOptions: Array<{ value: AccountFilter; label: string; count: number }> = [
+      { value: 'all', label: resolveUiText('total', snapshot.lang), count: searchedAccounts.length },
+      { value: 'enabled', label: resolveUiText('enabled', snapshot.lang), count: accountEnablement.enabled },
+      { value: 'disabled', label: resolveUiText('disabled', snapshot.lang), count: accountEnablement.disabled },
+      { value: 'claimed', label: resolveUiText('claimed', snapshot.lang), count: claimedAccountCount },
+      { value: 'healthy', label: resolveUiText('valid', snapshot.lang), count: validAccountCount },
+      { value: 'attention', label: resolveUiText('invalid', snapshot.lang), count: invalidAccountCount },
+      { value: 'capable', label: resolveUiText('capable', snapshot.lang), count: capableAccountCount },
+      { value: 'incapable', label: resolveUiText('incapable', snapshot.lang), count: incapableAccountCount }
+    ];
+    const statusFilter = <label class="dashboard-select-control account-status-filter" title={`Filter accounts: ${statusOptions.find(option => option.value === uiPreferences.filter)?.label ?? uiPreferences.filter}`}>
+      <span class="account-filter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8z" /></svg></span>
+      <select aria-label="Filter accounts" value={uiPreferences.filter} onChange={event => setUiPreferences(current => ({ ...current, filter: event.currentTarget.value as AccountFilter }))}>
+        {statusOptions.filter(option => option.value === 'all' || option.value === uiPreferences.filter || shouldShowAccountCountFilter(option.count, searchedAccounts.length)).map(option => <option key={option.value} value={option.value}>{option.label} {option.count}</option>)}
+      </select>
+    </label>;
     const displayFilters = (
       <>
         <label class="dashboard-select-control account-sort-control" title={`${resolveSortAriaLabel(snapshot.lang)}: ${resolveSortOptionLabel(accountSort, snapshot.lang)}`}>
@@ -2664,7 +2681,7 @@ function App() {
           <section class={`section ${compact ? "cli-account-dashboard" : ""} dashboard-view-${view}`}>
             <div class="header accounts-section-header">
               <div>
-                <div class="account-filters" role="group" aria-label={snapshot.copy.savedAccounts}>
+                {compact ? <div class="account-filters" role="group" aria-label={snapshot.copy.savedAccounts}>
                   <span class="account-count-badges">
                     <button
                       class={`header-count-badge header-count-link ${uiPreferences.filter === "all" ? "is-selected" : ""}`}
@@ -2745,7 +2762,7 @@ function App() {
                       </button>
                     ) : null}
                   </span>
-                </div>
+                </div> : null}
               </div>
               {compact ? <div class="account-center-actions" role="group" aria-label="Account actions">
                 <WorkspaceMenu label="More account actions" icon={<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor" /><circle cx="12" cy="12" r="1.8" fill="currentColor" /><circle cx="19" cy="12" r="1.8" fill="currentColor" /></svg>}>
@@ -2811,6 +2828,7 @@ function App() {
                   onShare={handleShareTokens}
                 />
               ) : <>
+                {!compact ? statusFilter : null}
                 {displayFilters}
                 <div class="dashboard-view-controls">
                   {viewToggle}

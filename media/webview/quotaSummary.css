@@ -19602,3 +19602,24 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
 .startup-check-results dd { margin: 4px 0 0; overflow-wrap: anywhere; }
 .startup-check-instructions ul { padding-left: 20px; }
 .startup-check-instructions li + li { margin-top: 8px; }
+
+/* Status lives between search and sorting; narrow surfaces give search its own row. */
+.dashboard-content .dashboard-account-toolbar:has(.account-status-filter) { grid-template-columns: minmax(0, 1fr) repeat(3, minmax(0, 160px)) auto; }
+.dashboard-content .dashboard-account-toolbar:has(.account-status-filter):has(.account-tag-filter) { grid-template-columns: minmax(0, 1fr) repeat(4, minmax(0, 140px)) auto; }
+.accounts-section-header:not(:has(.account-filters, .account-center-actions)) { display: none; }
+@container dashboard-surface (max-width: 600px) {
+  .dashboard-content .dashboard-account-toolbar { --account-control-size: 28px; gap: 3px; }
+  .dashboard-content .dashboard-account-toolbar .dashboard-select-control,
+  .dashboard-content .dashboard-account-toolbar .dashboard-view-toggle { padding: 2px 4px; border-radius: 4px; }
+  .dashboard-content .dashboard-account-toolbar .account-filter-icon > svg,
+  .dashboard-content .dashboard-account-toolbar .dashboard-view-toggle > svg { width: 14px; height: 14px; }
+  .dashboard-content .dashboard-account-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dashboard-content .dashboard-account-toolbar:has(.account-tag-filter),
+  .dashboard-content .dashboard-account-toolbar:has(.account-status-filter) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dashboard-content .dashboard-account-toolbar:has(.account-status-filter):has(.account-tag-filter) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .dashboard-content .dashboard-account-toolbar .account-search-control { grid-column: 1 / -1; }
+  .dashboard-content .dashboard-account-toolbar .dashboard-view-controls,
+  .dashboard-content .dashboard-account-toolbar .dashboard-view-toggle { width: 100%; max-width: none; justify-self: stretch; grid-template-columns: minmax(0, 1fr); }
+  .dashboard-content .dashboard-account-toolbar:has(.batch-bar.is-contextual) { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-content .dashboard-account-toolbar:has(.batch-bar.is-contextual) .batch-bar { grid-column: 1 / -1; }
+}

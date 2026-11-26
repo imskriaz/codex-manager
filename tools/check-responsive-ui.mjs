@@ -1112,6 +1112,47 @@ try {
       results.push({ width, height, checks: 'Contextual bulk toolbar, selection dispatch, visible failure, normal controls restored, no overflow' });
       await context.close(); continue;
     }
+    if (process.argv.includes('--account-toolbar')) {
+      const started = performance.now();
+      await page.goto(origin + '/');
+      const toolbar = page.locator('.dashboard-content .dashboard-account-toolbar').first();
+      const search = toolbar.getByRole('searchbox');
+      const status = toolbar.getByRole('combobox', {name:'Filter accounts',exact:true});
+      await status.waitFor();
+      assert.equal(await page.locator('.dashboard-content .account-count-badges').count(), 0, 'Counts moved into the dropdown');
+      const rect = async locator => locator.boundingBox();
+      const [outer, searchBox, statusBox, sortBox] = await Promise.all([rect(toolbar),rect(search.locator('..')),rect(status.locator('..')),rect(toolbar.locator('.account-sort-control'))]);
+      if (width <= 600) {
+        assert.ok(Math.abs(searchBox.width - outer.width) <= 4, `Search fills the first row: ${JSON.stringify({outer,searchBox,statusBox})}`);
+        assert.ok(statusBox.y >= searchBox.y + searchBox.height, 'Controls use a second row');
+        const controls = await toolbar.locator('> :visible:not(.account-search-control)').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+        assert.ok(controls.every(control => Math.abs(control.y - statusBox.y) <= 1), 'Remaining controls share one row');
+        assert.ok(controls.every(control => Math.abs(control.height - searchBox.height) <= 1), 'Icon controls match search height');
+        assert.ok(Math.abs(controls[0].x - searchBox.x) <= 1 && Math.abs(controls.at(-1).x + controls.at(-1).width - searchBox.x - searchBox.width) <= 1, 'Both rows fill the same width');
+        assert.ok(Math.abs((await rect(toolbar.locator('.dashboard-view-toggle'))).width - controls.at(-1).width) <= 1, 'View icon fills its control column');
+        assert.equal(await status.evaluate(element => getComputedStyle(element).opacity), '0', 'Small screens show an icon over the native select');
+        assert.equal(await toolbar.locator('.account-status-filter .account-filter-icon').isVisible(), true);
+      } else {
+        assert.ok(searchBox.x + searchBox.width <= statusBox.x + 1 && statusBox.x + statusBox.width <= sortBox.x + 1, 'Status sits between search and sorting');
+        assert.ok(Math.abs(searchBox.y - statusBox.y) <= 1, 'Desktop controls share a row');
+      }
+      assert.ok(await toolbar.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Toolbar has no overflow');
+      for (const value of ['capable','incapable']) {
+        const option = status.locator(`option[value="${value}"]`);
+        if (!await option.count()) continue;
+        const count = Number((await option.textContent()).trim().split(' ').at(-1));
+        await status.selectOption(value);
+        await page.waitForFunction(count => document.querySelectorAll('.accounts-grid .saved-card-container, .accounts-grid .saved-table-row').length === count, count);
+      }
+      await status.selectOption('all');
+      await search.fill('no-matching-account-toolbar');
+      await status.locator('option[value="all"]').filter({hasText:'Total 0'}).waitFor({state:'attached'});
+      await toolbar.locator('.account-search-control button').click();
+      await page.screenshot({path:path.join(output, `account-toolbar-${width}.png`)});
+      assert.deepEqual(errors, []);
+      results.push({width,height,readyMs:Math.round(performance.now()-started),checks:'Status dropdown counts and filtering, full-row mobile search, icon controls on second row, desktop ordering, clear search, no overflow or console errors'});
+      await context.close(); continue;
+    }
     if (process.argv.includes('--overview')) {
       await page.goto(origin+'/');
       const shell=page.locator('.overview-shell'), account=shell.locator('> .overview-account'), main=shell.locator('> .overview-main');
@@ -2836,14 +2877,15 @@ try {
     await page.goto(`${origin}/`);
     await page.locator(".hero").waitFor();
     console.log(`Checking ${width}: account filters`);
-    for (const name of ["Within quota", "Over quota"]) {
-      const filter = page.getByRole("button", { name: new RegExp("^" + name + " \\d+$") });
-      if (!await filter.count()) continue;
-      const count = Number((await filter.textContent()).trim().split(" ").at(-1));
-      await filter.click();
-      await page.waitForFunction(count => document.querySelectorAll(".saved-card-container").length === count, count);
+    const accountStatus = page.getByRole('combobox', { name: 'Filter accounts', exact: true });
+    for (const value of ['capable', 'incapable']) {
+      const option = accountStatus.locator(`option[value="${value}"]`);
+      if (!await option.count()) continue;
+      const count = Number((await option.textContent()).trim().split(' ').at(-1));
+      await accountStatus.selectOption(value);
+      await page.waitForFunction(count => document.querySelectorAll('.saved-card-container').length === count, count);
     }
-    await page.locator(".account-count-badges > button").first().click();
+    await accountStatus.selectOption('all');
     await page.locator('input[name="account-search"]').fill("codex-ui-no-matching-account");
     const searchInput = page.getByRole("searchbox", { name: /Search accounts/i });
     assert.equal(await searchInput.getAttribute("type"), "text", "Search has no native duplicate clear control");
@@ -2855,7 +2897,7 @@ try {
       assert.ok(await searchInput.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "Mobile search avoids iOS zoom at the configured text scale");
     }
 
-    await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector(".account-count-badges > button")?.textContent.trim() === "Total 0");
+    await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector('.account-status-filter option[value="all"]')?.textContent.trim() === "Total 0");
     await page.locator(".account-search-control button").click();
     assert.equal(await searchInput.inputValue(), "", "The custom clear control clears search");
     if (width <= 760) {

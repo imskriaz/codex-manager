@@ -496,15 +496,17 @@ try {
       assert.equal(await page.locator(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").count(), 0);
       return;
     }
-    await page.locator(".header-count-link").first().waitFor();
+    const status = page.getByRole('combobox', { name: 'Filter accounts', exact: true });
+    await status.waitFor();
     await page.locator('input[name="account-search"]').fill("");
-    for (const filter of await page.locator(".header-count-link").all()) {
-      const expected = Number((await filter.innerText()).match(/\d+/)?.[0]);
-      assert.ok(Number.isFinite(expected), "Each filter exposes its count");
-      await filter.click();
-      await page.waitForFunction(expected => document.querySelectorAll(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").length === expected, expected);
+    for (const option of await status.locator('option').all()) {
+      const value = await option.getAttribute('value');
+      const expected = Number((await option.innerText()).match(/\d+/)?.[0]);
+      assert.ok(Number.isFinite(expected), 'Each filter exposes its count');
+      await status.selectOption(value);
+      await page.waitForFunction(expected => document.querySelectorAll('.accounts-grid .saved-card-container, .accounts-grid .saved-table-row').length === expected, expected);
     }
-    await page.locator(".header-count-link").first().click();
+    await status.selectOption('all');
     const count = await page.locator(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").count();
     await page.locator(".dashboard-view-toggle").click();
     assert.equal(await page.locator(".accounts-grid .saved-card-container, .accounts-grid .saved-table-row").count(), count);
