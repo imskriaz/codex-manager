@@ -7,7 +7,7 @@ import type * as SDK from '@anthropic-ai/claude-agent-sdk';
 import { createClaudeModelOptions } from '../domain/dashboard/claudeModels';
 import type { DashboardCliModelOption } from '../domain/dashboard/types';
 import { waitWithin } from '../utils/concurrency';
-import { apiAccountEnvironment, apiAccountIdentity } from './apiAccounts';
+import { activeApiAccount, apiAccountCredential, apiAccountEnvironment, apiAccountIdentity } from './apiAccounts';
 import { managedClaudeCli } from './codexCliRuntime';
 import { isRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 
@@ -88,4 +88,31 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
   discovery = { key, pending };
   try { const result = await pending; cached = { ...result, key }; return result; }
   finally { if (discovery?.key === key) discovery = undefined; }
+}
+
+/** Discover models from a configured Anthropic-compatible gateway without requiring native Claude login. */
+export async function discoverClaudeApiModels(): Promise<ClaudeConnection> {
+  const account = activeApiAccount('anthropic');
+  if (!account) return { models: [] };
+  try {
+    const key = apiAccountCredential(account);
+    const path = account.baseUrl.toLowerCase().endsWith('/v1') ? '/models' : '/v1/models';
+    const response = await fetch(`${account.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(5_000), redirect: 'error',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+    });
+    if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}.`);
+    const payload: unknown = await response.json();
+    const rows = payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data) ? (payload as { data: unknown[] }).data : [];
+    const models = createClaudeModelOptions(rows.flatMap(row => {
+      if (!row || typeof row !== 'object') return [];
+      const value = (row as { id?: unknown }).id;
+      if (typeof value !== 'string') return [];
+      const displayName = (row as { display_name?: unknown; name?: unknown }).display_name ?? (row as { name?: unknown }).name;
+      return [{ value, displayName: typeof displayName === 'string' && displayName.trim() ? displayName : value }];
+    }));
+    return { models };
+  } catch (error) {
+    return { models: [], warning: `Claude gateway model discovery unavailable: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }

@@ -1,11 +1,19 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
-const native = vi.hoisted(() => ({ query: vi.fn(), stat: vi.fn(), identity: vi.fn(() => 'account') }));
+const native = vi.hoisted(() => ({ query: vi.fn(), stat: vi.fn(), identity: vi.fn(() => 'account'), account: undefined as { baseUrl: string } | undefined }));
 vi.mock('node:module', () => ({ createRequire: () => () => ({ query: native.query }) }));
 vi.mock('fs/promises', () => ({ stat: native.stat }));
-vi.mock('../src/services/apiAccounts', () => ({ apiAccountEnvironment: (_provider: string, env: unknown) => env, apiAccountIdentity: native.identity }));
+vi.mock('../src/services/apiAccounts', () => ({ activeApiAccount: () => native.account, apiAccountCredential: () => 'gateway-key', apiAccountEnvironment: (_provider: string, env: unknown) => env, apiAccountIdentity: native.identity }));
 
-afterEach(() => { vi.useRealTimers(); vi.resetModules(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.resetModules(); vi.clearAllMocks(); native.account = undefined; vi.unstubAllGlobals(); });
+
+it('discovers models from an active custom Anthropic-compatible gateway', async () => {
+  native.account = { baseUrl: 'https://gateway.example.test/v1' };
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'gateway-sonnet', display_name: 'Gateway Sonnet' }] }), { status: 200 })));
+  const { discoverClaudeApiModels } = await import('../src/services/claudeCliRuntime');
+  await expect(discoverClaudeApiModels()).resolves.toMatchObject({ models: [{ id: 'claude-code/gateway-sonnet', label: 'Gateway Sonnet' }] });
+  expect(fetch).toHaveBeenCalledWith('https://gateway.example.test/v1/models', expect.objectContaining({ headers: { 'x-api-key': 'gateway-key', 'anthropic-version': '2023-06-01' } }));
+});
 
 it('offers no Claude models and never starts the SDK when Claude is not installed', async () => {
   native.stat.mockRejectedValue(Object.assign(new Error('Not found'), { code: 'ENOENT' }));
