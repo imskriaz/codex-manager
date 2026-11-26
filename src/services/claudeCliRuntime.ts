@@ -79,7 +79,8 @@ export async function discoverClaudeModels(refresh = false): Promise<ClaudeConne
       connection = native.query({ prompt: 'Reply with OK only.', options: { pathToClaudeCodeExecutable: executable, cwd: process.cwd(), model: 'haiku', maxTurns: 1, tools: [],
         env: claudeEnvironment(), abortController: controller, persistSession: false, settingSources: ['user','project','local'] } });
       const info = await waitWithin(connection.initializationResult(), 5_000, 'Claude model discovery timed out. Refresh to retry.');
-      await verifyClaudeHaiku(connection);
+      // Model discovery only needs the initialization catalogue. A failed probe
+      // turn must not hide models that the native runtime already reported.
       return { models: createClaudeModelOptions(info.models), account: { email: info.account?.email, organization: info.account?.organization, subscriptionType: info.account?.subscriptionType, apiProvider: info.account?.apiProvider } };
     } catch (error) { return { models: [], warning: `Claude models unavailable: ${error instanceof Error ? error.message : String(error)}` }; }
     finally { controller.abort(); connection?.close(); }

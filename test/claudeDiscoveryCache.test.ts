@@ -22,12 +22,13 @@ it.each([false, true])('does not repeat successful or failed discovery on dashbo
       if (failed) throw new Error('Authentication failed');
       return { models: [{ value: 'haiku', displayName: 'Haiku' }], account: {} };
     },
-    async *[Symbol.asyncIterator]() { yield { type: 'result', is_error: false }; },
+    async *[Symbol.asyncIterator]() { yield { type: 'result', is_error: true }; },
     close: vi.fn()
   }));
   const { discoverClaudeModels } = await import('../src/services/claudeCliRuntime');
   const first = await discoverClaudeModels();
   expect(first.warning).toBe(failed ? 'Claude models unavailable: Authentication failed' : undefined);
+  if (!failed) expect(first.models.map(model => model.id)).toEqual(['claude-code/haiku']);
   await vi.advanceTimersByTimeAsync(120_000);
   expect(await discoverClaudeModels()).toMatchObject(first);
   expect(native.query).toHaveBeenCalledTimes(1);
