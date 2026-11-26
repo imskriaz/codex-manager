@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.17",
+  "version": "3.0.1-pre.18",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -515,7 +515,7 @@
           "type": "string",
           "default": "gpt-6.2-sol\ngpt-6.2-astra\ngpt-6.1-terra\ngpt-6.1-sol\ngpt-6-astra\ngpt-6-sol\ngpt-6-luna",
           "scope": "machine",
-          "markdownDescription": "Editable Codex fallback model IDs, one per line. Added to the model picker when absent from live discovery. Successful live discovery adds new IDs to this list; fallback entries do not confirm account access."
+          "markdownDescription": "Editable Codex fallback model IDs, one per line, used when live discovery is unavailable. Successful live discovery replaces this list with the models actually returned. Save an empty list to clear every fallback; Load models rebuilds it. Fallback entries do not confirm account access."
         }
       }
     },

@@ -18,6 +18,16 @@ function activity(message: DashboardCliSessionMessage): VNode<any> {
   return (node.type as (props: unknown) => VNode<any>)(node.props);
 }
 
+it('shows a readable model rejection while retaining the original provider error in diagnostics', () => {
+  const reason = "The 'gpt-6.2-sol' model is not supported when using Codex with a ChatGPT account.";
+  const raw = JSON.stringify({ type: 'error', status: 400, error: { message: reason, code: 'model_not_found' } });
+  const text = `The first response failed: ${raw}. Retry your message.`;
+  const node = activity({ id: 'initial-error', kind: 'error', status: 'failed', text });
+  expect(node.props.children[0].props.children).toBe(reason + ' Choose another model in the composer, then retry.');
+  expect(node.props.children[0].props.title).toBe(text);
+  expect(node.props.children[1].props.children[1].props.text).toBe(text);
+});
+
 it.each(['error', 'tool-call', 'compaction', 'review'] as const)('shows %s capacity messages immediately with optional diagnostics', kind => {
   for (const debug of [undefined, '{"error":"server_overloaded","request_id":"keep-me"}']) {
     const node = activity({ id: 'capacity', kind, text: 'Selected model is at capacity. Please try a different model.', status: 'failed', debug });

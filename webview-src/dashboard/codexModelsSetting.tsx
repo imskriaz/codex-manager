@@ -65,7 +65,7 @@ export function CodexModelsSetting(props: { saved?: string; connected: boolean; 
     } finally { if (!active.signal.aborted) setBusy(false); }
   };
   return <section class="settings-block settings-block-wide codex-models-setting" aria-label="Codex fallback models">
-    <div class="settings-block-head"><h3 class="settings-block-title">Codex fallback models</h3><p class="settings-block-sub">Keep models available in the picker when live discovery omits them. Successful discovery adds new model IDs to this saved list.</p></div>
+    <div class="settings-block-head"><h3 class="settings-block-title">Codex fallback models</h3><p class="settings-block-sub">Successful discovery replaces this list with the models returned by Codex. The saved list is used when discovery is unavailable. Clear and save to remove every fallback, or load models to rebuild the list.</p></div>
     <p class="settings-note">Fallback entries do not confirm account access. The test button sends a small request using the selected host’s account and consumes a small amount of usage.</p>
     <fieldset disabled={busy}>
       {ids.map((id, index) => <div class="codex-model-entry" key={index}>
@@ -74,7 +74,7 @@ export function CodexModelsSetting(props: { saved?: string; connected: boolean; 
           <button type="button" class="icon-btn" title={`Remove ${id || 'model'}`} aria-label={`Remove ${id || 'model'}`} onClick={() => change(ids.filter((_, i) => i !== index))}>{renderRemoveIcon()}</button></div>
         {results[id] ? <p class="settings-note" role={results[id]!.error ? 'alert' : 'status'}>{results[id]!.message}</p> : null}
       </div>)}
-      <div class="codex-model-actions"><button type="button" class="settings-action-btn" disabled={ids.length >= 100} onClick={() => change([...ids, ''])}>Add model</button><button type="button" class="settings-action-btn" disabled={dirty || !props.connected} title={dirty ? 'Save your edits before loading models' : 'Refresh models from Codex'} onClick={() => void act(undefined, true)}>Load models</button><button type="button" class="settings-action-btn" disabled={!dirty || !props.connected} onClick={() => void act()}>Save fallback models</button></div>
+      <div class="codex-model-actions"><button type="button" class="settings-action-btn" disabled={ids.length >= 100} onClick={() => change([...ids, ''])}>Add model</button><button type="button" class="settings-action-btn" disabled={!ids.length} onClick={() => change([])}>Clear all</button><button type="button" class="settings-action-btn" disabled={dirty || !props.connected} title={dirty ? 'Save your edits before loading models' : 'Replace fallback models with the models returned by Codex'} onClick={() => void act(undefined, true)}>Load models</button><button type="button" class="settings-action-btn" disabled={!dirty || !props.connected} onClick={() => void act()}>Save fallback models</button></div>
     </fieldset>
     {notice ? <p class={`settings-note ${notice.error ? 'settings-notice-warning' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.message}</p> : null}
   </section>;

@@ -497,7 +497,7 @@ function App() {
   const noticeRoute = useRef(browserPath); noticeRoute.current = browserPath;
   const showNotice = useCallback(
     (next: DashboardLocalNotice) => {
-      if (/private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
+      if (next.level === 'error' || /private app-server process/i.test(next.message)) next = { ...next, message: sessionFailureMessage(next.message, noticeRoute.current === '/tasks' ? 'Task management' : isCliSessionsPath(noticeRoute.current) ? 'Workspace' : 'Dashboard') };
       if (isCodexSessionInspectionNotice(next.message) || next.level === "info") return;
       noticeControllerRef.current?.show(next);
       if (!offlineNoticeMode.current) pushBrowserNotification(next);

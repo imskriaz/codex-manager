@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.18
+
+- Show the provider's readable failure reason in session errors and dashboard toasts, with a model-change action when the account rejects a model. Preserve original error details for diagnostics.
+- Replace fallback models with each successful live catalogue instead of retaining stale entries. Add Clear all and support saving an empty list before reloading actual models; failed discovery preserves saved entries.
+
 ## 3.0.1-pre.6
 
 - Reduce the extension package by retaining the backend's active library builds and removing duplicate browser bundles, document runtimes, terminal build output and development artifacts. Preserve document creation and reading, PDF page rendering, browser automation and terminals.

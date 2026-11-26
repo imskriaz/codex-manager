@@ -18,9 +18,11 @@ export function saveCodexFallbackCatalog(value: string, expected: string): Promi
 }
 
 export function rememberDiscoveredCodexModels(ids: string[]): Promise<void> {
+  const discovered = parseCodexFallbackModelIds(ids.join('\n')).join('\n');
+  if (!discovered) return Promise.resolve();
   return runCrossWindowExclusive('settings:codex-fallback-models', 'Fallback models', async () => {
-    const current = readCodexFallbackCatalog();
-    const merged = parseCodexFallbackModelIds([current, ...ids].join('\n')).join('\n');
-    if (merged !== current) await getCodexManagerConfiguration().update('codexFallbackModelIds', merged, vscode.ConfigurationTarget.Global);
+    const current = getCodexManagerConfiguration().get<string>('codexFallbackModelIds', DEFAULT_CODEX_FALLBACK_MODEL_IDS);
+    if (discovered !== current) await getCodexManagerConfiguration().update('codexFallbackModelIds', discovered, vscode.ConfigurationTarget.Global);
+    if (readCodexFallbackCatalog() !== discovered) throw new Error('The discovered fallback models could not be saved. Refresh models to retry.');
   });
 }

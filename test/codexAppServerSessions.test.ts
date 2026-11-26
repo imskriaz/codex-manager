@@ -1167,18 +1167,21 @@ it('resumes opaque managed permissions without replacing their exclusions with a
 });
 
 it('discovers live models over stale cache, reads all pages and refreshes after credentials change', async () => {
+  let fallbackIds = 'gpt-6.2-sol';
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'codexFallbackModelIds' ? fallbackIds : fallback, update: vi.fn(async (_key, value) => { fallbackIds = value; }) } as never);
   await writeFile(path.join(root, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'stale-model', visibility: 'list' }] }));
   await writeFile(path.join(root, 'config.toml'), 'model = "live-two"\n');
   const request = vi.fn(async (_method: string, params: any) => params.cursor ? { data: [{ id: 'live-two', displayName: 'Live two', defaultReasoningEffort: 'high', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], nextCursor: null } : { data: [null, { id: 'live-one' }, { id: 'hidden', hidden: true }], nextCursor: 'next' });
   mocks.open.mockResolvedValue({ request, close: vi.fn() });
-  const config = await readCodexCliComposerConfig(root);
-  expect(config.models.filter(model => model.provider !== 'claude').map(model => model.id)).toEqual(expect.arrayContaining(['live-one', 'live-two', 'gpt-6.2-sol', 'gpt-6.2-astra']));
-  expect(config.modelDiscoveryWarning).toContain('fallback');
+  const config = await readCodexCliComposerConfig(root, false);
+  expect(config.models.filter(model => model.provider !== 'claude').map(model => model.id)).toEqual(['live-one', 'live-two']);
+  expect(config.modelDiscoveryWarning).toBeUndefined();
+  expect(fallbackIds).toBe('live-one\nlive-two');
   expect(config.defaultModel).toBe('live-two'); expect(config.defaultReasoningEffort).toBe('high');
   expect(request).toHaveBeenCalledWith('model/list', expect.objectContaining({ cursor: 'next' }), expect.any(Number));
-  await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(2);
+  await readCodexCliComposerConfig(root, false); expect(request).toHaveBeenCalledTimes(2);
   await writeFile(path.join(root, 'auth.json'), JSON.stringify({ access_token: 'changed' }));
-  await readCodexCliComposerConfig(root); expect(request).toHaveBeenCalledTimes(4);
+  await readCodexCliComposerConfig(root, false); expect(request).toHaveBeenCalledTimes(4);
 });
 it.each(['offline', 'duplicate-cursor'])('keeps cached models with a warning when live discovery is incomplete: %s', async scenario => {
   await writeFile(path.join(root, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'saved-model', visibility: 'list' }] }));
@@ -1227,21 +1230,21 @@ it('keeps discovered models available when fallback settings are malformed', asy
   mocks.open.mockResolvedValue({ request: vi.fn(async () => ({ data: [{ id: 'live-model' }] })), close: vi.fn() });
   const config = await readCodexCliComposerConfig(root, false);
   expect(config.models.map(model => model.id)).toEqual(['live-model']);
-  expect(config.modelDiscoveryWarning).toContain('fallback list is invalid');
+  expect(config.modelDiscoveryWarning).toContain('fallback list could not be updated');
 });
-it('loads fresh models past the cached catalog, preserves custom entries, and keeps native failures visible', async () => {
+it('replaces stale and custom fallbacks with fresh models and keeps native failures visible', async () => {
   let ids = 'custom-model';
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'codexFallbackModelIds' ? ids : fallback, update: vi.fn(async (_key, value) => { ids = value; }) } as never);
   const request = vi.fn().mockResolvedValueOnce({ data: [{ id: 'old-model' }] }).mockResolvedValueOnce({ data: [{ id: 'new-model', displayName: 'New live model' }] });
   mocks.open.mockResolvedValue({ request, close: vi.fn() });
   await readCodexCliComposerConfig(root, false);
-  await expect(loadCodexModels()).resolves.toMatchObject({ ids: 'custom-model\nold-model\nnew-model', message: expect.stringContaining('Loaded 1 models') });
+  await expect(loadCodexModels()).resolves.toMatchObject({ ids: 'new-model', message: expect.stringContaining('Loaded 1 models') });
   const config = await readCodexCliComposerConfig(root, false);
   expect(config.models[0]).toMatchObject({ id: 'new-model', label: 'New live model' });
   expect(request).toHaveBeenCalledTimes(2);
   request.mockRejectedValueOnce(new Error('Sign-in expired'));
   await expect(loadCodexModels()).rejects.toThrow('Sign-in expired');
-  expect(ids).toBe('custom-model\nold-model\nnew-model');
+  expect(ids).toBe('new-model');
 });
 
 

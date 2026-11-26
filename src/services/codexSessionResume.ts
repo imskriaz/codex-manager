@@ -999,7 +999,7 @@ async function readCliComposerConfig(codexHome: string, codexEnabled: boolean): 
         catch (error) { modelDiscoveryWarning = `Models loaded, but the fallback list could not be updated: ${error instanceof Error ? error.message : String(error)}`; }
       }
     } else modelDiscoveryWarning = models.length ? 'Live model discovery is unavailable. Showing the saved catalog; refresh to retry.' : 'Models could not be discovered. Check provider sign-in and refresh to retry.';
-    if(openai) {
+    if(openai && !live.length) {
         let hidden:string[]=[];
         try{const cached=JSON.parse(modelsRaw??'{}') as {models?:Array<{slug?:string;id?:string;visibility?:string;hidden?:boolean}>};hidden=(cached.models??[]).filter(model=>model.hidden===true||model.visibility==='hide'||model.visibility==='hidden').map(model=>model.slug??model.id??'');}catch{/* An unreadable cache still permits the bundled fallback. */}
         const originalCount = models.length;
