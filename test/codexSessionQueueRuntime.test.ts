@@ -5,7 +5,7 @@ import type * as vscode from 'vscode';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ home: '', enabled: true, slots: 30, busy: 0, sessions: vi.fn(), resume: vi.fn(), notice: vi.fn(), released: undefined as (() => void) | undefined, configuration: undefined as ((event: { affectsConfiguration: (key: string) => boolean }) => void) | undefined, lease: undefined as AbortController | undefined }));
-vi.mock('../src/infrastructure/config/extensionSettings', () => ({ getCodexManagerConfiguration: () => ({ get: () => mocks.enabled }) }));
+vi.mock('../src/infrastructure/config/extensionSettings', () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, getCodexManagerConfiguration: () => ({ get: () => mocks.enabled }) }));
 vi.mock('../src/services/codexSessionResume', () => ({ resolveCodexHome: () => mocks.home, readCodexCliSessions: mocks.sessions }));
 vi.mock('../src/services/codexSessionLive', () => ({ availableCodexSessionLiveSlots: () => mocks.slots, onDidReleaseCodexSessionLiveSlot: (listener: () => void) => { mocks.released = listener; return () => { mocks.released = undefined; }; } }));
 vi.mock('../src/storage/configurationEvents', () => ({ onDidChangeConfiguration: (listener: typeof mocks.configuration) => { mocks.configuration = listener; return { dispose: () => { mocks.configuration = undefined; } }; } }));

@@ -17,6 +17,7 @@ import type { ChatAttachment } from '../domain/chatAttachments';
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { materializeChatAttachments } from './codexChatAttachments';
 import { prepareChatInput } from '../domain/chatAttachments';
+import { assertRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 
 type SavedClaudeSession = { summary: DashboardCliSessionSummary; firstPrompt: string; ownerPid?: number; failure?: string; recentMessages?: DashboardCliSessionMessage[] };
 export class ClaudeTurnCancelledError extends Error { constructor() { super('Claude turn was cancelled.'); } }
@@ -66,6 +67,7 @@ export async function readClaudeHistory(id: string, before?: string): Promise<{ 
 
 export type ClaudeTurnOptions = { text: string; attachments?: ChatAttachment[]; model?: string; reasoningEffort?: string; sandboxMode?: DashboardCliSandboxMode; autoApprove?: boolean; projectPath?: string; signal?: AbortSignal; onCreated?: (id: string) => void; onStarted?: () => void };
 export async function startClaudeSession(options: ClaudeTurnOptions): Promise<string> {
+  assertRuntimeModuleEnabled('claude');
   const id = randomUUID();
   claudeUserMessage(id, options.text, options.attachments);
   const cwd = path.resolve(options.projectPath || process.cwd());
@@ -82,6 +84,7 @@ export async function startClaudeSession(options: ClaudeTurnOptions): Promise<st
 }
 
 export async function sendClaudeMessage(id: string, options: ClaudeTurnOptions): Promise<'steered' | void> {
+  assertRuntimeModuleEnabled('claude');
   id = id.toLowerCase();
   const entry = requireSession(id);
   if (options.model && !isClaudeModel(options.model)) throw new Error('This is a Claude conversation. Start a new conversation to use an OpenAI model.');
@@ -246,6 +249,7 @@ async function runTurn(id: string, options: ClaudeTurnOptions, resume: boolean, 
 }
 
 export async function steerClaudeSession(id: string, options: Pick<ClaudeTurnOptions, 'text' | 'attachments'>, expectedTurnId: string): Promise<void> {
+  assertRuntimeModuleEnabled('claude');
   id = id.toLowerCase();
   const running = active.get(id);
   if (!running || running.stopped || running.stopOutcome || running.turnId !== expectedTurnId) throw new Error('The Claude turn changed. Your follow-up was not sent.');

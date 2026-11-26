@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ value: undefined as string | undefined, update: vi.fn() }));
-vi.mock('../src/infrastructure/config/extensionSettings', () => ({ getCodexManagerConfiguration: () => ({ get: (_key: string, fallback: string) => state.value ?? fallback, update: state.update }) }));
+vi.mock('../src/infrastructure/config/extensionSettings', () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, getCodexManagerConfiguration: () => ({ get: (_key: string, fallback: string) => state.value ?? fallback, update: state.update }) }));
 vi.mock('../src/utils/crossWindowOperations', () => ({ runCrossWindowExclusive: (_key: string, _title: string, task: () => unknown) => task() }));
 import { readCodexFallbackCatalog, rememberDiscoveredCodexModels, saveCodexFallbackCatalog } from '../src/services/codexFallbackCatalog';
 beforeEach(() => { state.value = 'custom-model\ngpt-6.2-sol'; state.update.mockReset().mockImplementation(async (_key, value) => { state.value = value; }); });

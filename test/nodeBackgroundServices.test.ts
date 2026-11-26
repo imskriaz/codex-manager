@@ -3,7 +3,7 @@ const fixture = vi.hoisted(() => ({ registrations: [] as string[], recovery: und
   handlers: new Map<string, (...args: any[]) => unknown>(), refreshQuota: vi.fn().mockResolvedValue(undefined), refreshAll: vi.fn().mockResolvedValue(undefined) }));
 function disposable(name: string) { fixture.registrations.push(name); return { dispose: vi.fn() }; }
 vi.mock("vscode", () => ({ commands: { registerCommand: vi.fn((name, handler) => { fixture.handlers.set(name, handler); return { dispose: vi.fn() }; }) } }));
-vi.mock("../src/infrastructure/config/extensionSettings", () => ({ getCodexManagerConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "encryptedSyncEnabled" ? fixture.encrypted : fallback }), normalizeAutoRefreshMinutes: (value: number) => value, getAutoRefreshMinutes: () => 10, getAutoRefreshCurrentMinutes: () => 1 }));
+vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, getCodexManagerConfiguration: () => ({ get: (key: string, fallback: unknown) => key === "encryptedSyncEnabled" ? fixture.encrypted : fallback }), normalizeAutoRefreshMinutes: (value: number) => value, getAutoRefreshMinutes: () => 10, getAutoRefreshCurrentMinutes: () => 1 }));
 vi.mock("../src/presentation/workbench/autoSwitchState", () => ({ initAutoSwitchRuntimeState: () => disposable("locks") }));
 vi.mock("../src/presentation/workbench/schedulerRegistration", () => ({
   registerAutoRefreshScheduler: (options: { canRefreshAccount: () => boolean }) => { fixture.canUse = options.canRefreshAccount; return disposable("quota"); },

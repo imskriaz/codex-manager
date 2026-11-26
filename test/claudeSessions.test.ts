@@ -8,6 +8,7 @@ import { getCodexSessionLiveState } from '../src/services/codexSessionLive';
 import { flushSessionRecording } from '../src/services/sessionRecording';
 import { respondCodexAppServerPrompt, listPendingCodexAppServerPrompts } from '../src/services/codexAppServerPrompts';
 import * as sessions from '../src/services/claudeSessions';
+import { isRuntimeModuleEnabled } from '../src/infrastructure/config/extensionSettings';
 
 const mocks = vi.hoisted(() => ({ query:vi.fn(), renameSession:vi.fn(), archiveSession:vi.fn(),unarchiveSession:vi.fn(),deleteSession:vi.fn(),forkSession:vi.fn(),getSessionMessages:vi.fn(),resolve:vi.fn() }));
 vi.mock('../src/services/claudeCliRuntime', () => ({
@@ -44,6 +45,15 @@ const until=async(predicate:()=>boolean)=>{await vi.waitFor(()=>expect(predicate
 const start=()=>sessions.startClaudeSession({text:'Hello',projectPath:root,model:'claude-code/opus',reasoningEffort:'high',sandboxMode:'danger-full-access',autoApprove:false});
 
 describe('Claude native sessions',()=>{
+  it('keeps the provider off until its module is enabled', async () => {
+    vi.mocked(isRuntimeModuleEnabled).mockReturnValueOnce(false);
+    await expect(start()).rejects.toThrow('Enable the Claude module'); expect(mocks.query).not.toHaveBeenCalled();
+  });
+  it('reports a missing local CLI without starting the SDK',async()=>{
+    mocks.resolve.mockResolvedValue(undefined);
+    await expect(start()).rejects.toThrow('Claude Code was not found. Install and sign in to Claude Code, then retry.');
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
   it.each(['assistant', 'stream_event', 'result'])('accepts a matching %s reply without waiting for user replay',async type=>{
     mocks.query.mockImplementation(({prompt,options})=>({
       initializationResult:async()=>({models:[{value:'opus',supportedEffortLevels:['high']}]}),
@@ -73,7 +83,7 @@ describe('Claude native sessions',()=>{
   });
   it('starts without opening an editor, streams, saves provider identity and records native quota',async()=>{
     const id=await start();await until(()=>sessions.readClaudeSession(id)?.nativeQuota?.limits.length===1);
-    expect(nativeOptions).toMatchObject({model:'opus',sessionId:id,permissionMode:'default',allowDangerouslySkipPermissions:false,settingSources:['user','project','local']});
+    expect(nativeOptions).toMatchObject({pathToClaudeCodeExecutable:'claude.exe',model:'opus',sessionId:id,permissionMode:'default',allowDangerouslySkipPermissions:false,settingSources:['user','project','local']});
     expect(received).toHaveLength(1);
     expect(getCodexSessionLiveState(id)).toMatchObject({provider:'claude',status:'running',messages:expect.arrayContaining([expect.objectContaining({text:'Hello from native Claude'})])});
     expect(sessions.readClaudeSession(id)).toMatchObject({provider:'claude',nativeQuota:{limits:[{kind:'five_hour',usedPercent:75}]}});

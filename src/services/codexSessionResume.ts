@@ -53,8 +53,9 @@ import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCod
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { sendCodexQuestionReply } from './codexQuestionReply';
-import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli, resolveCodexNpmBinary } from './codexCliRuntime';
+import { bundledCodexCli, discoverBundledCodexCli, managedCodexCli, resolveCodexNpmBinary } from './codexCliRuntime';
 import { discoverClaudeModels } from './claudeCliRuntime';
+import { isRuntimeModuleEnabled, assertRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 import { isClaudeModel } from '../domain/dashboard/claudeModels';
 import * as claude from './claudeSessions';
 
@@ -970,20 +971,22 @@ async function readKnownProjectRoots(home: string, force = false): Promise<strin
 
 export function readCodexCliComposerConfig(codexHome = resolveCodexHome(), includeClaude = true): Promise<DashboardCliComposerConfig> {
   const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
-  return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome))
+  // API account/proxy catalogues do not launch the optional session harness.
+  const codexEnabled = !includeClaude || isRuntimeModuleEnabled('codex');
+  return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces, codexEnabled])}`, () => readCliComposerConfig(codexHome, codexEnabled))
     .then(async config => {
       const native = includeClaude && path.resolve(codexHome) === path.resolve(resolveCodexHome()) ? await discoverClaudeModels() : { models: [] };
       return { ...config, models: [...config.models, ...native.models], ...((config.modelDiscoveryWarning || native.warning) ? { modelDiscoveryWarning: [config.modelDiscoveryWarning, native.warning].filter(Boolean).join(' ') } : {}), projects: workspaceProjectLabels(config.projects ?? []), hiddenProjectPaths: hiddenWorkspaceProjectPaths(), terminalSupported: true, standalone: vscode.env.appHost === 'node' }; });
 }
 
-async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {
+async function readCliComposerConfig(codexHome: string, codexEnabled: boolean): Promise<DashboardCliComposerConfig> {
   const [modelsRaw, configRaw] = await Promise.all([
     readSmallOptionalFile(path.join(codexHome, "models_cache.json"), MAX_MODELS_CACHE_BYTES),
     readSmallOptionalFile(path.join(codexHome, "config.toml"), MAX_CONFIG_BYTES)
   ]);
-  let models = parseCliModels(modelsRaw);
+  let models = codexEnabled ? parseCliModels(modelsRaw) : [];
   let modelDiscoveryWarning: string | undefined;
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome())) {
+  if (codexEnabled && path.resolve(codexHome) === path.resolve(resolveCodexHome())) {
     const auth = await readSmallOptionalFile(path.join(codexHome, 'auth.json'), MAX_CONFIG_BYTES);
     const identity = createHash('sha256').update(JSON.stringify([auth, configRaw, apiAccountIdentity('openai')])).digest('hex');
     const live = await readLiveCliModels(codexHome, identity);
@@ -1028,6 +1031,7 @@ async function readCliComposerConfig(codexHome: string): Promise<DashboardCliCom
 }
 
 export async function loadCodexModels(): Promise<{ ids: string; message: string }> {
+  assertRuntimeModuleEnabled('codex');
   const home = resolveCodexHome();
   const [auth, config] = await Promise.all([
     readSmallOptionalFile(path.join(home, 'auth.json'), MAX_CONFIG_BYTES),
@@ -1045,6 +1049,7 @@ export async function loadCodexModels(): Promise<{ ids: string; message: string 
 }
 
 export async function testCodexModel(model: string): Promise<string> {
+  assertRuntimeModuleEnabled('codex');
   if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => testCodexModel(model));
   if (parseCodexFallbackModelIds(model).length !== 1 || !MODEL_ID_PATTERN.test(model)) throw new Error('Enter one valid Codex model ID to test.');
   const home = resolveCodexHome(), account = apiAccountIdentity('openai');
@@ -1144,6 +1149,7 @@ export async function sendCodexCliSessionMessage(options: {
     return withNativeSession(() => sendCodexCliSessionMessage({ ...options, sessionId: nativeId }));
   }
   if (claude.isClaudeSession(options.sessionId)) return claude.sendClaudeMessage(options.sessionId, options);
+  assertRuntimeModuleEnabled('codex');
   newSessionFailures.delete(options.sessionId);
   const prepared = prepareChatInput(options.text, options.attachments);
   const text = prepared.text;
@@ -1223,6 +1229,7 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
   if (!hasApiAccountRuntime()) return withApiAccountRuntime(() => startCodexCliSession(options));
   const home = path.resolve(resolveCodexHome());
   if (isClaudeModel(options.model)) return claude.startClaudeSession({ ...options, projectPath: resolveCliProjectPath(options.projectPath) });
+  try { assertRuntimeModuleEnabled('codex'); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error(String(error))); }
   return new Promise((resolve, reject) => {
     let createdId: string | undefined;
     void runNewCodexCliSession(options, (id) => {
@@ -1306,7 +1313,8 @@ async function startAppServerSession(options: {
   let detachPrompts: () => void = () => undefined;
   let threadId: string | undefined;
   try {
-    const executable = await resolveCodexCliExecutable(true);
+    assertRuntimeModuleEnabled('codex');
+    const executable = await resolveCodexCliExecutable();
     if (path.resolve(resolveCodexHome()) !== home) throw new Error("The Codex home changed while preparing the CLI. No session was started.");
     rpc = await openCodexAppServer(executable, cwd);
     recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: appServerTransport.getStore() ?? "stdio" });
@@ -1481,7 +1489,8 @@ async function sendAppServerSessionMessage(options: {
   const abort = () => { void rpc?.close(); };
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    const executable = await resolveCodexCliExecutable(true);
+    assertRuntimeModuleEnabled('codex');
+    const executable = await resolveCodexCliExecutable();
     options.signal?.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error("The Codex home changed while preparing the CLI. No message was sent.");
     rpc = await openCodexAppServer(executable, cwd, options.signal);
@@ -1557,6 +1566,7 @@ export class CodexNativeOwnerUnavailableError extends Error {}
 
 /** Continue an existing goal through its official owner, without adding a user message. */
 export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary, signal?: AbortSignal, origin: "user" | "automatic" = "automatic", preferPrivate = false): Promise<void> {
+  assertRuntimeModuleEnabled('codex');
   validateSessionId(session.id);
   signal?.throwIfAborted();
   const timeout = AbortSignal.timeout(25_000);
@@ -1745,6 +1755,7 @@ async function observedNativeTurn(home: string, sessionId: string): Promise<stri
 export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
   options = { ...options, sessionId: routedSessionId(options.sessionId) };
   if (claude.isClaudeSession(options.sessionId)) return claude.steerClaudeSession(options.sessionId, options, options.expectedTurnId);
+  assertRuntimeModuleEnabled('codex');
   return sendCodexQuestionReply(resolveCodexHome(), options.sessionId, options.text, () => readCodexCliSessionMessages(options.sessionId), onAttempt => steerCodexCliSessionTurnOnce(options, onAttempt));
 }
 
@@ -3217,7 +3228,7 @@ export function getCodexCliPathCandidates(
   );
 }
 
-async function resolveCodexCliExecutable(allowInstall = false): Promise<CodexCliExecutable> {
+export async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
   const configuredPath = (
     sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<string>("codexCliPath", "") ?? ""
   ).trim();
@@ -3275,14 +3286,7 @@ async function resolveCodexCliExecutable(allowInstall = false): Promise<CodexCli
       }
     }
   }
-  if (allowInstall) {
-    const script = await installManagedCodexCli();
-    const native = await resolveCodexNpmBinary(script);
-    const executable = native === script ? { command: process.execPath, prefixArgs: [script] } : { command: native, prefixArgs: [] };
-    cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
-    return executable;
-  }
-  throw new Error("Codex CLI was not found on this PC. Start a session to install it automatically, install it with npm install -g @openai/codex, or set CODEX_CLI_PATH.");
+  throw new Error("Codex CLI was not found on this PC. Open Settings > Workspace > Session modules to set up Codex, or set CODEX_CLI_PATH.");
 }
 
 /** Check whether the Codex CLI can be launched on this PC without changing state. */

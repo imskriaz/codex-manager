@@ -56,6 +56,15 @@ export async function initializeSqliteContext(context: vscode.ExtensionContext):
     const manifest = context.extension.packageJSON as { contributes: { configuration: { properties: Record<string, SettingSchema> } } };
     configurationSchema = manifest.contributes.configuration.properties;
     configurationKeys = Object.keys(manifest.contributes.configuration.properties).map(key => key.slice("codexManager.".length));
+    const legacyModules: Array<'codex' | 'claude'> = [];
+    if (!store.get('migrations', `${scope}:runtime-modules`)) {
+      const legacyWorkspace = readConfigurationValue<boolean>(store, configurationNamespace, 'cliIntegrationEnabled') ?? vscode.workspace.getConfiguration('codexManager').get<boolean>('cliIntegrationEnabled', false);
+      if (legacyWorkspace) for (const provider of ['codex', 'claude'] as const) {
+        const explicit = vscode.workspace.getConfiguration('codexManager').inspect(`${provider}ModuleEnabled`);
+        if (readConfigurationValue(store, configurationNamespace, `${provider}ModuleEnabled`) === undefined && explicit?.globalValue === undefined && explicit?.workspaceValue === undefined && explicit?.workspaceFolderValue === undefined) legacyModules.push(provider);
+      }
+      store.set('migrations', `${scope}:runtime-modules`, true);
+    }
     synchronizeSqliteConfiguration();
     configurationSnapshot = currentConfigurationSnapshot();
     configureSqliteStateStore(store);
@@ -73,6 +82,7 @@ export async function initializeSqliteContext(context: vscode.ExtensionContext):
       return {provider: config.get<string>('officeDatabaseProvider', 'sqlite'), url: config.get<string>('officePostgresUrl', '').trim()};
     });
     void officeStorage.ready().catch(error => console.warn('[codexManager] Workspace storage initialization deferred', error));
+    if (legacyModules.length) void import('../services/workspaceRuntimes').then(module => module.migrateWorkspaceRuntimeModules(legacyModules)).catch(error => console.warn('[codexManager] Provider module migration deferred; open Settings to set up providers', error));
     return Object.create(context, { globalState: { value: globalState }, workspaceState: { value: workspaceState }, secrets: { value: secrets } }) as vscode.ExtensionContext;
   } catch (error) {
     configurationNamespace = undefined;

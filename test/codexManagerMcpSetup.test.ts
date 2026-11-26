@@ -7,7 +7,7 @@ vi.mock('../src/codex/authFile', () => ({ getCodexHome: () => 'D:/fixture', getC
 vi.mock('../src/services/codexCliRuntime', () => ({ discoverBundledCodexCli: () => mocks.discover() }));
 vi.mock('../src/utils/relayStartup', () => ({ resolveNodeExecutable: () => mocks.node() }));
 vi.mock('../src/utils/crossWindowOperations', () => ({ runCrossWindowExclusive: (_key: string, _name: string, run: () => unknown) => run() }));
-vi.mock('../src/infrastructure/config/extensionSettings', () => ({ getCodexManagerConfiguration: () => mocks.config }));
+vi.mock('../src/infrastructure/config/extensionSettings', () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, getCodexManagerConfiguration: () => mocks.config }));
 import { registerCodexManagerMcpSetup, setupCodexManagerMcp } from '../src/services/codexManagerMcpSetup';
 
 const key = 'codexManager.mcp.fixture';

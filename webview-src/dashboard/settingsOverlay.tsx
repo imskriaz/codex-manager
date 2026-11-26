@@ -1,4 +1,5 @@
 import {CodexModelsSetting} from './codexModelsSetting';
+import {WorkspaceRuntimeSettings} from './workspaceRuntimeSettings';
 import {MobileSectionPicker} from './mobileSectionPicker';
 import {UserWorkspaceLibrary,UserWorkspaceScheduled,type UserWorkspaceNavigation} from './userWorkspacePages';
 import {UserWorkspaceAccount} from './userWorkspaceAccount';
@@ -74,7 +75,7 @@ export function canShowTeamSettings(settings: DashboardSettings, office?: Dashbo
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
-  return key !== "cliIntegrationEnabled" && key !== "persistentLoggingEnabled" && key !== "persistentLogRetentionDays" && key !== "persistentLogLevel";
+  return key !== "cliIntegrationEnabled" && key !== "codexModuleEnabled" && key !== "claudeModuleEnabled" && key !== "persistentLoggingEnabled" && key !== "persistentLogRetentionDays" && key !== "persistentLogLevel";
 }
 
 export function SettingsOverlay(props: {
@@ -416,7 +417,7 @@ export function SettingsOverlay(props: {
           </div>
           <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
 <div class="settings-tab-panel" id="settings-panel-modules" role="tabpanel" aria-labelledby="settings-tab-modules" hidden={panelHidden("modules")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "modules")!} /><div class="settings-layout"><SettingsToggleBlock settingKey="webDashboardEnabled" title="Web Dashboard" sub="Browser access to accounts and this dashboard." enabled={props.settings.webDashboardEnabled}   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)} />
-<SettingsToggleBlock settingKey="cliIntegrationEnabled" title="Enable workspace" sub="Add chats and terminals to this dashboard." enabled={props.settings.cliIntegrationEnabled === true}   onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)} />
+<div class="settings-block"><div class="settings-block-title">Codex and Claude modules</div><p class="settings-note">Set up each provider separately in Workspace settings.</p><button type="button" class="settings-action-btn" onClick={() => setActiveTab("sessions")}>Set up session modules</button></div><SettingsToggleBlock settingKey="cliIntegrationEnabled" title="Enable workspace" sub="Add chats and terminals to this dashboard." enabled={props.settings.cliIntegrationEnabled === true}   onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)} />
 <SettingsToggleBlock settingKey="teamWorkspaceEnabled" title="Enable User Workspace" sub="User accounts, permissions, shared tools, and database settings." enabled={props.settings.teamWorkspaceEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("teamWorkspaceEnabled", enabled)} />
 <SettingsToggleBlock settingKey="apiAccessEnabled" title="Dashboard API" sub="Allow generated Bearer tokens to call the local dashboard API." enabled={props.settings.apiAccessEnabled === true}  disabled={!props.settings.webDashboardEnabled} onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)} />
 <SettingsToggleBlock settingKey="webSocketServerEnabled" title="WS Cross System" sub="Connect systems through a shared server." enabled={props.settings.webSocketServerEnabled !== false}   onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)} />
@@ -440,7 +441,7 @@ export function SettingsOverlay(props: {
                       targetDeviceId={props.targetDeviceId} targetName={props.targetName} sendAction={props.sendAction}
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
-                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><CodexModelsSetting onSaved={ids => props.onPatchSettings({codexFallbackModelIds: ids})} saved={props.settings.codexFallbackModelIds} connected={props.connected !== false && props.targetConnected !== false} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} /><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
+                    /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><WorkspaceRuntimeSettings settings={props.settings} connected={props.connected !== false && props.targetConnected !== false} parentOpen={props.open} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} onEnabled={provider => props.onPatchSettings({[`${provider}ModuleEnabled`]: true, cliIntegrationEnabled: true})} onDisable={provider => patchAndSend(`${provider}ModuleEnabled`, false)} /><CodexModelsSetting onSaved={ids => props.onPatchSettings({codexFallbackModelIds: ids})} saved={props.settings.codexFallbackModelIds} connected={props.connected !== false && props.targetConnected !== false} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} /><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
                         <div class="settings-block-title">Text file limit</div>
                         <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
                       </div><SettingsDiscreteSlider

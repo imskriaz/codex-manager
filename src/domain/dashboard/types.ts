@@ -17,6 +17,8 @@ export type DashboardSettingKey =
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
+  | "codexModuleEnabled"
+  | "claudeModuleEnabled"
   | "apiAccessEnabled"
   | "workspaceTextFileLimitMb"
   | "standaloneCapacityRetryDelaySeconds"
@@ -73,6 +75,8 @@ export interface DashboardSettings {
   codexAppRestartMode: "auto" | "manual";
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
+  codexModuleEnabled?: boolean;
+  claudeModuleEnabled?: boolean;
   apiAccessEnabled?: boolean;
   workspaceTextFileLimitMb?: number;
   standaloneCapacityRetryDelaySeconds?: number;
@@ -564,6 +568,7 @@ export interface DashboardPeerView {
 }
 
 export type DashboardActionName =
+  | "manageWorkspaceRuntime"
   | "manageCodexModels"
   | "saveApiAccount"
   | "enableSystemStartup"
@@ -709,6 +714,7 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  runtimeRequest?: { provider: 'codex' | 'claude'; operation: 'check' | 'enable' };
   codexModelRequest?: { operation: 'save' | 'load' | 'test'; ids?: string; expected?: string; model?: string };
   apiAccount?: import('../apiAccounts').ApiAccountInput;
   apiAccountId?: string;
@@ -1223,7 +1229,10 @@ export interface DashboardWorkspaceTerminalInfo {
   isActive?: boolean;
 }
 
+export type WorkspaceRuntime = { provider: 'codex' | 'claude'; available: boolean; enabled?: boolean; executable?: string; version?: string; loginCommand?: string; message: string };
+
 export interface DashboardActionResultPayload {
+  workspaceRuntime?: WorkspaceRuntime;
   codexModels?: { ids?: string; message: string };
   apiAccountSaved?: { id: string };
   teamSettingsResponse?: unknown;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.3
+
+- Move Codex and Claude session setup into separate modules under Settings > Workspace > Session modules. Reuse verified host installations, or download missing runtimes separately before enabling. Include sign-in instructions and setup error feedback.
+- Exclude the Claude native runtime from the extension package. Preserve existing session tools and assistant PDF reading, rendering and creation, while using browser PDF previews in User Workspace.
+
 ## 3.0.0
 
 - Manage connected systems, account quotas, remote sessions, terminals, files, Git, and task boards from the dashboard.

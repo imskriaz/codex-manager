@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import type { DashboardCliSessionSummary } from '../domain/dashboard/types';
-import { getCodexManagerConfiguration } from '../infrastructure/config/extensionSettings';
+import { getCodexManagerConfiguration, isRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 import { runCrossWindowExclusive, CrossWindowOperationBusyError } from '../utils/crossWindowOperations';
 import { readQueuedCodexSessionPreferences, claimCodexSessionQueue, finishCodexSessionQueueClaim, type CodexSessionPreference } from './codexSessionPreferences';
 import { readCodexCliSessions, resolveCodexHome } from './codexSessionResume';
@@ -48,7 +48,7 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
     running = true;
     dirty = false;
     try {
-      if (!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false)) return;
+      if ((!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false) || !isRuntimeModuleEnabled('codex'))) return;
       const home = resolveCodexHome();
       const initial = readQueuedCodexSessionPreferences(home);
       if (!initial.size) return;
@@ -58,7 +58,7 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
         const launchSignal = AbortSignal.any([controller.signal, signal, launch.signal]);
         try {
           const sessions = await waitWithin(readCodexCliSessions(home, 10000, true), 10000, 'Session queue is waiting for verified running state.', launchSignal);
-          if (disposed || launchSignal.aborted || resolveCodexHome() !== home || !getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false)) return;
+          if (disposed || launchSignal.aborted || resolveCodexHome() !== home || (!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false) || !isRuntimeModuleEnabled('codex'))) return;
           const statusFingerprint = sessions.filter(session => !session.archived).map(session => `${session.id}:${session.status}:${session.locked ? 1 : 0}:${session.goal?.status ?? ''}`).sort().join('|');
           const capacity = availableCodexSessionLiveSlots();
           const nextFingerprint = `${preferenceFingerprint}\n${statusFingerprint}\n${capacity}`;
@@ -67,7 +67,7 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
           const eligible = new Map([...readQueuedCodexSessionPreferences(home)].filter(([id]) => !isExplicitSessionGoalPause(home, id)));
           const group = nextQueuedSessions(sessions, eligible);
           await runWithConcurrencyLimit(group.slice(0, capacity), 8, async session => {
-            if (disposed || launchSignal.aborted || resolveCodexHome() !== home || !getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false)) return;
+            if (disposed || launchSignal.aborted || resolveCodexHome() !== home || (!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false) || !isRuntimeModuleEnabled('codex'))) return;
             if (availableCodexSessionLiveSlots() === 0) return;
             const preference = eligible.get(session.id);
             if (!preference?.queue || isExplicitSessionGoalPause(home, session.id)) return;
@@ -105,8 +105,8 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
   const stopCapacity = onDidReleaseCodexSessionLiveSlot(wake);
   const stopStorage = store?.subscribe(['sessions', 'session-status', 'session-preferences', 'state'], () => wake());
   const stopConfiguration = onDidChangeConfiguration(event => {
-    if (event.affectsConfiguration('codexManager.cliIntegrationEnabled') || event.affectsConfiguration('codexManager.codexHome')) {
-      if (!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false) || event.affectsConfiguration('codexManager.codexHome'))
+    if (event.affectsConfiguration('codexManager.codexModuleEnabled') || event.affectsConfiguration('codexManager.cliIntegrationEnabled') || event.affectsConfiguration('codexManager.codexHome')) {
+      if ((!getCodexManagerConfiguration().get<boolean>('cliIntegrationEnabled', false) || !isRuntimeModuleEnabled('codex')) || event.affectsConfiguration('codexManager.codexHome'))
         activeRun?.abort(new Error('Session queue configuration changed before startup was confirmed.'));
       wake();
     }

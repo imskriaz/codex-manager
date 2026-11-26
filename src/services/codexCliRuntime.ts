@@ -42,6 +42,11 @@ export function managedCodexCli(): string | undefined {
     ? path.join(root, "runtime", "codex-cli", "node_modules", "@openai", "codex", "bin", "codex.js") : undefined;
 }
 
+export function managedClaudeCli(): string | undefined {
+  return getSqliteStateStore()?.get('runtime', 'claude-cli-ready') === true
+    ? path.join(getCodexManagerStorageRoot(), 'runtime', 'claude-cli', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe') : undefined;
+}
+
 /** The npm wrapper spawns its native child without windowsHide on Windows. */
 export async function resolveCodexNpmBinary(script: string): Promise<string> {
   if (process.platform !== 'win32' || path.basename(script).toLowerCase() !== 'codex.js') return script;
@@ -73,42 +78,54 @@ async function run(executable: string, args: string[], timeout: number, cwd: str
   }, error => error ? reject(error instanceof Error ? error : new Error("Codex CLI process failed.", { cause: error })) : resolve()));
 }
 
-// Install only for an explicit turn, never for background model/session discovery.
+// Install only from explicit module setup, never from discovery or a chat send.
 const installations = new Map<string, Promise<string>>();
 export function installManagedCodexCli(): Promise<string> {
+  return installManagedCli('codex');
+}
+export function installManagedClaudeCli(): Promise<string> {
+  return installManagedCli('claude');
+}
+function installManagedCli(provider: 'codex' | 'claude'): Promise<string> {
   const root = getCodexManagerStorageRoot();
-  const pending = installations.get(root);
+  const key = `${root}:${provider}`, label = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const packageName = provider === 'codex' ? '@openai/codex' : '@anthropic-ai/claude-code';
+  const pending = installations.get(key);
   if (pending) return pending;
-  const installation = runCrossWindowExclusive("runtime:codex-cli-install", "Codex CLI installation", async signal => {
+  const installation = runCrossWindowExclusive(`runtime:${provider}-cli-install`, `${label} installation`, async signal => {
     const store = getSqliteStateStore();
-    if (!store) throw new Error("Codex CLI installation requires the shared SQLite store.");
+    if (!store) throw new Error(`${label} installation requires the shared SQLite store.`);
     const node = await resolveNodeExecutable();
-    const installed = managedCodexCli();
+    const launch = (script: string, cwd: string) => provider === 'codex' ? run(node, [script, '--version'], 10_000, cwd, signal) : run(script, ['--version'], 10_000, cwd, signal);
+    const installed = provider === 'codex' ? managedCodexCli() : managedClaudeCli();
     if (installed) {
-      try { await run(node, [installed, "--version"], 10_000, root, signal); return installed; }
+      try { await launch(installed, root); return installed; }
       catch { signal.throwIfAborted(); }
     }
     const npm = [process.env["npm_execpath"], path.join(path.dirname(node), "node_modules", "npm", "bin", "npm-cli.js"),
       path.resolve(path.dirname(node), "../lib/node_modules/npm/bin/npm-cli.js")];
     const npmScript = (await Promise.all(npm.map(async candidate => candidate && await fs.stat(candidate).then(stat => stat.isFile()).catch(() => false) ? candidate : undefined))).find(Boolean);
-    if (!npmScript) throw new Error("Codex CLI was not found. Install Node.js with npm, run npm install -g @openai/codex, or set CODEX_CLI_PATH.");
-    const prefix = path.join(root, "runtime", "codex-cli");
-    const script = path.join(prefix, "node_modules", "@openai", "codex", "bin", "codex.js");
+    if (!npmScript) throw new Error(`Install Node.js with npm on this host, then retry or run npm install -g ${packageName}.`);
+    const prefix = path.join(root, 'runtime', `${provider}-cli`);
+    const packageRoot = path.join(prefix, 'node_modules', ...packageName.split('/'));
+    const script = path.join(packageRoot, 'bin', provider === 'codex' ? 'codex.js' : 'claude.exe');
     await fs.mkdir(prefix, { recursive: true });
-    store.set("runtime", "codex-cli-ready", undefined);
-    recordPersistentEvent("info", "codex-cli", "Installing the official Codex CLI");
+    store.set('runtime', `${provider}-cli-ready`, undefined);
+    recordPersistentEvent('info', `${provider}-cli`, `Installing the official ${label} runtime`);
     try {
-      await run(node, [npmScript, "install", "--prefix", prefix, "--no-audit", "--no-fund", "--ignore-scripts", "--include=optional", "--registry=https://registry.npmjs.org", "--fetch-retries=0", "--fetch-timeout=30000", "@openai/codex"], 60_000, prefix, signal);
-      await run(node, [script, "--version"], 10_000, prefix, signal);
+      await run(node, [npmScript, "install", "--prefix", prefix, "--no-audit", "--no-fund", "--ignore-scripts", "--include=optional", "--registry=https://registry.npmjs.org", "--fetch-retries=0", "--fetch-timeout=30000", packageName], 60_000, prefix, signal);
+      // The official Claude installer links its platform dependency into bin/claude.exe.
+      if (provider === 'claude') await run(node, [path.join(packageRoot, 'install.cjs')], 10_000, prefix, signal);
+      await launch(script, prefix);
       signal.throwIfAborted();
-      store.set("runtime", "codex-cli-ready", true);
-      recordPersistentEvent("info", "codex-cli", "Official Codex CLI installation completed");
+      store.set('runtime', `${provider}-cli-ready`, true);
+      recordPersistentEvent('info', `${provider}-cli`, `Official ${label} installation completed`);
       return script;
     } catch (error) {
-      recordPersistentEvent("error", "codex-cli", "Official Codex CLI installation failed", undefined, error);
-      throw new Error("Codex CLI could not be installed or verified. Check network access and free disk space, then retry; or install it with npm install -g @openai/codex and set CODEX_CLI_PATH.", { cause: error });
+      recordPersistentEvent('error', `${provider}-cli`, `Official ${label} installation failed`, undefined, error);
+      throw new Error(`${label} could not be installed or verified. Check network access and free disk space, then retry; or install it with npm install -g ${packageName}. ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-  }, { waitMs: 2_000 }).finally(() => { installations.delete(root); });
-  installations.set(root, installation);
+  }, { waitMs: 2_000 }).finally(() => { installations.delete(key); });
+  installations.set(key, installation);
   return installation;
 }

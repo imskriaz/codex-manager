@@ -17,6 +17,12 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it('defaults session modules off and honors explicit enable and disable independently', () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ codexModuleEnabled: false, claudeModuleEnabled: false });
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'claudeModuleEnabled' ? true : fallback } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ codexModuleEnabled: false, claudeModuleEnabled: true });
+  });
   it.each([false, true])('keeps boot startup separate from Always Active (%s)', alwaysActive => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
       key === 'alwaysActive' ? alwaysActive : key === 'alwaysActiveStartWithSystem' ? true : fallback } as never);

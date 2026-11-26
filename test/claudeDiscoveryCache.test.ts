@@ -7,6 +7,13 @@ vi.mock('../src/services/apiAccounts', () => ({ apiAccountEnvironment: (_provide
 
 afterEach(() => { vi.useRealTimers(); vi.resetModules(); vi.clearAllMocks(); });
 
+it('offers no Claude models and never starts the SDK when Claude is not installed', async () => {
+  native.stat.mockRejectedValue(Object.assign(new Error('Not found'), { code: 'ENOENT' }));
+  const { discoverClaudeModels } = await import('../src/services/claudeCliRuntime');
+  expect(await discoverClaudeModels()).toEqual({ models: [] });
+  expect(native.query).not.toHaveBeenCalled();
+});
+
 it.each([false, true])('does not repeat successful or failed discovery on dashboard polling (failure: %s)', async failed => {
   vi.useFakeTimers();
   native.stat.mockResolvedValue({ isFile: () => true });

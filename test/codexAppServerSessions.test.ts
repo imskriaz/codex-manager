@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile, appendFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import { isRuntimeModuleEnabled } from '../src/infrastructure/config/extensionSettings';
 import { CodexAppServerDisconnectedError } from "../src/services/codexAppServerRpc";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1241,4 +1242,14 @@ it('loads fresh models past the cached catalog, preserves custom entries, and ke
   request.mockRejectedValueOnce(new Error('Sign-in expired'));
   await expect(loadCodexModels()).rejects.toThrow('Sign-in expired');
   expect(ids).toBe('custom-model\nold-model\nnew-model');
+});
+
+
+it('keeps API model catalogues available when session modules are disabled', async () => {
+  await writeFile(path.join(root, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'api-only-model', display_name: 'API model', visibility: 'list' }] }));
+  vi.mocked(isRuntimeModuleEnabled).mockReturnValue(false);
+  try {
+    expect((await readCodexCliComposerConfig()).models).toEqual([]);
+    expect((await readCodexCliComposerConfig(undefined, false)).models.some(model => model.id === 'api-only-model')).toBe(true);
+  } finally { vi.mocked(isRuntimeModuleEnabled).mockReturnValue(true); }
 });

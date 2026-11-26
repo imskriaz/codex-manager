@@ -28,7 +28,8 @@ vi.mock("../src/storage/sqliteState", () => ({
 }));
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({
   getCodexManagerConfiguration: () => ({ get: (key: string) => key === 'standaloneCapacityRetryDelaySeconds' ? m.delay : m.config }),
-  isAutoResumeEnabled: () => m.autoResume
+  isAutoResumeEnabled: () => m.autoResume,
+  isRuntimeModuleEnabled: () => m.config
 }));
 vi.mock("../src/services/codexSessionResume", () => ({
   resolveCodexHome: () => m.home,

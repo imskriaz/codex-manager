@@ -70,7 +70,7 @@ it('continues after a real file save and lost model response without duplicating
  const continuation=JSON.parse(vi.mocked(upstream).mock.calls[3][1]!.body as string);
  expect(JSON.stringify(continuation.messages)).toContain('Do not blindly replay tools');expect(JSON.stringify(continuation.messages)).toContain('presentation.html');
 });
-it.each(['docx','xlsx','pptx','pdf'])('keeps failed %s page renders downloadable without returning extracted content',async extension=>{
+it.each(['docx','xlsx','pptx'])('keeps failed %s page renders downloadable without returning extracted content',async extension=>{
  const project=path.join(root,'project');await fs.mkdir(project);
  const actor={...user,workspacePath:root,features:['files'] as OfficeUser['features']};
  const documents=await import('../src/services/officeFiles');
@@ -79,6 +79,15 @@ it.each(['docx','xlsx','pptx','pdf'])('keeps failed %s page renders downloadable
  const result=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'readWorkspaceFile',requestId:'preview',payload:{projectPath:project,filePath:`report.${extension}`}});
  expect(result.messages[0]).toMatchObject({status:'completed',payload:{workspaceFile:{kind:'binary',content:'',previewWarning:expect.stringContaining('Download')},notice:{level:'warning'}}});
  expect(preview).toHaveBeenCalledWith(actor,expect.any(String),`report.${extension}`,'html');
+});
+it('previews the original PDF in the browser without loading document extraction or rasterizing pages',async()=>{
+ const project=path.join(root,'project');await fs.mkdir(project);
+ const actor={...user,workspacePath:root,features:['files'] as OfficeUser['features']};
+ const documents=await import('../src/services/officeFiles'),preview=vi.spyOn(documents,'readOfficeDocument');
+ const data=Buffer.from('%PDF-1.7\nOriginal complete PDF bytes');await fs.writeFile(path.join(project,'report.pdf'),data);
+ const result=await (server as any).processOfficeMessage(actor,{type:'dashboard:action',action:'readWorkspaceFile',requestId:'pdf-preview',payload:{projectPath:project,filePath:'report.pdf'}});
+ expect(result.messages[0]).toMatchObject({status:'completed',payload:{workspaceFile:{kind:'pdf',content:'',mimeType:'application/pdf',dataUrl:`data:application/pdf;base64,${data.toString('base64')}`}}});
+ expect(preview).not.toHaveBeenCalled();
 });
 it('keeps documents over the visual preview limit downloadable without loading the parser',async()=>{
  const project=path.join(root,'project');await fs.mkdir(project);const file=path.join(project,'large.pptx');await fs.writeFile(file,'');await fs.truncate(file,10*1048576+1);

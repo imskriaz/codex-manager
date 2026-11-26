@@ -16,6 +16,7 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+if (/^extension\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+\//m.test(listing)) throw new Error('VSIX contains a bundled Claude runtime. Claude sessions must use the locally installed CLI.');
 if (listing.split('\n').some(file => /(?:localDictation\.|local-whisper\.py)/.test(file))) throw new Error('VSIX contains the removed local dictation runtime. Clean stale build output and package again.');
 for (const file of ['start-node.cjs', 'standalone-config.cjs', 'standalone-supervisor.cjs', 'update-standalone.cjs', 'local-mcp.cjs', 'codex-owner-bridge.cjs', 'codex-owner-launcher.cs'])
   if (!listing.split('\n').includes(`extension/tools/${file}`)) throw new Error(`VSIX standalone launcher is missing: ${file}`);

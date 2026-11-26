@@ -1,5 +1,15 @@
 import { beforeEach, vi } from "vitest";
 
+// Existing session fixtures represent hosts with their providers enabled.
+// Module/configuration suites unmock this to exercise fresh-install defaults.
+vi.mock('../src/infrastructure/config/extensionSettings', async importActual => {
+  const actual = await importActual<typeof import('../src/infrastructure/config/extensionSettings')>();
+  const isRuntimeModuleEnabled = vi.fn((_provider: 'codex' | 'claude') => true);
+  return { ...actual, isRuntimeModuleEnabled, assertRuntimeModuleEnabled: (provider: 'codex' | 'claude') => {
+    if (!isRuntimeModuleEnabled(provider)) throw new Error(`Enable the ${provider === 'codex' ? 'Codex' : 'Claude'} module in Settings > Workspace > Session modules before starting or continuing a session.`);
+  } };
+});
+
 // Server unit tests must never create identity files in the developer's Codex home.
 beforeEach(() => vi.stubEnv("CODEX_MANAGER_ADMIN_USERNAME", "manager-test"));
 vi.mock('../src/services/localMcpServer', () => ({ LocalMcpServer: class { start = vi.fn(async () => undefined); stop = vi.fn(async () => undefined); } }));

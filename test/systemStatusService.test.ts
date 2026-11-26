@@ -10,7 +10,7 @@ const readings = vi.hoisted(() => ({
   statfs: vi.fn(),
   execute: vi.fn()
 }));
-vi.mock('../src/infrastructure/config/extensionSettings', () => ({
+vi.mock('../src/infrastructure/config/extensionSettings', () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined,
   getCodexManagerConfiguration: () => ({ get: () => readings.enabled })
 }));
 vi.mock('node:os', () => ({

@@ -81,6 +81,7 @@ Enable **Auto Switch → Auto resume sessions** to recover eligible work after a
 - VS Code 1.101 or newer for the extension, or Node.js 22.13 or newer for standalone.
 - Node.js 22.13 or newer for **Always Active** background hosting.
 - A writable `CODEX_HOME` and saved signed-in accounts. Workspace sessions use the official Codex app-server/CLI; the AI proxy uses saved accounts directly.
+- Claude sessions are optional and use Claude Code installed on the host PC. Manager does not bundle Claude Code. Without it, Claude models are unavailable; install and sign in separately to enable them. Set `CLAUDE_CLI_PATH` for a custom executable location.
 - Node.js 22.13 or newer when building and testing from source.
 - A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
@@ -242,7 +243,16 @@ Node also starts the shared queue, session recording, Auto Resume, quota refresh
 
 Use `npm start -- --background` to launch standalone without keeping a terminal window open. It confirms the background PID and URL only after startup succeeds. Use the same `--data-dir` as the extension when overriding the default storage directory. Enabling Always Active in VS Code prepares the shared password and automatic handoff. Activate the updated extension once to migrate legacy VS Code credentials before using standalone.
 
-Standalone discovers the CLI bundled with an installed Codex extension even when VS Code is closed and `codex` is absent from PATH. It also checks the desktop installation, npm installation, `CODEX_CLI_PATH`, and the **Codex CLI path** setting. If none is present, starting or continuing a session installs the official `@openai/codex` package into the shared storage directory using npm. This first installation needs internet access, npm, and free disk space; it is verified before use, and a failed installation can be retried. Background discovery does not install packages. Codex authentication is still required to run a turn.
+Standalone discovers Codex in the official extension, desktop installation, npm installation, `CODEX_CLI_PATH`, and the **Codex CLI path** setting. Claude detection checks the native installation, npm installation, `PATH`, and `CLAUDE_CLI_PATH`. Manager's VSIX does not include either provider's executable.
+
+Open **Settings > Workspace > Session modules** on the host's own dashboard to enable **Codex** or **Claude** independently. Enabling opens a setup modal that checks and verifies an existing installation. If missing, Manager downloads only that runtime into its shared data folder and verifies it before enabling the module. Fresh installs start with both modules off. Previously enabled workspaces retain verified existing providers without startup downloads. Browser setup requires the local dashboard or a signed-in master account; for another connected PC, open that PC's own dashboard.
+
+Downloads require Node.js with npm, internet access and free disk space on the host. A failed setup leaves the module off and shows its error and Retry. Sending a message does not install a missing runtime; open module setup to install or repair it. Disabling a provider prevents new turns and automatic resumes without removing installed files or conversations. Active turns retain their runtime and Stop remains available. Files and terminals work independently of the provider switches.
+
+After setup, follow the displayed sign-in command in a terminal on that host (PowerShell on Windows), then refresh the model list. Installation verifies the executable, not account access. For manual installation, follow the [official Codex CLI instructions](https://developers.openai.com/codex/cli/) or [official Claude Code setup](https://code.claude.com/docs/en/setup). Saved API-key accounts can also authenticate new turns.
+
+PDF features remain available: native sessions receive the original file for their provider's harness, browser file views use the browser PDF viewer, and User Workspace retains its document reading, page rendering and creation tools.
+
 
 The **Tools** tab opens focused maintenance panels for archives, conversations, goals, and old shell snapshots. Review the selected system and affected items before confirming deletion. Search with Enter or the Search button. Progress arrives through bounded events; reopening a running operation or reconnecting checks its current status without polling. Use Refresh status if the host cannot stream updates. A missing start reply can be checked without resending cleanup. Inspection tools report missing projects, large conversations, and native database health without changing data. **System Log** stays in Data & sync; its console contains download and clear controls, and startup and recovery diagnostics use this same toggle. Switching logging off clears saved manager history and stops saving startup logs.
 

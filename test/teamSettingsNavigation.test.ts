@@ -13,13 +13,16 @@ describe("conditional Settings sections", () => {
     expect(settingsGroup('desktop')).toBe('sessions'); expect(settingsGroup('mcp')).toBe('users'); expect(settingsGroup('modules')).toBe('modules');
   });
   it.each([
-    ["dashboard", "webDashboardEnabled"], ["sessions", "cliIntegrationEnabled"],
+    ["dashboard", "webDashboardEnabled"],
     ["sync", "encryptedSyncEnabled"], ["desktop", "codexAppRestartEnabled"],
     ["usage", "dailyTokenUsageEnabled"], ["system-log", "persistentLoggingEnabled"],
     ["connections", "webSocketServerEnabled"]
   ])("shows %s only when its module is enabled", (section, key) => {
     expect(isSettingsSectionEnabled(section, { [key]: true } as unknown as DashboardSettings, true)).toBe(true);
     expect(isSettingsSectionEnabled(section, { [key]: false } as unknown as DashboardSettings, true)).toBe(false);
+  });
+  it('keeps Workspace setup accessible when its modules are disabled', () => {
+    expect(isSettingsSectionEnabled('sessions', {cliIntegrationEnabled:false} as DashboardSettings, false)).toBe(true);
   });
   it("searches option text with all words regardless of case or order", () => {
     expect(matchesSettingsSearch("Capacity retry delay seconds", "RETRY capacity")).toBe(true);
@@ -34,7 +37,7 @@ describe("conditional Settings sections", () => {
     expect(resolveSettingsModuleKey("proxy", { webDashboardEnabled: false } as DashboardSettings)).toBe("webDashboardEnabled");
     expect(resolveSettingsModuleKey("proxy", { webDashboardEnabled: true, teamWorkspaceEnabled: false } as DashboardSettings)).toBe("teamWorkspaceEnabled");
     expect(resolveSettingsModuleKey("proxy", enabled)).toBe("apiAccessEnabled");
-    expect(resolveSettingsModuleKey("sessions", enabled)).toBe("cliIntegrationEnabled");
+    expect(resolveSettingsModuleKey("sessions", enabled)).toBeUndefined();
     expect(resolveSettingsModuleKey("general", enabled)).toBeUndefined();
   });
   it("shows the same Team sections to the local VS Code user and browser administrators", () => {

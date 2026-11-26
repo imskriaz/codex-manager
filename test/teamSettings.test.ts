@@ -10,7 +10,7 @@ const config = vi.hoisted(() => {
     })
   };
 });
-vi.mock("../src/infrastructure/config/extensionSettings", () => ({ getCodexManagerConfiguration: () => config }));
+vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, getCodexManagerConfiguration: () => config }));
 import { readTeamSettings, saveTeamSettings } from "../src/services/teamSettings";
 import { DEFAULT_USER_WORKSPACE_PROMPT } from '../src/domain/teamWorkspacePresentation';
 

@@ -1,5 +1,6 @@
 import * as proxyMapping from "../src/services/aiProxyModelMapping";
 import * as fallbackCatalog from '../src/services/codexFallbackCatalog';
+import * as runtimeSetup from '../src/services/workspaceRuntimes';
 import * as teamSettingsRequest from "../src/services/teamSettingsRequest";
 import { AlwaysOnlineServer } from '../src/services/alwaysOnlineServer';
 import * as fs from "fs/promises";
@@ -101,6 +102,22 @@ beforeEach(() => {
 });
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it.each(['browser', 'webview'] as const)('returns runtime setup and installation failures to the initiating %s', async hostKind => {
+  const setup = vi.spyOn(runtimeSetup, 'manageWorkspaceRuntime').mockResolvedValue({ provider: 'claude', available: true, enabled: true, message: 'Claude module enabled.' });
+  const ctx = { ...createContext(), hostKind, authenticatedMasterAccess: true };
+  const request = { type: 'dashboard:action', action: 'manageWorkspaceRuntime', requestId: 'runtime-setup', payload: { runtimeRequest: { provider: 'claude', operation: 'enable' } } } as const;
+  expect(await executeDashboardActionMessage(ctx, request)).toMatchObject({ status: 'completed', payload: { workspaceRuntime: { enabled: true } } });
+  expect(setup).toHaveBeenCalledWith('claude', 'enable');
+  setup.mockRejectedValue(new Error('No disk space for Claude'));
+  expect(await executeDashboardActionMessage(ctx, { ...request, requestId: 'retry-runtime' })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('No disk space for Claude') });
+});
+
+it('does not let a browser session without master access install host runtimes', async () => {
+  const setup = vi.spyOn(runtimeSetup, 'manageWorkspaceRuntime');
+  expect(await executeDashboardActionMessage({ ...createContext(), hostKind: 'browser' }, { type: 'dashboard:action', action: 'manageWorkspaceRuntime', requestId: 'unauthorized-runtime', payload: { runtimeRequest: { provider: 'codex', operation: 'enable' } } })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('master account') });
+  expect(setup).not.toHaveBeenCalled();
+});
 
 it.each(['browser', 'webview'] as const)('returns fallback edits and model test failures to the initiating %s', async hostKind => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'cliIntegrationEnabled' ? true : fallback } as never);

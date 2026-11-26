@@ -5,6 +5,10 @@ import path from "node:path";
 import { getPeerActionTimeoutMs } from "../src/services/webDashboardServer";
 
 describe("dashboard action timeouts", () => {
+  it('leaves room for runtime detection, download, linking and verification locally and remotely', () => {
+    expect(getActionTimeoutMs('manageWorkspaceRuntime')).toBe(120_000);
+    expect(getPeerActionTimeoutMs('manageWorkspaceRuntime')).toBe(120_000);
+  });
   it('leaves time for a bounded model test to report its outcome locally and remotely', () => {
     expect(getActionTimeoutMs('manageCodexModels')).toBe(35_000);
     expect(getPeerActionTimeoutMs('manageCodexModels')).toBe(35_000);

@@ -40,6 +40,8 @@ export class ExtensionSettingsStore {
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "auto",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
+      codexModuleEnabled: isRuntimeModuleEnabled('codex'),
+      claudeModuleEnabled: isRuntimeModuleEnabled('claude'),
       codexFallbackModelIds: config.get<string>('codexFallbackModelIds', DEFAULT_CODEX_FALLBACK_MODEL_IDS),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
       workspaceTextFileLimitMb: normalizeWorkspaceTextFileLimitMb(config.get<number>('workspaceTextFileLimitMb', 10)),
@@ -263,4 +265,12 @@ export function normalizeTokenHistoryRetentionDays(value: number): number {
 
 export function normalizeModelCapacityFailures(value: number): number {
   return Number.isFinite(value) ? Math.max(1, Math.min(100, Math.round(value))) : 3;
+}
+
+export function isRuntimeModuleEnabled(provider: 'codex' | 'claude'): boolean {
+  return getCodexManagerConfiguration().get<boolean>(`${provider}ModuleEnabled`, false) === true;
+}
+
+export function assertRuntimeModuleEnabled(provider: 'codex' | 'claude'): void {
+  if (!isRuntimeModuleEnabled(provider)) throw new Error(`Enable the ${provider === 'codex' ? 'Codex' : 'Claude'} module in Settings > Workspace > Session modules before starting or continuing a session.`);
 }

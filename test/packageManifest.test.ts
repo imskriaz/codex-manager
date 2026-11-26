@@ -19,9 +19,9 @@ describe("extension manifest configuration", () => {
       displayName: "Codex Manager",
       preview: false,
       publisher: "imskriaz",
-      repository: { url: "https://github.com/imskriaz/codex-manager.git" },
-      extensionDependencies: ["openai.chatgpt"]
+      repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
+    expect(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).extensionDependencies ?? []).not.toContain('openai.chatgpt');
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+(?:-pre\.\d+)?$/);
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");

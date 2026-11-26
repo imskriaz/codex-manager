@@ -129,9 +129,11 @@ import {
 } from "../workbench/windowRuntimeAccount";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
 import { homedir } from "node:os";
+import { manageWorkspaceRuntime } from '../../services/workspaceRuntimes';
 import { readApiProxyHistory, clearApiProxyHistory } from '../../services/aiProxyHistory';
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
+  'manageWorkspaceRuntime',
   "teamSettingsRequest",
   "enableSystemStartup",
   "addAccount",
@@ -1232,6 +1234,14 @@ async function runDashboardAction(
       return handleUnarchiveCodexCliSession(payload?.sessionId);
     case "deleteCodexCliSession":
       return handleDeleteCodexCliSession(payload);
+    case 'manageWorkspaceRuntime': {
+      if (ctx.hostKind === 'browser' && ctx.localMasterAccess !== true && ctx.authenticatedMasterAccess !== true) throw new Error('Runtime setup requires the local dashboard or a signed-in master account.');
+      const request = payload?.runtimeRequest;
+      if (!request || !['codex', 'claude'].includes(request.provider) || !['check', 'enable'].includes(request.operation)) throw new Error('Choose Codex or Claude and check or enable its module.');
+      const workspaceRuntime = await manageWorkspaceRuntime(request.provider, request.operation);
+      ctx.schedulePublishState();
+      return { workspaceRuntime };
+    }
     case 'manageCodexModels': {
       ensureCliIntegrationEnabled();
       const request = payload?.codexModelRequest;

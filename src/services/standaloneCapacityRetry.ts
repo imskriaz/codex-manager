@@ -3,7 +3,7 @@ import type { DashboardCodexSessionLiveState } from '../domain/dashboard/types';
 import type { AccountsRepository } from "../storage";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { getCodexHomeStateKey } from "../codex/authFile";
-import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
+import { getCodexManagerConfiguration, isAutoResumeEnabled, isRuntimeModuleEnabled } from "../infrastructure/config/extensionSettings";
 import { isCodexCapacityInterruption, isCodexPermissionInterruption } from "../domain/codexSessionState";
 import { getCodexSessionLiveState } from "./codexSessionLive";
 import { readCodexCliSessionSummary, resolveCodexHome } from "./codexSessionResume";
@@ -39,7 +39,7 @@ export function registerStandaloneCapacityRetry(
   const controller = new AbortController();
   const enabled = () => {
     const config = getCodexManagerConfiguration();
-    return config.get<boolean>("cliIntegrationEnabled", false);
+    return config.get<boolean>("cliIntegrationEnabled", false) && isRuntimeModuleEnabled('codex');
   };
   const recoverable = (message: string) => isCodexPermissionInterruption(message) ||
     isCodexCapacityInterruption(message) && getCodexManagerConfiguration().get<boolean>('modelCapacityAutoSwitchEnabled', true) && getCodexManagerConfiguration().get<boolean>('autoSwitchEnabled', true);

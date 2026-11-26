@@ -185,6 +185,7 @@ function sendDashboardSocketMessage(socket: WebSocket | UndiciWebSocket, message
 }
 
 export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
+  if (action === 'manageWorkspaceRuntime') return 120_000;
   if (action === 'manageCodexModels') return 35_000;
   if (action === "batchSetAccountAutoResetAllowed") return 30_000 * Math.max(1, accountCount);
   if (action === "refreshAll" || action === "batchRefresh") return 240_000 * Math.max(1, accountCount);
@@ -2306,6 +2307,11 @@ export class WebDashboardServer implements vscode.Disposable {
         const mimeType=/\.pdf$/i.test(p.filePath!)?'application/pdf':/\.xlsx$/i.test(p.filePath!)?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':/\.pptx$/i.test(p.filePath!)?'application/vnd.openxmlformats-officedocument.presentationml.presentation':'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
         if(stat.size>10*1048576){const previewWarning='This document exceeds the 10 MB visual preview limit. Download the original file to view it.';return reply({workspaceFile:{path:p.filePath!,content:'',kind:'binary',language:'binary',mimeType,size:stat.size,revision:'',previewWarning},notice:{level:'warning',message:previewWarning}});}
         const revision=await readWorkspaceFileRevision(p.projectPath,p.filePath!);
+        if(mimeType==='application/pdf'){
+          const data=await fs.readFile(target);
+          if(data.length>10*1048576||await readWorkspaceFileRevision(p.projectPath,p.filePath!)!==revision)throw new Error('This file changed while opening. Refresh to view its latest version.');
+          return reply({workspaceFile:{path:p.filePath!,content:'',kind:'pdf',language:'binary',mimeType,size:data.length,revision,dataUrl:`data:application/pdf;base64,${data.toString('base64')}`}});
+        }
         let content: string, previewWarning: string | undefined;
         try { content=await readOfficeDocument(user,p.projectPath!,p.filePath!,'html'); }
         catch (error) { console.warn('[codexManager] Workspace file page preview unavailable', error); content=''; previewWarning='A visual preview is unavailable. Download the original file to view it.'; }

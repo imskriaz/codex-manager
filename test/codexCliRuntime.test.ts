@@ -9,7 +9,7 @@ vi.mock("../src/utils/relayStartup", () => ({ resolveNodeExecutable: async () =>
 vi.mock("../src/utils/crossWindowOperations", () => ({ runCrossWindowExclusive: (_key: string, _label: string, task: (signal: AbortSignal) => unknown) => task(fixture.controller.signal) }));
 vi.mock("../src/storage/sqliteState", () => ({ getSqliteStateStore: () => ({ get: (_namespace: string, key: string) => fixture.values.get(key), set: (_namespace: string, key: string, value: unknown) => fixture.values.set(key, value) }) }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: vi.fn() }));
-import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli, resolveCodexNpmBinary } from "../src/services/codexCliRuntime";
+import { bundledCodexCli, discoverBundledCodexCli, installManagedCodexCli, managedCodexCli, resolveCodexNpmBinary, installManagedClaudeCli, managedClaudeCli } from "../src/services/codexCliRuntime";
 
 const roots: string[] = [];
 
@@ -89,4 +89,24 @@ it("keeps the installation unready after losing ownership", async () => {
   });
   await expect(installManagedCodexCli()).rejects.toThrow("could not be installed or verified");
   expect(managedCodexCli()).toBeUndefined();
+});
+
+it('downloads Claude separately, links its native executable and verifies before reuse', async () => {
+  const { root, npm } = await installFixture();
+  fixture.exec.mockImplementation((_node, _args, _options, callback) => queueMicrotask(() => callback(null)));
+  const [one, two] = await Promise.all([installManagedClaudeCli(), installManagedClaudeCli()]);
+  expect(one).toBe(two); expect(managedClaudeCli()).toBe(one); expect(managedCodexCli()).toBeUndefined();
+  expect(fixture.exec).toHaveBeenCalledTimes(3);
+  expect(fixture.exec.mock.calls[0][1]).toEqual(expect.arrayContaining([npm, 'install', '--ignore-scripts', '--include=optional', '@anthropic-ai/claude-code']));
+  expect(fixture.exec.mock.calls[0][2]).toMatchObject({ cwd: path.join(root, 'runtime', 'claude-cli'), timeout: 60_000 });
+  expect(fixture.exec.mock.calls[1][1][0]).toBe(path.join(path.dirname(path.dirname(one)), 'install.cjs'));
+  expect(fixture.exec.mock.calls[2].slice(0, 2)).toEqual([one, ['--version']]);
+  await installManagedClaudeCli(); expect(fixture.exec).toHaveBeenCalledTimes(4);
+});
+
+it.each(['install.cjs', '--version'])('keeps Claude unavailable when %s fails and preserves the failure', async failed => {
+  await installFixture();
+  fixture.exec.mockImplementation((_node, args, _options, callback) => queueMicrotask(() => callback(args.some((arg: string) => arg.endsWith(failed)) ? new Error('native runtime missing') : null)));
+  await expect(installManagedClaudeCli()).rejects.toThrow('native runtime missing');
+  expect(managedClaudeCli()).toBeUndefined();
 });

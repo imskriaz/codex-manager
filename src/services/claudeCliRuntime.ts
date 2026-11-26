@@ -8,6 +8,8 @@ import { createClaudeModelOptions } from '../domain/dashboard/claudeModels';
 import type { DashboardCliModelOption } from '../domain/dashboard/types';
 import { waitWithin } from '../utils/concurrency';
 import { apiAccountEnvironment, apiAccountIdentity } from './apiAccounts';
+import { managedClaudeCli } from './codexCliRuntime';
+import { isRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 
 // The supported Node 22.13+ host can load the native SDK's synchronous ESM graph.
 const nativeRequire = createRequire(__filename);
@@ -27,13 +29,13 @@ export function getClaudeCliPathCandidates(platform = process.platform, env = pr
   const candidates = [env['CLAUDE_CLI_PATH'], p.join(os.homedir(), '.local', 'bin', platform === 'win32' ? 'claude.exe' : 'claude')];
   for (const root of roots) {
     // Resolve npm shims to the native executable; never invoke a shell with user prompts.
-    candidates.push(p.join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', platform === 'win32' ? 'claude.exe' : 'claude'), p.join(root, platform === 'win32' ? 'claude.exe' : 'claude'));
+    candidates.push(p.join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'), p.join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'), p.join(root, platform === 'win32' ? 'claude.exe' : 'claude'));
   }
   return [...new Set(candidates.filter((candidate): candidate is string => !!candidate))];
 }
 
 export async function resolveClaudeCliExecutable(): Promise<string | undefined> {
-  for (const candidate of getClaudeCliPathCandidates()) {
+  for (const candidate of [...getClaudeCliPathCandidates(), managedClaudeCli()].filter((value): value is string => !!value)) {
     if (/\.(?:cmd|bat|ps1)$/i.test(candidate)) continue;
     if (await fs.stat(candidate).then(stat => stat.isFile()).catch(() => false)) return candidate;
   }
@@ -47,7 +49,7 @@ export function claudeEnvironment(): NodeJS.ProcessEnv {
 }
 
 type ClaudeConnection = { models: DashboardCliModelOption[]; warning?: string; account?: Pick<SDK.AccountInfo, 'email' | 'organization' | 'subscriptionType' | 'apiProvider'> };
-const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], apiAccountIdentity('anthropic')]);
+const connectionKey = () => JSON.stringify([claudeConfigHome(), process.env['CLAUDE_CLI_PATH'], process.env['PATH'], managedClaudeCli(), isRuntimeModuleEnabled('claude'), apiAccountIdentity('anthropic')]);
 let cached: ClaudeConnection & { key: string } | undefined;
 let discovery: { key: string; pending: Promise<ClaudeConnection> } | undefined;
 export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage>): Promise<void> {
@@ -62,6 +64,7 @@ export async function verifyClaudeHaiku(connection: AsyncIterable<SDK.SDKMessage
 }
 export function cachedClaudeConnection(): ClaudeConnection | undefined { return cached?.key === connectionKey() ? cached : undefined; }
 export async function discoverClaudeModels(refresh = false): Promise<ClaudeConnection> {
+  if (!isRuntimeModuleEnabled('claude')) return { models: [] };
   const key = connectionKey();
   if (refresh) cached = undefined;
   if (cached?.key === key) return cached;

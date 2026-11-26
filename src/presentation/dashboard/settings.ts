@@ -25,6 +25,8 @@ import { normalizeQuotaColorThresholds } from "../../utils";
 import { setPersistentLogLevel, setPersistentLoggingEnabled, setPersistentLogRetentionDays } from "../../utils/persistentLog";
 import { removeRelayStartup } from '../../utils/relayStartup';
 import { runCrossWindowExclusive } from '../../utils/crossWindowOperations';
+import { getSqliteStateStore } from '../../storage/sqliteState';
+import { randomUUID } from 'node:crypto';
 
 export type DashboardConfigurationKey = DashboardSettingKey | "codexAppPath" | "codexCliPath";
 
@@ -37,6 +39,13 @@ export async function handleDashboardSettingUpdate(
   let updated = false;
 
   switch (key) {
+    case 'codexModuleEnabled':
+    case 'claudeModuleEnabled':
+      if (value === true) throw new Error('Open the module setup modal to verify or install the runtime before enabling it.');
+      if (value !== false) return false;
+      getSqliteStateStore()?.set('runtime', `${key.startsWith('codex') ? 'codex' : 'claude'}-module-intent`, randomUUID());
+      await updateDashboardConfiguration(config, key, false, vscode.ConfigurationTarget.Global);
+      return config.get<boolean>(key, true) === false;
     case "alwaysActive":
       if (typeof value !== "boolean") return false;
       await updateDashboardConfiguration(config, key, value, vscode.ConfigurationTarget.Global);
@@ -323,6 +332,8 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
+    key === "codexModuleEnabled" ||
+    key === "claudeModuleEnabled" ||
     key === "modelCapacityAutoSwitchEnabled" ||
     key === "modelCapacityFailureCount" ||
     key === "standaloneCapacityRetryDelaySeconds" ||

@@ -5,12 +5,14 @@ import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { clearCodexSessionManualStop, readCodexSessionPreferences } from "./codexSessionPreferences";
+import { assertRuntimeModuleEnabled } from '../infrastructure/config/extensionSettings';
 
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
 const manualRecovery = new WeakMap<Promise<"running" | "continued" | "goal" | "idle">, () => boolean>();
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
 export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic", connection: "native" | "private" = vscode.env.appHost === "node" ? "private" : "native"): Promise<"running" | "continued" | "goal" | "idle"> {
+  try { assertRuntimeModuleEnabled('codex'); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error(String(error))); }
   const home = resolveCodexHome();
   const key = `${home}:${sessionId}`;
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };

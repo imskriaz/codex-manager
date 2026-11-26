@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
-import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
+import { isAutoResumeEnabled, isRuntimeModuleEnabled } from "../infrastructure/config/extensionSettings";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, observeRunningCodexSession, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
@@ -36,6 +36,7 @@ const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
 
 function filterSessionAutoResumeIds(home: string, ids: readonly string[]): string[] {
+  if (!isRuntimeModuleEnabled('codex')) return [];
   const preferences = readCodexSessionPreferences(home, ids);
   const enabled = isAutoResumeEnabled();
   return ids.filter(id => {
@@ -589,6 +590,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
       if (timer) clearTimeout(timer);
       timer = undefined;
       dirty = false;
+      if (!isRuntimeModuleEnabled('codex')) return;
       void serialize(context, "track", () => clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2)).catch((error) =>
         console.warn("[codexManager] disabled Auto Resume recovery could not be cleared", error)
       );
@@ -596,6 +598,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   };
   const configuration = onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration("codexManager.autoResumeEnabled") ||
+        event.affectsConfiguration("codexManager.codexModuleEnabled") ||
         event.affectsConfiguration("codexManager.autoSwitchEnabled")) refreshSubscription();
   });
   const inspections = onDidInspectRunningCodexSessions(home => {
@@ -851,7 +854,7 @@ export function resumePersistedCodexSessions(
 }
 
 export function isAutoResumeAvailable(): boolean {
-  return isAutoResumeEnabled() || hasCodexSessionAutoResumeOptIn(resolveCodexHome());
+  return isRuntimeModuleEnabled('codex') && (isAutoResumeEnabled() || hasCodexSessionAutoResumeOptIn(resolveCodexHome()));
 }
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {

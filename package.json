@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.2",
+  "version": "3.0.1-pre.3",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -22,9 +22,6 @@
     "onStartupFinished",
     "onWebviewPanel:codexQuotaSummary",
     "onCommand:codexManager.showQuotaSummary"
-  ],
-  "extensionDependencies": [
-    "openai.chatgpt"
   ],
   "main": "./out/extension.js",
   "bin": {
@@ -94,7 +91,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 10,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`â€“`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -132,6 +129,18 @@
           "multipleOf": 1,
           "default": 30,
           "markdownDescription": "Legacy setting retained for compatibility. New quota history is not recorded."
+        },
+        "codexManager.codexModuleEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Enable the optional Codex session module. Use Settings > Workspace > Session modules > Codex to verify an existing runtime or download it separately before enabling."
+        },
+        "codexManager.claudeModuleEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Enable the optional Claude session module. Use Settings > Workspace > Session modules > Claude to verify an existing runtime or download it separately before enabling."
         },
         "codexManager.cliIntegrationEnabled": {
           "type": "boolean",

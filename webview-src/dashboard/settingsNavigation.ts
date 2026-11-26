@@ -1,7 +1,7 @@
 import type { DashboardSettings } from "../../src/domain/dashboard/types";
 
 export const SETTINGS_MODULE_KEYS: Record<string, keyof DashboardSettings> = {
-  dashboard: "webDashboardEnabled", sessions: "cliIntegrationEnabled", connections: "webSocketServerEnabled",
+  dashboard: "webDashboardEnabled", connections: "webSocketServerEnabled",
   sync: "encryptedSyncEnabled", desktop: "codexAppRestartEnabled", usage: "dailyTokenUsageEnabled",
   "system-log": "persistentLoggingEnabled", users: "teamWorkspaceEnabled", workspace: "teamWorkspaceEnabled",
   mcp: "teamWorkspaceEnabled", database: "teamWorkspaceEnabled", logs: "teamWorkspaceEnabled", proxy: "apiAccessEnabled"

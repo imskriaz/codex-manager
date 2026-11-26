@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ subscribe: mocks.subscribe }) }));
 vi.mock('../src/services/sessionRecording', () => ({ readRecordedSessionAccount: vi.fn() }));
-vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isAutoResumeEnabled: mocks.enabled }));
+vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined, isAutoResumeEnabled: mocks.enabled }));
 vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: mocks.home }));
 vi.mock("../src/services/codexSessionAutoResume", () => ({
   isAutoResumeAvailable: mocks.enabled,

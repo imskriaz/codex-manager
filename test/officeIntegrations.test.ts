@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {fetch} from 'undici';
 const configuration=vi.hoisted(()=>new Map<string,unknown>());
-vi.mock('../src/infrastructure/config/extensionSettings',()=>({getCodexManagerConfiguration:()=>({get:(key:string,fallback:unknown)=>configuration.get(key)??fallback})}));
+vi.mock('../src/infrastructure/config/extensionSettings',()=>({ isRuntimeModuleEnabled: () => true, assertRuntimeModuleEnabled: () => undefined,getCodexManagerConfiguration:()=>({get:(key:string,fallback:unknown)=>configuration.get(key)??fallback})}));
 vi.mock('undici',async original=>({...await original<typeof import('undici')>(),fetch:vi.fn()}));
 import {DEFAULT_OFFICE_INTEGRATIONS,validateOfficeIntegrations,publicOfficeIntegrations,checkOfficeIntegrations,readOfficeIntegrations} from '../src/services/officeIntegrations';
 import {searchOfficeWeb,readOfficeWebPage} from '../src/services/officeSources';
