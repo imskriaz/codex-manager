@@ -72,6 +72,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.claudeModuleEnabled ? "1" : "0",
     state.settings.apiAccessEnabled === true ? "1" : "0",
     state.settings.workspaceTextFileLimitMb ?? 10,
+    state.settings.workspaceFileLimitMb ?? 100,
     state.settings.standaloneCapacityRetryDelaySeconds ?? 5,
     state.settings.codexCliPath ?? "",
     state.settings.codexAppPath,

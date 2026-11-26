@@ -1,7 +1,7 @@
 import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../../src/domain/localFolder';
 import type { DashboardCliProject, DashboardNotice } from '../../src/domain/dashboard/types';
 import { request } from './teamSettingsRequest';
-import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,MAX_WORKSPACE_FILE_BYTES} from '../../src/domain/workspaceFileLimits';
+import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,MAX_WORKSPACE_FILE_BYTES,workspaceFileLimitBytes} from '../../src/domain/workspaceFileLimits';
 
 export type LocalDirectory = FileSystemDirectoryHandle & {
   values(): AsyncIterableIterator<FileSystemDirectoryHandle | FileSystemFileHandle>;
@@ -15,7 +15,8 @@ const newProjects = new WeakMap<LocalDirectory, { owner: string; id: string }>()
 let owner: string | undefined;
 let clientOwner: string | undefined, tabClient: string | undefined;
 let feedback: (notice: DashboardNotice) => void = () => {};
-const limit = MAX_WORKSPACE_FILE_BYTES;
+let limit = MAX_WORKSPACE_FILE_BYTES;
+export function setWorkspaceFileLimitMb(value: number | undefined): void { limit = workspaceFileLimitBytes(value); }
 const readSnapshots=new WeakMap<LocalDirectory,Map<string,{file:File;revision:string;at:number}>>();
 export const localFolderConnectedEvent = 'codex-manager:local-folder-connected';
 

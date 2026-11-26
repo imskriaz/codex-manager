@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
+import {DEFAULT_LOCAL_FILE_CHUNK_BYTES,LOCAL_FILE_CHUNK_BYTES,normalizeWorkspaceFileLimitMb,workspaceFileLimitBytes} from '../domain/workspaceFileLimits';
 import type { DashboardCliProject } from '../domain/dashboard/types';
 import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../domain/localFolder';
 import { createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, validateProjectName } from './workspaceProjects';
 import { getSqliteStateStore } from '../storage/sqliteState';
+import { getCodexManagerConfiguration } from '../infrastructure/config/extensionSettings';
 import type { OfficeUser } from './officeUsers';
 
 export async function createOfficeLocalProject(user: OfficeUser, client: string, name: unknown, folderName: unknown): Promise<DashboardCliProject> {
@@ -33,6 +34,7 @@ export function officeLocalProject(owner: string, project: string): DashboardCli
 export class OfficeLocalFolderConnections {
   private connections = new Map<string, Connection>();
   private key(owner: string, project: string) { return JSON.stringify([owner, project]); }
+  private limit() { const mb=normalizeWorkspaceFileLimitMb(getCodexManagerConfiguration().get<number>('workspaceFileLimitMb',100)); return {mb,bytes:workspaceFileLimitBytes(mb)}; }
   private active(connection:Connection){return Date.now()-connection.seen<30000||[...connection.pending.values()].some(pending=>pending.delivered&&(pending.command.expiresAt??0)>Date.now());}
   connect(owner: string, project: string, client: string): void {
     if (!/^[a-f0-9-]{36}$/i.test(client)) throw new Error('Choose the folder again to connect.');
@@ -96,9 +98,10 @@ export class OfficeLocalFolderConnections {
           if (result.entries !== undefined && (!Array.isArray(result.entries) || result.entries.length > 2000)) throw new Error('Invalid inspection.');
           for (const entry of result.entries ?? []) { localFolderPath(entry.path); if (!['file','folder'].includes(entry.kind)) throw new Error('Invalid entry.'); }
         } else {
-          if (typeof result.revision !== 'string' || !/^[a-f0-9]{64}$/.test(result.revision) || !Number.isSafeInteger(result.size) || result.size! < 0 || result.size! > MAX_WORKSPACE_FILE_BYTES) throw new Error('Invalid file.');
+          const limit=this.limit();
+          if (typeof result.revision !== 'string' || !/^[a-f0-9]{64}$/.test(result.revision) || !Number.isSafeInteger(result.size) || result.size! < 0 || result.size! > limit.bytes) throw new Error('Invalid file.');
           const size = pending.command.offset === undefined ? result.size : Math.min(pending.command.length??DEFAULT_LOCAL_FILE_CHUNK_BYTES, result.size! - pending.command.offset);
-          if (pending.command.operation === 'read' && (typeof result.data !== 'string' || result.data.length > Math.ceil(MAX_WORKSPACE_FILE_BYTES/3)*4 || result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) || Buffer.byteLength(result.data, 'base64') !== size)) throw new Error('Invalid content.');
+          if (pending.command.operation === 'read' && (typeof result.data !== 'string' || result.data.length > Math.ceil(limit.bytes/3)*4 || result.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(result.data) || Buffer.byteLength(result.data, 'base64') !== size)) throw new Error('Invalid content.');
         }
         pending.resolve(pending.command.operation === 'list' ? {files:result.files,warning:result.warning} : ['read','write'].includes(pending.command.operation) ? {data:result.data,revision:result.revision,size:result.size} : {message:result.message,revision:result.revision,kind:result.kind,entries:result.entries});
       } catch { pending.reject(new Error('The local folder returned an invalid result. Inspect the folder before retrying.')); }
@@ -110,7 +113,8 @@ export class OfficeLocalFolderConnections {
     assertLocalFolderPermission(permission, input.operation);
     if (input.operation !== 'list') localFolderPath(input.path);
     if (input.destination !== undefined) localFolderPath(input.destination);
-    if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0 || input.offset>MAX_WORKSPACE_FILE_BYTES)) throw new Error('Choose a valid download offset.');
+    const limit=this.limit();
+    if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0 || input.offset>limit.bytes)) throw new Error('Choose a valid download offset.');
     if (input.length!==undefined&&(!Number.isSafeInteger(input.length)||input.length<1||input.length>LOCAL_FILE_CHUNK_BYTES||input.offset===undefined||input.operation!=='read'))throw new Error('Choose a valid file chunk size.');
     const connection = this.connection(owner, project);
     if ([...connection.pending.values()].some(pending => pending.timedOut) && !['list','read','inspect'].includes(input.operation)) throw new Error('A previous folder action has not confirmed completion. Inspect the folder and wait for its result before changing files.');

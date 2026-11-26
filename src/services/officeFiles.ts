@@ -10,7 +10,10 @@ import {preserveOfficeFile} from './officeFileHistory';
 import {officeSessionFolder} from './officeWorkspaceCleanup';
 import {getSqliteStateStore} from '../storage/sqliteState';
 import {officeLocalFolders,officeLocalProject} from './officeLocalFolders';
-import {MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
+import {workspaceFileLimitBytes,normalizeWorkspaceFileLimitMb} from '../domain/workspaceFileLimits';
+import {getCodexManagerConfiguration} from '../infrastructure/config/extensionSettings';
+
+const workspaceLimit=()=>{const mb=normalizeWorkspaceFileLimitMb(getCodexManagerConfiguration().get<number>('workspaceFileLimitMb',100));return {mb,bytes:workspaceFileLimitBytes(mb)};};
 
 /** Read small saved slide batches; generation never evaluates user-provided code. */
 export async function readOfficeSlideParts(user:OfficeUser,project:string,files:unknown):Promise<unknown[]> {
@@ -35,12 +38,12 @@ export async function readOfficeSlideParts(user:OfficeUser,project:string,files:
 export async function writeOfficeBinary(user:OfficeUser,project:string,file:string,data:Buffer,revision?:string){
  if(!user.enabled||user.role!=='user'||!user.features.includes('files'))throw new Error('File access is unavailable.');
  if(officeLocalProject(user.id,project)){
-  if(data.length>MAX_WORKSPACE_FILE_BYTES)throw new Error('Keep connected-folder files at or below 100 MB.');
+  const limit=workspaceLimit();if(data.length>limit.bytes)throw new Error(`Keep connected-folder files at or below ${limit.mb} MB.`);
   const value=await officeLocalFolders.request(user.id,project,{operation:'write',path:file,data:data.toString('base64'),revision});
   if(typeof value.revision!=='string'||typeof value.size!=='number')throw new Error('Saving to the local folder was not confirmed. Inspect the file before retrying.');
   return {path:file,revision:value.revision,size:value.size,message:'Saved to your local folder.'};
  }
- if(data.length>MAX_WORKSPACE_FILE_BYTES)throw new Error('Keep each file at or below 100 MB.');const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file,true);
+ const limit=workspaceLimit();if(data.length>limit.bytes)throw new Error(`Keep each file at or below ${limit.mb} MB.`);const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file,true);
  if(target===root)throw new Error('Choose a file inside your workspace.');
  let previous:Buffer|undefined;try{previous=await fs.readFile(target);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
  const hash=(buffer:Buffer)=>createHash('sha256').update(buffer).digest('base64url');
@@ -83,7 +86,7 @@ export async function readOfficeDocumentSnapshot(user:OfficeUser,project:string,
   const data=value.data;
   return {content:await extractOfficeDocument(file,data,format,range),revision:value.revision!,size:data.length};
  }
- const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);if(stat.size>MAX_WORKSPACE_FILE_BYTES)throw new Error('Keep each Office document at or below 100 MB.');const data=await fs.readFile(target);
+ const root=await fs.realpath(user.workspacePath),target=await resolveOfficePath(root,project,file);const stat=await fs.stat(target);const limit=workspaceLimit();if(stat.size>limit.bytes)throw new Error(`Keep each Office document at or below ${limit.mb} MB.`);const data=await fs.readFile(target);
  const content=format==='html'&&/\.(docx|pptx|xlsx)$/i.test(file)?await (await import('./officeRendering')).renderOfficePreview(file,data,new AbortController().signal):await extractOfficeDocument(file,data,format,range);
  return {content,revision:createHash('sha256').update(data).digest('base64url'),size:data.length};
 }

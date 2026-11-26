@@ -442,7 +442,18 @@ export function SettingsOverlay(props: {
                       onDisable={() => props.onSendSetting('alwaysActiveStartWithSystem', false)}
                       onEnabled={() => props.onPatchSettings({ alwaysActiveStartWithSystem: true })}
                     /></div></div><div class="settings-tab-panel" id="settings-panel-sessions" role="tabpanel" aria-labelledby="settings-tab-sessions" hidden={panelHidden("sessions")} ><SettingsPanelIntro tab={allTabs.find(tab => tab.id === "sessions")!} /><div class="settings-layout"><WorkspaceRuntimeSettings settings={props.settings} connected={props.connected !== false && props.targetConnected !== false} parentOpen={props.open} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} onEnabled={provider => props.onPatchSettings({[`${provider}ModuleEnabled`]: true, cliIntegrationEnabled: true})} onDisable={provider => patchAndSend(`${provider}ModuleEnabled`, false)} /><CodexModelsSetting onSaved={ids => props.onPatchSettings({codexFallbackModelIds: ids})} saved={props.settings.codexFallbackModelIds} connected={props.connected !== false && props.targetConnected !== false} targetDeviceId={props.targetDeviceId} sendAction={props.sendAction} /><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Workspace editor</div></div><div class="settings-block-head">
-                        <div class="settings-block-title">Text file limit</div>
+                        <div class="settings-block-title">Workspace file limit</div>
+                        <div class="settings-block-sub">Maximum size for connected-folder files, saved workspace files, and Office documents.</div>
+                      </div><SettingsDiscreteSlider
+                        value={props.settings.workspaceFileLimitMb ?? 100}
+                        values={Array.from({ length: 1024 }, (_, index) => index + 1)}
+                        accent="sky"
+                        scaleValues={[1, 100, 512, 1024]}
+                        valueLabel={value => `${value} MB`}
+                        description={value => `Allow workspace files up to ${value} MB.`}
+                        onPreview={value => props.onPatchSettings({ workspaceFileLimitMb: value })}
+                        onCommit={value => patchAndSend('workspaceFileLimitMb', value)}
+                      /></div><div class="settings-block settings-block-wide"><div class="settings-block-head"><div class="settings-block-title">Text file limit</div>
                         <div class="settings-block-sub">Maximum size for opening and saving text files in the workspace editor.</div>
                       </div><SettingsDiscreteSlider
                         value={props.settings.workspaceTextFileLimitMb ?? 10}

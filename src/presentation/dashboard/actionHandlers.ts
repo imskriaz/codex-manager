@@ -1758,6 +1758,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "dailyTokenUsageEnabled",
     "dailyTokenUsageIntervalMinutes",
     "workspaceTextFileLimitMb",
+    "workspaceFileLimitMb",
     "standaloneCapacityRetryDelaySeconds",
     "autoSwitchEnabled",
     "modelCapacityAutoSwitchEnabled",

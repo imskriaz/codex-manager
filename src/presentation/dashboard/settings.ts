@@ -8,6 +8,7 @@ import {
   normalizeAutoRefreshMinutes,
   normalizeDailyTokenUsageIntervalMinutes,
   normalizeWorkspaceTextFileLimitMb,
+  normalizeWorkspaceFileLimitMb,
   normalizeStandaloneCapacityRetryDelaySeconds,
   normalizeCurrentAutoRefreshMinutes,
   normalizeAutoSwitchLockMinutes,
@@ -239,6 +240,12 @@ export async function handleDashboardSettingUpdate(
     case "workspaceTextFileLimitMb":
       if (typeof value === 'number' && Number.isFinite(value)) {
         await updateDashboardConfiguration(config, key, normalizeWorkspaceTextFileLimitMb(value), target);
+        updated = true;
+      }
+      break;
+    case "workspaceFileLimitMb":
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        await updateDashboardConfiguration(config, key, normalizeWorkspaceFileLimitMb(value), target);
         updated = true;
       }
       break;

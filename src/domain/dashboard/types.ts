@@ -20,6 +20,7 @@ export type DashboardSettingKey =
   | "codexModuleEnabled"
   | "claudeModuleEnabled"
   | "apiAccessEnabled"
+  | "workspaceFileLimitMb"
   | "workspaceTextFileLimitMb"
   | "standaloneCapacityRetryDelaySeconds"
   | "autoRefreshMinutes"
@@ -78,6 +79,7 @@ export interface DashboardSettings {
   codexModuleEnabled?: boolean;
   claudeModuleEnabled?: boolean;
   apiAccessEnabled?: boolean;
+  workspaceFileLimitMb?: number;
   workspaceTextFileLimitMb?: number;
   standaloneCapacityRetryDelaySeconds?: number;
   /** Default dashboard session surface. */

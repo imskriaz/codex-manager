@@ -3,11 +3,13 @@ import * as path from 'node:path';
 import {fork} from 'node:child_process';
 import type {PDFFont} from 'pdf-lib';
 import * as fs from 'node:fs/promises';
-import {MAX_WORKSPACE_FILE_BYTES} from '../domain/workspaceFileLimits';
+import {workspaceFileLimitBytes,normalizeWorkspaceFileLimitMb} from '../domain/workspaceFileLimits';
+import {getCodexManagerConfiguration} from '../infrastructure/config/extensionSettings';
 
 export async function extractOfficeDocument(name:string,data:Buffer,format:'text'|'html'|'images'|'validate'='text',range?:import('./officeWorkbook').WorkbookReadRange):Promise<string>{
  const extension=path.extname(name).slice(1).toLowerCase();if(!['xlsx','docx','pptx','pdf'].includes(extension))throw new Error('Use an XLSX, DOCX, PPTX or PDF document.');
- if(data.length>MAX_WORKSPACE_FILE_BYTES)throw new Error('Keep each Office document at or below 100 MB.');
+ const limitMb=normalizeWorkspaceFileLimitMb(getCodexManagerConfiguration().get<number>('workspaceFileLimitMb',100)),limit=workspaceFileLimitBytes(limitMb);
+ if(data.length>limit)throw new Error(`Keep each Office document at or below ${limitMb} MB.`);
  if(data.length<8)throw new Error('The document is empty or incomplete.');
  if(extension==='pdf'&&!data.subarray(0,8).toString().startsWith('%PDF-')||extension!=='pdf'&&data.readUInt32LE(0)!==0x04034b50)throw new Error('The document contents do not match its format.');
  return new Promise((resolve,reject)=>{

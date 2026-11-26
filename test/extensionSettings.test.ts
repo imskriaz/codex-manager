@@ -5,6 +5,7 @@ import {
   ExtensionSettingsStore,
   normalizeDailyTokenUsageIntervalMinutes,
   normalizeWorkspaceTextFileLimitMb,
+  normalizeWorkspaceFileLimitMb,
   normalizeStandaloneCapacityRetryDelaySeconds,
   getQuotaWarningThresholds,
   isHourlyQuotaControlEnabled,
@@ -30,10 +31,12 @@ describe("5-hour quota control defaults", () => {
   });
   it('shares the larger bounded workspace file limit with the dashboard', () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings().workspaceFileLimitMb).toBe(100);
     expect(new ExtensionSettingsStore().getDashboardSettings().workspaceTextFileLimitMb).toBe(10);
     expect(new ExtensionSettingsStore().getDashboardSettings().standaloneCapacityRetryDelaySeconds).toBe(5);
     expect([NaN, Infinity, 0, 1, 2.5, 60, 100].map(normalizeStandaloneCapacityRetryDelaySeconds)).toEqual([5, 5, 1, 1, 3, 60, 60]);
     expect([NaN, Infinity, 0, 1, 2.5, 16, 100].map(normalizeWorkspaceTextFileLimitMb)).toEqual([10, 10, 1, 1, 3, 16, 16]);
+    expect([NaN, Infinity, 0, 1, 2.5, 100, 2048].map(normalizeWorkspaceFileLimitMb)).toEqual([100, 100, 1, 1, 3, 100, 1024]);
   });
   it("matches the shipped portable defaults in fresh dashboard settings and keeps explicit Off", () => {
     const manifest = require("../package.json").contributes.configuration.properties;
@@ -45,7 +48,7 @@ describe("5-hour quota control defaults", () => {
       autoResumeEnabled: true, autoSwitchRefreshAllBeforeSwitchEnabled: true,
       autoResetEnabled: true, quotaWarningEnabled: true, webDashboardEnabled: false,
       encryptedSyncEnabled: false, webSocketServerEnabled: false, dailyTokenUsageEnabled: false, teamWorkspaceEnabled: false,
-      encryptedSyncVsCodeHeartbeatMinutes: 10
+      encryptedSyncVsCodeHeartbeatMinutes: 10, workspaceFileLimitMb: 100
     };
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject(expected);

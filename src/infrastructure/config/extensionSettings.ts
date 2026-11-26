@@ -11,6 +11,8 @@ import { normalizeQuotaColorThresholds } from "../../utils";
 import { getAutoQueueQuotaFreshnessMs, normalizeAutoQueueThreshold } from "../../domain/autoQueuePolicy";
 import { getPersistentLogLevel, getPersistentLogRetentionDays, isPersistentLoggingEnabled } from "../../utils/persistentLog";
 import { sqliteConfiguration } from "../../storage/sqliteContext";
+import { normalizeWorkspaceFileLimitMb } from "../../domain/workspaceFileLimits";
+export { normalizeWorkspaceFileLimitMb } from "../../domain/workspaceFileLimits";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
 
@@ -44,6 +46,7 @@ export class ExtensionSettingsStore {
       claudeModuleEnabled: isRuntimeModuleEnabled('claude'),
       codexFallbackModelIds: config.get<string>('codexFallbackModelIds', DEFAULT_CODEX_FALLBACK_MODEL_IDS),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
+      workspaceFileLimitMb: normalizeWorkspaceFileLimitMb(config.get<number>('workspaceFileLimitMb', 100)),
       workspaceTextFileLimitMb: normalizeWorkspaceTextFileLimitMb(config.get<number>('workspaceTextFileLimitMb', 10)),
       standaloneCapacityRetryDelaySeconds: normalizeStandaloneCapacityRetryDelaySeconds(config.get<number>('standaloneCapacityRetryDelaySeconds', 5)),
       codexSessionTransport: readCodexSessionTransport(config),

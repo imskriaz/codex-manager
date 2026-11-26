@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.12",
+  "version": "3.0.1-pre.13",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -167,6 +167,15 @@
           "multipleOf": 1,
           "default": 10,
           "markdownDescription": "Maximum text file size in MB for the workspace editor, used for opening and saving files."
+        },
+        "codexManager.workspaceFileLimitMb": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1024,
+          "multipleOf": 1,
+          "default": 100,
+          "scope": "machine",
+          "markdownDescription": "Maximum size in MB for connected-folder files, saved workspace files, and Office documents. Chat uploads remain capped at 100 MB per message."
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",

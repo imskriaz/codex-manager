@@ -1,7 +1,7 @@
 import {officeQuestionPreviews} from './officeVisualReview';
 import { getLocalFolderPermission, setLocalFolderPermission, createOfficeLocalProject, officeLocalFolders, officeLocalProject } from './officeLocalFolders';
 import type { LocalFolderResult } from '../domain/localFolder';
-import {MAX_LOCAL_FILE_WIRE_BYTES} from '../domain/workspaceFileLimits';
+import {maxLocalFileWireBytes} from '../domain/workspaceFileLimits';
 import {saveOfficeRecommendations} from './officeRecommendations';
 import {readOfficeWebPage,searchOfficeWeb,listOfficeConnections,readOfficeConnection} from './officeSources';
 import {readOfficeIntegrations,checkOfficeIntegrations} from './officeIntegrations';
@@ -1378,7 +1378,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (path === '/api/workspace/local-folder') {
       if (method !== 'POST' || officeUser?.role !== 'user' || !officeUser.features.includes('files')) { response.statusCode = 403; this.sendJson(response, { error: 'Local folders are available only in User Workspace with file access enabled.' }); return; }
       try {
-        const body = JSON.parse(await readDashboardRequestBody(request, MAX_LOCAL_FILE_WIRE_BYTES)) as Record<string, unknown>;
+        const body = JSON.parse(await readDashboardRequestBody(request, maxLocalFileWireBytes(this.settingsStore.getDashboardSettings().workspaceFileLimitMb))) as Record<string, unknown>;
         const client = typeof body['client'] === 'string' ? body['client'] : '';
         if (!/^[a-f0-9-]{36}$/i.test(client)) throw new Error('Choose the folder again to connect.');
         if (body['operation'] === 'connect') {
@@ -2602,6 +2602,7 @@ export class WebDashboardServer implements vscode.Disposable {
     settings.cliIntegrationEnabled=true;
     settings.teamWorkspaceEnabled=true;
     settings.workspaceTextFileLimitMb=state.settings.workspaceTextFileLimitMb;
+    settings.workspaceFileLimitMb=state.settings.workspaceFileLimitMb;
     return {
       lang:state.lang,copy:state.copy,logoUri:"",panelTitle:readTeamSettings().presentation.assistantName,brandSub:"",onboardingCompleted:true,
       office: { ...this.officeView(office), availability: quotaAvailability(state.accounts) },

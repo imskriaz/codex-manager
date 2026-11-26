@@ -30,6 +30,15 @@ describe("handleDashboardSettingUpdate", () => {
     }
     for (const value of [NaN, Infinity, '10']) expect(await handleDashboardSettingUpdate('workspaceTextFileLimitMb', value)).toBe(false);
   });
+  it('persists the configurable workspace file limit with a 1–1024 MB bound', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    for (const [value, expected] of [[0, 1], [100, 100], [2048, 1024], [2.5, 3]]) {
+      expect(await handleDashboardSettingUpdate('workspaceFileLimitMb', value)).toBe(true);
+      expect(update).toHaveBeenLastCalledWith('workspaceFileLimitMb', expected, vscode.ConfigurationTarget.Global);
+    }
+    for (const value of [NaN, Infinity, '100']) expect(await handleDashboardSettingUpdate('workspaceFileLimitMb', value)).toBe(false);
+  });
   it('stores model-capacity settings globally and validates the failure threshold', async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);

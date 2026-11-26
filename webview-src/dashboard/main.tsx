@@ -1,6 +1,6 @@
 import type { AccountFilter } from './preferences';
 import type { UserWorkspaceNavigation } from './userWorkspacePages';
-import { bindLocalFolderConnections, selectLocalFolderProject } from './localFolderConnection';
+import { bindLocalFolderConnections, selectLocalFolderProject, setWorkspaceFileLimitMb } from './localFolderConnection';
 import { retainOfflineAccounts } from './offlinePolicy';
 import { API_VIEW_PATHS, apiViewFromPath } from '../../src/domain/dashboard/apiRoutes';
 import { retainConfirmedValue } from '../../src/domain/confirmedSnapshot';
@@ -648,6 +648,7 @@ function App() {
   }, [sendAction]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = useMemo(() => visibleDashboardSnapshot(state), [state.snapshot, state.pendingActions]);
+  useEffect(() => { setWorkspaceFileLimitMb(snapshot?.settings.workspaceFileLimitMb); }, [snapshot?.settings.workspaceFileLimitMb]);
   const localFolderFeedback = useRef(showNotice); localFolderFeedback.current = showNotice;
   useEffect(() => {
     if (!isBrowserDashboard || snapshot?.office?.role !== 'user' || !snapshot.office.features.includes('files')) return;
