@@ -14,17 +14,19 @@ function directory(name = 'Project') {
       if (!value || value.kind !== 'directory') throw new DOMException('Missing directory', 'NotFoundError');
       return value;
     }),
+    removeEntry: vi.fn(async (name: string) => { if (!entries.delete(name)) throw new DOMException('Missing entry','NotFoundError'); }),
     getFileHandle: vi.fn(async (name: string, options?: { create?: boolean }) => {
       if (!entries.has(name) && options?.create) add(name, '');
       const value = entries.get(name);
-      if (!value || value.kind !== 'file') throw new DOMException('Missing file', 'NotFoundError');
+      if (value && value.kind !== 'file') throw new DOMException('Not a file', 'TypeMismatchError');
+      if (!value) throw new DOMException('Missing file', 'NotFoundError');
       return value;
     })
   } as unknown as LocalDirectory;
   function add(name: string, text: string) {
     let content = new TextEncoder().encode(text);
     const abort = vi.fn(async () => {}), close = vi.fn(async () => {});
-    const entry = { name, kind: 'file', getFile: async () => new File([content], name), createWritable: vi.fn(async () => ({ write: async (bytes: Uint8Array) => { content = bytes; }, close, abort })) };
+    const entry = { name, kind: 'file', getFile: async () => new File([content], name), createWritable: vi.fn(async () => ({ write: async (bytes: Uint8Array) => { content = bytes instanceof File ? new Uint8Array(await bytes.arrayBuffer()) : bytes; }, close, abort })) };
     entries.set(name, entry); return entry;
   }
   return { handle, entries, add };
@@ -101,4 +103,33 @@ it('downloads bounded chunks and rejects revisions that change between chunks', 
   const first = await performLocalFolderCommand(root.handle, { id: 'download', operation: 'read', path: 'report.txt', offset: 2 });
   expect(first.size).toBe(6); expect(atob(first.data!)).toBe('fore');
   await expect(performLocalFolderCommand(root.handle, { id: 'stale', operation: 'read', path: 'report.txt', offset: 2, revision: 'old' })).rejects.toThrow('changed during download');
+});
+
+it('defaults to Write, enforces read only and requires Full for deletion',async()=>{
+ const root=directory();root.add('notes.txt','hello');
+ await expect(performLocalFolderCommand(root.handle,{id:'r',operation:'write',path:'notes.txt',data:btoa('changed'),permission:'read-only'})).rejects.toThrow('read only');
+ await expect(performLocalFolderCommand(root.handle,{id:'d',operation:'delete',path:'notes.txt'})).rejects.toThrow('Full permission');
+ expect(root.entries.has('notes.txt')).toBe(true);
+ const inspected=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'notes.txt'});
+ await expect(performLocalFolderCommand(root.handle,{id:'d',operation:'delete',path:'notes.txt',revision:inspected.revision,permission:'full'})).resolves.toMatchObject({message:expect.stringContaining('Recycle Bin')});
+ expect(root.entries.has('notes.txt')).toBe(false);
+});
+it('inspects nested folders, rejects stale revisions, and protects the selected root',async()=>{
+ const root=directory(),child=directory('old');child.add('a.txt','one');root.entries.set('old',child.handle);
+ const before=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'old'});
+ expect(before.entries).toContainEqual({path:'old/a.txt',kind:'file'});
+ child.add('b.txt','two');
+ await expect(performLocalFolderCommand(root.handle,{id:'d',operation:'delete',path:'old',permission:'full',revision:before.revision})).rejects.toThrow('changed');
+ await expect(performLocalFolderCommand(root.handle,{id:'d',operation:'delete',path:'.',permission:'full'})).rejects.toThrow('relative path');
+ expect(root.entries.has('old')).toBe(true);
+});
+it('creates and copies with Write and moves with Full without overwriting',async()=>{
+ const root=directory();root.add('a.txt','one');
+ await performLocalFolderCommand(root.handle,{id:'c',operation:'create_folder',path:'saved'});
+ const before=await performLocalFolderCommand(root.handle,{id:'i',operation:'inspect',path:'a.txt'});
+ await performLocalFolderCommand(root.handle,{id:'c',operation:'copy_file',path:'a.txt',destination:'saved/b.txt',revision:before.revision});
+ expect(root.entries.has('a.txt')).toBe(true);
+ await expect(performLocalFolderCommand(root.handle,{id:'c',operation:'copy_file',path:'a.txt',destination:'saved/b.txt',revision:before.revision})).rejects.toThrow('already exists');
+ await performLocalFolderCommand(root.handle,{id:'m',operation:'move_file',path:'a.txt',destination:'renamed.txt',revision:before.revision,permission:'full'});
+ expect(root.entries.has('a.txt')).toBe(false);expect(root.entries.has('renamed.txt')).toBe(true);
 });

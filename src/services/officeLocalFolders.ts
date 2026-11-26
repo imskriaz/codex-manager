@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DashboardCliProject } from '../domain/dashboard/types';
-import { localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../domain/localFolder';
+import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../domain/localFolder';
 import { createWorkspaceProject, readWorkspaceProjects, renameWorkspaceProject, validateProjectName } from './workspaceProjects';
 import { getSqliteStateStore } from '../storage/sqliteState';
 import type { OfficeUser } from './officeUsers';
@@ -52,6 +52,9 @@ export class OfficeLocalFolderConnections {
     }
     connection.pending.clear();
   }
+  assertIdle(owner: string, project: string): void {
+    if (this.connections.get(this.key(owner,project))?.pending.size) throw new Error('A folder action is still in progress. Wait for its result before changing permission.');
+  }
   disconnectProject(owner: string, project: string): void {
     const connection = this.connections.get(this.key(owner, project));
     if (connection) this.disconnect(owner, project, connection.client);
@@ -84,6 +87,10 @@ export class OfficeLocalFolderConnections {
             localFolderPath(file.path);
             if (typeof file.name !== 'string' || file.name.length > 255 || !['file','directory'].includes(file.type) || !Number.isInteger(file.depth) || file.depth < 0 || file.depth > 8) throw new Error('Invalid entry.');
           }
+        } else if (!['read','write'].includes(pending.command.operation)) {
+          if (typeof result.message !== 'string' || result.message.length > 600 || result.revision !== undefined && !/^[a-f0-9]{64}$/.test(result.revision)) throw new Error('Invalid management result.');
+          if (result.entries !== undefined && (!Array.isArray(result.entries) || result.entries.length > 2000)) throw new Error('Invalid inspection.');
+          for (const entry of result.entries ?? []) { localFolderPath(entry.path); if (!['file','folder'].includes(entry.kind)) throw new Error('Invalid entry.'); }
         } else {
           if (typeof result.revision !== 'string' || !/^[a-f0-9]{64}$/.test(result.revision) || !Number.isSafeInteger(result.size) || result.size! < 0 || result.size! > 10 * 1048576) throw new Error('Invalid file.');
           const size = pending.command.offset === undefined ? result.size : Math.min(262144, result.size! - pending.command.offset);
@@ -94,12 +101,16 @@ export class OfficeLocalFolderConnections {
     }
   }
   request(owner: string, project: string, input: Omit<LocalFolderCommand, 'id'>): Promise<LocalFolderResult> {
+    if (!['list','read','write','inspect','create_folder','copy_file','move_file','delete'].includes(input.operation)) throw new Error('Choose a supported folder action.');
+    const permission = getLocalFolderPermission(owner, project);
+    assertLocalFolderPermission(permission, input.operation);
     if (input.operation !== 'list') localFolderPath(input.path);
+    if (input.destination !== undefined) localFolderPath(input.destination);
     if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0)) throw new Error('Choose a valid download offset.');
     const connection = this.connection(owner, project);
     if (connection.pending.size >= 16) throw new Error('The local folder is busy. Wait for the current action to finish.');
     return new Promise((resolve, reject) => {
-      const command = { ...input, id: randomUUID(), expiresAt: Date.now() + 12_000 };
+      const command = { ...input, permission, id: randomUUID(), expiresAt: Date.now() + 12_000 };
       const timer = setTimeout(() => {
         connection.pending.delete(command.id);
         reject(new Error('The local folder did not confirm completion. Check the folder before retrying; changes were not replayed.'));
@@ -110,5 +121,16 @@ export class OfficeLocalFolderConnections {
   close(): void {
     for (const connection of this.connections.values()) this.disconnect(connection.owner, connection.project, connection.client);
   }
+}
+export function getLocalFolderPermission(owner: string, project: string) {
+  return localFolderPermission(getSqliteStateStore()?.get(`office-folder-permissions:${owner}`, project));
+}
+export function setLocalFolderPermission(owner: string, project: string, value: unknown) {
+  if (!officeLocalProject(owner, project)) throw new Error('This connected folder is unavailable.');
+  const permission = localFolderPermission(value), store = getSqliteStateStore();
+  if (!store) throw new Error('Permission could not be saved.');
+  officeLocalFolders.assertIdle(owner, project);
+  store.set(`office-folder-permissions:${owner}`, project, permission);
+  return permission;
 }
 export const officeLocalFolders = new OfficeLocalFolderConnections();

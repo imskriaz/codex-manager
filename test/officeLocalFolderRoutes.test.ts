@@ -77,3 +77,19 @@ it('keeps two local projects distinct in the same browser connection', async () 
   expect(second.status).toBe(200); expect(second.value.project.path).not.toBe(first.path);
   expect(second.value.project.label).toBe('Another project');
 });
+
+it('persists Write by default, enforces user permission and rejects changes during pending actions', async () => {
+ const connected=await connect(),project=connected.value.project.path;
+ expect((await call({operation:'permission',project,client})).value.permission).toBe('write');
+ expect(()=>officeLocalFolders.request(user.id,project,{operation:'delete',path:'old'})).toThrow('Full permission');
+ expect((await call({operation:'permission',project,client,permission:'read-only'})).value.permission).toBe('read-only');
+ expect(()=>officeLocalFolders.request(user.id,project,{operation:'write',path:'file',data:'eA=='})).toThrow('read only');
+ expect((await call({operation:'permission',project,client,permission:'full'})).value.permission).toBe('full');
+ const pending=officeLocalFolders.request(user.id,project,{operation:'inspect',path:'old'});
+ expect((await call({operation:'permission',project,client,permission:'write'})).status).toBe(400);
+ const inspecting=await command(project);
+ expect(inspecting.permission).toBe('full');
+ await call({operation:'result',project,client,id:inspecting.id,result:{message:'Files inspected.',revision:'a'.repeat(64),entries:[{path:'old',kind:'folder'}]}});
+ await expect(pending).resolves.toMatchObject({message:'Files inspected.'});
+ expect((await call({operation:'permission',project,client,permission:'write'})).value.permission).toBe('write');
+});

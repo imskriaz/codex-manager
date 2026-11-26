@@ -1,4 +1,4 @@
-import { localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../../src/domain/localFolder';
+import { assertLocalFolderPermission, localFolderPermission, localFolderPath, type LocalFolderCommand, type LocalFolderResult } from '../../src/domain/localFolder';
 import type { DashboardCliProject, DashboardNotice } from '../../src/domain/dashboard/types';
 import { request } from './teamSettingsRequest';
 
@@ -43,6 +43,7 @@ async function parent(root: LocalDirectory, path: string, create = false) {
 export async function performLocalFolderCommand(root: LocalDirectory, command: LocalFolderCommand): Promise<LocalFolderResult> {
   const checkDeadline = () => { if (command.expiresAt !== undefined && Date.now() >= command.expiresAt) throw new Error('This folder request expired. Inspect the file before retrying.'); };
   checkDeadline();
+  assertLocalFolderPermission(localFolderPermission(command.permission), command.operation);
   if (command.operation === 'list') {
     const files: NonNullable<LocalFolderResult['files']> = [], pending = [{ directory: root, prefix: '', depth: 0 }];
     const deadline = Date.now() + 5000;
@@ -57,6 +58,72 @@ export async function performLocalFolderCommand(root: LocalDirectory, command: L
       }
     }
     return { files };
+  }
+  if (['inspect','create_folder','copy_file','move_file','delete'].includes(command.operation)) {
+    const { directory, name } = await parent(root, command.path!, command.operation === 'create_folder');
+    if (command.operation === 'create_folder') {
+      checkDeadline(); await directory.getDirectoryHandle(name, { create: true });
+      return { message: 'Folder created.' };
+    }
+    const inspect = async () => {
+      const entries: NonNullable<LocalFolderResult['entries']> = [], stamps: unknown[] = [];
+      const visit = async (dir: FileSystemDirectoryHandle, entryName: string, path: string, depth: number): Promise<void> => {
+        checkDeadline();
+        if (depth > 8 || entries.length >= 2000) throw new Error('This folder is too large to inspect safely. Choose a smaller folder.');
+        let file: FileSystemFileHandle;
+        try { file = await dir.getFileHandle(entryName); }
+        catch (error) {
+          if (!(error instanceof DOMException) || error.name !== 'TypeMismatchError') throw error;
+          const child = await dir.getDirectoryHandle(entryName) as LocalDirectory;
+          entries.push({path,kind:'folder'}); stamps.push([path,'folder']);
+          for await (const item of child.values()) await visit(child,item.name,path+'/'+item.name,depth+1);
+          return;
+        }
+        const data = await file.getFile();
+        if (data.size > limit) throw new Error('Keep connected-folder files under 10 MB for this action.');
+        entries.push({path,kind:'file'}); stamps.push([path,await revision(data)]);
+      };
+      await visit(directory,name,command.path!,0);
+      stamps.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      return {entries,revision:await revision(new File([JSON.stringify(stamps)],'revision')),kind:entries[0]!.kind as 'file'|'folder'};
+    };
+    const before = await inspect();
+    if (command.operation === 'inspect') return {...before,message:'Files inspected.'};
+    if (!command.revision || command.revision !== before.revision) throw new Error('These files changed. Inspect them again before continuing.');
+    if (command.operation === 'delete') {
+      if ((await inspect()).revision !== before.revision) throw new Error('These files changed. Inspect them again before continuing.');
+      checkDeadline(); await directory.removeEntry(name,{recursive:true});
+      return {message:'Deleted from the connected folder. This does not use the system Recycle Bin.'};
+    }
+    const destination = localFolderPath(command.destination);
+    if (destination === command.path || destination.startsWith(command.path!+'/')) throw new Error('Choose a different destination outside the source folder.');
+    const target = await parent(root,destination);
+    for await (const item of (target.directory as LocalDirectory).values()) if (item.name === target.name) throw new Error('The destination already exists. Choose another name.');
+    // Browser folder handles have no exclusive rename; verify the source again before removing it.
+    const copy = async (sourceDir: FileSystemDirectoryHandle, sourceName: string, destDir: FileSystemDirectoryHandle, destName: string, kind: string) => {
+      checkDeadline();
+      if (kind === 'folder') {
+        const source = await sourceDir.getDirectoryHandle(sourceName) as LocalDirectory;
+        const dest = await destDir.getDirectoryHandle(destName,{create:true});
+        for await (const child of source.values()) await copy(source,child.name,dest,child.name,child.kind === 'directory'?'folder':'file');
+      } else {
+        const file = await (await sourceDir.getFileHandle(sourceName)).getFile();
+        if (file.size > limit) throw new Error('Keep connected-folder files under 10 MB.');
+        const dest = await destDir.getFileHandle(destName,{create:true});
+        if ((await dest.getFile()).size) throw new Error('A destination file appeared. Inspect both locations before retrying.');
+        const writable = await dest.createWritable();
+        try { await writable.write(file); await writable.close(); } catch(error) { await writable.abort().catch(()=>{}); throw error; }
+        if (await revision(await dest.getFile()) !== await revision(file)) throw new Error('The copied file could not be verified. Inspect both locations.');
+      }
+    };
+    try {
+      await copy(directory,name,target.directory,target.name,before.kind);
+      if (command.operation === 'move_file') {
+        if ((await inspect()).revision !== before.revision) throw new Error('The source changed. Both locations were kept.');
+        checkDeadline(); await directory.removeEntry(name,{recursive:true});
+      }
+    } catch(error) { throw new Error('The action may have saved some destination files. Inspect both locations before retrying. '+(error instanceof Error?error.message:'Copy failed.')); }
+    return {message:command.operation === 'move_file'?'Moved successfully.':'Copied successfully.'};
   }
   if (command.operation !== 'read' && command.operation !== 'write') throw new Error('This local folder action is unavailable.');
   const { directory, name } = await parent(root, command.path!, command.operation === 'write');
