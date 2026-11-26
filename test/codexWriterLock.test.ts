@@ -15,7 +15,7 @@ vi.mock("child_process", async (importOriginal) => {
       if (probe.nativeMode === "incomplete") { args.at(-1)(null, "{}"); return {}; }
       if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
       const startupFailure = probe.calls.length === 1 || probe.nativeMode === "always-fail";
-      args.at(-1)(startupFailure ? Object.assign(new Error("runtime startup failed"), { code: 0xc0000142 }) : null, "[]");
+      args.at(-1)(startupFailure ? Object.assign(new Error("Command failed: powershell.exe -EncodedCommand PRIVATE_ENCODED_PAYLOAD"), { code: 0xc0000142 }) : null, "[]");
       return {};
     }
     return (actual.execFile as any)(...args);
@@ -95,13 +95,19 @@ describe("writer lock evidence", () => {
     await expect(readRunningCodexSessionIds(root)).resolves.toEqual([id]);
     expect(probe.calls).toHaveLength(2);
     expect(probe.calls.map(call => call.options.windowsHide)).toEqual([true, false]);
-    expect(probe.calls[1]!.args).toEqual(expect.arrayContaining(["-WindowStyle", "Hidden"]));
+    expect(probe.calls[1]!.args).toEqual(expect.arrayContaining(["-WindowStyle", "Hidden", "-File", "-Directory"]));
+    expect(probe.calls[1]!.args).not.toContain('-EncodedCommand');
+    expect(probe.calls[1]!.args.at(-1)).toBe(path.join(root, 'thread-writer-locks'));
     expect(probe.calls[1]!.options.timeout).toBeLessThanOrEqual(probe.calls[0]!.options.timeout);
   });
   it.skipIf(process.platform !== "win32")("keeps failed retry inconclusive instead of reporting an idle session", async () => {
     const root = await fixture();
     probe.nativeMode = "always-fail";
-    await expect(readRunningCodexSessionIds(root)).rejects.toThrow("Windows session writer inspection failed");
+    const error = await readRunningCodexSessionIds(root).catch(error => error as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Windows could not initialize PowerShell');
+    expect((error as Error).message).not.toMatch(/EncodedCommand|PRIVATE_ENCODED_PAYLOAD|Command failed/);
+    expect((error as Error).message).toContain('ownership is unconfirmed');
     expect(probe.calls).toHaveLength(2);
   });
   it("uses a held OS lock without a transcript start marker and clears it when released", async () => {

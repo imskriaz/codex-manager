@@ -3658,15 +3658,13 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
     const directory = path.dirname(lockPath);
     let cached = writerLockProbes.get(directory);
     if (!cached || cached.expiresAt <= Date.now()) {
-      const directoryData = Buffer.from(directory, "utf8").toString("base64");
-      const probeData = Buffer.from(path.join(__dirname, '..', '..', 'tools', 'inspect-session-writers.ps1'), 'utf8').toString('base64');
-      const script = `& ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${probeData}'))) -Directory ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryData}')))`;
+      const probeScript = path.join(__dirname, '..', '..', 'tools', 'inspect-session-writers.ps1');
       const entry = { expiresAt: Infinity, paths: Promise.resolve(new Set<string>()), owners: new Map<string, number>() };
       entry.paths = new Promise<Set<string>>((resolve, reject) => {
         // CREATE_NO_WINDOW can prevent Windows PowerShell's runtime from
         // initializing on some Windows hosts (STATUS_DLL_INIT_FAILED).
         // Let PowerShell hide its own window instead on that specific failure.
-        const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+        const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", probeScript, "-Directory", directory];
         const deadline = Date.now() + 15_000;
         const inspect = (windowsHide: boolean): void => {
           const completed = (error: unknown, stdout?: string | Buffer): void => {
@@ -3676,7 +3674,15 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
               return;
             }
             entry.expiresAt = error ? 0 : Date.now() + 2000;
-            if (error) { reject(new Error(`Windows session writer inspection failed. Retry after the PC responds. ${error instanceof Error ? error.message : code ?? "Unknown process failure"}`)); return; }
+            if (error) {
+              recordPersistentEvent('warning', 'session-writer', 'Windows session writer inspection failed', { code, windowsHide }, error);
+              const failure = error as { killed?: boolean; signal?: string; stderr?: unknown };
+              const reason = failure.killed || code === 'ETIMEDOUT' ? 'The inspection timed out.' :
+                (Number(code) >>> 0) === 0xc0000142 ? 'Windows could not initialize PowerShell.' :
+                  code === 'EPERM' || code === 'EACCES' ? 'Windows denied permission to start the inspector.' :
+                    code === 'ENOENT' ? 'Windows PowerShell could not be found.' : 'The Windows inspector could not complete.';
+              reject(new Error(`Windows session writer inspection failed. ${reason} Session ownership is unconfirmed; retry after the PC responds. See persistent logs for diagnostic details.`)); return;
+            }
             try {
               const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
               if (!Array.isArray(values)) throw new Error("Invalid lock response");
