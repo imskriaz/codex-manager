@@ -120,7 +120,7 @@ const mockHost = `(() => {
     for(const task of projectTasks){task.createdAt=Date.now()-86400000;task.updatedAt=Date.now()-600000;}
     projectTasks.push(...[{title:'Review release notes',stage:'planned'},{title:'Validate API scopes',stage:'planned'},{title:'Polish the mobile workspace',stage:'completed'},{title:'Confirm reconnect recovery',stage:'completed'}].map((task,index)=>({id:'docs-task-'+index,...task,prompt:'Review the project changes',manualStage:task.stage,revision:1,createdAt:Date.now()-86400000,updatedAt:Date.now()-3600000})));
   }
-  if(window.__workspaceUiFixture) { config.models[0].label="GPT-6.1-Sol extended model label"; config.models[0].reasoningEfforts=["medium","high","xhigh"]; config.models.push({id:"gpt-alternate",label:"Alternate model",reasoningEfforts:["medium","high"]}); config.defaultReasoningEffort="xhigh"; }
+  if(window.__workspaceUiFixture || window.__messageSettingsFixture) { config.models[0].label="GPT-6.1-Sol extended model label"; config.models[0].reasoningEfforts=["medium","high","xhigh"]; config.models.push({id:"gpt-alternate",label:"Alternate model",reasoningEfforts:["medium","high"]}); config.defaultReasoningEffort="xhigh"; }
   const uploadFiles = new Map();
   const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
   window.__fillListFixture=()=>{
@@ -686,6 +686,7 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    if(process.argv.includes('--message-settings')) await page.addInitScript(()=>{window.__messageSettingsFixture=true;});
     if(process.argv.includes('--system-startup')) await page.addInitScript(()=>{window.__startupFixture=true;});
     const fixtureGoto = page.goto.bind(page);
     page.goto = async (url, options) => {

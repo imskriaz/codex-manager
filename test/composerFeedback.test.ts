@@ -8,6 +8,16 @@ import { Composer, QueuedMessages, TurnUsageStrip } from '../webview-src/dashboa
 import { VoiceDictation } from '../webview-src/dashboard/voiceDictation';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
 
+it('keeps unsupported thinking visible without changing the model or hiding the saved preference', () => {
+  vi.mocked(useState).mockReturnValueOnce([false, vi.fn()]).mockReturnValueOnce([[], vi.fn()]).mockReturnValueOnce([true, vi.fn()]);
+  const config: Parameters<typeof Composer>[0] = { attachments: [], attachmentReading: false, draft: '', projects: [], model: 'selected', reasoningEffort: 'xhigh', models: [{ id: 'selected', label: 'Selected', reasoningEfforts: ['medium'] }], reasoningOptions: ['medium'], sending: false, stopping: false, composerHeight: 160,
+    onFeedback() {}, onAttach() {}, onRemoveAttachment() {}, onDraft() {}, onModel() {}, onReasoning() {}, onSandbox() {}, onProject() {}, onSubmit() {}, onStop() {}, onResize() {}, onResizeKeyDown() {} };
+  const tree = nodes(Composer(config));
+  expect(tree.find(node => node.type === 'select' && node.props.name === 'model')?.props.value).toBe('selected');
+  expect(tree.find(node => node.type === 'select' && node.props.name === 'reasoning-effort')?.props.value).toBe('xhigh');
+  expect(tree.find(node => node.type === 'option' && node.props.value === 'xhigh')?.props.children).toContain(' (not supported)');
+});
+
 it('keeps the entered local project name when session discovery supplies its internal folder name', () => {
   const path = 'D:/workspace/Local-720e12a6-9647-4170-a789-001bd78538f1';
   vi.mocked(useState).mockReturnValueOnce([false, vi.fn()]).mockReturnValueOnce([[{ path, label: 'My project' }], vi.fn()]);

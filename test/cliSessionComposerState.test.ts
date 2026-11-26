@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, cliDraftChangesActiveTurnSettings, cliContextUsage, isCliSubmissionEcho, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
+  it('keeps model and thinking independent across model defaults and unsupported effort catalogs', () => {
+    const config = { models: [
+      { id: 'first', label: 'First', reasoningEfforts: ['medium', 'high'], defaultReasoningEffort: 'medium' },
+      { id: 'second', label: 'Second', reasoningEfforts: ['medium'], defaultReasoningEffort: 'medium' }
+    ], defaultModel: 'first' };
+    const session = { model: 'first', reasoningEffort: 'high' };
+    const changedModel = { text: '', attachments: [], model: 'second', reasoningEffort: 'high' };
+    expect(resolveCliComposerSettings(changedModel, config, session)).toMatchObject({ model: 'second', reasoningEffort: 'high' });
+    expect(resolveCliComposerSettings({ ...changedModel, reasoningEffort: 'medium' }, config, session)).toMatchObject({ model: 'second', reasoningEffort: 'medium' });
+    expect(resolveCliComposerSettings({ ...changedModel, model: 'first' }, config)).toMatchObject(session);
+    expect(resolveCliComposerSettings(undefined, config).reasoningEffort).toBe('medium');
+  });
   it('keeps floating drafts and queues separate without changing existing keys or system ownership', () => {
     expect(cliComposerDraftKey('pc', 'chat')).toBe('["pc","session","chat"]');
     const floating = cliComposerDraftKey('pc', 'chat', undefined, true);
@@ -69,10 +81,10 @@ describe("durable Codex composer state", () => {
     expect(restoreFailedCliComposerDraft(cleared,submitted)).toEqual(submitted);
     expect(restoreFailedCliComposerDraft({...cleared,text:'New edit'},submitted).text).toBe('New edit');
   });
-  it("restores settings offline and validates them against the fresh model catalog", () => {
+  it("restores settings offline and preserves thinking when the fresh catalog replaces a retired model", () => {
     const saved = { text: "draft", attachments: [], model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" as const };
     expect(resolveCliComposerSettings(saved, undefined)).toMatchObject({ model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" });
-    expect(resolveCliComposerSettings(saved, { models: [{ id: "available", label: "Available", reasoningEfforts: ["medium"], defaultReasoningEffort: "medium" }], defaultSandboxMode: "workspace-write" })).toEqual({ model: "available", reasoningEffort: "medium", sandboxMode: "read-only", followUpMode: "steer" });
+    expect(resolveCliComposerSettings(saved, { models: [{ id: "available", label: "Available", reasoningEfforts: ["medium"], defaultReasoningEffort: "medium" }], defaultSandboxMode: "workspace-write" })).toEqual({ model: "available", reasoningEffort: "xhigh", sandboxMode: "read-only", followUpMode: "steer" });
   });
 });
 

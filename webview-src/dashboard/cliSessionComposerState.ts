@@ -56,10 +56,8 @@ export function resolveCliComposerSettings(draft: CliComposerDraft | undefined, 
   const preferredEffort = draft?.reasoningEffort ?? session?.reasoningEffort;
   const model = config?.models.find((option) => option.id === preferredModel)
     ?? config?.models.find((option) => option.id === config.defaultModel) ?? config?.models[0];
-  const reasoningEffort = model?.reasoningEfforts.includes(preferredEffort ?? "")
-    ? preferredEffort
-    : model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
-      ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0];
+  const reasoningEffort = preferredEffort ?? (model?.reasoningEfforts.includes(config?.defaultReasoningEffort ?? "")
+    ? config?.defaultReasoningEffort : model?.defaultReasoningEffort ?? model?.reasoningEfforts[0]);
   return { model: model?.id ?? (!config?.models.length ? preferredModel ?? config?.defaultModel : undefined), reasoningEffort: reasoningEffort ?? (!config?.models.length ? preferredEffort ?? config?.defaultReasoningEffort : undefined),
     sandboxMode: session ? session.sandboxMode : draft?.sandboxMode ?? defaultSandboxMode ?? config?.defaultSandboxMode ?? "danger-full-access" as DashboardCliSandboxMode,
     followUpMode: draft?.followUpMode ?? 'steer' };

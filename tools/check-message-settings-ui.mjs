@@ -1,12 +1,32 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+async function checkIndependentModelThinking(panel) {
+  const model = panel.getByRole('combobox', { name: 'Model', exact: true });
+  const thinking = panel.getByRole('combobox', { name: 'Reasoning', exact: true });
+  const originalModel = await model.inputValue();
+  const originalThinking = await thinking.inputValue();
+  await model.selectOption('gpt-alternate');
+  assert.equal(await thinking.inputValue(), originalThinking, 'Changing model preserves implicit thinking defaults');
+  await model.selectOption(originalModel);
+  assert.equal(await thinking.inputValue(), originalThinking, 'Returning to the original model preserves thinking');
+  await thinking.selectOption('high');
+  assert.equal(await model.inputValue(), originalModel, 'Changing thinking preserves the selected model');
+  await model.selectOption('gpt-alternate');
+  assert.equal(await thinking.inputValue(), 'high', 'Changing model preserves the selected thinking level');
+  await thinking.selectOption('medium');
+  assert.equal(await model.inputValue(), 'gpt-alternate', 'Changing thinking keeps the alternate model');
+  await model.selectOption(originalModel);
+  assert.equal(await thinking.inputValue(), 'medium', 'Switching back keeps the thinking selection');
+}
+
 export async function checkMessageSettingsUi(page, width, height, output) {
   const started = Date.now();
   await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Message settings', exact: true }).click();
   const panel = page.locator('.cli-composer-options');
   await panel.waitFor();
+  await checkIndependentModelThinking(panel);
   const approval = panel.getByRole('checkbox', { name: 'Auto approve', exact: true });
   assert.equal(await approval.isChecked(), true, 'Sessions without an approval preference default to On');
   await approval.click();
@@ -56,6 +76,7 @@ export async function checkMessageSettingsUi(page, width, height, output) {
   await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await page.getByRole('button', { name: 'Message settings', exact: true }).click();
   assert.equal(await approval.isChecked(), true, 'Fresh chat defaults to Auto approve On');
+  await checkIndependentModelThinking(panel);
   await approval.click();
   assert.equal(await approval.isChecked(), false, 'New chat allows an explicit Off draft');
   await page.keyboard.press('Escape');

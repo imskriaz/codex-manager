@@ -7,6 +7,7 @@
 - Add User Workspace recovery, saved deliverables, Office document workflows, and administration controls.
 - Avoid repeated Claude model discovery and keep optional system information, automatic MCP setup, and workspace presentation disabled by default while preserving saved choices.
 - Preserve exhausted-quota borders when an account is active or selected across dashboard themes.
+- Keep model and thinking selections independent in new and existing conversations.
 
 - Accept text questions without attempting to load unused image previews. Report invalid visual questions clearly instead of exhausting automatic recovery.
 - Apply User Workspace steering to the active request at its next response step, with saved feedback, duplicate protection and active-turn checks.
