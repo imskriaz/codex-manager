@@ -1,3 +1,4 @@
+import { isNamedProject } from '../webview-src/dashboard/projectPicker';
 import { expect,it } from 'vitest';
 import { currentUserWorkspacePlan,currentUserWorkspaceQuestion,userProjectLabel,userWorkspaceNotice,userSessionActivity,userCommandSummary,userToolSummary } from '../webview-src/dashboard/userWorkspacePresentation';
 import { userWorkspacePathText, userWorkspaceActivityText } from '../src/domain/teamWorkspacePresentation';
@@ -39,9 +40,9 @@ it('masks question choices and structured plan paths without corrupting JSON or 
 
 it('uses project labels without displaying physical workspace folders',()=>{
  const projects=[{id:'personal',path:'C:/team/alex',label:'My workspace'},{id:'planning',path:'C:/team/alex/plan',label:'Planning'}];
- expect(userProjectLabel('C:\\team\\alex',projects)).toBe('My workspace');
+ expect(userProjectLabel('C:\\team\\alex',projects)).toBe('My Workspace');
  expect(userProjectLabel('C:/team/alex/plan',projects)).toBe('Planning');
- expect(userProjectLabel('C:/private/internal')).toBe('My workspace');
+ expect(userProjectLabel('C:/private/internal')).toBe('My Workspace');
 });
 it.each(['Cannot read C:\\private\\file.txt','ENOENT /home/service/work','API HTTP 503 token expired','Codex provider disconnected','Postgres error'])('replaces technical UI diagnostics: %s',message=>{
  expect(userWorkspaceNotice(message)).toBe('This request could not be completed. Please try again.');
@@ -116,3 +117,9 @@ it('preserves useful tool arguments and results while hiding credentials and pri
  expect(userWorkspaceActivityText('Read https://example.test/report?q=verified',[])).toContain('https://example.test/report?q=verified');
  expect(userWorkspaceActivityText(JSON.stringify({content:[{type:'text',text:JSON.stringify({password:'nested-secret',count:42})}]}),[])).not.toContain('nested-secret');
 });
+
+ it('keeps only named projects outside My Workspace', () => {
+   expect(isNamedProject({label:'My workspace',path:'C:/users/work'})).toBe(false);
+   expect(isNamedProject({label:'Chat',path:'C:/users/work/Chat-cf22e8c4-8c62-4576-a329-123456789abc'})).toBe(false);
+   expect(isNamedProject({label:'Planning',path:'C:/users/work/plan'})).toBe(true);
+ });

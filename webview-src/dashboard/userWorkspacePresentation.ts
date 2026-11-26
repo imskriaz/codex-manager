@@ -1,5 +1,6 @@
 import type { DashboardCliProject, DashboardCliSessionMessage } from '../../src/domain/dashboard/types';
 import { messageSessionPlan } from '../../src/domain/sessionPlan';
+import { isNamedProject } from './projectPicker';
 import { canonicalWebPath } from './helpers';
 import { userWorkspaceNotice } from '../../src/domain/teamWorkspacePresentation';
 import { answeredSessionQuestionIds } from '../../src/domain/sessionQuestions';
@@ -50,6 +51,6 @@ export function userCommandSummary(command: string): string {
 }
 
 export function userProjectLabel(projectPath: string | undefined, projects: DashboardCliProject[] = []): string {
-  return projects.find(project => projectPath && canonicalWebPath(project.path) === canonicalWebPath(projectPath))?.label || 'My workspace';
+  return projects.filter(isNamedProject).find(project => projectPath && canonicalWebPath(project.path) === canonicalWebPath(projectPath))?.label || 'My Workspace';
 }
 

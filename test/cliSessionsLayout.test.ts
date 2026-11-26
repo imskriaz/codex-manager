@@ -520,7 +520,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("props.onArchive?.()");
     expect(source).toContain('<strong>Thinking</strong><span>for {formatElapsed(elapsed)}</span>');
     expect(source).not.toContain('<strong>Working</strong><span>for {formatElapsed(elapsed)}</span>');
-    expect(source).toContain('label: "Recent"');
+    expect(source).toContain('label: "My Workspace"');
     expect(source).not.toContain('class="cli-session-project"');
     expect(source).toContain('class="cli-conversation-project"');
     expect(source).not.toContain('"Current workspace"');
@@ -1113,7 +1113,7 @@ describe("sessions sidebar layout", () => {
   });
   it("keeps project navigation compact, populated, and collapsed with running counts", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    expect(source).toContain("sessions.length > 0 || (pc.local && section === 'active')");
+    expect(source).toContain("}).filter(({ sessions }) => sessions.length > 0);");
     expect(source).toContain("const projectCollapsed = collapsedGroups[groupId] ?? true;");
     expect(source).toContain('runningSessions ? "cli-project-running"');
     expect(source).toContain('class="cli-compact-session-list"');
@@ -1171,9 +1171,9 @@ describe('session image gallery', () => {
   });
 });
 
-it('retains empty active projects and keeps creation in the existing project picker', () => {
+it('hides empty projects and keeps creation in the existing project picker', () => {
   const source = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
-  expect(source).toContain("sessions.length > 0 || (pc.local && section === 'active')");
+  expect(source).toContain("}).filter(({ sessions }) => sessions.length > 0);");
   expect(source).not.toContain('class="cli-create-project"');
   expect(source).toContain('onAdd={() => setCreateProject(true)}');
   expect(source).not.toContain('New chat in ${project.label}');

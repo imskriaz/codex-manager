@@ -5,6 +5,9 @@ import { createPortal } from 'preact/compat';
 import { useModalAccessibility } from './primitives';
 
 type Project = { path: string; label: string };
+export function isNamedProject(project: Project): boolean {
+  return project.label.toLowerCase() !== 'my workspace' && !/^Chat-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(project.path.split(/[\\/]/).filter(Boolean).pop() ?? '');
+}
 const changed = 'codexManager.projectPickerChanged';
 const storageKey = (scope: string) => `codexManager.projectPicker.removed.${scope}`;
 function readRemoved(scope: string): string[] {
@@ -36,9 +39,9 @@ export function ProjectPicker(props: {
     window.addEventListener(changed, load); window.addEventListener('storage', load);
     return () => { window.removeEventListener(changed, load); window.removeEventListener('storage', load); };
   }, [scope]);
-  const projects = [...new Map(props.projects.map(project => [canonicalWebPath(project.path), project])).values()];
+  const projects = [...new Map(props.projects.filter(isNamedProject).map(project => [canonicalWebPath(project.path), project])).values()];
   const selected = projects.find(project => canonicalWebPath(project.path) === canonicalWebPath(props.value));
-  const matches = projects.filter(project => !/^Chat-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(project.path.split(/[\\/]/).filter(Boolean).pop() ?? '') && (query.trim() || !removed.includes(canonicalWebPath(project.path))) && `${project.label} ${project.path}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const matches = projects.filter(project => (query.trim() || !removed.includes(canonicalWebPath(project.path))) && `${project.label} ${project.path}`.toLowerCase().includes(query.trim().toLowerCase()));
   const close = (restore = false) => { setOpen(false); if (restore) trigger.current?.focus({ preventScroll: true }); };
   const choose = (path: string) => { if (!props.disabled) { props.onChange(path); close(true); } };
   const remove = (project: Project) => {
@@ -63,7 +66,7 @@ export function ProjectPicker(props: {
   return <div class="project-picker">
     {toast ? createPortal(<div class="dashboard-notice-stack project-picker-toast" aria-live="polite"><div class="dashboard-notice is-info" role="status"><span>{toast.message}</span><button type="button" aria-label="Dismiss project notification" onClick={() => setToast(undefined)}>×</button></div></div>, document.body) : null}
     <button ref={trigger} type="button" role="combobox" name={props.name} class="project-picker-trigger" aria-label={props.label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? `${id}-list` : undefined} disabled={props.disabled} title={props.title ?? props.value} data-value={props.value} onClick={() => open ? close() : show()} onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); show(); } }}>
-      <span>{selected?.label ?? (props.value ? props.value.split(/[\\/]/).filter(Boolean).pop() : 'No folder')}</span><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 8 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>{selected?.label ?? 'My Workspace'}</span><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 8 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
     </button>
     {open ? <div ref={panel} class="project-picker-popover" popover="manual" onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
@@ -79,8 +82,8 @@ export function ProjectPicker(props: {
     }}>
       <input ref={search} type="search" aria-label={`Search ${props.label.toLowerCase()}`} placeholder="Search folders…" value={query} onInput={event => { setQuery(event.currentTarget.value); setActive(event.currentTarget.value.trim() && props.allowEmpty !== false ? 1 : 0); }}/>
       <div id={`${id}-list`} role="listbox" aria-label={`${props.label} folders`} class="project-picker-options">
-        {props.allowEmpty !== false ? <button type="button" role="option" aria-selected={!props.value} data-active={active === 0} onClick={() => choose('')}><span>No folder</span></button> : null}
-        <div class="project-picker-heading" role="presentation">{query.trim() ? 'Folders' : 'Recent'}</div>
+        {props.allowEmpty !== false ? <button type="button" role="option" aria-selected={!props.value} data-active={active === 0} onClick={() => choose('')}><span>My Workspace</span></button> : null}
+        <div class="project-picker-heading" role="presentation">Projects</div>
         {matches.map((project, index) => <div class="project-picker-row" key={project.path} role="presentation">
           <button type="button" role="option" title={project.path} aria-selected={canonicalWebPath(project.path) === canonicalWebPath(props.value)} data-value={project.path} data-active={active === index + (props.allowEmpty !== false ? 1 : 0)} onClick={() => choose(project.path)}><span>{project.label}</span></button>
           <button type="button" class="project-picker-remove" title="Remove from recent" aria-label={`Remove ${project.label} from recent`} onClick={() => { close(true); setNotice(''); setFailed(false); setPending(project); }}>×</button>

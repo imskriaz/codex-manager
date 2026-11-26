@@ -14,7 +14,7 @@ import { officeCapacityMessage } from "../../src/domain/officeCapacity";
 import { quotaAvailability, quotaOfflineMessage } from '../../src/domain/quotaAvailability';
 import { messageSessionPlan, sessionPlanMessage } from '../../src/domain/sessionPlan';
 import { SessionPlanChecklist } from './sessionPlan';
-import { ProjectPicker } from './projectPicker';
+import { ProjectPicker, isNamedProject } from './projectPicker';
 import { SystemPicker, SystemStatusRows } from './systemPicker';
 import { userProjectLabel, userWorkspaceNotice, userSessionActivity, userCommandSummary, currentUserWorkspacePlan, currentUserWorkspaceQuestion, userToolSummary } from './userWorkspacePresentation';
 import { downloadWorkspaceFile } from "./workspaceDownload";
@@ -975,17 +975,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const composerBlockedByOwner = Boolean((isCodexSessionRunning(props.selectedSession)) && !props.sending && !ownedLiveTurn && !canSteer);
   const hasInProgressActivity = props.messages.some((message) => message.status === "inProgress");
   const projects = props.composerConfig?.projects ?? [];
-  const composerProjects = useMemo(() => {
-    const known = new Set(projects.map((project) => canonicalWebPath(project.path)));
-    const extraPaths = [...orderedSessions.map(session => session.projectPath), props.selectedSession?.projectPath, newChatProject, projectPath]
-      .filter((projectPath): projectPath is string => typeof projectPath === "string" && projectPath.length > 0 && !known.has(canonicalWebPath(projectPath)));
-    const uniqueExtraPaths = extraPaths.filter((projectPath, index, all) => all.findIndex((candidate) => canonicalWebPath(candidate) === canonicalWebPath(projectPath)) === index);
-    return [...projects, ...uniqueExtraPaths.map((projectPath) => ({
-      id: `session-project:${projectPath}`,
-      label: projectDisplayName(projectPath),
-      path: projectPath
-    }))];
-  }, [projects, orderedSessions, props.selectedSession?.projectPath, newChatProject, projectPath]);
+  const composerProjects = projects;
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const retryMessage = (id: string): void => {
     const prompt = getMessagePrompt(props.messages, id);
@@ -1728,15 +1718,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{renderStartingSession()}{visibleSessions.slice(0,sessionLimits['compact'] ?? 50).map(session => renderSession(session))}<ScrollMore remaining={visibleSessions.length-(sessionLimits['compact'] ?? 50)} onMore={() => growSessions('compact')} /></div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
             {renderStartingSession()}
             {pcGroups.map((pc) => {
-              const knownProjectPaths = new Set(projects.map((project) => canonicalWebPath(project.path)));
-              const sessionProjects = [...new Map(pc.allSessions
-                .filter((session) => session.projectPath && !knownProjectPaths.has(canonicalWebPath(session.projectPath)) && !props.composerConfig?.hiddenProjectPaths?.some(hidden => canonicalWebPath(hidden) === canonicalWebPath(session.projectPath!)))
-                .map((session) => [canonicalWebPath(session.projectPath!), {
-                  id: `${pc.id}:${canonicalWebPath(session.projectPath!)}`,
-                  label: projectDisplayName(session.projectPath!),
-                  path: session.projectPath!
-                }])).values()];
-              const pcProjects = [...new Map(([...projects, ...sessionProjects]).map((project) => [canonicalWebPath(project.path), project])).values()];
+              const pcProjects = projects.filter(isNamedProject);
               const assigned = new Set<string>();
               const projectGroups = pcProjects.map((project) => {
                 const sessions = pc.sessions.filter((session) => {
@@ -1746,9 +1728,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   return matches;
                 });
                 return { project, sessions };
-              }).filter(({ sessions }) => sessions.length > 0 || (pc.local && section === 'active'));
+              }).filter(({ sessions }) => sessions.length > 0);
               const unassigned = pc.sessions.filter((session) => !assigned.has(session.id));
-               if (unassigned.length > 0) projectGroups.unshift({ project: { id: `${pc.id}:recents`, label: "Recent", path: "" }, sessions: unassigned });
+               if (unassigned.length > 0) projectGroups.push({ project: { id: `${pc.id}:recents`, label: "My Workspace", path: "" }, sessions: unassigned });
                return <section class="cli-pc-group" key={pc.id}>
                 <div class="cli-pc-group-children">
                   {projectGroups.map(({ project, sessions }) => {
@@ -2094,7 +2076,7 @@ export function ConversationHeader(props: {
   const renameForm = <form class="user-editor-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized && !props.busy && !props.sending) { props.onRename?.(normalized); setRenaming(false); } }}><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><div class="user-page-actions"><button type="button" onClick={cancelRename}>Cancel</button><button type="submit" disabled={!name.trim() || props.busy || props.sending}>Save</button></div></form>;
   const statusLabel = props.archived ? "Archived" : props.session.status === "unknown" ? "Status unavailable" : props.session.status === "running" ? "Running" : "Ready";
   return <header class="cli-conversation-header">
-    {!props.readOnly ? <span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /> : null}<div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1>{(!props.privateWorkspace || props.archived || props.session.status !== "idle") && (!props.readOnly || props.session.status !== 'unknown') ? <span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span> : null}</div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.privateWorkspace ? props.projectLabel : props.session.projectPath}><EmptyFolderIcon /><strong>{props.privateWorkspace ? props.projectLabel || "My workspace" : projectDisplayName(props.session.projectPath)}</strong>{!props.privateWorkspace ? <span>{props.session.projectPath}</span> : null}</div> : null}</div>
+    {!props.readOnly ? <span id="session-sidebar-toggle-slot" class="content-sidebar-slot" /> : null}<div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1>{(!props.privateWorkspace || props.archived || props.session.status !== "idle") && (!props.readOnly || props.session.status !== 'unknown') ? <span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span> : null}</div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.privateWorkspace ? props.projectLabel : props.session.projectPath}><EmptyFolderIcon /><strong>{props.privateWorkspace ? props.projectLabel || "My Workspace" : projectDisplayName(props.session.projectPath)}</strong>{!props.privateWorkspace ? <span>{props.session.projectPath}</span> : null}</div> : null}</div>
     <div class="cli-conversation-actions">
       {props.workWindow}
       {emailWatch.feedback}
@@ -2740,7 +2722,7 @@ export function WorkspaceEnvironmentView(props: {
   const usage=props.liveState?.tokenUsage??props.session?.tokenUsage,context=cliContextUsage(usage);
   const contextSummary=context?<section class="environment-context" aria-label="Context usage"><header><span>Context</span><strong>{context.percent}% used</strong></header><progress aria-label="Context used" max={context.limit} value={context.used}/><small>{formatTokenCount(context.used)} / {formatTokenCount(context.limit)} tokens</small></section>:null;
   if (props.officeFeatures) return <section class="cli-inspector-view cli-environment-view user-environment compact-environment" aria-label="Environment"><div class="cli-inspector-body">
-    <header class="environment-identity"><EmptyFolderIcon/><strong>{environment?.projectName||'My workspace'}</strong><span>{props.connected?'Connected':'Offline'}</span></header>
+    <header class="environment-identity"><EmptyFolderIcon/><strong>{environment?.projectName === 'My workspace' ? 'My Workspace' : environment?.projectName || 'My Workspace'}</strong><span>{props.connected?'Connected':'Offline'}</span></header>
     {props.editedFiles||props.dirtyFiles?<section class="environment-changes" aria-label="Workspace changes"><header>Changes</header><button type="button" disabled={!props.officeFeatures.includes('files')} onClick={()=>props.onOpen('files')}><FileIcon/><span>{props.editedFiles} changed {props.editedFiles===1?'file':'files'}{props.dirtyFiles?` ? ${props.dirtyFiles} unsaved`:''}</span><ChevronIcon/></button></section>:null}
     {contextSummary}
     <nav class="environment-tools" aria-label="Workspace tools">{props.officeFeatures.includes('files')?<button type="button" onClick={()=>props.onOpen('files')}><FileIcon/><span>Files</span><ChevronIcon/></button>:null}{props.officeFeatures.includes('browser')?<button type="button" onClick={()=>props.onOpen('browser')}><BrowserIcon/><span>Browser</span><ChevronIcon/></button>:null}{props.officeFeatures.includes('git')?<button type="button" onClick={()=>props.onOpen('git')}><WorkspaceToolIcon kind="branch"/><span>Git</span><ChevronIcon/></button>:null}</nav>
