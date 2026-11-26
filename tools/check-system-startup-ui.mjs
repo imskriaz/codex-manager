@@ -27,6 +27,9 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   const modal = page.getByRole('dialog', { name: 'Set up system startup', exact: true });
   await modal.waitFor();
   assert.equal(await boot.getAttribute('aria-pressed'), 'false', 'Opening instructions does not enable startup');
+  await modal.getByRole('status').getByText('Not checked', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, `startup-ready-${width}.png`) });
+  await modal.locator('summary').getByText('Windows', { exact: true }).click();
   await modal.getByText('Run as administrator', { exact: true }).waitFor();
   await modal.getByText('Running in VS Code', { exact: true }).waitFor();
   await modal.getByText('Running directly with Node.js', { exact: true }).waitFor();
@@ -48,6 +51,7 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   await boot.click();
   const verify = modal.getByRole('button', { name: 'Verify and enable', exact: true });
   await verify.click();
+  await modal.getByRole('status').getByText('Checking system...', { exact: true }).waitFor();
   assert.equal(await boot.getAttribute('aria-pressed'), 'false');
   await page.waitForFunction(() => !!window.__startupRequest);
   const result = async (status, error, id) => page.evaluate(({status,error,id}) => {
@@ -57,6 +61,7 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   await result('completed', undefined, 'unrelated-result');
   assert.equal(await boot.getAttribute('aria-pressed'), 'false');
   await result('failed', 'Access is denied');
+  await modal.getByRole('status').getByText('Blocked: verification needed', { exact: true }).waitFor();
   await modal.getByRole('alert').getByText('Access is denied', { exact: true }).waitFor();
   assert.equal(await boot.getAttribute('aria-pressed'), 'false');
   await page.screenshot({ path: path.join(output, `startup-verification-${width}.png`) });
@@ -65,11 +70,15 @@ export async function checkSystemStartupUi(page, { origin, width, output }) {
   await verify.click();
   await page.clock.fastForward(30_001);
   await modal.getByRole('alert').getByText(/outcome is unconfirmed/).waitFor();
+  await modal.getByRole('status').getByText('Unconfirmed: check timed out', { exact: true }).waitFor();
   await result('completed');
   assert.equal(await boot.getAttribute('aria-pressed'), 'false', 'Late completion does not fabricate a verified result');
   await verify.click();
   await page.clock.runFor(60);
   await result('completed');
+  await modal.getByRole('status').getByText('Ready: startup verified', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, `startup-passed-${width}.png`) });
+  await modal.getByRole('button', { name: 'Done', exact: true }).click();
   await modal.waitFor({state:'hidden'});
   assert.equal(await boot.getAttribute('aria-pressed'), 'true', 'Only matching confirmed success enables startup');
   assert.equal(await active.getAttribute('aria-pressed'), 'false', 'Always Active remains independent');

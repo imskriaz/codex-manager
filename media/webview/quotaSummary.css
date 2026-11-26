@@ -19588,3 +19588,10 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
 .codex-model-row button { flex: 0 0 32px; width: 32px; height: 32px; }
 .codex-model-row svg { width: 16px; height: 16px; }
 .codex-model-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* Keep startup readiness and its action ahead of platform-specific help. */
+.startup-readiness { border: 1px solid var(--border-default); border-radius: 8px; padding: 14px; }
+.startup-readiness-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.startup-readiness-heading > span { font-weight: 600; }
+.startup-readiness p { margin: 10px 0; }
+.startup-readiness .modal-actions { margin-bottom: 0; flex-wrap: wrap; }
