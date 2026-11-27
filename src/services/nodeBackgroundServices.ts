@@ -6,6 +6,7 @@ import { initAutoSwitchRuntimeState } from "../presentation/workbench/autoSwitch
 import { registerAutoRefreshScheduler, registerTokenRefreshScheduler } from "../presentation/workbench/schedulerRegistration";
 import { registerSessionRecording } from "./sessionRecording";
 import { registerCodexSessionQueue } from "./codexSessionQueue";
+import { registerCodexGoalContinuation } from "./codexGoalContinuation";
 import { registerCompletedGoalCleanup } from './completedGoalCleanup';
 import { registerStorageMaintenance } from './storageMaintenance';
 import { registerStandaloneCapacityRetry } from './standaloneCapacityRetry';
@@ -39,6 +40,7 @@ export function registerNodeBackgroundServices(context: vscode.ExtensionContext,
   registerWorkspaceTerminalMonitoring(context);
   registerSessionRecording(context);
   registerCodexSessionQueue(context);
+  registerCodexGoalContinuation(context, repo, canUseAccount);
   registerCompletedGoalCleanup(context);
   registerStorageMaintenance(context);
   registerStandaloneCapacityRetry(context, repo, canUseAccount);

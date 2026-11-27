@@ -343,6 +343,35 @@ describe("native App Server new sessions", () => {
     expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ input: [] }), expect.any(Number), expect.any(Function));
   });
 
+  it.each([false, true])('fences automatic goal continuation to the completed turn after thread resume (changed: %s)', async changed => {
+    await mkdir(path.join(root, 'sessions'));
+    const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);
+    const event = (type: string, turn_id: string) => JSON.stringify({ type: 'event_msg', payload: { type, turn_id } }) + '\n';
+    await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' + event('task_complete', 'completed-turn'));
+    seedGoal('active');
+    const rpc = {
+      request: vi.fn(async () => {
+        if (changed) await appendFile(transcript, event('task_started', 'new-turn'));
+        return {};
+      }),
+      onServerRequest: () => () => undefined,
+      onNotification: () => () => undefined,
+      close: vi.fn(),
+      startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => started('goal-turn'))
+    };
+    mocks.open.mockResolvedValue(rpc);
+    const claim = vi.fn(turn => turn === 'completed-turn');
+    await resumeCodexSessionGoal({ id, title: 'Goal', status: 'idle', projectPath: root }, undefined, 'automatic', true, claim);
+    if (changed) {
+      expect(claim).not.toHaveBeenCalled();
+      expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+    } else {
+      expect(claim).toHaveBeenCalledExactlyOnceWith('completed-turn');
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledExactlyOnceWith(id, expect.objectContaining({ input: [] }), expect.any(Number), expect.any(Function));
+    }
+    await vi.waitFor(() => expect(rpc.close).toHaveBeenCalledOnce());
+  });
+
   it.each(['manual-stop', 'paused', 'writer-conflict'])('keeps private goal recovery safe when %s', async scenario => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');

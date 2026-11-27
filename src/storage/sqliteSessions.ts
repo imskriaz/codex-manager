@@ -216,7 +216,7 @@ export function removeDeletedSessionCache(store: SqliteStateStore, home: string,
         if (store.prepare("SELECT 1 FROM session_status WHERE home=? AND session_id=? AND status IN ('starting','running') AND checked_at>=?").get(getCodexHomeStateKey(home), id, startedAt)) continue;
         store.set("deleted-codex-sessions", `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`, Date.now());
         removeSessionCoordination(store, getCodexHomeStateKey(home), id.toLowerCase());
-        for (const namespace of ['codex-session-preferences', 'codex-session-title-overrides', 'session-goal-explicit-pause'])
+        for (const namespace of ['codex-session-preferences', 'codex-session-title-overrides', 'session-goal-explicit-pause', 'goal-continuation-turn'])
           store.set(namespace, `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`, undefined);
         store.set('session-access', JSON.stringify([path.resolve(home), id.toLowerCase()]), undefined);
         store.prepare("DELETE FROM state WHERE namespace='session-attachment-owners' AND json_valid(key) AND json_extract(key,'$[0]')=? AND json_extract(key,'$[1]')=?").run(getCodexHomeStateKey(home), id.toLowerCase());

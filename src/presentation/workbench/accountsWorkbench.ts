@@ -16,6 +16,7 @@ import { startHostLifecycle, recordHostLifecycle } from '../../services/hostLife
 import { waitWithin } from "../../utils/concurrency";
 import { registerQuotaRecoveryAutoResume } from "../../services/quotaRecoveryAutoResume";
 import { registerStandaloneCapacityRetry } from '../../services/standaloneCapacityRetry';
+import { registerCodexGoalContinuation } from "../../services/codexGoalContinuation";
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../../infrastructure/config/extensionSettings";
 import {
   closeQuotaSummaryTabsForExtensionHostRestart,
@@ -234,6 +235,7 @@ export class AccountsWorkbench {
       this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id), accountId =>
         maybeAutoSwitchForActiveQuota(this.repo, refreshers, { quotaRejectedAccountId: accountId, canUseAccount: id => this.encryptedSync.canAutomateAccount(id) })));
       registerStandaloneCapacityRetry(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id));
+      registerCodexGoalContinuation(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id));
       this.context.subscriptions.push(
         registerAutoRefreshScheduler({
           context: this.context,
