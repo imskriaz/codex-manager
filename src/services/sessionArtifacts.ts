@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import * as http from 'node:http';
-import { isIP } from 'node:net';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import type { SessionArtifact, SessionArtifactRequest } from '../domain/sessionArtifacts';
@@ -19,6 +18,11 @@ const previewPrefix = 'cm-preview-';
 const idPattern = /^[a-f0-9]{32}$/;
 const probeHeader = 'x-codex-artifact-check';
 const hopHeaders = ['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade'];
+const previewPolicy = "sandbox allow-scripts allow-forms; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+const previewResponseHeaders = [
+  'accept-ranges', 'content-disposition', 'content-encoding', 'content-language', 'content-length', 'content-range',
+  'content-type', 'cross-origin-resource-policy', 'etag', 'last-modified', 'location', 'vary'
+];
 
 type Source =
   | { kind: 'file'; name: string; bytes: number; html: boolean }
@@ -26,6 +30,7 @@ type Source =
   | { kind: 'link'; href: string };
 
 type Record = SessionArtifact & { sessionId: string; source: Source };
+type ArtifactRoute = { record: Record; mount: string; upstreamPath: string };
 
 function storage() {
   const store = getSqliteStateStore();
@@ -69,15 +74,6 @@ export function artifactAppSource(value: string): Extract<Source, { kind: 'app' 
   return { kind: 'app', hostname: url.hostname === '[::1]' ? '::1' : '127.0.0.1', port, entry: `${url.pathname}${url.search}${url.hash}` };
 }
 
-function previewDomain(value: string): string {
-  const domain = value.trim().toLowerCase();
-  if (domain.length > 208 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/.test(domain) ||
-    isIP(domain)) {
-    throw new Error('Set Session Artifact Domain to a DNS suffix for preview hosts and route it to the dashboard tunnel.');
-  }
-  return domain;
-}
-
 function safeRelative(root: string, file: string): boolean {
   const relative = path.relative(root, file);
   return !!relative && !path.isAbsolute(relative) && relative.split(path.sep).every(part => part !== '..' && !part.includes(':'));
@@ -109,7 +105,7 @@ function remove(store: ReturnType<typeof storage>, id: string): void {
 export async function manageSessionArtifacts(
   sessionId: string | undefined,
   request: SessionArtifactRequest | undefined,
-  options: { dashboardOrigin?: string; previewDomain: string; resolveProject: () => Promise<string>; confirmed: boolean }
+  options: { dashboardOrigin?: string; resolveProject: () => Promise<string>; confirmed: boolean }
 ): Promise<{ sessionArtifacts: SessionArtifact[]; artifact?: SessionArtifact; warning?: string }> {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 256 || !request) throw new Error('Choose a session first.');
   if (request.operation === 'list') return { sessionArtifacts: list(sessionId) };
@@ -138,10 +134,11 @@ export async function manageSessionArtifacts(
   else throw new Error('Choose a file, running app, or existing URL.');
 
   const id = randomBytes(16).toString('hex');
-  const url = source.kind === 'app' || (source.kind === 'file' && source.html)
-    ? `https://${previewPrefix}${id}.${previewDomain(options.previewDomain)}${source.kind === 'app' ? source.entry : '/'}`
-    : new URL(artifactPath + id, dashboard).href;
-  const record: Record = { id, sessionId, url, source, kind: source.kind, title: request.title.trim(), expiresAt: Date.now() + artifactLifetime };
+  const title = request.title.trim();
+  const slug = title.normalize('NFKD').toLowerCase().replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9]+/g, '-').slice(0, 60).replace(/^-|-$/g, '') || 'artifact';
+  const url = new URL(`${artifactPath}${slug}-${id}`, dashboard).href;
+  const record: Record = { id, sessionId, url, source, kind: source.kind, title, expiresAt: Date.now() + artifactLifetime };
   const store = storage();
   store.transaction(() => {
     let count = 0;
@@ -161,7 +158,7 @@ export async function manageSessionArtifacts(
   const publicReady = await fetch(url, {
     method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { [probeHeader]: '1' }
   }).then(response => response.status === 204 && response.headers.get(probeHeader) === id, () => false);
-  const warning = publicReady ? undefined : 'Artifact saved, but the public link could not be verified. Check that its domain routes to this system.';
+  const warning = publicReady ? undefined : 'Artifact saved, but the public link could not be verified. Check that the public dashboard and the selected app are reachable.';
   return { artifact: visible(record), sessionArtifacts: list(sessionId), warning };
 }
 
@@ -173,15 +170,22 @@ function previewRequest(request: http.IncomingMessage, pathname: string): boolea
   return requestHost(request).startsWith(previewPrefix) || pathname.startsWith(artifactPath);
 }
 
-function lookup(request: http.IncomingMessage, pathname: string): Record | undefined {
+function lookup(request: http.IncomingMessage, pathname: string): ArtifactRoute | undefined {
   const host = requestHost(request);
-  const preview = host.startsWith(previewPrefix);
-  const id = preview ? host.slice(previewPrefix.length).split('.')[0] : pathname.slice(artifactPath.length);
+  const legacyPreview = host.startsWith(previewPrefix);
+  const key = pathname.slice(artifactPath.length).split('/', 1)[0] ?? '';
+  const id = legacyPreview ? host.slice(previewPrefix.length).split('.')[0] : key.split('-').at(-1);
   const record = active(id ?? '');
   if (!record) return;
   const url = new URL(record.url);
-  if (host === url.host && (preview || pathname === url.pathname)) return record;
-  return undefined;
+  const mount = legacyPreview ? '' : artifactPath + key;
+  if (host !== url.host || (!legacyPreview && mount !== url.pathname)) return;
+  if (record.source.kind !== 'app' && pathname !== url.pathname) return;
+  const search = new URL(request.url ?? '/', 'http://127.0.0.1').search;
+  const upstreamPath = pathname === mount && record.source.kind === 'app'
+    ? record.source.entry.split('#', 1)[0]!
+    : `${pathname.slice(mount.length)}${search}`;
+  return { record, mount, upstreamPath };
 }
 
 function reply(response: http.ServerResponse, status: number, message: string): void {
@@ -194,25 +198,43 @@ export function handleSessionArtifact(request: http.IncomingMessage, response: h
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Referrer-Policy', 'no-referrer');
   response.setHeader('X-Content-Type-Options', 'nosniff');
-  const record = lookup(request, pathname);
-  if (!record) reply(response, 404, 'This artifact link is unavailable.');
-  else if (request.method === 'HEAD' && request.headers[probeHeader] === '1') {
-    if (record.source.kind === 'app') proxyHttp(request, response, record, true);
+  response.setHeader('Content-Security-Policy', previewPolicy);
+  const route = lookup(request, pathname);
+  if (!route) {
+    reply(response, 404, 'This artifact link is unavailable.');
+    return true;
+  }
+  const { record } = route;
+  if (request.headers.origin === 'null' && record.source.kind === 'app') {
+    response.setHeader('Access-Control-Allow-Origin', 'null');
+    response.setHeader('Vary', 'Origin');
+    if (request.method === 'OPTIONS' && request.headers['access-control-request-method']) {
+      response.writeHead(204, {
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': request.headers['access-control-request-headers'] ?? ''
+      });
+      response.end();
+      return true;
+    }
+  }
+  if (request.method === 'HEAD' && request.headers[probeHeader] === '1') {
+    if (record.source.kind === 'app') proxyHttp(request, response, route, true);
     else ready(response, record);
-  } else if (record.source.kind === 'app') proxyHttp(request, response, record);
+  } else if (record.source.kind === 'app' && pathname !== route.mount) proxyHttp(request, response, route);
   else if (request.method !== 'GET' && request.method !== 'HEAD') reply(response, 405, 'Use GET or HEAD to open this artifact.');
-  else if (record.source.kind === 'link') {
+  else if (record.source.kind === 'app') {
+    response.writeHead(302, { Location: route.mount + record.source.entry });
+    response.end();
+  } else if (record.source.kind === 'link') {
     response.writeHead(302, { Location: record.source.href });
     response.end();
-  } else if (pathname !== new URL(record.url).pathname) reply(response, 404, 'This artifact contains one file.');
-  else {
+  } else {
     const encoded = getSqliteStateStore()?.get<string>(files, record.id);
     if (encoded === undefined) reply(response, 404, 'This artifact file is unavailable.');
     else {
       response.setHeader('Content-Length', record.source.bytes);
       if (record.source.html) {
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
-        response.setHeader('Content-Security-Policy', "worker-src 'none'; frame-ancestors 'none'");
       } else {
         response.setHeader('Content-Type', 'application/octet-stream');
         response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(record.source.name).replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16))}`);
@@ -234,25 +256,22 @@ function endToEnd(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
   return copy;
 }
 
-function upstreamOptions(request: http.IncomingMessage, source: Extract<Source, { kind: 'app' }>, upgrade: boolean): http.RequestOptions {
+function upstreamOptions(request: http.IncomingMessage, source: Extract<Source, { kind: 'app' }>, route: ArtifactRoute, upgrade: boolean, probe = false): http.RequestOptions {
   const headers = endToEnd(request.headers);
   const host = source.hostname === '::1' ? `[::1]:${source.port}` : `localhost:${source.port}`;
   for (const header of Object.keys(headers)) {
-    if (/^(cf-|x-forwarded-|x-codex-)|^forwarded$/.test(header)) delete headers[header];
+    if (/^(cf-|x-forwarded-|x-codex-)|^(?:forwarded|cookie|authorization)$/.test(header)) delete headers[header];
   }
   headers.host = host;
   headers['x-forwarded-host'] = requestHost(request);
   headers['x-forwarded-proto'] = 'https';
-  if (headers.origin === `https://${requestHost(request)}`) headers.origin = `http://${host}`;
-  if (typeof headers.cookie === 'string') {
-    headers.cookie = headers.cookie.split(';').filter(cookie => !/^\s*codex_dashboard_session\s*=/.test(cookie)).join(';');
-  }
+  if (route.mount) headers['x-forwarded-prefix'] = route.mount;
+  if (headers.origin === `https://${requestHost(request)}` || headers.origin === 'null') headers.origin = `http://${host}`;
   if (upgrade) {
     headers.connection = 'Upgrade';
     headers.upgrade = 'websocket';
   }
-  const requestPath = request.url && /^\/(?![\\/])/.test(request.url) ? request.url : '/';
-  return { hostname: source.hostname, port: source.port, method: request.method, path: requestPath, headers, agent: false };
+  return { hostname: source.hostname, port: source.port, method: probe ? 'GET' : request.method, path: route.upstreamPath, headers, agent: false };
 }
 
 function checkRevocation(record: Record, close: () => void): NodeJS.Timeout {
@@ -264,30 +283,37 @@ function checkRevocation(record: Record, close: () => void): NodeJS.Timeout {
   return timer;
 }
 
-function proxyHttp(request: http.IncomingMessage, response: http.ServerResponse, record: Record, probe = false): void {
-  if (record.source.kind !== 'app') return;
-  const upstream = http.request(upstreamOptions(request, record.source, false), incoming => {
+function proxyHttp(request: http.IncomingMessage, response: http.ServerResponse, route: ArtifactRoute, probe = false): void {
+  const { record } = route;
+  const source = record.source;
+  if (source.kind !== 'app') return;
+  const upstream = http.request(upstreamOptions(request, source, route, false, probe), incoming => {
     if (probe) {
       incoming.destroy();
-      ready(response, record);
+      if (incoming.statusCode && incoming.statusCode < 400) ready(response, record);
+      else reply(response, 502, 'The app did not serve its entry page.');
       return;
     }
-    const headers = endToEnd(incoming.headers);
-    delete headers['clear-site-data'];
-    delete headers['service-worker-allowed'];
-    delete headers[probeHeader];
+    const upstreamHeaders = endToEnd(incoming.headers);
+    const headers: http.OutgoingHttpHeaders = {};
+    for (const name of previewResponseHeaders) {
+      if (upstreamHeaders[name] !== undefined) headers[name] = upstreamHeaders[name];
+    }
     headers['cache-control'] = 'no-store';
     headers['referrer-policy'] = 'no-referrer';
-    if (Array.isArray(headers['set-cookie'])) {
-      headers['set-cookie'] = headers['set-cookie'].filter(cookie => !/^codex_dashboard_session\s*=/i.test(cookie))
-        .map(cookie => cookie.replace(/;\s*domain\s*=[^;]*/ig, ''));
-    }
+    headers['content-security-policy'] = [previewPolicy, incoming.headers['content-security-policy']].filter(Boolean).join(', ');
+    headers['x-content-type-options'] = 'nosniff';
+    headers['permissions-policy'] = 'camera=(), microphone=(), geolocation=()';
+    headers.vary = incoming.headers.vary ? `${incoming.headers.vary}, Origin` : 'Origin';
     if (typeof headers.location === 'string') {
       try {
-        const location = new URL(headers.location);
-        if (record.source.kind === 'app' && ['http:', 'https:'].includes(location.protocol) &&
-          ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname) && Number(location.port || 80) === record.source.port) {
-          headers.location = `${new URL(record.url).origin}${location.pathname}${location.search}${location.hash}`;
+        const local = new URL(`http://localhost:${source.port}`);
+        const location = new URL(headers.location, local.origin + route.upstreamPath);
+        const origin = new URL(record.url).origin;
+        if (location.origin === origin || ['http:', 'https:'].includes(location.protocol) &&
+          ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname) && Number(location.port || 80) === source.port) {
+          const prefix = location.pathname === route.mount || location.pathname.startsWith(route.mount + '/') ? '' : route.mount;
+          headers.location = `${origin}${prefix}${location.pathname}${location.search}${location.hash}`;
         }
       } catch { /* Relative redirects are already scoped to the preview. */ }
     }
@@ -308,12 +334,14 @@ function proxyHttp(request: http.IncomingMessage, response: http.ServerResponse,
 
 export function upgradeSessionArtifact(request: http.IncomingMessage, socket: Duplex, head: Buffer, pathname: string): boolean {
   if (!previewRequest(request, pathname)) return false;
-  const record = lookup(request, pathname);
-  if (!record || record.source.kind !== 'app' || request.headers.upgrade?.toLowerCase() !== 'websocket') {
+  const route = lookup(request, pathname);
+  const source = route?.record.source;
+  if (!route || pathname === route.mount || source?.kind !== 'app' || request.headers.upgrade?.toLowerCase() !== 'websocket') {
     socket.destroy();
     return true;
   }
-  const upstream = http.request(upstreamOptions(request, record.source, true));
+  const { record } = route;
+  const upstream = http.request(upstreamOptions(request, source, route, true));
   const timer = checkRevocation(record, () => socket.destroy());
   socket.once('close', () => { clearInterval(timer); upstream.destroy(); });
   socket.once('error', () => upstream.destroy());

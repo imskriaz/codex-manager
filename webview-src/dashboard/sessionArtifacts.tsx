@@ -84,7 +84,7 @@ export function SessionArtifactsModal(props: { request: ReturnType<typeof useWor
         setConfirmed(false);
       }} /></label>
       {kind === 'file' ? <p>HTML opens as a single-file preview. Other files download.</p> : null}
-      {kind === 'app' ? <p>This shares the running app and its routes. Keep the app running while the link is in use.</p> : null}
+      {kind === 'app' ? <p>Keep the app running and use relative URLs or the forwarded artifact prefix for assets and routes.</p> : null}
       <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.currentTarget.checked)} /> Anyone with the link can open it for up to 24 hours.</label>
       <div class="dialog-actions"><button type="submit" disabled={busy || !confirmed || !title.trim() || !source.trim()}>Create share link</button></div>
     </form>

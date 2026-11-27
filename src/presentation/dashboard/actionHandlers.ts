@@ -506,7 +506,6 @@ async function runDashboardAction(
       }
       const result = await manageSessionArtifacts(payload?.sessionId, payload?.artifactRequest, {
         dashboardOrigin: normalizeCloudflaredDomain(config.get<string>('cloudflaredDomain', '')),
-        previewDomain: config.get<string>('sessionArtifactDomain', ''),
         confirmed: payload?.confirmed === true,
         resolveProject: () => waitWithin(resolveRecordedSessionProject(payload?.sessionId ?? '', payload?.projectPath),
           5_000, "This session's project folder is unavailable.")

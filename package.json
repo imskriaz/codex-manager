@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "3.0.1-pre.29",
+  "version": "3.0.1-pre.30",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -363,12 +363,6 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Optional HTTPS dashboard address for other PCs; set a shared password before sharing."
-        },
-        "codexManager.sessionArtifactDomain": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "markdownDescription": "DNS suffix for public session preview hosts. Point wildcard DNS and HTTPS tunnel ingress for this suffix to the local dashboard and preserve the request hostname."
         },
         "codexManager.officeWorkspaceRoot": {
           "type": "string",

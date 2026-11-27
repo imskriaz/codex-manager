@@ -14,7 +14,6 @@ let store: SqliteStateStore;
 const servers: http.Server[] = [];
 const options = {
   dashboardOrigin: 'https://example.test',
-  previewDomain: 'example.test',
   confirmed: true,
   resolveProject: async () => folder
 };
@@ -79,6 +78,7 @@ it('issues a distinct redirect for every share and revokes only the matching ses
   const second = await manage(request);
   expect(first.warning).toMatch(/public link could not be verified/);
   expect(first.artifact?.url).not.toBe(second.artifact?.url);
+  expect(first.artifact?.url).toMatch(/^https:\/\/example\.test\/artifacts\/demo-[a-f0-9]{32}$/);
   expect((await manage({ operation: 'list' }, 'session-two')).sessionArtifacts).toEqual([]);
   await expect(manage({ operation: 'revoke', id: first.artifact!.id }, 'session-two')).rejects.toThrow(/expired or been revoked/);
   expect((await get(port, first.artifact!.url)).headers.location).toBe(request.source);
@@ -88,7 +88,7 @@ it('issues a distinct redirect for every share and revokes only the matching ses
   expect((await get(port, second.artifact!.url, 'different.example.test')).status).toBe(404);
 });
 
-it('serves an HTML snapshot on its own hostname and blocks paths outside the artifact', async () => {
+it('serves a sandboxed HTML snapshot under its slug and blocks other paths', async () => {
   await writeFile(join(folder, 'demo.html'), '<h1>first version</h1>');
   const request = { operation: 'create', kind: 'file', title: 'Demo', source: 'demo.html' } as const;
   const { artifact } = await manage(request);
@@ -100,14 +100,22 @@ it('serves an HTML snapshot on its own hostname and blocks paths outside the art
   expect(result.body).toBe('<h1>first version</h1>');
   expect(result.headers['content-type']).toContain('text/html');
   expect(result.headers['cache-control']).toBe('no-store');
-  expect((await get(port, new URL('/api/state', url).href)).status).toBe(404);
+  expect(result.headers['content-security-policy']).toContain('sandbox allow-scripts allow-forms');
+  expect(result.headers['content-security-policy']).not.toContain('allow-same-origin');
+  expect((await get(port, url.href + '/other')).status).toBe(404);
+  expect((await get(port, url.href.replace('/demo-', '/wrong-'))).status).toBe(404);
+  expect((await get(port, new URL('/api/state', url).href)).body).toBe('dashboard');
   expect((await get(port, url.href, 'cm-preview-invalid.example.test')).status).toBe(404);
 });
 
 it('proxies the selected loopback app, reports reachability, and supports its WebSocket', async () => {
   const app = http.createServer((request, response) => {
     response.setHeader('Set-Cookie', ['app=1; Domain=example.test; Path=/', 'codex_dashboard_session=drop']);
-    response.end(`${request.url} ${request.headers.cookie ?? ''}`);
+    response.setHeader('Content-Security-Policy', 'default-src *');
+    if (request.url === '/redirect') {
+      response.writeHead(302, { Location: '/demo' });
+      response.end();
+    } else response.end(JSON.stringify({ url: request.url, prefix: request.headers['x-forwarded-prefix'], cookie: request.headers.cookie }));
   });
   const webSocket = new WebSocketServer({ server: app });
   webSocket.on('connection', client => client.on('message', message => client.send(message)));
@@ -121,12 +129,21 @@ it('proxies the selected loopback app, reports reachability, and supports its We
   const { artifact, warning } = await manage({ operation: 'create', kind: 'app', title: 'App', source: `http://localhost:${appPort}/demo?q=works` });
   const second = await manage({ operation: 'create', kind: 'app', title: 'Second app', source: String(secondAppPort) });
   expect(warning).toBeUndefined();
-  expect(new URL(second.artifact!.url).hostname).not.toBe(new URL(artifact!.url).hostname);
-  expect((await get(port, second.artifact!.url)).body).toBe('second app');
-  const response = await get(port, artifact!.url, undefined, 'GET', { cookie: 'app=1; codex_dashboard_session=private' });
-  expect(response.body).toBe('/demo?q=works app=1');
-  expect(response.headers['set-cookie']).toEqual(['app=1; Path=/']);
-  const client = new WebSocket(`ws://127.0.0.1:${port}/socket`, { headers: { host: new URL(artifact!.url).host } });
+  const firstUrl = new URL(artifact!.url);
+  const secondUrl = new URL(second.artifact!.url);
+  expect(firstUrl.origin).toBe(secondUrl.origin);
+  expect(secondUrl.pathname).not.toBe(firstUrl.pathname);
+  const firstEntry = (await get(port, firstUrl.href)).headers.location!;
+  expect(firstEntry).toBe(firstUrl.pathname + '/demo?q=works');
+  const secondEntry = new URL((await get(port, secondUrl.href)).headers.location!, secondUrl);
+  expect((await get(port, secondEntry.href)).body).toBe('second app');
+  const response = await get(port, new URL(firstEntry, firstUrl).href, undefined, 'GET', { cookie: 'codex_dashboard_session=private', origin: 'null' });
+  expect(JSON.parse(response.body)).toEqual({ url: '/demo?q=works', prefix: firstUrl.pathname });
+  expect(response.headers['set-cookie']).toBeUndefined();
+  expect(response.headers['access-control-allow-origin']).toBe('null');
+  expect(response.headers['content-security-policy']).toContain('sandbox allow-scripts allow-forms');
+  expect((await get(port, firstUrl.href + '/redirect')).headers.location).toBe(firstUrl.href + '/demo');
+  const client = new WebSocket(`ws://127.0.0.1:${port}${firstUrl.pathname}/socket`, { headers: { host: firstUrl.host } });
   try {
     await once(client, 'open');
     client.send('hello');
@@ -138,7 +155,7 @@ it('proxies the selected loopback app, reports reachability, and supports its We
   }
   await manage({ operation: 'revoke', id: artifact!.id });
   expect((await get(port, artifact!.url)).status).toBe(404);
-  expect((await get(port, second.artifact!.url)).status).toBe(200);
+  expect((await get(port, secondEntry.href)).status).toBe(200);
   expect(() => artifactAppSource('http://192.168.1.10:3000')).toThrow(/loopback/);
   expect(() => artifactAppSource('39875')).toThrow(/loopback/);
 });

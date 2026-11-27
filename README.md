@@ -265,7 +265,7 @@ On the dashboard host, open **Session actions → Artifacts**. Use **Project fil
 
 Each share gets a unique URL and expires after 24 hours. Revoke individual URLs from the same session. Codex can use the local MCP tool `manager_session_artifact` when asked to share a deliverable. For work that only needs a local preview, use the workspace Browser.
 
-File downloads and redirects use the public HTTPS dashboard address. To enable HTML and running app previews, set `codexManager.sessionArtifactDomain` to a DNS suffix you control. Configure wildcard DNS, a matching HTTPS certificate, and Cloudflare Tunnel ingress for that suffix to the same dashboard listener, preserving the request hostname. Preview links use `cm-preview-<id>.<suffix>`, with a dedicated origin per preview. The dashboard reports when it saves an artifact but cannot verify that its public URL is reachable.
+All share links use the public HTTPS dashboard address and a unique `/artifacts/<id>` path. The ID starts with a slug based on the title and ends with a random suffix. HTML and running app pages open in a browser sandbox. Running apps should use relative asset and API URLs or honor the `X-Forwarded-Prefix` header for links rooted at the artifact path. Browser cookies and service workers are unavailable inside shared apps. The dashboard reports when it saves an artifact but cannot verify that its public URL is reachable.
 
 ### Remote and mobile workflow
 
