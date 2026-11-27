@@ -131,6 +131,8 @@ import { BrowserPushService, BrowserPushRegistrationConflictError } from "./brow
 import { EmailNotificationService, readEmailWatches, saveEmailPreferences, saveEmailWatch } from './emailNotifications';
 import { clearOfficeWorkspace } from './officeWorkspaceClear';
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
+import { handleSessionArtifact, upgradeSessionArtifact } from './sessionArtifacts';
+import { SESSION_ARTIFACT_ACTION_TIMEOUT_MS } from '../domain/sessionArtifacts';
 import { filterCliSessionsBySection, isCodexSessionRunning, isCodexQuotaInterruption, isCodexCapacityInterruption } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
@@ -196,6 +198,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "resyncProfile") return 300_000;
   if (action === "syncNow" || action === "configureEncryptedSync") return 135_000;
   if (action === "workspaceTerminal") return 10_000;
+  if (action === 'sessionArtifact') return SESSION_ARTIFACT_ACTION_TIMEOUT_MS;
   if (action === "workspaceGit" || action === "workspaceGitHub") return 135_000;
   if (action === "commitWorkspaceChanges") return 75_000;
   if (action === "coordinateCodexSessions") return 90_000;
@@ -1066,6 +1069,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async handle(request: http.IncomingMessage, response: http.ServerResponse, localMcp = false): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (!localMcp && handleSessionArtifact(request, response, path)) return;
     if (isAiProxyPath(path)) {
       this.aiProxy ??= new AiProxy(this.context, this.repo, () => !this.shuttingDown && this.settingsStore.getDashboardSettings().apiAccessEnabled === true, id => this.encryptedSync?.canAutomateAccount(id) ?? true, () => this.publishLocalStateChange(), id => !this.shuttingDown && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled === true && this.officeInternalProxyIds.has(id), candidate => {
         if (!candidate || this.shuttingDown || !this.settingsStore.getDashboardSettings().teamWorkspaceEnabled) return undefined;
@@ -2649,7 +2653,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const parsed = JSON.parse(await readDashboardRequestBody(request, MAX_DASHBOARD_MESSAGE_BYTES)) as unknown;
       if (!isDashboardClientMessage(parsed)) throw new Error("Invalid message");
       message = parsed;
-      if (message.type === 'dashboard:action' && !DASHBOARD_API_ACTIONS.includes(message.action)) throw new Error('Unknown action.');
+      if (message.type === 'dashboard:action' && !DASHBOARD_API_ACTIONS.includes(message.action) && message.action !== 'sessionArtifact') throw new Error('Unknown action.');
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
         response.statusCode = 413;
@@ -2662,6 +2666,11 @@ export class WebDashboardServer implements vscode.Disposable {
     }
 
     if (apiToken) {
+      if (message.type === 'dashboard:action' && message.action === 'sessionArtifact' && apiToken.id !== 'local-mcp') {
+        response.statusCode = 403;
+        this.sendJson(response, { error: 'Manage session artifacts from the master dashboard or local Codex Manager MCP.' });
+        return;
+      }
       try { message = await authorizeApiMessage(apiToken, message, this.deviceId); }
       catch (error) {
         response.statusCode = error instanceof ApiPermissionError ? 403 : 503;
@@ -2819,6 +2828,11 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if (message.type === "dashboard:action") {
       const targetDeviceId = message.payload?.targetDeviceId;
+      if (message.action === 'sessionArtifact' && targetDeviceId && targetDeviceId !== 'local' && targetDeviceId !== this.deviceId) {
+        messages.push({ type: 'dashboard:action-result', requestId: message.requestId, action: message.action, status: 'failed',
+          error: 'Open this session on the system hosting its public dashboard to manage artifact links.' });
+        return { messages, reloadAfterResponse };
+      }
       if (targetDeviceId && targetDeviceId !== "local" && targetDeviceId !== this.deviceId) {
         const relayed = await this.relayPeerAction(message, targetDeviceId);
         messages.push({
@@ -2927,6 +2941,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
+    if (request.type === 'dashboard:action' && request.action === 'sessionArtifact') return;
     if (request.type === "dashboard:action" && ["workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "runWorkspaceTerminalCommand", "cancelWorkspaceTerminalCommand", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal", "saveWorkspaceFile", "deleteWorkspaceFile", "commitWorkspaceChanges", "pushWorkspaceBranch", "respondCodexServerRequest", "resetProjectTaskStart", "listApiTokens", "clearApiProxyLogs", "saveApiProxyModelMapping", "generateApiToken", "editApiToken", "copyApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn", "resumeCodexSessions", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue", "setCodexSessionAccess", "listWorkspaceFiles", "readWorkspaceFile", "getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
@@ -3104,9 +3119,10 @@ export class WebDashboardServer implements vscode.Disposable {
     socket: import("stream").Duplex,
     head: Buffer
   ): Promise<void> {
+    const requestUrl = new URL(request.url ?? "/", this.getUrl());
+    if (upgradeSessionArtifact(request, socket, head, requestUrl.pathname)) return;
     // API tokens use HTTP, where every request enforces project and operation scope.
     if (readDashboardBearerToken(request)) { socket.destroy(); return; }
-    const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
     if (isPeer && !this.encryptedSync?.isCrossPcEnabled()) { socket.destroy(); return; }
     const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));

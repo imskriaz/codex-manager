@@ -23,6 +23,7 @@ import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
 import { workspaceTerminal } from '../../services/workspaceTerminalPty';
 import { workspaceBrowser } from '../../services/workspaceBrowser';
+import { manageSessionArtifacts } from '../../services/sessionArtifacts';
 import { workspaceSurface } from '../../services/workspaceSurfaces';
 import { workspaceGit } from '../../services/workspaceGit';
 import { workspaceGitHub } from '../../services/workspaceGitHub';
@@ -202,7 +203,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "unarchiveCodexCliSession",
   "deleteCodexCliSession",
   "getWorkspaceEnvironment",
-  "coordinateCodexSessions", "workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub",
+  "coordinateCodexSessions", "workspacePanel", "workspaceBrowser", "workspaceTerminal", "workspaceGit", "workspaceGitHub", "sessionArtifact",
   "listWorkspaceFiles",
   "readWorkspaceFile",
   "saveWorkspaceFile",
@@ -218,7 +219,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
 ]);
 import type { DashboardOAuthCoordinator } from "./oauthCoordinator";
 import { ExtensionSettingsStore } from "../../infrastructure/config/extensionSettings";
-import { handleDashboardSettingUpdate } from "./settings";
+import { handleDashboardSettingUpdate, normalizeCloudflaredDomain } from "./settings";
 import {
   deferWindowReloadForAccount,
   handleCodexAppRestartPreference,
@@ -319,6 +320,7 @@ async function executeDashboardActionMessageInTransport(
     (message.action === "openCodexCliSession" && (ctx.hostKind !== "browser" || message.payload?.openInVsCode === true)))
     cancelCodexSessionAutoResume("Auto Resume was cancelled for this manual action.");
   // Routine reads and the console itself must not generate audit traffic.
+  if (message.action === 'sessionArtifact' && message.payload?.artifactRequest?.operation === 'list') return executeDashboardActionMessageCore(ctx, message);
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
     "getUsageGraph", "getCodexSkills", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
     "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceBrowser", "workspacePanel", "coordinateCodexSessions"
@@ -490,6 +492,31 @@ async function runDashboardAction(
   }
 
   switch (action) {
+    case 'sessionArtifact': {
+      if (ctx.hostKind === 'browser' && ctx.authenticatedMasterAccess !== true && ctx.actor?.id !== 'local-mcp') {
+        throw new Error('Session artifacts are managed from the master dashboard or local Codex Manager MCP.');
+      }
+      const config = getCodexManagerConfiguration();
+      if (payload?.artifactRequest?.operation === 'create') {
+        if (!config.get<boolean>('webDashboardEnabled', false)) throw new Error('Enable Web Dashboard before publishing a session artifact.');
+        if (!payload.sessionId || typeof payload.sessionId !== 'string') throw new Error('Choose a session first.');
+        const session = await waitWithin(readCodexCliSessionSummary(payload.sessionId, undefined, 'display'), 3_000,
+          'This session could not be verified. Refresh the session and try again.');
+        if (!session) throw new Error('This session no longer exists on the dashboard host.');
+      }
+      const result = await manageSessionArtifacts(payload?.sessionId, payload?.artifactRequest, {
+        dashboardOrigin: normalizeCloudflaredDomain(config.get<string>('cloudflaredDomain', '')),
+        previewDomain: config.get<string>('sessionArtifactDomain', ''),
+        confirmed: payload?.confirmed === true,
+        resolveProject: () => waitWithin(resolveRecordedSessionProject(payload?.sessionId ?? '', payload?.projectPath),
+          5_000, "This session's project folder is unavailable.")
+      });
+      return {
+        sessionArtifacts: result.sessionArtifacts,
+        artifact: result.artifact,
+        ...(result.warning ? { notice: { level: 'warning', message: result.warning } } : {})
+      };
+    }
     case 'saveApiAccount': {
       if (!payload?.apiAccount) throw new Error('Enter the API account details.');
       const saved = await saveValidatedApiAccount(payload.apiAccount, payload.apiAccountId, payload.apiAccountRevision);

@@ -9,6 +9,7 @@ import { createActionRequestId, postMessageToHost } from "./host";
 
 import { cacheSystemId, peekBrowserCache, readBrowserCache, writeBrowserCache } from './cliSessionCache';
 import { offlineReadCacheKey } from './offlinePolicy';
+import { SESSION_ARTIFACT_ACTION_TIMEOUT_MS } from '../../src/domain/sessionArtifacts';
 
 /** Transient workspace commands are never queued or automatically replayed. Cached reads never authorize mutations. */
 export function useWorkspaceRequest(
@@ -35,7 +36,7 @@ export function useWorkspaceRequest(
       if (!connected) {
         return (cacheKey ? readBrowserCache<DashboardActionResultPayload>(cacheKey) : Promise.resolve(undefined)).then(saved => { if (saved) return { ...saved, notice: { level: 'warning' as const, message: 'Offline · Saved snapshot' } }; throw new Error(cacheable ? 'No saved snapshot. Connect to load this view.' : 'Offline. This action was not sent or queued.'); });
       }
-      if (!projectPath) {
+      if (!projectPath && action !== 'sessionArtifact') {
         return Promise.reject(new Error("Select a project first."));
       }
       if (pending.current.size >= 16) {
@@ -70,7 +71,7 @@ export function useWorkspaceRequest(
               )
             );
           },
-          action === "workspaceTerminal" ? 10_000 : 135_000
+          action === "workspaceTerminal" ? 10_000 : action === 'sessionArtifact' ? SESSION_ARTIFACT_ACTION_TIMEOUT_MS : 135_000
         );
         window.addEventListener("message", receive);
         pending.current.set(id, {
@@ -90,7 +91,7 @@ export function useWorkspaceRequest(
             type: "dashboard:action",
             requestId: id,
             action,
-            payload: { ...payload, ...(action === 'workspaceBrowser' && payload.browserRequest ? { browserRequest: { ...payload.browserRequest, sessionId } } : {}), projectPath, targetDeviceId, automatic: true }
+            payload: { ...payload, ...(action === 'workspaceBrowser' && payload.browserRequest ? { browserRequest: { ...payload.browserRequest, sessionId } } : {}), ...(action === 'sessionArtifact' ? { sessionId } : {}), projectPath, targetDeviceId, automatic: action !== 'sessionArtifact' || payload.artifactRequest?.operation === 'list' }
           });
         } catch (error) {
           finish();

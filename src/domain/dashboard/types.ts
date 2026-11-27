@@ -576,6 +576,7 @@ export type DashboardActionName =
   | "checkSystemStartup"
   | "enableSystemStartup"
   | "workspaceBrowser"
+  | "sessionArtifact"
   | "workspacePanel"
   | "coordinateCodexSessions"
   | "browseWorkspaceFolders"
@@ -805,6 +806,7 @@ export interface DashboardActionPayload {
   gitHistory?: DashboardWorkspaceGitRequest;
   terminalRequest?: WorkspaceTerminalRequest;
   browserRequest?: import('../workspaceBrowser').WorkspaceBrowserRequest;
+  artifactRequest?: import('../sessionArtifacts').SessionArtifactRequest;
   panelRequest?: import('../workspaceSurface').WorkspaceSurfaceRequest;
   /** Enforced by project-scoped API authorization, not by the dashboard client. */
   panelLocalOnly?: boolean;
@@ -1250,6 +1252,8 @@ export interface DashboardActionResultPayload {
   teamSettingsResponse?: unknown;
   masterUsername?: string;
   workspaceBrowser?: import('../workspaceBrowser').WorkspaceBrowserState;
+  sessionArtifacts?: import('../sessionArtifacts').SessionArtifact[];
+  artifact?: import('../sessionArtifacts').SessionArtifact;
   workspacePanel?: import('../workspaceSurface').WorkspaceSurfaceResult;
   sessionCoordination?: import('../sessionCoordination').SessionCoordinationResult;
   workspaceFolder?: string;

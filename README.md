@@ -259,6 +259,14 @@ Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudfla
 
 Cloudflare Tunnel exposes the dashboard’s HTTPS and secure WebSocket endpoints. It does **not** expose raw MQTT/TCP; devices that use MQTT still need a separately reachable broker. Install the same stable VSIX on every PC that should appear in the PC picker; the dashboard cannot discover a PC whose extension host is offline or running an older build.
 
+### Share session artifacts
+
+On the dashboard host, open **Session actions → Artifacts**. Use **Project file** to publish a snapshot up to 8 MiB, **Existing URL** for an HTTP or HTTPS redirect, or **Running app** for a loopback HTTP server such as a Node.js development app. A self-contained HTML snapshot opens in the browser. Other files download. A running app must stay online and its routes are accessible to anyone with the link.
+
+Each share gets a unique URL and expires after 24 hours. Revoke individual URLs from the same session. Codex can use the local MCP tool `manager_session_artifact` when asked to share a deliverable. For work that only needs a local preview, use the workspace Browser.
+
+File downloads and redirects use the public HTTPS dashboard address. To enable HTML and running app previews, set `codexManager.sessionArtifactDomain` to a DNS suffix you control. Configure wildcard DNS, a matching HTTPS certificate, and Cloudflare Tunnel ingress for that suffix to the same dashboard listener, preserving the request hostname. Preview links use `cm-preview-<id>.<suffix>`, with a dedicated origin per preview. The dashboard reports when it saves an artifact but cannot verify that its public URL is reachable.
+
 ### Remote and mobile workflow
 
 1. Install Codex Manager on each PC and enable CLI integration where sessions should be visible.

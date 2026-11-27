@@ -85,6 +85,7 @@ import { isCliTurnActive, isCliLiveStateCurrent, isCliTranscriptRunning, reconci
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { isWorkspaceTerminalKeyboardEvent } from "./keyboardScope";
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
+import { SessionArtifactsModal } from './sessionArtifacts';
 import { getSensitiveDisplayValue } from "./helpers";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, canRestoreCliComposerDraft, cliComposerDraftKey, cliContextUsage, cliDraftChangesActiveTurnSettings, isCliSubmissionEcho, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
@@ -697,6 +698,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sessionReadError = props.selectedSession?.status === "unknown" && !isCodexSessionInspectionNotice(props.selectedSession.statusError ?? "") ? props.selectedSession.statusError : undefined;
   useEffect(() => { if (sessionReadError) props.onActionFeedback({ level: 'warning', message: sessionReadError }); }, [sessionReadError]);
   const [shareOpen, setShareOpen] = useState(false);
+  const [artifactSession, setArtifactSession] = useState<string>();
   const [workWindowButtonTarget, setWorkWindowButtonTarget] = useState<HTMLElement | null>(null);
   const messageViewportRef = useRef<HTMLElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
@@ -1812,6 +1814,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onOpenInCodex={props.standalone || props.selectedSession?.provider === 'claude' ? undefined : () => props.onOpenInCodex(props.selectedSession!)}
                 onCopyLink={props.onCopyLink}
                 onShare={() => setShareOpen(true)}
+                onArtifacts={props.officeUser ? undefined : () => setArtifactSession(cliSessionTargetKey(props.selectedSession!))}
                 onArchive={() => props.onArchive(props.selectedSession!)}
                 onRestore={() => props.onUnarchive(props.selectedSession!)}
                 onDelete={() => setDeleteTarget(props.selectedSession)}
@@ -2046,6 +2049,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </div>
       {props.browser && window.self === window.top ? <BrowserWorkWindow simple={!!props.officeUser} buttonTarget={workWindowButtonTarget} path={props.selectedSession ? buildCliSessionPath(props.selectedSession) : '/workspace'} onFeedback={reportLocalFeedback} /> : null}
       {shareOpen && props.selectedSession ? <SessionShareModal onFeedback={props.onActionFeedback} connected={props.connected !== false} key={cliSessionTargetKey(props.selectedSession)} title={props.selectedSession.title} sessionKey={cliSessionTargetKey(props.selectedSession)} messages={props.messages} onClose={() => setShareOpen(false)} /> : null}
+      {artifactSession && props.selectedSession && artifactSession === cliSessionTargetKey(props.selectedSession)
+        ? <SessionArtifactsModal key={artifactSession} request={workspaceDownloadRequest} onClose={() => setArtifactSession(undefined)} />
+        : null}
     </fieldset></PrivateWorkspaceContext.Provider>
   );
 }
@@ -2057,6 +2063,7 @@ export function ConversationHeader(props: {
   session: DashboardCliSessionSummary; readOnly?: boolean; archived?: boolean; busy?: boolean; sending?: boolean;
   onBack?: () => void; onRefresh: () => void;
   onRename?: (name: string) => void; onFork?: () => void; onCopyLink?: () => void; onShare?: () => void;
+  onArtifacts?: () => void;
   onArchive?: () => void; onRestore?: () => void; onDelete?: () => void; onRenameCancelled?: () => void; onOpenInCodex?: () => void;
   toolsAvailable?:boolean; terminalCollapsed?: boolean; onToggleTerminal?: () => void;
 }) {
@@ -2088,6 +2095,7 @@ export function ConversationHeader(props: {
       <div class="cli-session-menu-wrap" ref={menuRef}>
         <button type="button" class="cli-icon-button" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreIcon /></button>
         {menuOpen ? <div class="cli-session-menu" role="menu">
+          {props.onArtifacts ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); props.onArtifacts?.(); }}><LinkIcon /> Artifacts</button> : null}
           {!props.archived ? <>
 
             <span class="cli-mobile-menu-item" />

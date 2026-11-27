@@ -260,6 +260,24 @@ const tools = [
     }
   },
   {
+    name: "manager_session_artifact",
+    description: "Manage unique, revocable share URLs in a local Codex Manager session. Only create a public share when the user asks to share the deliverable. Choose file for a project file or self-contained HTML, link for an existing HTTP(S) URL, and app only when the deliverable needs a running local HTTP server. Use the exact current session ID. For local-only viewing use manager_browser. Report any reachability warning from the result.",
+    inputSchema: {
+      type: "object",
+      required: ["sessionId", "operation"],
+      additionalProperties: false,
+      properties: {
+        sessionId: { type: "string" },
+        operation: { type: "string", enum: ["list", "create", "revoke"] },
+        kind: { type: "string", enum: ["file", "app", "link"] },
+        title: { type: "string" },
+        source: { type: "string", description: "Project-relative file path, running loopback HTTP URL or port, or existing HTTP(S) URL." },
+        id: { type: "string", description: "Artifact ID from the list operation." },
+        confirmed: { type: "boolean", description: "Set true for create only when the user has authorized sharing with anyone who has the link." }
+      }
+    }
+  },
+  {
     name: "manager_setting",
     description: "Change a permitted global Manager setting. Needs settings permission.",
     inputSchema: {
@@ -284,6 +302,11 @@ async function tool(name, args, signal) {
       await api("/api/state" + (args.projectPath ? "?projectPath=" + encodeURIComponent(args.projectPath) : ""), signal)
     );
   if (name === "manager_action") return action(args, signal);
+  if (name === "manager_session_artifact") {
+    if (!localTransport) throw new Error("Session artifacts require local Codex Manager MCP.");
+    const { sessionId, confirmed, ...artifactRequest } = args;
+    return action({ action: "sessionArtifact", payload: { sessionId, confirmed, artifactRequest } }, signal);
+  }
   if (name === 'manager_coordination') {
     if (typeof args.projectPath !== 'string' || !object(args.request)) throw new Error('Provide projectPath and request.');
     const request = { ...args.request };
@@ -417,7 +440,7 @@ async function handle(message, signal) {
   }
   if (message.method === "ping") return {};
   if (!initialized) throw Object.assign(new Error("Initialize MCP first."), { code: -32002 });
-  if (message.method === "tools/list") return { tools };
+  if (message.method === "tools/list") return { tools: localTransport ? tools : tools.filter(tool => tool.name !== "manager_session_artifact") };
   if (message.method === "tools/call") {
     try {
       return await tool(message.params?.name, message.params?.arguments || {}, signal);
