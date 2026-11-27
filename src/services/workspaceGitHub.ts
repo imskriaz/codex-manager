@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
-import { spawn } from "node:child_process";
 import { fetch } from "undici";
 import type { WorkspaceGitHubItem, WorkspaceGitHubRequest, WorkspaceGitHubState } from "../domain/dashboard/types";
 import { resolveWorkspaceProjectPathAsync } from "./workspaceTools";
 import { workspaceGitCommand } from "./workspaceGit";
 import { runCrossWindowExclusive, runCrossWindowOnce, sharedResourceKey } from "../utils/crossWindowOperations";
 import { waitWithin } from "../utils/concurrency";
+import { readGitHubCredential } from "./workspaceGitAuth";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>
@@ -17,7 +17,7 @@ const positive = (value: unknown): number =>
 
 import { parseGitHubRemote } from "../domain/workspaceGitStatus";
 export { parseGitHubRemote } from "../domain/workspaceGitStatus";
-async function credential(cwd: string): Promise<string | undefined> {
+async function credential(cwd: string, repository: string): Promise<string | undefined> {
   const session = await waitWithin(
     Promise.resolve(vscode.authentication.getSession("github", ["repo"], { silent: true })),
     3000,
@@ -26,40 +26,7 @@ async function credential(cwd: string): Promise<string | undefined> {
   if (session?.accessToken) {
     return session.accessToken;
   }
-  return new Promise((resolve) => {
-    const child = spawn("git", ["-c", "credential.interactive=false", "credential", "fill"], {
-      cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
-      windowsHide: true
-    });
-    let output = "",
-      settled = false;
-    const finish = (value?: string) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish();
-    }, 5000);
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (output.length + chunk.length > 16_384) {
-        child.kill();
-        finish();
-      } else {
-        output += chunk.toString("utf8");
-      }
-    });
-    child.stderr.resume();
-    child.on("error", () => finish());
-    child.stdin.on("error", () => undefined);
-    child.on("close", (code) => finish(code === 0 ? /^password=(.+)$/m.exec(output)?.[1]?.trim() : undefined));
-    child.stdin.end("protocol=https\nhost=github.com\n\n");
-  });
+  return readGitHubCredential(cwd, repository);
 }
 async function api(
   repository: string,
@@ -320,8 +287,11 @@ export async function workspaceGitHub(
     throw new Error("Choose a supported GitHub action.");
   }
   let repository: string;
+  let remotePath: string | undefined;
   try {
-    repository = parseGitHubRemote(await workspaceGitCommand(cwd, ["remote", "get-url", "origin"]));
+    const remote = (await workspaceGitCommand(cwd, ["remote", "get-url", "origin"])).trim();
+    repository = parseGitHubRemote(remote);
+    if (remote.startsWith("https://")) remotePath = new URL(remote).pathname.slice(1);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/not a git repository/i.test(message)) {
@@ -334,6 +304,9 @@ export async function workspaceGitHub(
   }
   let token: string | undefined;
   if (request.operation === "connect") {
+    if (vscode.env?.appHost === "node") {
+      throw new Error("Use Authorize GitHub HTTPS in Repository actions to sign in on this system.");
+    }
     const session = await waitWithin(
       Promise.resolve(vscode.authentication.getSession("github", ["repo"], { createIfNone: true })),
       90_000,
@@ -344,7 +317,7 @@ export async function workspaceGitHub(
       throw new Error("GitHub sign-in was cancelled.");
     }
   } else {
-    token = await credential(cwd);
+    token = await credential(cwd, remotePath ?? repository);
   }
   if (["read", "detail", "connect"].includes(request.operation)) {
     return read(repository, token, request);

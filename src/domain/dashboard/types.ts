@@ -1028,6 +1028,7 @@ export interface DashboardWorkspaceEnvironment {
   ahead: number;
   behind: number;
   hasRemote: boolean;
+  hasOriginRemote?: boolean;
   changedFiles?: Array<{ path: string; originalPath?: string; index: string; worktree: string }>;
   changedFilesTruncated?: boolean;
   branchDiff?: string;
@@ -1103,7 +1104,7 @@ export interface WorkspaceTerminalSnapshot {
 }
 
 export interface WorkspaceGitRequest {
-  operation: 'read' | 'diff' | 'init' | 'addRemote' | 'stage' | 'unstage' | 'discard' | 'fetch' | 'pull' | 'push' | 'commit' | 'switch' | 'createBranch' | 'renameBranch' | 'deleteBranch' | 'merge' | 'abortMerge' | 'stash' | 'applyStash' | 'popStash' | 'dropStash';
+  operation: 'read' | 'diff' | 'init' | 'addRemote' | 'authStart' | 'authStatus' | 'authCancel' | 'stage' | 'unstage' | 'discard' | 'fetch' | 'pull' | 'push' | 'commit' | 'switch' | 'createBranch' | 'renameBranch' | 'deleteBranch' | 'merge' | 'abortMerge' | 'stash' | 'applyStash' | 'popStash' | 'dropStash';
   operationId?: string;
   revision?: string;
   path?: string;
@@ -1125,6 +1126,13 @@ export interface WorkspaceGitState {
   output?: string;
   warning?: string;
   environment?: DashboardWorkspaceEnvironment;
+  auth?: WorkspaceGitAuthState;
+}
+
+export interface WorkspaceGitAuthState {
+  status: 'starting' | 'waiting' | 'completed' | 'cancelled' | 'failed';
+  code?: string;
+  message?: string;
 }
 
 export interface WorkspaceGitHubRequest {

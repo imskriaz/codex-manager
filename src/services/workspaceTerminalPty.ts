@@ -44,7 +44,7 @@ const terminals = new Map<string, SharedTerminal>();
 const creates = new Map<string, { fingerprint: string; promise: Promise<SharedTerminal>; expires: number }>();
 const MAX_TERMINALS = 8;
 
-function releaseWindowsResources(pty: IPty): void {
+export function releaseWindowsResources(pty: IPty): void {
   if (process.platform !== "win32") {
     return;
   }
@@ -89,7 +89,7 @@ export function disposeSharedTerminals(): void {
   creates.clear();
 }
 
-async function loadPty(): Promise<typeof import("node-pty")> {
+export async function loadPty(): Promise<typeof import("node-pty")> {
   try {
     if (process.platform === "darwin") {
       const helper = path.resolve(

@@ -16,6 +16,7 @@ import {
 } from "../utils/crossWindowOperations";
 import { waitWithin } from "../utils/concurrency";
 import * as vscode from "vscode";
+import { startWorkspaceGitAuth, workspaceGitAuthStatus } from "./workspaceGitAuth";
 
 const MUTATIONS = new Set([
   "init",
@@ -192,6 +193,17 @@ export async function workspaceGit(
   confirmed: boolean
 ): Promise<WorkspaceGitState> {
   const cwd = await resolveWorkspaceProjectPathAsync(project);
+  if (request && ["authStart", "authStatus", "authCancel"].includes(request.operation)) {
+    if (!confirmed || vscode.workspace.isTrusted === false) throw new Error("Confirm GitHub authorization in a trusted workspace.");
+    if (!request.operationId || !/^[a-f0-9-]{36}$/i.test(request.operationId)) throw new Error("A valid GitHub authorization ID is required.");
+    if (request.operation !== "authStart") {
+      return { revision: "", branches: [], stashes: [], auth: workspaceGitAuthStatus(cwd, request.operationId, request.operation === "authCancel") };
+    }
+    const remote = (await workspaceGitCommand(cwd, ["remote", "get-url", "origin"], 5000)).trim();
+    parseGitHubRemote(remote);
+    if (!remote.startsWith("https://")) throw new Error("This origin uses SSH. Configure an SSH key on the selected system to authorize Git operations.");
+    return { revision: "", branches: [], stashes: [], auth: startWorkspaceGitAuth(cwd, request.operationId, new URL(remote).pathname.slice(1)) };
+  }
   if (!request || !["read", "diff", ...MUTATIONS].includes(request.operation)) {
     throw new Error("Choose a supported Git operation.");
   }

@@ -663,6 +663,7 @@ async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardW
     additions,
     deletions,
     hasRemote: Boolean(remotes.stdout.trim()),
+    hasOriginRemote: remotes.stdout.split(/\r?\n/).includes('origin'),
     ...(unborn && diff.exitCode !== 0 ? { warning: 'Git change totals are unavailable until the first commit.' } : {})
   };
 }

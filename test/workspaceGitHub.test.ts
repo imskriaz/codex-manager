@@ -5,7 +5,7 @@ import type { WorkspaceGitHubRequest } from "../src/domain/dashboard/types";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), auth: vi.fn(), remote: vi.fn() }));
 vi.mock("undici", () => ({ fetch: mocks.fetch }));
-vi.mock("vscode", () => ({ authentication: { getSession: mocks.auth }, workspace: {} }));
+vi.mock("vscode", () => ({ authentication: { getSession: mocks.auth }, env: {}, workspace: {} }));
 vi.mock("../src/services/workspaceTools", () => ({ resolveWorkspaceProjectPathAsync: vi.fn(async (value) => value) }));
 vi.mock("../src/services/workspaceGit", () => ({ workspaceGitCommand: mocks.remote }));
 const secret = "private-token-never-sent-to-browser";

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   DashboardNotice,
   DashboardWorkspaceGitHistory,
+  WorkspaceGitAuthState,
   WorkspaceGitRequest,
   WorkspaceGitState
 } from "../../src/domain/dashboard/types";
@@ -32,6 +33,7 @@ export function WorkspaceGit(props: {
   const [state, setState] = useState<WorkspaceGitState>(),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
+    [readError, setReadError] = useState(""),
     [stale, setStale] = useState(true),
     [setupRequired, setSetupRequired] = useState(false);
   const [history, setHistory] = useState<DashboardWorkspaceGitHistory>(),
@@ -42,17 +44,27 @@ export function WorkspaceGit(props: {
     title: string;
     description: string;
     request: WorkspaceGitRequest;
-    field?: "name" | "message";
+    field?: "name" | "message" | "remote";
     placeholder?: string;
   }>();
   const [field, setField] = useState(""),
     [filter, setFilter] = useState("");
+  const [auth, setAuth] = useState<{
+    id: string;
+    state: WorkspaceGitAuthState;
+    ready: boolean;
+    cancelling?: boolean;
+    statusError?: string;
+  }>();
+  const [authorizedAttempt, setAuthorizedAttempt] = useState<string>();
   const generation = useRef(0);
+  const cancelOnClose = useRef<() => void>();
   const previousPending = useRef(props.pending);
   const ownsPending = useRef(false);
   useEffect(
     () => () => {
       generation.current++;
+      cancelOnClose.current?.();
     },
     []
   );
@@ -75,13 +87,19 @@ export function WorkspaceGit(props: {
       }
       setState(result.workspaceGit);
       setSetupRequired(false);
+      setReadError("");
       setStale(!props.connected);
       setNotice("");
       if (result.workspaceGit.warning) props.onFeedback({ level: "warning", message: result.workspaceGit.warning });
     } catch (error) {
       if (token === generation.current) {
-        if (/not a git repository/i.test((error as Error).message)) { setSetupRequired(true); setState(undefined); setHistory(undefined); }
-        else props.onFeedback({ level: "error", message: (error as Error).message });
+        const message = (error as Error).message;
+        const missing = /not a git repository/i.test(message);
+        setSetupRequired(missing);
+        setReadError(missing ? "" : message);
+        setState(undefined);
+        setHistory(undefined);
+        if (!missing) props.onFeedback({ level: "error", message });
         setStale(true);
       }
     } finally {
@@ -102,6 +120,59 @@ export function WorkspaceGit(props: {
     }
     previousPending.current = props.pending;
   }, [props.pending]);
+  const requestAuth = async (operation: "authStart" | "authStatus" | "authCancel", id: string) => {
+    const result = await request("workspaceGit", { gitRequest: { operation, operationId: id }, confirmed: true });
+    if (!result.workspaceGit?.auth) throw new Error("The system did not confirm GitHub authorization. Check its status before retrying.");
+    return result.workspaceGit.auth;
+  };
+  const startAuth = async () => {
+    const token = generation.current;
+    const id = crypto.randomUUID();
+    setAuth({ id, state: { status: "starting" }, ready: false });
+    try {
+      const state = await requestAuth("authStart", id);
+      const cancel = () => { void requestAuth("authCancel", id).catch(() => undefined); };
+      const active = state.status === "starting" || state.status === "waiting";
+      if (token === generation.current) {
+        if (active) cancelOnClose.current = cancel;
+        setAuth({ id, state, ready: true });
+      } else if (active) {
+        cancel();
+      }
+    } catch (error) {
+      if (token === generation.current) setAuth({ id, state: { status: "failed", message: (error as Error).message }, ready: true });
+    }
+  };
+  const authActive = auth?.state.status === "starting" || auth?.state.status === "waiting";
+  useEffect(() => {
+    if (!auth || !auth.ready || !authActive || auth.cancelling || !props.connected) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      void requestAuth("authStatus", auth.id).then((state) => {
+        if (current) setAuth({ ...auth, state, statusError: undefined });
+      }, (error: Error) => {
+        if (current) setAuth({ ...auth, statusError: error.message });
+      });
+    }, 1500);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [auth, authActive, request, props.connected]);
+  useEffect(() => {
+    if (!authActive) cancelOnClose.current = undefined;
+    if (auth?.state.status === "completed") setAuthorizedAttempt(auth.id);
+  }, [auth, authActive]);
+  const cancelAuth = async () => {
+    if (!auth || !auth.ready || auth.cancelling) return;
+    setAuth({ ...auth, cancelling: true });
+    try {
+      const state = await requestAuth("authCancel", auth.id);
+      setAuth({ ...auth, state, cancelling: false, statusError: undefined });
+    } catch (error) {
+      setAuth({ ...auth, cancelling: false, statusError: (error as Error).message });
+    }
+  };
   const run = async (operation: WorkspaceGitRequest) => {
     if (!state || stale || busy || props.pending) {
       return;
@@ -211,6 +282,18 @@ export function WorkspaceGit(props: {
     setField(value.field === "message" ? draft : "");
     setDialog(value);
   };
+  const addRemote = () => confirm({
+    title: "Add GitHub remote",
+    description: "Add this URL as origin. You can use Git locally and add a remote without signing in.",
+    request: { operation: "addRemote" },
+    field: "remote",
+    placeholder: "https://github.com/owner/repository.git"
+  });
+  const closeDialog = () => {
+    if (busy) return;
+    if (dialog?.request.operation === "addRemote") setNotice("Add remote cancelled.");
+    setDialog(undefined);
+  };
   const initializeRepository = async () => {
     if (busy || !props.connected) return;
     setBusy(true);
@@ -232,6 +315,8 @@ export function WorkspaceGit(props: {
   };
   const disabled = busy || Boolean(props.pending) || stale || !props.connected || !state?.environment?.isGitRepository;
   const environment = state?.environment;
+  const hasOrigin = environment?.hasOriginRemote ?? environment?.hasRemote;
+  const ownershipBlocked = /detected dubious ownership/i.test(readError);
   const changed = environment?.changedFiles ?? [];
   const staged = changed.filter((file) => file.index !== " " && file.index !== "?" && file.index !== "!");
   const working = changed.filter((file) => file.worktree !== " " || file.index === "?");
@@ -249,6 +334,9 @@ export function WorkspaceGit(props: {
 
         <WorkspaceMenu label="Repository actions" icon={<ToolIcon kind="more" />}>
           <div>
+            <button type="button" disabled={busy || !props.connected || !props.projectPath} onClick={() => void read()}>Refresh Git</button>
+            {!hasOrigin && <button type="button" disabled={disabled} onClick={addRemote}>Add GitHub remote</button>}
+            {hasOrigin && <button type="button" disabled={disabled || Boolean(authActive)} onClick={() => void startAuth()}>Authorize GitHub HTTPS</button>}
             {(["fetch", "pull", "push"] as const).map((operation) => (
               <button
                 type="button"
@@ -312,21 +400,33 @@ export function WorkspaceGit(props: {
           </button>
         ))}
       </nav>
-      {view !== "github" && notice ? <pre class="workspace-tool-output" aria-label="Git output">{notice}</pre> : null}
-      {view === "github" ? (
-        <WorkspaceGitHub {...props} />
+      {notice ? <pre class="workspace-tool-output" aria-label="Git output" role="status">{notice}</pre> : null}
+      {view === "github" && !ownershipBlocked ? (
+        <WorkspaceGitHub
+          {...props}
+          hasOrigin={hasOrigin}
+          authorizedAttempt={authorizedAttempt}
+          canAddRemote={!disabled}
+          onAddRemote={addRemote}
+          onRepositoryInitialized={() => void read()}
+        />
       ) : (
         <div class="workspace-tool-scroll">
           {!state || !environment?.isGitRepository ? (
             <div class="workspace-tool-empty">
               <ToolIcon kind="branch" />
-              <strong>{busy ? "Reading repository…" : setupRequired ? "No Git repository" : "Repository unavailable"}</strong>
-              <p>{setupRequired ? "Initialize Git in this project to use source control." : "Select a Git project, or refresh when its folder is available."}</p>
+              <strong>{busy ? "Reading repository…" : setupRequired ? "No Git repository" : ownershipBlocked ? "Git blocked this repository" : "Repository unavailable"}</strong>
+              <p>{setupRequired ? "Initialize Git in this project to use source control." : ownershipBlocked ? "Git sees a different owner for this checkout. Run Codex Manager under the account that owns the project, then refresh." : "Select a Git project, or refresh when its folder is available."}</p>
+              {readError && !busy ? <pre class="workspace-tool-output" role="alert">{ownershipBlocked ? readError.split(/\r?\n/)[0] : readError}</pre> : null}
               {setupRequired ? (
                 <button type="button" disabled={busy || !props.connected} onClick={() => void initializeRepository()}>
                   Initialize repository
                 </button>
-              ) : null}
+              ) : (
+                <button type="button" disabled={busy || !props.connected || !props.projectPath} onClick={() => void read()}>
+                  Refresh Git
+                </button>
+              )}
             </div>
           ) : view === "changes" ? (
             <>
@@ -705,14 +805,10 @@ export function WorkspaceGit(props: {
         <WorkspaceDialog
           title={dialog.title}
           subtitle={dialog.description}
-          onClose={() => {
-            if (!busy) {
-              setDialog(undefined);
-            }
-          }}
+          onClose={closeDialog}
           footer={
             <>
-              <button type="button" disabled={busy} onClick={() => setDialog(undefined)}>
+              <button type="button" disabled={busy} onClick={closeDialog}>
                 Cancel
               </button>
               <button
@@ -720,17 +816,17 @@ export function WorkspaceGit(props: {
                 disabled={disabled || Boolean(dialog.field && !field.trim())}
                 onClick={() => void run({ ...dialog.request, ...(dialog.field ? { [dialog.field]: field } : {}) })}
               >
-                {busy ? "Working…" : "Confirm"}
+                {busy ? "Working…" : dialog.field === "remote" ? "Add remote" : "Confirm"}
               </button>
             </>
           }
         >
           {dialog.field ? (
             <label>
-              {dialog.field === "name" ? "Branch name" : "Message"}
+              {dialog.field === "name" ? "Branch name" : dialog.field === "remote" ? "GitHub remote URL" : "Message"}
               <input
                 autoFocus
-                maxLength={dialog.field === "name" ? 240 : 2000}
+                maxLength={dialog.field === "name" ? 240 : dialog.field === "remote" ? 2048 : 2000}
                 value={field}
                 placeholder={dialog.placeholder}
                 onInput={(event) => setField(event.currentTarget.value)}
@@ -740,6 +836,29 @@ export function WorkspaceGit(props: {
             <p>Project: {environment?.projectName}</p>
           )}
           {stale ? <p>Refresh the repository before retrying.</p> : null}
+        </WorkspaceDialog>
+      ) : null}
+      {auth ? (
+        <WorkspaceDialog
+          title="Authorize GitHub HTTPS"
+          onClose={() => { if (!authActive) setAuth(undefined); else void cancelAuth(); }}
+          footer={authActive ? (
+            <button type="button" disabled={!props.connected || !auth.ready || auth.cancelling || Boolean(auth.state.message)} onClick={() => void cancelAuth()}>Cancel</button>
+          ) : <button type="button" onClick={() => setAuth(undefined)}>Close</button>}
+        >
+          {auth.state.code ? (
+            <>
+              <p>Enter this code on GitHub to authorize HTTPS Git on the selected system.</p>
+              <p><code>{auth.state.code}</code></p>
+              <p><a href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub device verification</a></p>
+            </>
+          ) : null}
+          <p role={auth.state.status === "failed" ? "alert" : "status"}>
+            {auth.cancelling ? "Cancelling GitHub authorization…" : auth.state.message ?? (auth.state.code ? "Waiting for GitHub approval…" : "Starting GitHub authorization…")}
+          </p>
+          {authActive && (!props.connected || auth.statusError) ? (
+            <p role="alert">{props.connected ? auth.statusError : "The selected system disconnected. Reconnect to check authorization."}</p>
+          ) : null}
         </WorkspaceDialog>
       ) : null}
       {diff ? (

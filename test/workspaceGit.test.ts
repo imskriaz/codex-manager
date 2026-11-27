@@ -42,11 +42,13 @@ describe("workspace source control", () => {
       const operation = (request: WorkspaceGitRequest) => workspaceGit(root, { ...request, operationId: randomUUID() }, true);
       const initialized = await operation({ operation: "init" });
       expect(initialized.environment?.isGitRepository).toBe(true);
+      expect(initialized.environment?.hasOriginRemote).toBe(false);
       await expect(operation({ operation: 'init' })).rejects.toThrow('already manages');
       await mkdir(path.join(root, 'nested'));
       await expect(workspaceGit(path.join(root, 'nested'), { operation: 'addRemote', remote: 'https://github.com/example/project', operationId: randomUUID() }, true)).rejects.toThrow('repository root');
       const added = await operation({ operation: "addRemote", remote: "https://github.com/example/project.git" });
       expect(added.environment?.hasRemote).toBe(true);
+      expect(added.environment?.hasOriginRemote).toBe(true);
       expect(execFileSync("git", ["remote", "get-url", "origin"], { cwd: root, encoding: "utf8" }).trim()).toBe("https://github.com/example/project.git");
       await expect(operation({ operation: "addRemote", remote: "https://github.com.evil.test/example/project" })).rejects.toThrow("canonical GitHub");
     } finally {
@@ -54,6 +56,16 @@ describe("workspace source control", () => {
       await removeTestDirectory(root);
     }
   });
+  it("requires confirmation and a GitHub HTTPS origin for device authorization", async () =>
+    fixture(async (root, git) => {
+      const request: WorkspaceGitRequest = { operation: "authStart", operationId: randomUUID() };
+      await expect(workspaceGit(root, request, false)).rejects.toThrow("Confirm GitHub authorization");
+      await expect(workspaceGit(root, request, true)).rejects.toThrow("No such remote");
+      git("remote", "add", "origin", "git@github.com:example/project.git");
+      await expect(workspaceGit(root, request, true)).rejects.toThrow("uses SSH");
+      git("remote", "set-url", "origin", "https://github.com.example/project");
+      await expect(workspaceGit(root, request, true)).rejects.toThrow("github.com origin");
+    }));
   it("stages and unstages an unborn repository without deleting work, then commits exactly staged changes", async () =>
     fixture(async (root, git) => {
       await writeFile(path.join(root, "first.txt"), "first");
