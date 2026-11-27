@@ -17,7 +17,7 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors=[]; page.on('pageerror',error=>errors.push(error.stack));
     page.on('console',message=>{if(message.type()==='error' && !message.text().includes('409 (Conflict)'))errors.push(message.text());});
-    let snapshot={enabled:true,keys:[],settings:{revision:'0',mappings:{}},profiles:['regular','professional','expert'].map(profile=>({profile}))};
+    let snapshot={enabled:true,keys:[],settings:{revision:'0',mappings:{regular:'expert'}},profiles:['regular','professional','expert'].map(profile=>({profile}))};
     let uncertain=true, submitted, mutations=0;
     await useWorkspaceDashboardAssets(page,origin,context);
     await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:host.replace(JSON.stringify(state),JSON.stringify({...state,settings:{...state.settings,dashboardTheme:theme}}))}));
@@ -47,6 +47,11 @@ try {
     if(width<600)await page.getByRole('combobox',{name:'Settings section',exact:true}).selectOption('proxy');
     else await page.getByRole('tab',{name:'Proxy',exact:true}).click();
     const proxy=page.getByRole('region',{name:'Proxy',exact:true});await proxy.getByText('No proxy keys yet.',{exact:true}).waitFor();
+    const settingsDialog=page.getByRole('dialog',{name:'Settings',exact:true});
+    for(const select of await settingsDialog.locator('select:visible').all()){
+      const style=await select.evaluate(element=>({height:element.getBoundingClientRect().height,appearance:getComputedStyle(element).appearance,radius:getComputedStyle(element).borderRadius,color:getComputedStyle(element).color,background:getComputedStyle(element).backgroundColor}));
+      assert.ok(style.height>=(width<600?40:36));assert.equal(style.appearance,'none');assert.notEqual(style.radius,'0px');assert.notEqual(style.color,style.background);
+    }
     await page.waitForFunction(theme=>document.documentElement.dataset.theme===theme,theme);
     await page.locator('#user-settings-panel').evaluate(panel=>{panel.scrollTop=0;});
     await page.screenshot({path:path.join(output,`empty-${theme}-${width}.png`)});
@@ -68,18 +73,30 @@ try {
     await proxy.locator('.user-proxy-mappings > summary').focus();
     await proxy.locator('.user-proxy-mappings > summary').press('Enter');
     assert.equal(await proxy.getByRole('button',{name:'Save mappings',exact:true}).isDisabled(),true);
-    assert.equal(await proxy.getByRole('combobox',{name:'Map expert',exact:true}).inputValue(),'');
-    const control=await proxy.getByRole('combobox',{name:'Map expert',exact:true}).evaluate(element=>({height:element.getBoundingClientRect().height,font:getComputedStyle(element).fontFamily,background:getComputedStyle(element).backgroundColor,color:getComputedStyle(element).color}));
-    assert.ok(control.height>=(width<600?40:36));assert.notEqual(control.background,control.color);
-    await proxy.getByRole('combobox',{name:'Map professional',exact:true}).selectOption('expert');
+    for(const profile of ['regular','professional','expert'])assert.equal(await proxy.getByLabel(`Map ${profile}`,{exact:true}).count(),0,'Unrelated Codex mapping controls are removed');
+    for(const alias of ['claude-opus','claude-sonnet','claude-haiku','claude-fable']){
+      const picker=proxy.getByRole('button',{name:`Map ${alias}`,exact:true});assert.match(await picker.innerText(),/Auto/);
+      await picker.click();const search=page.getByRole('combobox',{name:`Search map ${alias}`,exact:true});await search.waitFor();
+      await search.fill('no-matching-profile');await page.getByRole('status').filter({hasText:`No matching map ${alias}.`}).waitFor();
+      await search.fill('');
+      const menu=page.locator('.api-choice-popover:visible');
+      await page.waitForFunction(()=>{const menu=document.querySelector('.api-choice-popover:popover-open');if(!menu)return false;const bounds=menu.getBoundingClientRect();return bounds.x>=0&&bounds.right<=innerWidth+1&&bounds.y>=0&&bounds.bottom<=innerHeight+1;});
+      const menuBounds=await menu.boundingBox();assert.ok(menuBounds&&menuBounds.x>=0&&menuBounds.x+menuBounds.width<=width+1&&menuBounds.y>=0&&menuBounds.y+menuBounds.height<=height+1);
+      assert.equal(await menu.getByRole('option').count(),4);assert.equal(await menu.getByRole('option',{name:/Auto/}).getAttribute('aria-selected'),'true');
+      await page.screenshot({path:path.join(output,`dropdown-${alias}-${theme}-${width}.png`)});
+      await search.press('Escape');await menu.waitFor({state:'hidden'});assert.equal(await picker.getAttribute('aria-expanded'),'false');
+    }
+    const sonnet=proxy.getByRole('button',{name:'Map claude-sonnet',exact:true});await sonnet.focus();await sonnet.press('ArrowDown');
+    const search=page.getByRole('combobox',{name:'Search map claude-sonnet',exact:true});await search.fill('Expert');await search.press('Enter');
+    assert.match(await sonnet.innerText(),/Expert/);
     await proxy.getByRole('button',{name:'Save mappings',exact:true}).click();
     await proxy.getByRole('alert').filter({hasText:'changed in another window'}).waitFor();
-    assert.equal(await proxy.getByRole('combobox',{name:'Map professional',exact:true}).inputValue(),'expert');
+    assert.match(await sonnet.innerText(),/Expert/);
     await proxy.getByRole('button',{name:'Refresh proxy',exact:true}).click();
     await proxy.getByRole('status').filter({hasText:'Your mapping draft is kept'}).waitFor();
-    assert.equal(await proxy.getByRole('combobox',{name:'Map professional',exact:true}).inputValue(),'expert');
+    assert.match(await sonnet.innerText(),/Expert/);
     await proxy.getByRole('button',{name:'Save mappings',exact:true}).click();
-    await proxy.getByRole('status').filter({hasText:'Proxy settings saved.'}).waitFor();assert.equal(submitted.mappings.professional,'expert');
+    await proxy.getByRole('status').filter({hasText:'Proxy settings saved.'}).waitFor();assert.equal(submitted.mappings['claude-sonnet'],'expert');assert.equal(submitted.mappings.regular,'expert','Hidden saved settings are not deleted by a UI-only edit');
     await page.screenshot({path:path.join(output,`mappings-${theme}-${width}.png`)});
     for(const client of ['Claude','Codex']){
       await proxy.getByRole('button',{name:`${client} settings`,exact:true}).click();const dialog=page.getByRole('dialog',{name:`${client} settings`,exact:true});await dialog.waitFor();

@@ -9,10 +9,11 @@ import {checkUserDeliverablesUi} from './check-user-deliverables-ui.mjs';
 import {checkUserWorkspaceRecoveryUi} from './check-user-workspace-recovery-ui.mjs';
 import {checkUserMessageRenderingUi,checkUserFileRenderingUi} from './check-user-message-rendering-ui.mjs';
 import {checkToolFailureUi} from './check-tool-failure-ui.mjs';
+import {checkUserSettingsPolishUi} from './check-user-settings-polish-ui.mjs';
 const origin='http://127.0.0.1:39875';
 const raw=await(await fetch(origin+'/api/state')).json();
 const office={id:'fixture-alex',username:'alex@example.test',displayName:'Alex Morgan',role:'user',features:['generalChat','tasks','files','browser','env'],defaultPrompt:'',workspacePath:'',mcpServers:[]};
-const state={lang:raw.lang,copy:raw.copy,logoUri:raw.logoUri,panelTitle:'Workspace',brandSub:'',onboardingCompleted:true,office,accounts:[],connectedPeers:[],peerAccounts:{},indexHealth:{status:'healthy',availableBackups:0},tokenAutomation:{enabled:false},settings:{...Object.fromEntries(Object.entries(raw.settings).map(([key,value])=>[key,typeof value==='boolean'?false:typeof value==='number'?0:typeof value==='string'?'':[]])),dashboardTheme:'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,workspaceTextFileLimitMb:10}};
+const state={lang:raw.lang,copy:raw.copy,logoUri:raw.logoUri,panelTitle:'Workspace',brandSub:'',onboardingCompleted:true,office,accounts:[],connectedPeers:[],peerAccounts:{},indexHealth:{status:'healthy',availableBackups:0},tokenAutomation:{enabled:false},settings:{...Object.fromEntries(Object.entries(raw.settings).map(([key,value])=>[key,typeof value==='boolean'?false:typeof value==='number'?0:typeof value==='string'?'':[]])),dashboardTheme:process.env.CODEX_MANAGER_TEST_THEME||'light',cliIntegrationEnabled:true,teamWorkspaceEnabled:true,workspaceTextFileLimitMb:10}};
 const activities=[
  {id:'task-plan',kind:'plan',title:'Plan',text:'Task complete',arguments:JSON.stringify({steps:[{step:'Read requirements',status:'completed'},{step:'Make changes',status:'completed'},{step:'Check results',status:'completed'}]}),status:'completed'},
  {id:'read-file',kind:'tool-call',title:'Read file',text:'Read the document',arguments:JSON.stringify({path:'C:/team/alex/notes.txt'}),result:'Complete document contents.',status:'completed'},
@@ -72,10 +73,10 @@ async function assertPlainUserInterface(page){
  const presentation=await page.evaluate(()=>[document.body.innerText,...[...document.querySelectorAll('[title],[aria-label]')].filter(node=>node.getClientRects().length).flatMap(node=>[node.getAttribute('title')||'',node.getAttribute('aria-label')||''])].join('\n'));
  assert.doesNotMatch(presentation,/C:[\\/]|Windows[\\/](?:System32|Temp)|Codex|quota|sandbox|API|model provider|native thread/i);
 }
-const browser=await chromium.launch({channel:'msedge',headless:true});
+const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL==='bundled'?{}:{channel:'msedge'})});
 try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('--phone-only')||value===360)){
  // Playwright's service-worker blocking script throws inside opaque sandbox previews.
- const context=await browser.newContext({viewport:{width,height:width===360?674:960}});const page=await context.newPage();page.setDefaultTimeout(15_000);
+ const context=await browser.newContext({viewport:{width,height:process.argv.includes('--settings-polish')&&width<600?(width===390?844:674):width===360?674:960}});const page=await context.newPage();page.setDefaultTimeout(15_000);
  const errors=[];page.on('pageerror',error=>errors.push(error.stack||error.message));
  page.on('console',message=>{if(message.type()==='error'&&!/(?:status of (?:409|503))/.test(message.text()))errors.push('Console: '+message.text());});
  await useWorkspaceDashboardAssets(page,origin,context);await context.route('**/assets/browserHost.js*',route=>route.fulfill({contentType:'text/javascript',body:mockHost}));
@@ -155,6 +156,9 @@ try{for(const width of [1440,390,360,320].filter(value=>!process.argv.includes('
  });
  const openSettings=async()=>{if(await page.locator('.overlay.open .office-user-settings').count())return;const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();await page.getByRole('button',{name:'Open settings',exact:true}).click();await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();assert.equal(await page.locator('.user-settings-footer form[action="/logout"]').count(),1);};
  const nav=async(name)=>{if(name==='Chats'){if(await page.locator('.overlay.open .office-user-settings').count())await page.locator('.overlay.open .office-user-settings .settings-close').click();return;}await openSettings();if(width<=760)await page.getByRole('combobox',{name:'Settings section',exact:true}).selectOption({label:name});else await page.getByRole('tab',{name,exact:true}).click();};
+ if(process.argv.includes('--settings-polish')){
+  await checkUserSettingsPolishUi(page,context,{width,output,nav});assert.deepEqual(errors,[]);await context.close();continue;
+ }
  if(process.argv.includes('--loading-recovery')){
   await checkUserWorkspaceRecoveryUi(page,context,{width,output,nav});
   assert.deepEqual(errors,[]);await context.close();continue;

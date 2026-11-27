@@ -5,12 +5,10 @@ import { CLAUDE_PROXY_MODEL_OVERRIDES } from '../../src/domain/dashboard/apiProx
 import { request } from './teamSettingsRequest';
 import { handleTabKeyDown, ModalShell } from './primitives';
 import { ToolIcon, CopyIcon, renderRefreshIcon } from './icons';
+import { ApiChoicePicker } from './apiChoicePicker';
 
 type Snapshot = OfficeProxySnapshot & { key?: {id: string; value: string}; message?: string };
-const MODEL_GROUPS = [
-  { name: 'Claude Code', aliases: ['claude-opus', 'claude-sonnet', 'claude-haiku', 'claude-fable'] },
-  { name: 'Codex', aliases: ['regular', 'professional', 'expert'] }
-] as const;
+const CLAUDE_ALIASES = ['claude-opus', 'claude-sonnet', 'claude-haiku', 'claude-fable'] as const;
 export function UserWorkspaceProxy({ connected }: { connected: boolean }) {
   const [tab, setTab] = useState('keys'), [snapshot, setSnapshot] = useState<Snapshot>();
   const [mappings, setMappings] = useState<OfficeProxySettings['mappings']>({});
@@ -51,8 +49,8 @@ export function UserWorkspaceProxy({ connected }: { connected: boolean }) {
     const profile = snapshot?.profiles.find(choice => choice.profile === OFFICE_PROXY_DEFAULTS[alias])?.profile ?? snapshot?.profiles[0]?.profile;
     return profile ? officeProfileLabel(profile) : 'Unavailable';
   };
-  const dirty = (Object.keys(OFFICE_PROXY_DEFAULTS) as OfficeProxyAlias[]).some(alias => mappings[alias] !== snapshot?.settings.mappings[alias]);
-  const customCount = Object.keys(mappings).length;
+  const dirty = CLAUDE_ALIASES.some(alias => mappings[alias] !== snapshot?.settings.mappings[alias]);
+  const customCount = CLAUDE_ALIASES.filter(alias => mappings[alias]).length;
   return <section class="settings-block settings-block-wide user-proxy" aria-label="Proxy">
     <header class="user-proxy-heading"><div><h3 class="settings-block-title">Proxy</h3><p>Connect your coding tools.</p></div><button class="user-proxy-refresh" type="button" aria-label="Refresh proxy" disabled={busy || !connected} onClick={() => void run()}>{renderRefreshIcon()}<span>Refresh</span></button></header>
     {!connected ? <p class="user-proxy-notice is-error" role="alert">Disconnected. Reconnect before changing Proxy.</p> : null}
@@ -75,10 +73,13 @@ export function UserWorkspaceProxy({ connected }: { connected: boolean }) {
       <div id="user-proxy-panel-settings" role="tabpanel" aria-labelledby="user-proxy-tab-settings" hidden={tab !== 'settings'}>
         <div class="user-proxy-section-heading"><h4>Connect a client</h4><p>Use a key from the Keys tab with either configuration.</p></div>
         <div class="user-proxy-clients">{(['claude', 'codex'] as const).map(value => <div class="user-proxy-client" key={value}><span class="user-proxy-client-icon"><ToolIcon kind="terminal" /></span><div><h4>{value === 'claude' ? 'Claude Code' : 'Codex'}</h4><p>{value === 'claude' ? 'Anthropic-compatible connection' : 'OpenAI-compatible connection'}</p></div><button type="button" aria-label={value === 'claude' ? 'Claude settings' : 'Codex settings'} onClick={() => { setStatus(''); setClient(value); }}>Configure</button></div>)}</div>
-        <details class="user-proxy-mappings"><summary><span>Model mapping<small>{customCount ? `${customCount} custom ${customCount === 1 ? 'mapping' : 'mappings'}` : 'Auto configured · no setup needed'}</small></span><ToolIcon kind="down" /></summary>
-          <p>Auto uses your available workspace profiles. Customize a target only when you need a different model.</p>
+        <details class="user-proxy-mappings"><summary><span>Claude model mapping<small>{customCount ? `${customCount} custom ${customCount === 1 ? 'mapping' : 'mappings'}` : 'Auto configured · no setup needed'}</small></span><ToolIcon kind="down" /></summary>
+          <p>Choose the workspace profile behind each Claude model. Auto follows your available profiles; Codex needs no extra mapping here.</p>
           <form onSubmit={event => { event.preventDefault(); void run('PUT', { mappings, expected: snapshot.settings.revision }); }}>
-            {MODEL_GROUPS.map(group => <fieldset key={group.name}><legend>{group.name}</legend>{group.aliases.map(alias => <label class="user-proxy-map-row" key={alias}><span>{alias.startsWith('claude-') ? alias.slice(7).replace(/^./, character => character.toUpperCase()) : officeProfileLabel(alias as 'regular' | 'professional' | 'expert')}<code>{alias}</code></span><select aria-label={`Map ${alias}`} disabled={busy || !connected} value={mappings[alias] ?? ''} onChange={event => { const next = { ...mappings }; const value = event.currentTarget.value; if (value) next[alias] = value as typeof OFFICE_PROXY_DEFAULTS[OfficeProxyAlias]; else delete next[alias]; setMappings(next); }}><option value="">Auto ({autoLabel(alias)})</option>{mappings[alias] && !snapshot.profiles.some(choice => choice.profile === mappings[alias]) ? <option value={mappings[alias]} disabled>{officeProfileLabel(mappings[alias]!)} (unavailable)</option> : null}{snapshot.profiles.map(({ profile }) => <option value={profile}>{officeProfileLabel(profile)}</option>)}</select></label>)}</fieldset>)}
+            <div class="user-proxy-mapping-table"><div class="user-proxy-mapping-head" aria-hidden="true"><span>Claude model</span><span>Workspace profile</span></div>{CLAUDE_ALIASES.map(alias => <div class="user-proxy-map-row" key={alias}><span>{alias.slice(7).replace(/^./, character => character.toUpperCase())}<code>{alias}</code></span><ApiChoicePicker label={`Map ${alias}`} value={mappings[alias] ?? ''} disabled={busy || !connected} placeholder={mappings[alias] ? `${officeProfileLabel(mappings[alias]!)} (unavailable)` : 'Choose a profile'} choices={[
+              {id:'',label:'Auto',detail:`Recommended · ${autoLabel(alias)}`},
+              ...snapshot.profiles.map(({profile})=>({id:profile,label:officeProfileLabel(profile),detail:'Use this workspace profile'}))
+            ]} onChange={value=>{const next={...mappings};if(value)next[alias]=value as typeof OFFICE_PROXY_DEFAULTS[OfficeProxyAlias];else delete next[alias];setMappings(next);}} /></div>)}</div>
             <div class="user-proxy-save"><span>{dirty ? 'Unsaved changes' : 'Mappings up to date'}</span><button class="user-proxy-primary" type="submit" disabled={busy || !connected || !dirty}>Save mappings</button></div>
           </form>
         </details>
@@ -89,7 +90,7 @@ export function UserWorkspaceProxy({ connected }: { connected: boolean }) {
       {feedback}
       <div class="user-proxy-code"><div class="user-proxy-code-heading"><code>{client === 'claude' ? 'settings.json' : 'config.toml'}</code><button type="button" aria-label="Copy configuration" onClick={() => void copy(config)}><CopyIcon />Copy</button></div><textarea aria-label="Client configuration" readOnly rows={12} wrap="off" value={config} spellcheck={false} onFocus={event => event.currentTarget.select()} /></div>
       <div class="user-proxy-dialog-help"><ToolIcon kind="key" /><p>{client === 'claude' ? 'Replace <YOUR_PROXY_KEY> with a key from Proxy → Keys.' : 'Set MANAGER_API_KEY in your environment to a key from Proxy → Keys.'} Never share your key.</p></div>
-      <p class="user-proxy-footnote">{client === 'claude' ? 'Auto defaults: Opus → Expert, Sonnet → Professional, Haiku → Regular.' : 'Regular, Professional and Expert automatically use your workspace models.'} You can customize these in Proxy → Settings.</p>
+      <p class="user-proxy-footnote">{client === 'claude' ? 'Auto defaults: Opus → Expert, Sonnet → Professional, Haiku → Regular. Customize Claude targets in Proxy → Settings.' : 'Codex automatically uses your configured workspace models. No extra mapping is needed here.'}</p>
     </ModalShell>
     <ModalShell open={!!revoking} title="Revoke proxy key" closeLabel="Cancel key revocation" closeDisabled={busy} onClose={() => { setRevoking(undefined); setStatus('Key revocation cancelled.'); setFailed(false); }} className="office-user-settings user-proxy user-proxy-dialog user-proxy-confirm">
       {feedback}<p>Revoke <strong>{revoking?.name}</strong>? Clients using this key will lose access immediately.</p><div class="user-proxy-actions"><button type="button" disabled={busy} onClick={() => { setRevoking(undefined); setStatus('Key revocation cancelled.'); setFailed(false); }}>Cancel</button><button class="user-proxy-danger" type="button" disabled={busy || !connected} onClick={() => void run('DELETE', {id: revoking?.id, confirmed: true})}>Confirm revoke</button></div>

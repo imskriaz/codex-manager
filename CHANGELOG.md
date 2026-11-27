@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1-pre.23
+
+- Remove unrelated Codex profile mapping controls from User Proxy settings and use the master API's searchable picker for Claude targets. Align dropdowns across user and master Settings, including Workspace section, with consistent spacing, focus, dark-theme options and touch sizing.
+- Polish all seven user Settings tabs with shared typography and controls, aligned account/security rows, clearer usage and personalization sections, and consistent Library, Scheduled and editor layouts.
+
 ## 3.0.1-pre.22
 
 - Refine User Workspace Proxy with a compact key form, readable key rows, grouped optional model mappings, and smaller Claude/Codex setup dialogs. Keep Auto configuration visible by default and improve keyboard focus, mobile controls, and light/dark theme styling.

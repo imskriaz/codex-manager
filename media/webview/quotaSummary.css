@@ -4015,9 +4015,7 @@ html[data-theme="auto"] body.vscode-light .overlay {
   border-color: var(--border-accent);
   box-shadow: 0 0 0 1px rgba(56, 139, 253, 0.16) inset;
 }
-.settings-select option {
-  color: #111827;
-}
+.settings-select option { color: var(--text-primary); background: var(--bg-surface); }
 .settings-text-input {
   min-width: 0;
   box-sizing: border-box;
@@ -19624,7 +19622,7 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
   .dashboard-content .dashboard-account-toolbar:has(.batch-bar.is-contextual) { grid-template-columns: minmax(0, 1fr) auto; }
 }
 
-.settings-modal.office-user-settings:has(.user-proxy):not(.user-proxy-dialog) { height: min(680px, calc(100dvh - 32px)); font-family: var(--font-family); }
+.settings-modal.office-user-settings:has(> .user-settings-layout) { width: min(880px, calc(100vw - 24px)); height: min(680px, calc(100dvh - 32px)); }
 .office-user-settings .settings-block.user-proxy { container: proxy-panel / inline-size; gap: 12px; border: 0; }
 .user-proxy { min-width: 0; color: var(--text-primary); font-family: var(--font-family); }
 .user-proxy p { line-height: 1.5; overflow-wrap: anywhere; }
@@ -19633,7 +19631,7 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
 .user-proxy :is(input, select, textarea) { box-sizing: border-box; width: 100%; min-width: 0; font: inherit; color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 6px; }
 .user-proxy :is(input, select) { min-height: 36px; padding: 8px 10px; }
 .user-proxy :is(input, select, textarea, button, summary):focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
-:is(.office-user-settings .user-proxy, .office-user-settings.user-proxy) button:not([role=tab]):not(.settings-close) {
+:is(.office-user-settings .user-proxy, .office-user-settings.user-proxy) button:not([role=tab]):not([role=option]):not(.settings-close) {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 12px; font: inherit; font-size: calc(13px * var(--dashboard-text-scale, 1)); line-height: 1.25; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer;
   &:not(:disabled):hover { background: var(--bg-hover); border-color: var(--border-muted); }
   &:disabled { opacity: .5; cursor: not-allowed; }
@@ -19680,11 +19678,16 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
 .user-proxy-mappings[open] > summary > svg { transform: rotate(180deg); }
 .user-proxy-mappings > p { padding-block: 8px 16px; }
 .user-proxy-mappings form { display: grid; gap: 20px; margin: 0; }
-.user-proxy-mappings fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-.user-proxy-mappings legend { width: 100%; padding: 0 0 8px; font-size: calc(12px * var(--dashboard-text-scale, 1)); font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-default); }
+.user-proxy-mapping-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); gap: 16px; padding-bottom: 8px; font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); border-bottom: 1px solid var(--border-default); }
 .user-proxy .user-proxy-map-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); align-items: center; gap: 16px; padding-block: 8px; border-bottom: 1px solid var(--border-default); }
 .user-proxy-map-row > span { min-width: 0; display: grid; gap: 4px; }
 .user-proxy-map-row code { font: calc(11px * var(--dashboard-text-scale, 1))/1.4 var(--font-mono); color: var(--text-muted); overflow-wrap: anywhere; }
+.user-proxy-map-row .api-choice-field > label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.office-user-settings .user-proxy .api-choice-trigger { display: flex; justify-content: space-between; width: 100%; min-height: 52px; text-align: left; }
+.user-proxy .api-choice-trigger small { font: calc(11px * var(--dashboard-text-scale, 1))/1.5 var(--font-family); }
+.user-proxy .api-choice-popover small { font-family: var(--font-family); }
+.settings-modal.office-user-settings .user-proxy .api-choice-popover [role=option] { justify-content: space-between; min-height: 40px; padding: 8px; border: 0; border-radius: 5px; background: transparent; font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.settings-modal.office-user-settings .user-proxy .api-choice-popover [role=option][data-active=true] { background: var(--bg-hover); }
 .user-proxy-save { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
 .user-proxy-save > span { font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
 .settings-modal.office-user-settings.user-proxy-dialog { width: min(600px, calc(100vw - 24px)); height: auto; }
@@ -19703,9 +19706,99 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
   .user-proxy-client { gap: 8px; }
   .user-proxy-client-icon { display: none; }
   .user-proxy .user-proxy-map-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px; }
+  .user-proxy-mapping-head { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px; }
   .user-proxy :is(button, input, select) { min-height: 40px; }
-  .office-user-settings .user-proxy button:not([role=tab]):not(.settings-close) { min-height: 40px; }
+  .office-user-settings .user-proxy button:not([role=tab]):not([role=option]):not(.settings-close) { min-height: 40px; }
 }
+
+.settings-modal select:not([multiple]) { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 36px; padding: 8px 36px 8px 12px; border: 1px solid var(--border-default); border-radius: 6px; background-color: var(--bg-surface); color: var(--text-primary); font: calc(13px * var(--dashboard-text-scale, 1))/1.4 var(--font-family); appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238c959f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; cursor: pointer; }
+.settings-modal select:not([multiple]):hover:not(:disabled) { border-color: var(--border-muted); background-color: var(--bg-elevated); }
+.settings-modal select:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.settings-modal select:disabled { opacity: .55; cursor: not-allowed; }
+.settings-modal select option { background: var(--bg-surface); color: var(--text-primary); }
+.settings-modal.office-user-settings { font: calc(13px * var(--dashboard-text-scale, 1))/1.5 var(--font-family); color: var(--text-primary); }
+.settings-modal:is(.user-confirm-modal,.user-recovery-modal) { font: calc(13px * var(--dashboard-text-scale, 1))/1.5 var(--font-family); color: var(--text-primary); }
+.settings-modal:is(.user-confirm-modal,.user-recovery-modal) :is(button,input,textarea,select) { font: inherit; }
+.office-user-settings > .settings-modal-head { padding: 16px 20px; }
+.office-user-settings .settings-modal-title { font: 600 calc(15px * var(--dashboard-text-scale, 1))/1.4 var(--font-family); }
+.office-user-settings .user-settings-layout { grid-template-columns: 168px minmax(0, 1fr); }
+.office-user-settings .user-settings-layout > .settings-modal-body { padding: 4px 24px 24px; }
+.office-user-settings .user-settings-nav { padding: 16px 12px; }
+.office-user-settings .user-settings-nav > button { min-height: 36px; font: 400 calc(13px * var(--dashboard-text-scale, 1))/1.4 var(--font-family); padding: 8px 12px; }
+.office-user-settings .user-settings-nav > button[aria-selected=true] { font-weight: 600; }
+.office-user-settings .settings-block { padding-block: 20px; gap: 12px; font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.office-user-settings .settings-block-title { font-size: calc(14px * var(--dashboard-text-scale, 1)); line-height: 1.4; }
+.office-user-settings .user-settings-section-heading { display: grid; gap: 4px; }
+.office-user-settings :is(input:not([type=checkbox]):not([type=radio]), textarea) { padding: 8px 12px; border-radius: 6px; background: var(--bg-surface); font: inherit; }
+.office-user-settings input:not([type=checkbox]):not([type=radio]) { min-height: 36px; }
+.office-user-settings button:not(.settings-close):not([role]):not(.user-page-icon):not(.api-choice-trigger):not(.user-proxy-primary):not(.user-proxy-refresh):not(.user-proxy-danger) { min-height: 36px; padding: 8px 12px; border-radius: 6px; background: var(--bg-surface); font: inherit; cursor: pointer; }
+.office-user-settings button:not(:disabled):hover { border-color: var(--border-muted); }
+.office-user-settings button:disabled { opacity: .55; cursor: not-allowed; }
+.office-user-settings :is(.user-editor-modal,.settings-block) button[type=submit],.office-user-settings.user-editor-modal button[type=submit] { background: var(--text-primary); color: var(--bg-surface); border-color: var(--text-primary); }
+.office-user-settings p:is([role=status],[role=alert]) { padding: 8px 12px; border-left: 2px solid var(--border-muted); background: var(--bg-base); font-size: calc(12px * var(--dashboard-text-scale, 1)); }
+.office-user-settings p[role=alert] { border-left-color: var(--danger); }
+.office-user-settings .user-appearance select { width: min(200px, 50%); }
+.office-user-settings .settings-block.user-appearance { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.office-user-settings .user-instructions-preview { margin-top: 4px; padding: 12px 16px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-base); white-space: pre-wrap; }
+.office-user-settings .user-account dl { display: grid; gap: 0; margin: 4px 0 0; }
+.office-user-settings .user-account dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 16px; min-height: 48px; padding: 12px 0; border-bottom: 1px solid var(--border-default); }
+.office-user-settings .user-account dt { color: var(--text-secondary); }
+.office-user-settings .user-account dd { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; min-width: 0; text-align: start; }
+.office-user-settings .user-account dd > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.office-user-settings .user-account dd > button { flex: none; }
+.user-account-actions { display: grid; gap: 16px; padding-top: 8px; }
+.user-account-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.user-account-action > div { min-width: 0; display: grid; gap: 4px; }
+.user-account-action strong { font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 500; }
+.user-account-action > button { flex: none; }
+.office-user-settings .user-workspace-usage dl { gap: 0; margin-block: 4px 8px; }
+.office-user-settings .user-workspace-usage dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 16px 0; }
+.office-user-settings .user-workspace-usage dd { color: var(--text-primary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.office-user-settings .user-workspace-usage small { display: block; }
+.office-user-settings .user-workspace-page { padding: 20px 0; font: inherit; }
+.office-user-settings .user-workspace-page > header { align-items: flex-start; margin-bottom: 16px; }
+.office-user-settings .user-workspace-page h1 { font-size: calc(14px * var(--dashboard-text-scale, 1)); font-weight: 600; line-height: 1.4; }
+.office-user-settings .user-page-actions { gap: 8px; }
+.office-user-settings .user-library-storage { padding: 12px 0 16px; }
+.office-user-settings .user-page-filters { gap: 8px; margin: 16px 0 8px; }
+.office-user-settings .user-page-filters select { max-width: 160px; }
+.office-user-settings .user-library-files li { padding: 12px 0; gap: 12px; }
+.office-user-settings .user-library-files li > button:first-child { padding: 0; background: transparent; border: 0; text-align: start; min-width: 0; }
+.office-user-settings .user-library-files strong { font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 500; }
+.office-user-settings .user-workspace-page .user-page-icon { width: 36px; height: 36px; min-height: 36px; padding: 8px; border: 1px solid var(--border-default); background: var(--bg-surface); border-radius: 6px; }
+.office-user-settings .user-workspace-page .user-page-icon:hover { background: var(--bg-hover); }
+.office-user-settings .user-page-empty { padding: 24px 16px; margin-block: 16px; border: 1px dashed var(--border-default); border-radius: 8px; text-align: center; }
+.office-user-settings .user-schedule-list > li { gap: 12px; padding: 16px 0; }
+.office-user-settings .user-schedule-list h2 { font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 500; }
+.office-user-settings .user-schedule-copy p { margin: 4px 0 0; }
+.office-user-settings.user-editor-modal > .dashboard-modal-body,.office-user-settings.user-memory-manager > .dashboard-modal-body { padding: 20px; gap: 16px; }
+.office-user-settings.user-editor-modal :is(form,label) { gap: 12px; }
+.office-user-settings .user-memory-manage { min-height: 36px; }
+.office-user-settings .user-settings-footer { padding: 12px 20px; }
+.office-user-settings [aria-label="Clear workspace data"] .user-page-actions button { color: var(--danger); }
+@media (max-width: 760px) {
+  .settings-modal.office-user-settings:has(> .user-settings-layout) { width: calc(100vw - 16px); height: min(680px, calc(100dvh - 16px)); max-height: calc(100dvh - 16px); }
+  .office-user-settings .user-settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .office-user-settings .user-settings-layout > .settings-modal-body { padding: 0 16px 16px; }
+  .office-user-settings > .settings-modal-head,.office-user-settings .user-settings-footer { padding: 12px 16px; }
+  .office-user-settings .settings-block { padding-block: 16px; }
+  .office-user-settings .user-account dl > div { grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+  .office-user-settings .user-account dl > div:first-child { align-items: start; }
+  .office-user-settings .user-account dl > div:first-child dd { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .office-user-settings .user-account dd > span { width: 100%; }
+  .user-account-action { flex-wrap: wrap; gap: 8px; }
+  .office-user-settings .user-workspace-page > header { flex-wrap: wrap; gap: 12px; }
+  .office-user-settings .user-workspace-page .user-page-icon { width: 40px; height: 40px; min-height: 40px; padding: 10px; }
+  .office-user-settings button:not(.settings-close):not([role=tab]):not([role=option]),.office-user-settings input:not([type=checkbox]):not([type=radio]) { min-height: 40px; }
+  .office-user-settings .user-page-filters input { min-width: 100%; }
+  .office-user-settings .user-page-filters select { width: 100%; max-width: none; }
+}
+.settings-team-section { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 4px 0 16px; color: var(--text-secondary); font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+@media (max-width: 600px) {
+  .settings-modal select:not([multiple]) { min-height: 40px; }
+  .settings-team-section { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+@media (forced-colors: active) { .settings-modal select:not([multiple]) { appearance: auto; background-image: none; padding-inline-end: 8px; } }
 @media (max-width: 600px) {
   .user-proxy-dialog > .settings-modal-body { padding: 16px; gap: 12px; }
   .settings-modal.office-user-settings.user-proxy button:not(.settings-close) { min-height: 40px; }
