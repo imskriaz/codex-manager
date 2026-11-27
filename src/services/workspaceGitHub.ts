@@ -6,6 +6,7 @@ import { resolveWorkspaceProjectPathAsync } from "./workspaceTools";
 import { workspaceGitCommand } from "./workspaceGit";
 import { runCrossWindowExclusive, runCrossWindowOnce, sharedResourceKey } from "../utils/crossWindowOperations";
 import { waitWithin } from "../utils/concurrency";
+import { connectGitHubDevice } from "./githubDeviceAuth";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>
@@ -319,6 +320,21 @@ export async function workspaceGitHub(
   ) {
     throw new Error("Choose a supported GitHub action.");
   }
+  const standaloneConnect = request.operation === "connect" && vscode.env?.appHost === "node";
+  if (standaloneConnect) {
+    const warning = await connectGitHubDevice(cwd);
+    if (warning)
+      return {
+        repository: "GitHub",
+        url: "https://github.com",
+        authenticated: false,
+        canWrite: false,
+        items: [],
+        page: 1,
+        hasMore: false,
+        warning
+      };
+  }
   let repository: string;
   try {
     repository = parseGitHubRemote(await workspaceGitCommand(cwd, ["remote", "get-url", "origin"]));
@@ -334,14 +350,22 @@ export async function workspaceGitHub(
   }
   let token: string | undefined;
   if (request.operation === "connect") {
-    const session = await waitWithin(
-      Promise.resolve(vscode.authentication.getSession("github", ["repo"], { createIfNone: true })),
-      90_000,
-      "GitHub sign-in was not completed. Finish it in VS Code on the selected system, then retry."
-    );
-    token = session?.accessToken;
-    if (!token) {
-      throw new Error("GitHub sign-in was cancelled.");
+    if (standaloneConnect) {
+      token = await credential(cwd);
+      if (!token)
+        throw new Error(
+          "GitHub signed in, but Git could not read the credential. Check GitHub CLI on the selected system."
+        );
+    } else {
+      const session = await waitWithin(
+        Promise.resolve(vscode.authentication.getSession("github", ["repo"], { createIfNone: true })),
+        90_000,
+        "GitHub sign-in was not completed. Finish it in VS Code on the selected system, then retry."
+      );
+      token = session?.accessToken;
+      if (!token) {
+        throw new Error("GitHub sign-in was cancelled.");
+      }
     }
   } else {
     token = await credential(cwd);

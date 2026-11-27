@@ -410,6 +410,9 @@ Each project and system keeps its own tool tabs, commit draft and file edits. Gi
 
 **GitHub** reads the selected system’s canonical GitHub origin and uses that system’s VS Code sign-in or Git credential manager. Credentials never go to the browser. Browse paged pull requests, issues, workflow runs and releases; inspect comments, file patches, checks and job steps; create/comment/close/reopen items, submit reviews, merge a verified PR head, dispatch/cancel/rerun workflows, and create/publish/delete releases. Writes require confirmation and are not replayed automatically. Large reviews, full logs, artifacts and repository administration remain available through **Open on GitHub**. Scoped project API tokens cannot invoke the repository-wide Git/GitHub or terminal actions.
 
+On standalone hosts, **Git ? GitHub ? Connect GitHub** starts GitHub CLI device sign-in on the selected system. Open `https://github.com/login/device` on any device and enter the displayed code. After approving GitHub CLI, click **Connect GitHub** again to finish. Pending attempts reuse the same code; failed or expired attempts report their outcome before retry. GitHub CLI must be installed on that system; it stores the credential and configures Git.
+
+
 ### Project Kanban and task details
 
 **Task view**, beside Dashboard in the browser workspace, opens the selected project's **Idea, Planned, Running, Completed** board. The project board is always available. Choose a discovered project or add an existing project folder, including a closed worktree.
