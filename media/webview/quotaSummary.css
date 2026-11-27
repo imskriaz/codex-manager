@@ -18643,7 +18643,7 @@ html[data-theme="light"] .workspace-browser-inspector { --devtools-bg: #fff; --d
 
 /* Horizontal tools share workspace tabs; vertical settings use the sidebar layout. */
 :is(
-  [role="tablist"]:not([aria-orientation="vertical"]):where(:not(.user-settings-nav)):not(.cli-context-tabs-v3):not(:has(> .workspace-browser-pane-tabs)),
+  [role="tablist"]:not([aria-orientation="vertical"]):where(:not(.user-settings-nav, .user-proxy-tabs)):not(.cli-context-tabs-v3):not(:has(> .workspace-browser-pane-tabs)),
   .office-user-tabs,
   .cli-workspace .cli-context-tab-scroll,
   .cli-workspace .cli-agent-tabs,
@@ -19624,15 +19624,89 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
   .dashboard-content .dashboard-account-toolbar:has(.batch-bar.is-contextual) { grid-template-columns: minmax(0, 1fr) auto; }
 }
 
-.user-proxy { min-width: 0; }
+.settings-modal.office-user-settings:has(.user-proxy):not(.user-proxy-dialog) { height: min(680px, calc(100dvh - 32px)); font-family: var(--font-family); }
+.office-user-settings .settings-block.user-proxy { container: proxy-panel / inline-size; gap: 12px; border: 0; }
+.user-proxy { min-width: 0; color: var(--text-primary); font-family: var(--font-family); }
 .user-proxy p { line-height: 1.5; overflow-wrap: anywhere; }
-.user-proxy form { display: grid; gap: 12px; margin-block: 16px; }
-.user-proxy label { display: grid; gap: 6px; min-width: 0; }
-.user-proxy input, .user-proxy select, .user-proxy textarea { box-sizing: border-box; width: 100%; min-width: 0; }
-.user-proxy textarea { font-family: var(--vscode-editor-font-family, monospace); }
-.user-proxy-keys { list-style: none; padding: 0; }
-.user-proxy-keys li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 12px; border-bottom: 1px solid var(--vscode-panel-border, #8884); }
-.user-proxy-keys span { min-width: 0; overflow-wrap: anywhere; }
-.user-proxy-keys small { display: block; opacity: .7; margin-top: 4px; }
-.user-proxy-secret { margin-block: 16px; padding: 12px; border: 1px solid var(--vscode-panel-border, #8884); }
-.user-proxy-secret button + button { margin-inline-start: 8px; }
+.user-proxy h4 { margin: 0; font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 600; }
+.user-proxy label { display: grid; gap: 8px; min-width: 0; font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.user-proxy :is(input, select, textarea) { box-sizing: border-box; width: 100%; min-width: 0; font: inherit; color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 6px; }
+.user-proxy :is(input, select) { min-height: 36px; padding: 8px 10px; }
+.user-proxy :is(input, select, textarea, button, summary):focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+:is(.office-user-settings .user-proxy, .office-user-settings.user-proxy) button:not([role=tab]):not(.settings-close) {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 8px 12px; font: inherit; font-size: calc(13px * var(--dashboard-text-scale, 1)); line-height: 1.25; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer;
+  &:not(:disabled):hover { background: var(--bg-hover); border-color: var(--border-muted); }
+  &:disabled { opacity: .5; cursor: not-allowed; }
+  &.user-proxy-primary { background: var(--text-primary); color: var(--bg-surface); border-color: var(--text-primary); }
+  &.user-proxy-primary:not(:disabled):hover { background: var(--text-secondary); border-color: var(--text-secondary); }
+  &.user-proxy-danger { color: var(--danger); }
+  &.user-proxy-danger:not(:disabled):hover { background: color-mix(in srgb, var(--danger) 7%, var(--bg-surface)); border-color: color-mix(in srgb, var(--danger) 45%, var(--border-default)); }
+  &.user-proxy-refresh { flex: none; min-width: 36px; border-color: transparent; color: var(--text-secondary); padding-inline: 8px; }
+}
+.user-proxy svg { width: 16px; height: 16px; flex: none; }
+.user-proxy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.user-proxy-heading > div { display: grid; gap: 4px; min-width: 0; }
+.user-proxy-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border-default); }
+.user-proxy .user-proxy-tabs > button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 0 12px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.user-proxy .user-proxy-tabs > button[aria-selected=true] { border-bottom-color: var(--accent-blue); color: var(--text-primary); font-weight: 600; }
+.user-proxy-tabs > button > span { font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); font-weight: 400; }
+.office-user-settings .user-proxy-notice { padding: 8px 12px; border-left: 2px solid var(--border-muted); background: var(--bg-base); color: var(--text-secondary); }
+.office-user-settings .user-proxy-notice.is-error { color: var(--danger); border-left-color: var(--danger); }
+.user-proxy [role=tabpanel] { display: grid; gap: 12px; }
+.user-proxy-section-heading { display: grid; gap: 4px; }
+.user-proxy-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin: 0; }
+.user-proxy-secret { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-base); }
+.user-proxy-secret input { font-family: var(--font-mono); font-size: calc(12px * var(--dashboard-text-scale, 1)); background: var(--bg-surface); }
+.user-proxy-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.user-proxy-secret .user-proxy-actions { justify-content: flex-start; }
+.user-proxy-keys { list-style: none; margin: 0; padding: 0; }
+.user-proxy-keys li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-default); }
+.user-proxy-key-icon, .user-proxy-client-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-secondary); }
+.user-proxy-key-name { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: calc(13px * var(--dashboard-text-scale, 1)); }
+.user-proxy-key-name small { display: block; margin-top: 4px; }
+.user-proxy-empty { display: grid; justify-items: center; gap: 8px; padding: 16px 12px; border: 1px dashed var(--border-default); border-radius: 8px; text-align: center; }
+.user-proxy-empty > svg { width: 24px; height: 24px; margin-bottom: 4px; color: var(--text-muted); }
+.office-user-settings .user-proxy-empty > p { color: var(--text-primary); font-weight: 500; }
+.office-user-settings .user-proxy-footnote { font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
+.user-proxy-clients { border-block: 1px solid var(--border-default); }
+.user-proxy-client { display: flex; align-items: center; gap: 12px; padding: 16px 0; }
+.user-proxy-client + .user-proxy-client { border-top: 1px solid var(--border-default); }
+.user-proxy-client > div { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.user-proxy-client > button { flex: none; }
+.user-proxy-mappings { min-width: 0; }
+.user-proxy-mappings > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 8px; list-style: none; cursor: pointer; font-size: calc(13px * var(--dashboard-text-scale, 1)); font-weight: 500; }
+.user-proxy-mappings > summary::-webkit-details-marker { display: none; }
+.user-proxy-mappings > summary small { display: block; margin-top: 4px; font-weight: 400; }
+.user-proxy-mappings[open] > summary > svg { transform: rotate(180deg); }
+.user-proxy-mappings > p { padding-block: 8px 16px; }
+.user-proxy-mappings form { display: grid; gap: 20px; margin: 0; }
+.user-proxy-mappings fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.user-proxy-mappings legend { width: 100%; padding: 0 0 8px; font-size: calc(12px * var(--dashboard-text-scale, 1)); font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-default); }
+.user-proxy .user-proxy-map-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); align-items: center; gap: 16px; padding-block: 8px; border-bottom: 1px solid var(--border-default); }
+.user-proxy-map-row > span { min-width: 0; display: grid; gap: 4px; }
+.user-proxy-map-row code { font: calc(11px * var(--dashboard-text-scale, 1))/1.4 var(--font-mono); color: var(--text-muted); overflow-wrap: anywhere; }
+.user-proxy-save { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
+.user-proxy-save > span { font-size: calc(12px * var(--dashboard-text-scale, 1)); color: var(--text-muted); }
+.settings-modal.office-user-settings.user-proxy-dialog { width: min(600px, calc(100vw - 24px)); height: auto; }
+.user-proxy-dialog > .settings-modal-body { display: grid; gap: 16px; padding: 20px; }
+.user-proxy-code { min-width: 0; border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; background: var(--bg-base); }
+.user-proxy-code-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border-default); }
+.user-proxy-code-heading > code { font: calc(12px * var(--dashboard-text-scale, 1))/1.5 var(--font-mono); color: var(--text-secondary); }
+.user-proxy-code-heading > button { min-height: 32px; padding: 6px 8px; }
+.office-user-settings .user-proxy-code textarea { display: block; min-height: 160px; max-height: 32dvh; resize: vertical; border: 0; border-radius: 0; padding: 12px; background: transparent; font: calc(12px * var(--dashboard-text-scale, 1))/1.65 var(--font-mono); tab-size: 2; }
+.user-proxy-dialog-help { display: flex; align-items: flex-start; gap: 12px; }
+.user-proxy-dialog-help > svg { color: var(--text-muted); margin-top: 2px; }
+.settings-modal.office-user-settings.user-proxy-confirm { width: min(420px, calc(100vw - 24px)); }
+@container proxy-panel (max-width: 360px) {
+  .user-proxy-create { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .user-proxy .user-proxy-refresh > span { display: none; }
+  .user-proxy-client { gap: 8px; }
+  .user-proxy-client-icon { display: none; }
+  .user-proxy .user-proxy-map-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px; }
+  .user-proxy :is(button, input, select) { min-height: 40px; }
+  .office-user-settings .user-proxy button:not([role=tab]):not(.settings-close) { min-height: 40px; }
+}
+@media (max-width: 600px) {
+  .user-proxy-dialog > .settings-modal-body { padding: 16px; gap: 12px; }
+  .settings-modal.office-user-settings.user-proxy button:not(.settings-close) { min-height: 40px; }
+}
