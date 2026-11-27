@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {workspaceFileFromLink, workspaceRelativePath} from '../webview-src/dashboard/workspaceFileLink';
+import {workspaceDocumentLink, workspaceFileFromLink, workspaceRelativePath} from '../webview-src/dashboard/workspaceFileLink';
 
 describe('chat file references',()=>{
   it.each([
@@ -25,4 +25,16 @@ describe('chat file references',()=>{
     ['src/main.ts?raw=1','src/main.ts'],['../outside.ts','../outside.ts']
   ])('keeps %s inside the workspace reader', (link,file)=>expect(workspaceFileFromLink(link)).toBe(file));
   it.each(['https://example.com/file.ts','http://example.com','//example.com/file.ts','mailto:test@example.com','javascript:alert(1)','data:text/html,test','#heading','?page=2','file:///tmp/%00secret','file://user:password@host/file',''])('does not reinterpret %s as a file',link=>expect(workspaceFileFromLink(link)).toBeUndefined());
+});
+
+it.each([
+  ['docs/guide.md', 'README.md', 'docs/guide.md'],
+  ['./diagram.png', 'docs/guide.md', 'docs/diagram.png'],
+  ['../CHANGELOG.md', 'docs/guide.md', 'CHANGELOG.md'],
+  ['D:/project/README.md', 'docs/guide.md', 'README.md'],
+  ['demo%20.md', 'docs/guide.md', 'docs/demo%20.md'],
+  ['../../outside.md', 'docs/guide.md', undefined],
+  ['D:/other/private.md', 'docs/guide.md', undefined]
+])('resolves workspace document link %s from %s', (link, doc, expected) => {
+  expect(workspaceDocumentLink(link, doc, 'D:/project')).toBe(expected);
 });

@@ -30,19 +30,33 @@ async function engine(): Promise<Browser> {
     launching = (async () => {
       const started = generation;
       const { chromium } = await import("playwright-core");
-      const channel = process.env["CODEX_MANAGER_BROWSER"] ?? (process.platform === "win32" ? "msedge" : "chromium");
-      const instance = await chromium.launch({
-        ...(channel === "chromium" ? {} : { channel }),
-        headless: true,
-        ignoreDefaultArgs: ['--hide-scrollbars'],
-        timeout: 15_000
-      });
+      const configured = process.env["CODEX_MANAGER_BROWSER"]?.trim();
+      const channels = configured ? [configured] : process.platform === "win32" ? ["msedge", "chromium", "chrome"] : ["chromium"];
+      const failures: string[] = [];
+      let instance: Browser | undefined;
+      for (const channel of channels) {
+        if (started !== generation) throw new Error("Browser startup was cancelled by host shutdown.");
+        try {
+          instance = await chromium.launch({
+            ...(channel === "chromium" ? {} : { channel }),
+            headless: true,
+            ignoreDefaultArgs: ['--hide-scrollbars'],
+            timeout: 15_000 / channels.length
+          });
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push(`${channel}: ${message.split(/\r?\n/, 1)[0] || "Failed to launch."}`);
+        }
+      }
       if (started !== generation) {
-        await instance.close();
+        await instance?.close();
         throw new Error("Browser startup was cancelled by host shutdown.");
       }
+      if (!instance) throw new Error(`Workspace Browser could not start. ${failures.join(" ")}`);
+      const current = instance;
       instance.on("disconnected", () => {
-        if (browser === instance) {
+        if (browser === current) {
           browser = undefined;
           sessions.clear();
         }

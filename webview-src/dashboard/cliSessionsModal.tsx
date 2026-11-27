@@ -25,7 +25,7 @@ import { useWorkspaceRequest } from "./workspaceRequest";
 import { useWorkspaceSurface } from './workspaceSurface';
 import { WORKSPACE_TOOL_KINDS, type WorkspaceToolKind } from '../../src/domain/workspaceSurface';
 import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
-import { workspaceRelativePath } from './workspaceFileLink';
+import { workspaceDocumentLink, workspaceRelativePath } from './workspaceFileLink';
 import { readCliSessionStarts, writeCliSessionStarts } from './cliSessionStarts';
 import { ACCOUNT_CENTER_SIZE_KEY, loadAccountCenterSize, type AccountCenterSize } from './preferences';
 import { CreateProjectModal } from './createProjectModal';
@@ -1924,7 +1924,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onKeyDown={(event) => adjustPanelWithKeyboard("terminal", event.key, event.shiftKey)}
           onReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
-        <WorkspaceContextPanel
+        <SessionLinkContext.Provider value={sessionLinkActions}><WorkspaceContextPanel
           presentation={presentation}
           officeFeatures={props.officeFeatures}
           liveState={props.liveState}
@@ -2045,7 +2045,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onResizePointerDown={(event) => beginPanelResize("terminal", event)}
           onResizeKeyDown={(event) => adjustPanelWithKeyboard("terminal", event.key, event.shiftKey)}
           onResizeReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
-        />
+        /></SessionLinkContext.Provider>
       </div>
       {props.browser && window.self === window.top ? <BrowserWorkWindow simple={!!props.officeUser} buttonTarget={workWindowButtonTarget} path={props.selectedSession ? buildCliSessionPath(props.selectedSession) : '/workspace'} onFeedback={reportLocalFeedback} /> : null}
       {shareOpen && props.selectedSession ? <SessionShareModal onFeedback={props.onActionFeedback} connected={props.connected !== false} key={cliSessionTargetKey(props.selectedSession)} title={props.selectedSession.title} sessionKey={cliSessionTargetKey(props.selectedSession)} messages={props.messages} onClose={() => setShareOpen(false)} /> : null}
@@ -2520,7 +2520,9 @@ export function isInternalWorkspaceLink(href: string): boolean {
   }
 }
 
-function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpenFile?: (path: string) => void; onFeedback?: (notice: DashboardNotice) => void }) {
+type MarkdownFileLinks = { documentPath: string; projectPath?: string; download: (path: string) => void };
+
+function MarkdownMessage({ text, onOpenFile, onFeedback, fileLinks }: { text: string; onOpenFile?: (path: string) => void; onFeedback?: (notice: DashboardNotice) => void; fileLinks?: MarkdownFileLinks }) {
   const inheritedFeedback = useContext(SessionFeedbackContext);
   const feedback = onFeedback ?? inheritedFeedback;
   const html = useMemo(() => markdownRenderer.render(text), [text]);
@@ -2528,13 +2530,20 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
   const [copyNotice, setCopyNotice] = useState('');
   const markdownRoot = useRef<HTMLDivElement>(null);
   const links = useContext(SessionLinkContext);
-  const generatedFiles = links.privateWorkspace ? generatedWorkspaceFiles(text) : [];
+  const generatedFiles = links.privateWorkspace && !fileLinks ? generatedWorkspaceFiles(text) : [];
   const gallery = () => Array.from(markdownRoot.current?.querySelectorAll('img') ?? []).map(image => ({ src: image.getAttribute('src') || image.src, alt: image.alt }));
   const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
     const file = (event.target as Element).closest<HTMLAnchorElement>('a[data-workspace-file]');
     if (file) {
       event.preventDefault();
       const path = file.dataset['workspaceFile']!;
+      if (fileLinks) {
+        const resolved = workspaceDocumentLink(path, fileLinks.documentPath, fileLinks.projectPath);
+        if (!resolved) feedback?.({ level: 'warning', message: 'This link points outside the workspace project.' });
+        else if (file.hasAttribute('data-workspace-download')) fileLinks.download(resolved);
+        else onOpenFile?.(resolved);
+        return;
+      }
       if (file.hasAttribute?.('data-workspace-download') || isWorkspaceDownloadPath(path)) void links.downloadFile(path);
       else if (onOpenFile) onOpenFile(path);
       else feedback?.({ level: 'warning', message: 'Open this conversation in its workspace to view this file.' });
@@ -2543,6 +2552,16 @@ function MarkdownMessage({ text, onOpenFile, onFeedback }: { text: string; onOpe
     const link = (event.target as Element).closest<HTMLAnchorElement>("a[href]");
     if (link) {
       event.preventDefault();
+      const fragment = fileLinks ? link.getAttribute('href') : undefined;
+      if (fragment?.startsWith('#')) {
+        let id = fragment.slice(1);
+        try { id = decodeURIComponent(id); } catch { /* Match the literal fragment. */ }
+        const heading = Array.from(markdownRoot.current?.querySelectorAll('h1,h2,h3,h4,h5,h6') ?? []).find(element =>
+          element.id === id || (element.textContent ?? '').trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '').replace(/\s/g, '-') === id);
+        if (heading) heading.scrollIntoView({ block: 'start' });
+        else feedback?.({ level: 'warning', message: 'This heading could not be found in the file.' });
+        return;
+      }
       const href = link.href;
       if (isDownloadLink(link, href)) links.download(href);
       else if (isInternalWorkspaceLink(href) || link.getAttribute('title') === 'workspace-browser' || links.browserNeeded?.(href)) links.openInternal(href);
@@ -3267,19 +3286,19 @@ function WorkspaceFilesView(props: {
   const downloadRequest = useWorkspaceRequest(props.projectPath, props.targetDeviceId, props.connected !== false);
   const [downloading, setDownloading] = useState(false);
   const [downloadMessage, setDownloadMessage] = useState("");
-  const download = async () => {
-    if (!props.activePath || downloading) return;
+  const download = async (filePath = props.activePath) => {
+    if (!filePath || downloading) return;
     setDownloading(true);
     setDownloadMessage("");
     try {
       if (document.documentElement.dataset['dashboardHost'] !== 'browser') {
-        const result = await downloadRequest("readWorkspaceFile", { filePath: props.activePath, fileDownloadNative: true });
+        const result = await downloadRequest("readWorkspaceFile", { filePath, fileDownloadNative: true });
         if (!result.notice) throw new Error("The file download was not confirmed.");
         setDownloadMessage(result.notice.message);
         props.onFeedback(result.notice);
         return;
       }
-      await downloadWorkspaceFile(props.activePath, payload => downloadRequest("readWorkspaceFile", payload), (blob, name) => {
+      await downloadWorkspaceFile(filePath, payload => downloadRequest("readWorkspaceFile", payload), (blob, name) => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url; link.download = name;
@@ -3334,13 +3353,13 @@ function WorkspaceFilesView(props: {
     {currentPath ? null : <div class="cli-file-tree" aria-busy={props.loading}><header><strong>Project files</strong></header>{props.loading && props.files.length === 0 ? <span class="cli-context-loading" role="status"><span class="cli-live-spinner" />Loading files…</span> : props.files.length === 0 ? <span class="cli-context-empty">{props.readError ? "File list unavailable. Reopen Files to retry." : "No project files."}</span> : props.files.filter((entry) => !hiddenByParent(entry)).map((entry) => entry.type === "directory" ? <button key={entry.path} type="button" class="is-directory" aria-expanded={collapsed[entry.path] === false} title={entry.path} style={`--tree-depth:${entry.depth}`} onContextMenu={(event) => { event.preventDefault(); setFileMenu({ entry, x: event.clientX, y: event.clientY }); }} onClick={() => setCollapsed((current) => ({ ...current, [entry.path]: current[entry.path] === false }))}><ChevronIcon /><EmptyFolderIcon /><span>{entry.name}</span></button> : <button key={entry.path} type="button" title={entry.path} class={currentPath === entry.path ? "is-selected" : ""} style={`--tree-depth:${entry.depth}`} onContextMenu={(event) => { event.preventDefault(); setFileMenu({ entry, x: event.clientX, y: event.clientY }); }} onClick={() => openFile(entry.path)}><FileIcon /><span>{entry.name}</span></button>)}</div>}
     {fileMenu ? <WorkspaceContextMenu x={fileMenu.x} y={fileMenu.y} onClose={() => setFileMenu(undefined)}><strong title={fileMenu.entry.path}>{fileMenu.entry.name}</strong>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); openFile(fileMenu.entry.path); }}><FileIcon /> Open</button> : <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); setCollapsed((current) => ({ ...current, [fileMenu.entry.path]: current[fileMenu.entry.path] === false })); }}><EmptyFolderIcon /> Expand / collapse</button>}<button type="button" role="menuitem" onClick={() => { const selected = fileMenu.entry.path; setFileMenu(undefined); void navigator.clipboard.writeText(selected).then(() => props.onFeedback({ level: "info", message: "File path copied." }), () => props.onFeedback({ level: "error", message: "File path could not be copied." })); }}><LinkIcon /> Copy path</button>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" class="is-danger" disabled={props.connected === false} onClick={() => { setDeleteTarget(fileMenu.entry); setFileMenu(undefined); }}><TrashIcon /> Delete</button> : null}</WorkspaceContextMenu> : null}
     {deleteTarget ? <DeleteConfirmation compact title={deleteTarget.name} onCancel={() => setDeleteTarget(undefined)} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDeleteFile(target.path, props.filesByPath[target.path]?.revision); }} /> : null}
-    {currentPath ? <div class="cli-file-editor">{fileReady && props.file ? <><header><span><strong title={props.file.path}>{props.file.path}</strong><small>{dirty ? "Modified" : `${props.file.kind === "text" ? props.file.language : props.file.mimeType} · ${formatFileSize(props.file.size)}`}</small></span><span class="cli-file-actions">{props.file.kind !== "binary" ? downloadAction : null}{props.file.language === "markdown" || htmlFile ? <button type="button" onClick={() => setDocumentModes((current) => ({ ...current, [props.file!.path]: markdownPreview || htmlPreview ? "edit" : "preview" }))} class="workspace-icon-action" title={htmlFile ? (htmlPreview ? "Edit HTML" : "Preview HTML") : (markdownPreview ? "Edit Markdown" : "Preview Markdown")} aria-label={htmlFile ? (htmlPreview ? "Edit HTML" : "Preview HTML") : (markdownPreview ? "Edit Markdown" : "Preview Markdown")}><WorkspaceToolIcon kind={markdownPreview || htmlPreview ? "edit" : "eye"} /></button> : null}{props.file.kind === "text" ? <button type="button" disabled={!dirty || props.saving || props.connected === false} onClick={() => props.onSave(props.file!.path, draft, revision)} class="workspace-icon-action" title={props.saving ? "Saving file…" : "Save file"} aria-label={props.saving ? "Saving file…" : "Save file"}><WorkspaceToolIcon kind="save" /></button> : null}</span></header>{props.file.kind === "binary" ? <div class="cli-binary-file-state" role="status"><div class="cli-binary-file-icon"><FileIcon /></div><div class="cli-binary-file-copy"><strong>{props.file.path.split(/[\\/]/).pop() || props.file.path}</strong><span role="status">{props.file.previewWarning || "A visual preview is not available for this file type. Download the original file to view it."}</span><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div><div class="cli-binary-file-actions">{downloadAction}<span>Downloads save a local copy and do not modify the project.</span></div></div> : props.file.kind === "image" && props.file.dataUrl ? <figure class="cli-file-image-preview"><button type="button" aria-label={`Preview ${props.file.path}`} onClick={() => setImageOpen(true)}><img src={props.file.dataUrl} alt={props.file.path} onError={() => setImageFailed(true)} /></button>{imageFailed ? <p role="alert">Image preview could not be loaded. Download the original file to view it.</p> : null}<figcaption>{props.file.mimeType} · {formatFileSize(props.file.size)}</figcaption></figure> : (props.file.kind === "audio" || props.file.kind === "video") && props.file.dataUrl ? <WorkspaceMediaPreview key={props.file.path + props.file.revision} file={props.file} onFeedback={props.onFeedback} /> : props.file.kind === "pdf" && props.file.dataUrl ? <iframe class="cli-file-pdf-preview" title={`Preview ${props.file.path}`} src={props.file.dataUrl} /> : props.file.kind === "document" ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>*{box-sizing:border-box}body{max-width:760px;margin:0 auto;padding:clamp(12px,4vw,32px);color:#24292f;background:#fff;font:15px/1.65 Georgia,serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}pre{max-width:100%;overflow:auto}td,th{padding:6px;border:1px solid #d0d7de}</style>${props.file.content}`} /> : htmlPreview ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={draft} /> : markdownPreview ? <MarkdownPreview content={draft} onFeedback={props.onFeedback} /> : <WorkspaceCodeEditor path={props.file.path} language={props.file.language} value={draft} disabled={false} onChange={(value) => props.onDraft(props.file!.path, value)} onSave={() => { if (dirty && !props.saving && props.connected !== false) props.onSave(props.file!.path, draft, revision); }} />}</> : <div class="cli-context-empty" role="status"><FileIcon /><span>{props.fileLoading ? "Opening file…" : "File could not be loaded."}</span>{!props.fileLoading ? <button type="button" disabled={props.connected === false} onClick={() => props.onOpenFile(currentPath)} class="workspace-icon-action" title="Retry loading file" aria-label="Retry loading file"><WorkspaceToolIcon kind="play" /></button> : null}</div>}</div> : null}
+    {currentPath ? <div class="cli-file-editor">{fileReady && props.file ? <><header><span><strong title={props.file.path}>{props.file.path}</strong><small>{dirty ? "Modified" : `${props.file.kind === "text" ? props.file.language : props.file.mimeType} · ${formatFileSize(props.file.size)}`}</small></span><span class="cli-file-actions">{props.file.kind !== "binary" ? downloadAction : null}{props.file.language === "markdown" || htmlFile ? <button type="button" onClick={() => setDocumentModes((current) => ({ ...current, [props.file!.path]: markdownPreview || htmlPreview ? "edit" : "preview" }))} class="workspace-icon-action" title={htmlFile ? (htmlPreview ? "Edit HTML" : "Preview HTML") : (markdownPreview ? "Edit Markdown" : "Preview Markdown")} aria-label={htmlFile ? (htmlPreview ? "Edit HTML" : "Preview HTML") : (markdownPreview ? "Edit Markdown" : "Preview Markdown")}><WorkspaceToolIcon kind={markdownPreview || htmlPreview ? "edit" : "eye"} /></button> : null}{props.file.kind === "text" ? <button type="button" disabled={!dirty || props.saving || props.connected === false} onClick={() => props.onSave(props.file!.path, draft, revision)} class="workspace-icon-action" title={props.saving ? "Saving file…" : "Save file"} aria-label={props.saving ? "Saving file…" : "Save file"}><WorkspaceToolIcon kind="save" /></button> : null}</span></header>{props.file.kind === "binary" ? <div class="cli-binary-file-state" role="status"><div class="cli-binary-file-icon"><FileIcon /></div><div class="cli-binary-file-copy"><strong>{props.file.path.split(/[\\/]/).pop() || props.file.path}</strong><span role="status">{props.file.previewWarning || "A visual preview is not available for this file type. Download the original file to view it."}</span><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div><div class="cli-binary-file-actions">{downloadAction}<span>Downloads save a local copy and do not modify the project.</span></div></div> : props.file.kind === "image" && props.file.dataUrl ? <figure class="cli-file-image-preview"><button type="button" aria-label={`Preview ${props.file.path}`} onClick={() => setImageOpen(true)}><img src={props.file.dataUrl} alt={props.file.path} onError={() => setImageFailed(true)} /></button>{imageFailed ? <p role="alert">Image preview could not be loaded. Download the original file to view it.</p> : null}<figcaption>{props.file.mimeType} · {formatFileSize(props.file.size)}</figcaption></figure> : (props.file.kind === "audio" || props.file.kind === "video") && props.file.dataUrl ? <WorkspaceMediaPreview key={props.file.path + props.file.revision} file={props.file} onFeedback={props.onFeedback} /> : props.file.kind === "pdf" && props.file.dataUrl ? <iframe class="cli-file-pdf-preview" title={`Preview ${props.file.path}`} src={props.file.dataUrl} /> : props.file.kind === "document" ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>*{box-sizing:border-box}body{max-width:760px;margin:0 auto;padding:clamp(12px,4vw,32px);color:#24292f;background:#fff;font:15px/1.65 Georgia,serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}pre{max-width:100%;overflow:auto}td,th{padding:6px;border:1px solid #d0d7de}</style>${props.file.content}`} /> : htmlPreview ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={draft} /> : markdownPreview ? <MarkdownPreview content={draft} fileLinks={{ documentPath: props.file.path, projectPath: props.projectPath, download: filePath => void download(filePath) }} onOpenFile={openFile} onFeedback={props.onFeedback} /> : <WorkspaceCodeEditor path={props.file.path} language={props.file.language} value={draft} disabled={false} onChange={(value) => props.onDraft(props.file!.path, value)} onSave={() => { if (dirty && !props.saving && props.connected !== false) props.onSave(props.file!.path, draft, revision); }} />}</> : <div class="cli-context-empty" role="status"><FileIcon /><span>{props.fileLoading ? "Opening file…" : "File could not be loaded."}</span>{!props.fileLoading ? <button type="button" disabled={props.connected === false} onClick={() => props.onOpenFile(currentPath)} class="workspace-icon-action" title="Retry loading file" aria-label="Retry loading file"><WorkspaceToolIcon kind="play" /></button> : null}</div>}</div> : null}
   </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <ImageLightbox image={{ src: props.file.dataUrl, alt: props.file.path }} onClose={() => setImageOpen(false)} /> : null}</>;
 }
 
 
-function MarkdownPreview(props: { content: string; onFeedback: (notice: DashboardNotice) => void }) {
-  return <article class="cli-markdown-preview"><MarkdownMessage text={props.content} onFeedback={props.onFeedback} /></article>;
+export function MarkdownPreview(props: { content: string; fileLinks: MarkdownFileLinks; onOpenFile: (path: string) => void; onFeedback: (notice: DashboardNotice) => void }) {
+  return <article class="cli-markdown-preview"><MarkdownMessage text={props.content} fileLinks={props.fileLinks} onOpenFile={props.onOpenFile} onFeedback={props.onFeedback} /></article>;
 }
 
 function formatFileSize(bytes: number): string {

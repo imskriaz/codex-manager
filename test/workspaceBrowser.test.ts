@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { browserUrl, validateBrowserRequest } from "../src/domain/workspaceBrowser";
 vi.mock('../src/services/workspaceBrowserDebug', () => ({ createBrowserDebugger: async () => ({ events: [], sequence: 0 }), browserDebugCommand: vi.fn(async () => 'document') }));
 import { browserDebugCommand } from '../src/services/workspaceBrowserDebug';
+import { chromium } from 'playwright-core';
 const m = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
   failStorage: false,
@@ -85,6 +86,26 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await disposeWorkspaceBrowsers();
+  vi.unstubAllEnvs();
+});
+
+it.runIf(process.platform === 'win32')('falls back to Chromium when Windows Edge exits during startup', async () => {
+  vi.stubEnv('CODEX_MANAGER_BROWSER', undefined);
+  const launch = vi.mocked(chromium.launch);
+  launch.mockClear();
+  launch.mockRejectedValueOnce(new Error('Target page, context or browser has been closed\nBrowser logs: large diagnostics'));
+  const result = await open('edge-fallback');
+  expect(launch.mock.calls.map(([options]) => options?.channel)).toEqual(['msedge', undefined]);
+  expect(result.pages).toEqual([expect.objectContaining({ url: 'http://localhost:3000/' })]);
+});
+
+it('reports a concise launch error when the configured browser fails', async () => {
+  vi.stubEnv('CODEX_MANAGER_BROWSER', 'msedge');
+  const launch = vi.mocked(chromium.launch);
+  launch.mockClear();
+  launch.mockRejectedValueOnce(new Error('Target page, context or browser has been closed\nBrowser logs: large diagnostics'));
+  await expect(open('configured-edge-error')).rejects.toThrow(/^Workspace Browser could not start\. msedge: Target page, context or browser has been closed$/);
+  expect(launch).toHaveBeenCalledTimes(1);
 });
 
 it("validates browser URLs and untrusted feedback before execution", () => {

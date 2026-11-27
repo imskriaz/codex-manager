@@ -22,9 +22,29 @@ export function workspaceFileFromLink(href: string): string | undefined {
 export function workspaceRelativePath(filePath: string, projectPath: string | undefined): string {
   const native = normalizeNativePath(filePath);
   const file = (workspaceFileFromLink(native) ?? native).replace(/\\/g, '/');
+  return relativeToWorkspaceRoot(file, projectPath);
+}
+
+function relativeToWorkspaceRoot(file: string, projectPath: string | undefined): string {
   const root = normalizeNativePath(projectPath?.trim() ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
   const windows = /^(?:[a-z]:|\/\/)/i.test(root);
   const comparableFile = windows ? file.toLowerCase() : file;
   const comparableRoot = windows ? root.toLowerCase() : root;
   return root && comparableFile.startsWith(`${comparableRoot}/`) ? file.slice(root.length + 1) : file;
+}
+
+/** References in a Markdown file resolve from its directory within the project. */
+export function workspaceDocumentLink(link: string, documentPath: string, projectPath?: string): string | undefined {
+  const relative = relativeToWorkspaceRoot(link, projectPath);
+  if (/^(?:\/|[a-z]:)/i.test(relative)) return undefined;
+  const absolute = /^(?:\/|[a-z]:)/i.test(link);
+  const segments = absolute ? [] : documentPath.split('/').slice(0, -1);
+  for (const part of relative.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (!segments.length) return undefined;
+      segments.pop();
+    } else segments.push(part);
+  }
+  return segments.join('/') || undefined;
 }

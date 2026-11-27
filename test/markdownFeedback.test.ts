@@ -9,7 +9,7 @@ vi.mock('preact/hooks', () => ({
   useRef: (value: unknown) => ({ current: value }),
   useEffect() {}, useLayoutEffect() {}, useId: () => 'markdown-fixture'
 }));
-import { isDownloadLink, isInternalWorkspaceLink, SessionMessage } from '../webview-src/dashboard/cliSessionsModal';
+import { isDownloadLink, isInternalWorkspaceLink, MarkdownPreview, SessionMessage } from '../webview-src/dashboard/cliSessionsModal';
 function nodes(node: unknown): VNode<any>[] { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== 'object' || !('props' in node)) return []; const value = node as VNode<any>; return [value, ...nodes(value.props.children)]; }
 function markdown(onFeedback?: typeof fixture.feedback, text = '```ts\nhello\n```') {
   const message = SessionMessage({ message: { id: 'm', role: 'assistant', text }, onActionFeedback: onFeedback });
@@ -68,7 +68,30 @@ it('uses scoped transcript feedback for unsupported links without adding an inli
   expect(source).not.toContain('cli-code-copy-feedback');
   expect(source).toContain('<SessionFeedbackContext.Provider value={onActionFeedback}>');
   expect(source).toContain('<SessionFeedbackContext.Provider value={feedback}><ActivityMessage');
-  expect(source).toContain('<MarkdownPreview content={draft} onFeedback={props.onFeedback} />');
+  expect(source).toContain('<MarkdownPreview content={draft} fileLinks=');
+});
+
+it('opens and downloads Markdown file links in their workspace and sends external URLs to the host', () => {
+  const open = vi.fn(), download = vi.fn(), feedback = vi.fn(), external = vi.fn();
+  fixture.links = { external };
+  const preview = MarkdownPreview({ content: '[Guide](guide.md)', fileLinks: { documentPath: 'docs/README.md', download }, onOpenFile: open, onFeedback: feedback });
+  const component = nodes(preview).find(node => typeof node.type === 'function' && node.type.name === 'MarkdownMessage')!;
+  const control = nodes((component.type as (props: any) => VNode<any>)(component.props)).find(node => node.props.class === 'cli-message-markdown')!;
+  const clickFile = (workspaceFile: string, download = false) => control.props.onClick({
+    preventDefault: vi.fn(),
+    target: { closest: () => ({ dataset: { workspaceFile }, hasAttribute: () => download }) }
+  });
+  clickFile('guide.md');
+  clickFile('../CHANGELOG.md');
+  clickFile('archive.zip', true);
+  clickFile('../../outside.md');
+  expect(open.mock.calls).toEqual([['docs/guide.md'], ['CHANGELOG.md']]);
+  expect(download).toHaveBeenCalledExactlyOnceWith('docs/archive.zip');
+  expect(feedback).toHaveBeenCalledExactlyOnceWith({ level: 'warning', message: 'This link points outside the workspace project.' });
+  control.props.onClick({ preventDefault: vi.fn(), target: { closest: (selector: string) =>
+    selector === 'a[href]' ? { href: 'https://example.com/releases', getAttribute: () => null, hasAttribute: () => false, textContent: 'Latest release' } : null
+  } });
+  expect(external).toHaveBeenCalledExactlyOnceWith('https://example.com/releases');
 });
 it('keeps the code copy icon intact and confirms success through its title without a toast', async () => {
   vi.useFakeTimers();
