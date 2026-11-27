@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.1-pre.20
+
+- Keep account search readable beside status, sorting, tag and quota filters. Fit narrow dashboard panes on one row with compact filter icons.
+
 ## 3.0.1-pre.18
 
 - Show the provider's readable failure reason in session errors and dashboard toasts, with a model-change action when the account rejects a model. Preserve original error details for diagnostics.
