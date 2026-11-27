@@ -311,7 +311,7 @@ export type CliSessionsPageProps = {
   onSelect: (session: DashboardCliSessionSummary, initialMessages?: DashboardCliSessionMessage[]) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
-  onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean, gitHistory?: DashboardWorkspaceGitRequest) => void;
+  onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean, gitHistory?: DashboardWorkspaceGitRequest, automatic?: boolean) => void;
   onRunTerminal: (command: string, projectPath?: string, terminalId?: string) => string | undefined;
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash", projectPath?: string) => void;
@@ -1070,7 +1070,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (toolsCollapsed || !props.selectedSession) return;
     const kind = workspaceTabKind(activeContextTab), path = workspaceTabPath(activeContextTab);
     if (kind === 'files') { if (path) props.onReadFile(path, toolProjectPath); else props.onListFiles(toolProjectPath); }
-    else if (toolProjectPath && (kind === 'env' || kind === 'git')) props.onRefreshEnvironment(toolProjectPath);
+    else if (toolProjectPath && kind === 'env') props.onRefreshEnvironment(toolProjectPath, undefined, undefined, true);
   }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed, props.connected, props.standalone]);
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
   const browserPages = contextProjectState.browserPages ?? [];
@@ -1181,7 +1181,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [props.sessions, props.messages, props.selectedSession?.id, props.selectedSession?.deviceId]);
   const selectContextTab = (tab: WorkspaceTab): void => {
     setActiveContextTab(tab);
-    if (toolProjectPath && (tab === 'env' || tab === 'git')) props.onRefreshEnvironment(toolProjectPath);
+    if (toolProjectPath && tab === 'env') props.onRefreshEnvironment(toolProjectPath, undefined, undefined, true);
     const filePath = workspaceTabPath(tab);
     if (workspaceTabKind(tab) === "agents" && filePath) {
       const agent = relatedAgents.find(session => session.id === filePath);

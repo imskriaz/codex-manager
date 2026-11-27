@@ -15,7 +15,8 @@ import {TaskBoard} from './webview-src/dashboard/taskBoard';
 const noop=()=>{}, task={id:'fixture-task',title:'Fixture task',prompt:'Read only',stage:'planned',revision:1,createdAt:1,updatedAt:1};
 const board={projectPath:'C:/fixture',tasks:[task],comments:[],sessions:[],updatedAt:1};
 const environment={projectPath:'C:/fixture',projectName:'Fixture',isGitRepository:true,branch:'main',changedFiles:[],changes:0,additions:0,deletions:0,hasRemote:false,hasOriginRemote:false,gitHistory:{commits:[],hasMore:false,offset:0}};
-window.__gitFixture={blocked:true, actions:[], authStatus:'waiting'};
+window.__gitFixture={blocked:true, actions:[], notices:[], authStatus:'waiting'};
+const reportGitFeedback=notice=>window.__gitFixture.notices.push(notice);
 window.__fixturePostMessage=(message)=>{
   setTimeout(()=>{
     const fixture=window.__gitFixture;
@@ -50,7 +51,7 @@ window.__fixturePostMessage=(message)=>{
 };
 const events=[{method:'Network.requestWillBeSent',sequence:1,params:{requestId:'r',type:'Fetch',request:{url:'https://example.test/report',method:'GET',headers:{}}}},{method:'Network.responseReceived',sequence:2,params:{requestId:'r',response:{status:200,mimeType:'application/json',headers:{}}}}];
 async function inspect(_action,payload){const op=payload.browserRequest.operation;return {workspaceBrowser:{pages:[],feedback:[],resources:[{url:'https://example.test/app.js',type:'Script'}],events,eventSequence:2,value:op==='storage'?{origin:'https://example.test',cookies:[],localStorage:{demo:'value'},sessionStorage:{},indexedDB:[],cacheStorage:[],serviceWorkers:[]}:op==='styles'?{rules:[],computed:[],listeners:[]}:op==='html'?{body:'{}'}:{}}};}
-function App(){const [surface,setSurface]=useState('git'),[panel,setPanel]=useState('elements');return <><select aria-label="Fixture surface" value={surface} onChange={event=>setSurface(event.currentTarget.value)}><option value="git">Git</option><option value="inspector">Inspector</option><option value="tasks">Tasks</option></select>{surface==='git'?<WorkspaceGit projectPath="C:/fixture" connected draft="" onDraft={noop} onPending={noop} onFeedback={noop} onOpenFile={noop} renderDiff={text=><pre>{text}</pre>}/>:surface==='tasks'?<TaskBoard sessions={[]} projects={[{path:'C:/fixture',label:'Fixture'}]} connected shared={{draftKey:'mobile-fixture',board,permissions:['activities','files','changes'],request:async(action)=>action==='getProjectBoard'?{projectBoard:board}:{projectTaskDetails:{task,taskId:task.id,messages:[],files:[],history:[],warnings:[]}}}} sendAction={noop} onOpenSession={noop}/>:<><select aria-label="Fixture inspector panel" value={panel} onChange={event=>setPanel(event.currentTarget.value)}>{['elements','sources','network','application'].map(value=><option>{value}</option>)}</select><div class="workspace-browser-inspector is-open" style={{position:'static',width:'100%',height:'650px'}}><BrowserInspectorContent key={panel} panel={panel} pageId="fixture" connected busy={false} request={inspect} onCommand={noop} onClearConsole={noop} onEvaluate={noop}/></div></>}</>;}render(<App/>,document.getElementById('app'));
+function App(){const [surface,setSurface]=useState('git'),[panel,setPanel]=useState('elements');return <><select aria-label="Fixture surface" value={surface} onChange={event=>setSurface(event.currentTarget.value)}><option value="git">Git</option><option value="inspector">Inspector</option><option value="tasks">Tasks</option></select>{surface==='git'?<WorkspaceGit projectPath="C:/fixture" connected draft="" onDraft={noop} onPending={noop} onFeedback={reportGitFeedback} onOpenFile={noop} renderDiff={text=><pre>{text}</pre>}/>:surface==='tasks'?<TaskBoard sessions={[]} projects={[{path:'C:/fixture',label:'Fixture'}]} connected shared={{draftKey:'mobile-fixture',board,permissions:['activities','files','changes'],request:async(action)=>action==='getProjectBoard'?{projectBoard:board}:{projectTaskDetails:{task,taskId:task.id,messages:[],files:[],history:[],warnings:[]}}}} sendAction={noop} onOpenSession={noop}/>:<><select aria-label="Fixture inspector panel" value={panel} onChange={event=>setPanel(event.currentTarget.value)}>{['elements','sources','network','application'].map(value=><option>{value}</option>)}</select><div class="workspace-browser-inspector is-open" style={{position:'static',width:'100%',height:'650px'}}><BrowserInspectorContent key={panel} panel={panel} pageId="fixture" connected busy={false} request={inspect} onCommand={noop} onClearConsole={noop} onEvaluate={noop}/></div></>}</>;}render(<App/>,document.getElementById('app'));
 `},bundle:true,write:false,format:'esm',loader:{'.css':'text'},jsx:'automatic',jsxImportSource:'preact'});
 const browser=await chromium.launch({channel:process.env.CODEX_MANAGER_UI_BROWSER==='bundled'?undefined:'msedge',headless:true});
 try{for(const width of [1440,390,320]){
@@ -59,11 +60,28 @@ try{for(const width of [1440,390,320]){
  await page.route(origin+'/__section-fixture.js',route=>route.fulfill({contentType:'text/javascript',body:bundle.outputFiles[0].text}));
  await page.goto(origin+'/__section-fixture');for(const name of ['shared.css','quotaSummary.css'])await page.addStyleTag({content:await readFile('media/webview/'+name,'utf8')});
  await page.addStyleTag({content:'body{height:auto;overflow:auto;margin:0;padding:8px}#app{height:900px;min-width:0}.workspace-git{height:850px}'});
- const choose=async(label,value,tab)=>{const picker=page.getByRole('combobox',{name:label,exact:true});assert.equal(await picker.isVisible(),width<=760);if(width<=760){await picker.selectOption(value);assert.equal(await picker.inputValue(),value);}else await page.getByRole('tab',{name:tab,exact:true}).click();};
+ const choose=async(label,value,tab)=>{
+   const picker=page.getByRole('combobox',{name:label,exact:true});
+   if(width<=760){
+     await picker.waitFor({state:'visible'});
+     await picker.selectOption(value);
+     assert.equal(await picker.inputValue(),value);
+   }else{
+     assert.equal(await picker.isVisible(),false);
+     await page.getByRole('tab',{name:tab,exact:true}).click();
+   }
+ };
  const gitStarted=performance.now();
  await page.getByText('Git blocked this repository',{exact:true}).waitFor();
  await page.getByRole('alert').filter({hasText:'detected dubious ownership'}).waitFor();
+ assert.deepEqual(await page.evaluate(()=>window.__gitFixture.notices),[]);
  await page.screenshot({path:path.join(output,'git-ownership-'+width+'.png')});
+ await choose('Git view','github','GitHub');
+ await page.getByRole('button',{name:'Refresh Git',exact:true}).click();
+ await page.waitForFunction(()=>window.__gitFixture.actions.filter(action=>action==='read').length===2);
+ await page.getByRole('alert').filter({hasText:'detected dubious ownership'}).waitFor();
+ assert.deepEqual(await page.evaluate(()=>window.__gitFixture.notices),[]);
+ await choose('Git view','changes','Changes');
  await page.evaluate(()=>{window.__gitFixture.blocked=false;});
  await page.getByRole('button',{name:'Refresh Git',exact:true}).click();
  await page.getByRole('textbox',{name:'Commit message'}).waitFor();
@@ -74,7 +92,7 @@ try{for(const width of [1440,390,320]){
  await remoteDialog.getByRole('textbox',{name:'GitHub remote URL'}).fill('https://github.com/example/repo.git');
  await remoteDialog.getByRole('button',{name:'Add remote',exact:true}).click();
  await page.getByRole('status',{name:'Git output'}).filter({hasText:'GitHub remote added.'}).waitFor();
- assert.deepEqual(await page.evaluate(()=>window.__gitFixture.actions),['read','read','addRemote']);
+ assert.deepEqual(await page.evaluate(()=>window.__gitFixture.actions),['read','read','read','addRemote']);
  const startAuth=async()=>{
    await menu.click();
    await page.getByRole('button',{name:'Authorize GitHub HTTPS',exact:true}).click();

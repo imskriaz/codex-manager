@@ -3399,10 +3399,10 @@ function App() {
                 selectedCliSession &&
                 requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true, false)
               }
-              onRefreshEnvironment={(projectPath, includeBranchDiff, gitHistory) => {
+              onRefreshEnvironment={(projectPath, includeBranchDiff, gitHistory, automatic = false) => {
                 if (includeBranchDiff) setWorkspaceEnvironment((current) => current ? { ...current, branchDiff: undefined, branchDiffBase: undefined, branchDiffTruncated: undefined } : current);
                 lastAutomaticWorkspaceLoadRef.current = undefined;
-                requestWorkspaceEnvironment(projectPath, includeBranchDiff, false, gitHistory);
+                requestWorkspaceEnvironment(projectPath, includeBranchDiff, automatic, gitHistory);
               }}
               onRunTerminal={(command, projectPath, terminalId) =>
                 sendAction("runWorkspaceTerminalCommand", undefined, { sessionId: selectedCliSession?.id, command, projectPath, terminalId, targetDeviceId: workspaceTargetDeviceId })

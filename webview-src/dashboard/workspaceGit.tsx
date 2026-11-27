@@ -99,7 +99,6 @@ export function WorkspaceGit(props: {
         setReadError(missing ? "" : message);
         setState(undefined);
         setHistory(undefined);
-        if (!missing) props.onFeedback({ level: "error", message });
         setStale(true);
       }
     } finally {
@@ -401,7 +400,7 @@ export function WorkspaceGit(props: {
         ))}
       </nav>
       {notice ? <pre class="workspace-tool-output" aria-label="Git output" role="status">{notice}</pre> : null}
-      {view === "github" && !ownershipBlocked ? (
+      {view === "github" && !readError && (state || setupRequired) ? (
         <WorkspaceGitHub
           {...props}
           hasOrigin={hasOrigin}
