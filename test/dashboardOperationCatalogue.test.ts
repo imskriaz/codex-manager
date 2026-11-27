@@ -18,9 +18,10 @@ const cases = (file: string) => {
   visit(source(file)); return found;
 };
 
-it('routes every declared operation and exposes each exactly once in the runtime API catalogue', () => {
+it('routes every declared operation and lists externally available actions exactly once', () => {
   const declared = values('DashboardActionName');
-  expect([...DASHBOARD_API_ACTIONS].sort()).toEqual(declared);
+  expect(declared).toContain('sessionArtifact');
+  expect([...DASHBOARD_API_ACTIONS].sort()).toEqual(declared.filter(action => action !== 'sessionArtifact'));
   const handled = cases('src/presentation/dashboard/actionHandlers.ts');
   expect(declared.filter(action => !handled.has(action))).toEqual([]);
   expect([...PROJECT_API_ACTIONS].filter(action => !declared.includes(action))).toEqual([]);

@@ -2,6 +2,12 @@
 
 ## 3.0.0
 
+- Share selected files, HTML previews, existing URLs, and running local apps from session Artifacts. Each link has a unique path on the existing dashboard hostname, expires after 24 hours, and can be revoked individually.
+- Open relative Markdown links from the current file's workspace and launch external links in the browser. Fall back to Chromium or Chrome when Edge cannot start the Workspace Browser on Windows.
+- Add optional GitHub device sign-in for standalone workspaces and keep Git repository load errors visible inside the Git panel.
+- Add private workspace API proxy keys and automatic model mappings. Refresh fallback models from live discovery and show why model requests fail.
+- Add connected folder permissions, move Codex and Claude runtimes into optional workspace modules, and support configurable file limits and chunked reads for large files.
+
 - Manage connected systems, account quotas, remote sessions, terminals, files, Git, and task boards from the dashboard.
 - Improve session recovery, tool failure feedback, local folder access, browser dictation, and editable fallback models.
 - Add User Workspace recovery, saved deliverables, Office document workflows, and administration controls.

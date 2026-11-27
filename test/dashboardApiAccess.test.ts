@@ -119,11 +119,13 @@ it('preserves corrupt storage and enforces the token cap', async () => {
   expect(await readDashboardApiToken(context, first.token)).toBeDefined();
 });
 
-it('keeps the runtime explorer and HTTP validation catalogue in sync with every dashboard action', async () => {
+it('keeps the runtime explorer in sync with externally available dashboard actions', async () => {
   const source = await readFile(join(process.cwd(), 'src/domain/dashboard/types.ts'), 'utf8');
   const declaration = source.split('export type DashboardActionName =')[1]!.split(';')[0]!;
   const names = [...declaration.matchAll(/"([^"]+)"/g)].map(match => match[1]);
-  expect([...new Set(DASHBOARD_API_ACTIONS)].sort()).toEqual(names.sort());
+  expect([...new Set(DASHBOARD_API_ACTIONS)].sort()).toEqual(names.filter(name => name !== 'sessionArtifact').sort());
+  await expect(createDashboardApiToken(context, { name: 'Artifact publisher', permissions: ['sessionArtifact'] }))
+    .rejects.toThrow('Choose valid API permissions.');
 });
 
 it('enforces multiple project scopes on actions, settings and refreshed results', async () => {
