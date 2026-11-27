@@ -10,11 +10,9 @@ It is an independent, community project. It is not an official OpenAI product.
 
 Use the [AI control and browser guide](docs/ai-control.md) for MCP setup, browser feedback and standalone native terminals.
 
-## Version 3.0.0
+## Releases
 
-Download the final [3.0.0 release](https://github.com/imskriaz/codex-manager/releases/tag/v3.0.0) or install [codex-manager-3.0.0.vsix](https://github.com/imskriaz/codex-manager/releases/download/v3.0.0/codex-manager-3.0.0.vsix). See the [changelog](CHANGELOG.md) for the full release history.
-
-This release includes OpenAI and Anthropic API-key accounts, native Claude sessions, SMTP session notifications, browser voice dictation, and PostgreSQL storage for Team workspaces. It also improves account controls, session questions, standalone startup recovery, User Workspace recovery and deliverables, and optional feature defaults.
+Download the VSIX from the [latest GitHub release](https://github.com/imskriaz/codex-manager/releases/latest). See the [changelog](CHANGELOG.md) for release history.
 
 ## What it provides
 
@@ -79,10 +77,9 @@ Enable **Auto Switch → Auto resume sessions** to recover eligible work after a
 ## Requirements
 
 - VS Code 1.101 or newer for the extension, or Node.js 22.13 or newer for standalone.
-- Node.js 22.13 or newer for **Always Active** background hosting.
+- Node.js 22.13 or newer for **Always Active** background hosting and source builds.
 - A writable `CODEX_HOME` and saved signed-in accounts. Workspace sessions use the official Codex app-server/CLI; the AI proxy uses saved accounts directly.
 - Claude sessions are optional and use Claude Code installed on the host PC. Manager does not bundle Claude Code. Without it, Claude models are unavailable; install and sign in separately to enable them. Set `CLAUDE_CLI_PATH` for a custom executable location. Native Claude discovery excludes custom endpoints and cloud providers configured in Claude Code; add those separately through **Add API key**.
-- Node.js 22.13 or newer when building and testing from source.
 - A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
 
@@ -97,7 +94,7 @@ Install **Codex Manager** from the [Visual Studio Marketplace](https://marketpla
 Download a release VSIX, then run **Extensions: Install from VSIX...** in VS Code. From a terminal:
 
 ```bash
-code --install-extension codex-manager-3.0.0.vsix --force
+code --install-extension path/to/codex-manager.vsix
 ```
 
 ### Build from source
@@ -412,8 +409,9 @@ Each project and system keeps its own tool tabs, commit draft and file edits. Gi
 
 **GitHub** reads the selected system’s canonical GitHub origin and uses that system’s VS Code sign-in or Git credential manager. Credentials never go to the browser. Browse paged pull requests, issues, workflow runs and releases; inspect comments, file patches, checks and job steps; create/comment/close/reopen items, submit reviews, merge a verified PR head, dispatch/cancel/rerun workflows, and create/publish/delete releases. Writes require confirmation and are not replayed automatically. Large reviews, full logs, artifacts and repository administration remain available through **Open on GitHub**. Scoped project API tokens cannot invoke the repository-wide Git/GitHub or terminal actions.
 
-On standalone hosts, **Git ? GitHub ? Connect GitHub** starts GitHub CLI device sign-in on the selected system. Open `https://github.com/login/device` on any device and enter the displayed code. After approving GitHub CLI, click **Connect GitHub** again to finish. Pending attempts reuse the same code; failed or expired attempts report their outcome before retry. GitHub CLI must be installed on that system; it stores the credential and configures Git.
+Use **Git → Repository actions → Add GitHub remote** to set the repository’s `origin`. Local Git and remote setup work without a GitHub account. If Git rejects the checkout because it belongs to another user, the Git panel shows the error and offers **Refresh Git**.
 
+For HTTPS operations, use **Git → Repository actions → Authorize GitHub HTTPS** on a system with Git Credential Manager. The panel shows a device code and waits for approval. On standalone hosts with GitHub CLI installed, **Git → GitHub → Connect GitHub** also offers device sign-in. Enter the displayed code on [GitHub](https://github.com/login/device), then select **Connect GitHub** again to finish the GitHub CLI flow. In VS Code, **Connect GitHub** uses its GitHub sign-in.
 
 ### Project Kanban and task details
 

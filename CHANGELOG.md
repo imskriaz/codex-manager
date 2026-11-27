@@ -1,37 +1,5 @@
 # Changelog
 
-## 3.0.1-pre.23
-
-- Remove unrelated Codex profile mapping controls from User Proxy settings and use the master API's searchable picker for Claude targets. Align dropdowns across user and master Settings, including Workspace section, with consistent spacing, focus, dark-theme options and touch sizing.
-- Polish all seven user Settings tabs with shared typography and controls, aligned account/security rows, clearer usage and personalization sections, and consistent Library, Scheduled and editor layouts.
-
-## 3.0.1-pre.22
-
-- Refine User Workspace Proxy with a compact key form, readable key rows, grouped optional model mappings, and smaller Claude/Codex setup dialogs. Keep Auto configuration visible by default and improve keyboard focus, mobile controls, and light/dark theme styling.
-
-## 3.0.1-pre.21
-
-- Add private User Workspace Settings → Proxy with Keys and Settings subtabs, one-time generated API keys, revocation, Claude/Codex configuration dialogs, and editable Auto mappings. Resolve public model profiles to actual permitted backend models and share workspace plan, request and token limits without exposing dashboard administration.
-
-## 3.0.1-pre.20
-
-- Keep account search readable beside status, sorting, tag and quota filters. Fit narrow dashboard panes on one row with compact filter icons.
-
-## 3.0.1-pre.18
-
-- Show the provider's readable failure reason in session errors and dashboard toasts, with a model-change action when the account rejects a model. Preserve original error details for diagnostics.
-- Replace fallback models with each successful live catalogue instead of retaining stale entries. Add Clear all and support saving an empty list before reloading actual models; failed discovery preserves saved entries.
-
-## 3.0.1-pre.6
-
-- Reduce the extension package by retaining the backend's active library builds and removing duplicate browser bundles, document runtimes, terminal build output and development artifacts. Preserve document creation and reading, PDF page rendering, browser automation and terminals.
-- Use the existing ZIP library for package inspection. Add an isolated test of the actual packaged document, terminal, browser and Claude SDK runtimes, including Bengali PDF shaping.
-
-## 3.0.1-pre.3
-
-- Move Codex and Claude session setup into separate modules under Settings > Workspace > Session modules. Reuse verified host installations, or download missing runtimes separately before enabling. Include sign-in instructions and setup error feedback.
-- Exclude the Claude native runtime from the extension package. Preserve existing session tools and assistant PDF reading, rendering and creation, while using browser PDF previews in User Workspace.
-
 ## 3.0.0
 
 - Manage connected systems, account quotas, remote sessions, terminals, files, Git, and task boards from the dashboard.
