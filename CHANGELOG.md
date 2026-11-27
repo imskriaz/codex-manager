@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.1-pre.21
+
+- Add private User Workspace Settings → Proxy with Keys and Settings subtabs, one-time generated API keys, revocation, Claude/Codex configuration dialogs, and editable Auto mappings. Resolve public model profiles to actual permitted backend models and share workspace plan, request and token limits without exposing dashboard administration.
+
 ## 3.0.1-pre.20
 
 - Keep account search readable beside status, sorting, tag and quota filters. Fit narrow dashboard panes on one row with compact filter icons.

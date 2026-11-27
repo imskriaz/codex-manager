@@ -60,6 +60,7 @@ import * as pathLib from "path";
 import * as os from "os";
 import { gzip } from "zlib";
 import * as vscode from "vscode";
+import { readOfficeProxyAccess, officeProxySnapshot, createOfficeProxyKey, revokeOfficeProxyKey, saveOfficeProxySettings } from './officeProxy';
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 import { buildDashboardState } from "../application/dashboard/buildDashboardState";
@@ -1070,7 +1071,7 @@ export class WebDashboardServer implements vscode.Disposable {
         if (!candidate || this.shuttingDown || !this.settingsStore.getDashboardSettings().teamWorkspaceEnabled) return undefined;
         const owner = [...this.officeProxyTokens].find(([, token]) => token === candidate)?.[0];
         return owner ? {id: owner, name: 'User Workspace', permissions: ['aiProxy'], createdAt: 0} : undefined;
-      });
+      }, async candidate => !this.shuttingDown && this.settingsStore.getDashboardSettings().teamWorkspaceEnabled === true ? readOfficeProxyAccess(candidate) : undefined);
       await this.aiProxy.handle(request, response, requestUrl); return;
     }
     if (request.method === "POST" && path === "/shutdown") {
@@ -1295,7 +1296,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (!apiAuthorized) this.renewSessionCookie(request, response);
-    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/email/preferences","/api/email/test","/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/workspace/clear","/api/workspace/local-folder","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
+    if(officeUser?.role === "user" && path.startsWith("/api/") && !["/api/email/preferences","/api/email/test","/api/state","/api/message","/api/workspace/preferences","/api/workspace/memory","/api/workspace/preview","/api/workspace/files","/api/workspace/image","/api/workspace/file-history","/api/workspace/account","/api/workspace/proxy","/api/workspace/clear","/api/workspace/local-folder","/api/push/key","/api/push/subscribe","/api/push/unsubscribe","/api/push/status"].includes(path) && path!=='/api/workspace/schedules' && !/^\/api\/workspace\/schedules\/[a-f0-9-]{36}$/.test(path)) {
       response.statusCode=403;this.sendJson(response,{error:"This page is unavailable in your workspace."});return;
     }
     if (path.startsWith('/api/email/')) {
@@ -1429,6 +1430,25 @@ export class WebDashboardServer implements vscode.Disposable {
         }
         this.sendJson(response,result);
       }catch(error){response.statusCode=400;this.sendJson(response,{error:userWorkspaceNotice(error instanceof Error?error.message:'Clearing could not be confirmed. Refresh before retrying.')});}return;
+    }
+    if(path==='/api/workspace/proxy'){
+      if(!officeUser||officeUser.role!=='user'||!officeUser.enabled){response.statusCode=403;this.sendJson(response,{error:'Sign in to your workspace.'});return;}
+      try {
+        const enabled = this.settingsStore.getDashboardSettings().apiAccessEnabled === true;
+        let key: {id:string;value:string}|undefined;
+        if (method !== 'GET') {
+          const input: unknown = JSON.parse(await readDashboardRequestBody(request, 16384));
+          if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Choose a valid proxy action.');
+          if (method === 'POST') {
+            if (!enabled) throw new Error('Proxy access is disabled by your administrator.');
+            key = createOfficeProxyKey(officeUser, input as Record<string, unknown>);
+          } else if (method === 'PUT') saveOfficeProxySettings(officeUser, input as Record<string, unknown>);
+          else if (method === 'DELETE') revokeOfficeProxyKey(officeUser.id, input as Record<string, unknown>);
+          else {response.statusCode=405;this.sendJson(response,{error:'Use GET, POST, PUT or DELETE for Proxy.'});return;}
+        }
+        this.sendJson(response, {...officeProxySnapshot(officeUser, enabled), ...(key ? {key} : {}), message: method === 'POST' ? 'Key generated. Copy it now; it will not be shown again.' : method === 'DELETE' ? 'Key revoked.' : method === 'PUT' ? 'Proxy settings saved.' : ''});
+      } catch(error) {response.statusCode=400;this.sendJson(response,{error:error instanceof Error?error.message:'Proxy changes could not be confirmed. Reload before retrying.'});}
+      return;
     }
     if(path==='/api/workspace/account'){
       if(!officeUser||officeUser.role!=='user'){response.statusCode=403;this.sendJson(response,{error:'Sign in to your workspace.'});return;}

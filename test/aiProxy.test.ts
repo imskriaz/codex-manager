@@ -17,6 +17,11 @@ import { fetch as upstream } from "undici";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../src/application/accounts/quota";
 import type { AccountsRepository } from "../src/storage";
 import { readApiProxyHistory } from "../src/services/aiProxyHistory";
+import { SqliteStateStore, configureSqliteStateStore } from '../src/storage/sqliteState';
+import { createOfficeProxyKey, readOfficeProxyAccess, revokeOfficeProxyKey, saveOfficeProxySettings } from '../src/services/officeProxy';
+import { readOfficeUsage } from '../src/services/officeQuota';
+import * as proxyUsers from '../src/services/officeUsers';
+import * as proxySettings from '../src/services/teamSettings';
 
 vi.mock("undici", async (original) => ({ ...(await original<typeof import("undici")>()), fetch: vi.fn() }));
 vi.mock("../src/application/accounts/quota", () => ({
@@ -123,6 +128,46 @@ afterEach(async () => {
   });
   vi.restoreAllMocks();
   await removeTestDirectory(root);
+});
+
+it('routes user keys through editable aliases for every protocol, charges usage and rejects revoked keys', async () => {
+  const database = await SqliteStateStore.open(join(root, 'proxy.sqlite')); configureSqliteStateStore(database);
+  try {
+    const user = { id: 'alex', username: 'alex', role: 'user', enabled: true, features: ['generalChat'], limits: {dailyRequests: 3, dailyTokens: 1000} } as proxyUsers.OfficeUser;
+    vi.spyOn(proxyUsers, 'getOfficeUser').mockResolvedValue(user);
+    vi.spyOn(proxySettings, 'readTeamSettings').mockReturnValue({regularModel: 'codex-test', professionalModel: 'quality', expertModel: 'deep', defaultModel: 'codex-test'} as never);
+    const credential = createOfficeProxyKey(user, { name: 'Owned key', requestId: crypto.randomUUID() });
+    proxy.stop();
+    proxy = new AiProxy(context, repo as never, () => enabled, () => allowed, undefined, undefined, undefined, readOfficeProxyAccess);
+    vi.mocked(upstream).mockImplementation(async (url) => String(url).includes('/models') ? new Response(JSON.stringify({models:[{slug:'codex-test',display_name:'Fast'},{slug:'quality',display_name:'Quality'},{slug:'deep',display_name:'Deep'}]}), {headers:{'content-type':'application/json'}}) as never : generation() as never);
+    const models = await fetch(origin + '/v1/models', {headers:{Authorization:`Bearer ${credential.value}`}});
+    expect((await models.json()).data.map((model: any) => model.id)).toEqual(['regular','professional','expert']);
+    for (const [endpoint, body, target, alias] of [
+      ['/v1/chat/completions', chat({model:'expert'}), 'deep', 'expert'],
+      ['/v1/responses', {model:'professional',input:'Hello',stream:false}, 'quality', 'professional'],
+      ['/v1/messages', {model:'claude-sonnet-4-6',messages:[{role:'user',content:'Hello'}],max_tokens:32}, 'codex-test', 'claude-sonnet-4-6']
+    ] as const) {
+      if(endpoint === '/v1/messages') saveOfficeProxySettings(user,{expected:'0',mappings:{'claude-sonnet':'regular'}});
+      const response = await post(endpoint, body, credential.value);
+      expect(response.status).toBe(200);
+      expect((await response.json()).model).toBe(alias);
+      const last = vi.mocked(upstream).mock.calls.at(-1)!;
+      expect(JSON.parse(String(last[1]?.body)).model).toBe(target);
+    }
+    expect(readOfficeUsage(user.id)).toMatchObject({requests:3,tokens:45,pending:false});
+    expect((await post('/v1/chat/completions',chat({model:'regular'}),credential.value)).status).toBe(429);
+    expect((await post('/v1/chat/completions',chat(),credential.value)).status).toBe(403);
+    revokeOfficeProxyKey(user.id,{id:credential.id,confirmed:true});
+    expect((await post('/v1/chat/completions',chat({model:'regular'}),credential.value)).status).toBe(401);
+    const interruptedUser = {...user,id:'interrupted'};
+    vi.mocked(proxyUsers.getOfficeUser).mockResolvedValue(interruptedUser);
+    const interruptedKey = createOfficeProxyKey(interruptedUser,{name:'Interrupted client',requestId:crypto.randomUUID()});
+    vi.mocked(upstream).mockResolvedValueOnce(events({type:'response.created',response:{id:'unfinished'}}) as never);
+    const interrupted = await post('/v1/chat/completions',chat({model:'regular'}),interruptedKey.value);
+    expect(interrupted.status).toBe(502);await interrupted.text();
+    expect(readOfficeUsage(interruptedUser.id)).toMatchObject({requests:1,pending:false,unconfirmed:true});
+    expect(readOfficeUsage(interruptedUser.id).reservedTokens).toBeGreaterThan(0);
+  } finally { configureSqliteStateStore(undefined); database.close(); }
 });
 
 it("records real proxy usage and safe failure metadata without credentials or bodies", async () => {

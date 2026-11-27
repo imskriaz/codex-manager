@@ -13,7 +13,7 @@ export function validateOfficeLimits(value: unknown): OfficeLimits {
   return {storageMb: limits['storageMb'] as number, dailyTokens: limits['dailyTokens'] as number, dailyRequests: limits['dailyRequests'] as number};
 }
 const dayKey = () => new Date().toISOString().slice(0, 10);
-type Usage = {tokens:number; requests:number; unconfirmed?:boolean; pending?:boolean; reservedTokens?:number; pendingTokens?:number; pendingUntil?:number; claimId?:string};
+type Usage = {tokens:number; requests:number; unconfirmed?:boolean; pending?:boolean; pendingSource?:'proxy'; reservedTokens?:number; pendingTokens?:number; pendingUntil?:number; claimId?:string};
 export type OfficeTokenClaim = {day:string; id:string};
 export function readOfficeUsage(owner: string) {
   const day = dayKey();
@@ -39,24 +39,25 @@ export function recordOfficeTokens(owner: string, tokens: unknown, claim?:Office
     const day=claim?.day??dayKey(),usage=store.get<Usage>(`office-usage:${owner}`,day)??{tokens:0,requests:0};
     if(claim&&usage.claimId!==claim.id)return;
     const valid = typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0;
-    store.set(`office-usage:${owner}`, day, {...usage, pending:false, pendingUntil:undefined, pendingTokens:undefined, claimId:undefined, tokens:usage.tokens+(valid?tokens:0), reservedTokens:(usage.reservedTokens??0)+(valid?0:usage.pendingTokens??0), unconfirmed:usage.unconfirmed||!valid});
+    store.set(`office-usage:${owner}`, day, {...usage, pending:false, pendingSource:undefined, pendingUntil:undefined, pendingTokens:undefined, claimId:undefined, tokens:usage.tokens+(valid?tokens:0), reservedTokens:(usage.reservedTokens??0)+(valid?0:usage.pendingTokens??0), unconfirmed:usage.unconfirmed||!valid});
   });
 }
-export function beginOfficeTokens(user: OfficeUser, estimatedTokens=0): OfficeTokenClaim {
+export function beginOfficeTokens(user: OfficeUser, estimatedTokens=0, source?:'proxy'): OfficeTokenClaim {
   const store = getSqliteStateStore();
   if (!store) throw new Error('Usage is unavailable. Please try again.');
   return store.transaction(() => {
     checkOfficeTokens(user);
     const usage = readOfficeUsage(user.id);
+    if (usage.pending && (source === 'proxy' || usage.pendingSource === 'proxy')) throw new OfficeQuotaError('A workspace response is already running. Wait for it to finish before starting another proxy or chat response.');
     const id=crypto.randomUUID();
-    store.set(`office-usage:${user.id}`, usage.day, {...usage, pending:true,claimId:id,pendingTokens:Math.max(0,Math.ceil(estimatedTokens)),pendingUntil:Date.now()+660_000});
+    store.set(`office-usage:${user.id}`, usage.day, {...usage, pending:true,pendingSource:source,claimId:id,pendingTokens:Math.max(0,Math.ceil(estimatedTokens)),pendingUntil:Date.now()+660_000});
     return {day:usage.day,id};
   });
 }
 
 export function recoverOfficeTokens(owner:string,idle=false):void {
   const usage=readOfficeUsage(owner);
-  if(usage.pending&&(idle||usage.pendingUntil!==undefined&&usage.pendingUntil<Date.now()))recordOfficeTokens(owner,undefined,usage.claimId?{day:usage.day,id:usage.claimId}:undefined);
+  if(usage.pending&&(idle&&usage.pendingSource!=='proxy'||usage.pendingUntil!==undefined&&usage.pendingUntil<Date.now()))recordOfficeTokens(owner,undefined,usage.claimId?{day:usage.day,id:usage.claimId}:undefined);
 }
 
 export function reconcileOfficeTokens(owner:string,expected:unknown,additionalTokens:unknown):void {

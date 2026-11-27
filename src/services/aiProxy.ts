@@ -13,6 +13,9 @@ import {officeReasoning} from '../domain/officeModels';
 import { startApiProxyLog, saveOfficeProxyLog } from "./aiProxyHistory";
 import { recordOfficeAudit } from "./officeAudit";
 import { readClaudeProxyMapping } from './aiProxyModelMapping';
+import { officeProxyModels, claimOfficeProxyGeneration, type OfficeProxyAccess } from './officeProxy';
+import { OfficeEntitlementError } from './officeUsers';
+import { OfficeQuotaError, recordOfficeTokens, type OfficeTokenClaim } from './officeQuota';
 import { CLAUDE_PROXY_MODELS, claudeProxyModelName, type ClaudeProxyMapping } from '../domain/dashboard/apiProxy';
 import type { ApiProxyRequestLog } from "../domain/dashboard/apiProxy";
 import { maybeAutoSwitchForActiveQuota, refreshSingleQuota } from "../application/accounts/quota";
@@ -185,7 +188,8 @@ export class AiProxy {
     private readonly canUseAccount: (id: string) => boolean = () => true,
     private readonly refresh: () => void = () => undefined,
     private readonly internalTokenAllowed: (id: string) => boolean = () => false,
-    private readonly internalToken: (candidate: string | undefined) => import('./dashboardApiToken').DashboardApiToken | undefined = () => undefined
+    private readonly internalToken: (candidate: string | undefined) => import('./dashboardApiToken').DashboardApiToken | undefined = () => undefined,
+    private readonly userToken: (candidate: string | undefined) => Promise<OfficeProxyAccess | undefined> = () => Promise.resolve(undefined)
   ) {}
   stop(): void {
     this.stopped = true;
@@ -214,6 +218,9 @@ export class AiProxy {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let acceptedGeneration = false;
     let officeRequest = false;
+    let userAccess: OfficeProxyAccess | undefined;
+    let tokenClaim: OfficeTokenClaim | undefined;
+    let officeSubmitted = false;
     const disconnect = () => {
       if (!response.writableEnded) controller.abort(new Error("The API client disconnected."));
     };
@@ -227,8 +234,9 @@ export class AiProxy {
       if ((auth && !bearer) || (bearer && apiKey && bearer !== apiKey))
         throw new AiProxyError(401, "Supply one valid Manager API key.", "authentication_error");
       const candidate = bearer ?? apiKey;
+      userAccess = await waitWithin(this.userToken(candidate), 5000, 'Workspace key verification timed out.', signal);
       const token = await waitWithin(
-        Promise.resolve(this.internalToken(candidate) ?? readDashboardApiToken(this.context, candidate)),
+        Promise.resolve(userAccess ? { ...userAccess.key, permissions: ['aiProxy'] } : this.internalToken(candidate) ?? readDashboardApiToken(this.context, candidate)),
         5000,
         "API key verification timed out.",
         signal
@@ -237,9 +245,10 @@ export class AiProxy {
       if (!token) throw new AiProxyError(401, "Invalid or revoked Manager API key.", "authentication_error");
       if (!this.enabled() && !this.internalTokenAllowed(token.id)) throw new AiProxyError(401, "Dashboard API access is disabled.", "authentication_error");
       log.apiKeyId = token.id;
-      officeRequest = this.internalTokenAllowed(token.id);
+      officeRequest = !!userAccess || this.internalTokenAllowed(token.id);
       log.apiKeyName = token.name;
       log.actor = { id: token.id, name: token.name, ...(token.name.startsWith("Team: ") ? { email: token.name.slice(6) } : {}) };
+      if (userAccess) log.actor = { id: userAccess.user.id, name: userAccess.user.displayName || userAccess.user.username };
       if (officeRequest) saveOfficeProxyLog(log);
       response.once("finish", () => recordOfficeAudit(`proxy ${log.method} ${log.path}`, response.statusCode < 400 ? "completed" : "failed", log.actor));
       if (apiTokenProjects(token).length || !hasApiPermission(token, "aiProxy"))
@@ -264,9 +273,9 @@ export class AiProxy {
           response.setHeader("Allow", "GET");
           throw new AiProxyError(405, "Use GET for model discovery.");
         }
-        const saved = protocol === 'claude' ? readClaudeProxyMapping(this.context) : undefined;
+        const saved = !userAccess && protocol === 'claude' ? readClaudeProxyMapping(this.context) : undefined;
         const catalogue = saved ? [...new Set(Object.values(saved))].map(id => ({ id, name: id })) : await this.listModels(signal, log);
-        const models: Model[] = protocol === 'claude' ? withClaudeModelIds(catalogue, saved) : catalogue;
+        const models: Model[] = userAccess ? officeProxyModels(userAccess.user, catalogue.map(model => model.id), protocol === 'claude').map(model => ({ id: model.id, name: model.profile })) : protocol === 'claude' ? withClaudeModelIds(catalogue, saved) : catalogue;
         const publicModelId = (model: Model): string =>
           protocol === "claude" ? (model.claudeId ?? model.id) : model.id;
         const format = (model: Model): Json => {
@@ -347,9 +356,20 @@ export class AiProxy {
         response.setHeader('x-manager-output-token-minimum', '16');
       const clientModel = String(normalized.body['model']);
       log.model = clientModel;
-      if (generationProtocol === 'claude') normalized.body['model'] = await this.resolveClaudeModel(clientModel, signal, log);
+      if (userAccess) {
+        const currentAccess = await waitWithin(this.userToken(candidate), 5000, 'Workspace authorization timed out.', signal);
+        if (!currentAccess || !this.enabled()) throw new AiProxyError(403, 'Workspace proxy access was revoked.', 'permission_error');
+        userAccess = currentAccess;
+        const catalogue = await this.listModels(signal, log);
+        const alias = generationProtocol === 'claude' && claudeRole(clientModel) ? `claude-${claudeRole(clientModel)}` : clientModel.toLowerCase();
+        const target = officeProxyModels(userAccess.user, catalogue.map(model => model.id), generationProtocol === 'claude').find(model => model.id === alias);
+        if (!target) throw new AiProxyError(403, 'This model mapping is unavailable for your plan. Check Proxy settings or choose an available profile.', 'permission_error');
+        normalized.body['model'] = target.model;
+        tokenClaim = claimOfficeProxyGeneration(userAccess.user, Math.ceil(JSON.stringify(normalized.body).length / 4) + Number(normalized.body['max_output_tokens'] ?? 4096));
+      } else if (generationProtocol === 'claude') normalized.body['model'] = await this.resolveClaudeModel(clientModel, signal, log);
       log.upstreamModel = String(normalized.body["model"]);
       signal.throwIfAborted();
+      officeSubmitted = !!tokenClaim;
       const upstream = await this.fetchBackend("/responses", normalized.body, signal, log);
       acceptedGeneration = true;
       const contentType = upstream.headers.get("content-type");
@@ -359,14 +379,14 @@ export class AiProxy {
       }
       const stream = new AiStream(
         generationProtocol,
-        generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
+        generationProtocol === 'claude' || userAccess ? clientModel : String(normalized.body["model"]),
         normalized.includeUsage,
         normalized.omitThinking,
         normalized.stopSequences
       );
       let completed = false;
       for await (const upstreamEvent of aiEvents(upstream.body as unknown as ReadableStream<Uint8Array>, signal)) {
-        const event = generationProtocol === 'claude' && upstreamEvent['response'] && typeof upstreamEvent['response'] === 'object'
+        const event = (generationProtocol === 'claude' || userAccess) && upstreamEvent['response'] && typeof upstreamEvent['response'] === 'object'
           ? { ...upstreamEvent, response: { ...object(upstreamEvent['response'], 'AI response'), model: clientModel } } : upstreamEvent;
         signal.throwIfAborted();
         const type = event["type"];
@@ -410,7 +430,7 @@ export class AiProxy {
             ? completedAiResponse(
                 object(event["response"], "AI response"),
                 generationProtocol,
-                generationProtocol === 'claude' ? clientModel : String(normalized.body["model"]),
+                generationProtocol === 'claude' || userAccess ? clientModel : String(normalized.body["model"]),
                 normalized.omitThinking,
                 normalized.stopSequences
               )
@@ -448,7 +468,7 @@ export class AiProxy {
       log.httpStatus = response.headersSent ? response.statusCode : undefined;
       log.error = response.destroyed ? "Client disconnected before completion." : "The proxy request did not complete.";
       if (!response.destroyed && !response.writableEnded) {
-        const reason = signal.aborted && signal.reason instanceof AiProxyError ? signal.reason : error;
+        const reason = signal.aborted && signal.reason instanceof AiProxyError ? signal.reason : error instanceof OfficeQuotaError ? new AiProxyError(429, error.message, 'rate_limit_error') : error instanceof OfficeEntitlementError ? new AiProxyError(403, error.message, 'permission_error') : error;
         const failure =
           reason instanceof AiProxyError && !(acceptedGeneration && reason.status === 400)
             ? reason
@@ -474,6 +494,10 @@ export class AiProxy {
         }
       }
     } finally {
+      if (userAccess && tokenClaim) {
+        try { recordOfficeTokens(userAccess.user.id, !officeSubmitted ? 0 : log.inputTokens !== undefined && log.outputTokens !== undefined ? log.inputTokens + log.outputTokens : undefined, tokenClaim); }
+        catch (error) { console.warn('[codexManager] Workspace proxy usage could not be finalized', error); }
+      }
       if (log.status === "running") {
         log.status = "completed";
         log.httpStatus = response.statusCode;

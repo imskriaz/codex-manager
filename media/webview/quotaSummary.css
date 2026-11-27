@@ -19623,3 +19623,16 @@ html[data-theme] body .dashboard-content .saved-card.active:not(.quota-exhausted
   .dashboard-content .dashboard-account-toolbar .dashboard-view-toggle { width: 100%; max-width: none; justify-self: stretch; grid-template-columns: minmax(0, 1fr); }
   .dashboard-content .dashboard-account-toolbar:has(.batch-bar.is-contextual) { grid-template-columns: minmax(0, 1fr) auto; }
 }
+
+.user-proxy { min-width: 0; }
+.user-proxy p { line-height: 1.5; overflow-wrap: anywhere; }
+.user-proxy form { display: grid; gap: 12px; margin-block: 16px; }
+.user-proxy label { display: grid; gap: 6px; min-width: 0; }
+.user-proxy input, .user-proxy select, .user-proxy textarea { box-sizing: border-box; width: 100%; min-width: 0; }
+.user-proxy textarea { font-family: var(--vscode-editor-font-family, monospace); }
+.user-proxy-keys { list-style: none; padding: 0; }
+.user-proxy-keys li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 12px; border-bottom: 1px solid var(--vscode-panel-border, #8884); }
+.user-proxy-keys span { min-width: 0; overflow-wrap: anywhere; }
+.user-proxy-keys small { display: block; opacity: .7; margin-top: 4px; }
+.user-proxy-secret { margin-block: 16px; padding: 12px; border: 1px solid var(--vscode-panel-border, #8884); }
+.user-proxy-secret button + button { margin-inline-start: 8px; }

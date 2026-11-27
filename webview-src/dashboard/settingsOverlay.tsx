@@ -4,6 +4,7 @@ import {MobileSectionPicker} from './mobileSectionPicker';
 import {UserWorkspaceLibrary,UserWorkspaceScheduled,type UserWorkspaceNavigation} from './userWorkspacePages';
 import {UserWorkspaceAccount} from './userWorkspaceAccount';
 import {UserWorkspaceMemory} from './userWorkspaceMemory';
+import {UserWorkspaceProxy} from './userWorkspaceProxy';
 import { UserWorkspaceInstructions } from "./userWorkspaceInstructions";
 import type {
   DashboardCopy,
@@ -231,16 +232,17 @@ export function SettingsOverlay(props: {
       <div ref={accessibility.modalRef} class="settings-modal office-user-settings" role="dialog" aria-modal="true" aria-labelledby="office-user-settings-title" tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="settings-modal-head"><div class="settings-modal-title" id="office-user-settings-title">Settings</div><button class="settings-close" type="button" aria-label={props.copy.closeModal} onClick={props.onClose}>×</button></div>
         <div class="user-settings-layout">
-          <MobileSectionPicker label="Settings section" value={userTab} options={['General','Personalization','Account','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label=>({value:label.toLowerCase(),label}))} onChange={setUserTab}/>
+          <MobileSectionPicker label="Settings section" value={userTab} options={['General','Personalization','Account','Proxy','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label=>({value:label.toLowerCase(),label}))} onChange={setUserTab}/>
           <nav class="user-settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections" onKeyDown={event => {
             if (['ArrowUp','ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) { const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (index >= 0) { event.preventDefault(); const next = buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]; next?.focus(); next?.click(); } }
             else handleTabKeyDown(event);
-          }}>{['General','Personalization','Account','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label => { const id = label.toLowerCase(); return <button type="button" role="tab" id={`user-settings-tab-${id}`} aria-selected={userTab === id} aria-controls="user-settings-panel" tabIndex={userTab === id ? 0 : -1} onClick={() => setUserTab(id)}>{label}</button>; })}</nav>
+          }}>{['General','Personalization','Account','Proxy','Usage',...(props.office.features.includes('tasks')?['Scheduled']:[]),...(props.office.features.includes('files')?['Library']:[])].map(label => { const id = label.toLowerCase(); return <button type="button" role="tab" id={`user-settings-tab-${id}`} aria-selected={userTab === id} aria-controls="user-settings-panel" tabIndex={userTab === id ? 0 : -1} onClick={() => setUserTab(id)}>{label}</button>; })}</nav>
           <div class="settings-modal-body" id="user-settings-panel" role="tabpanel" aria-labelledby={`user-settings-tab-${userTab}`} tabIndex={0}>
             <div hidden={userTab !== 'general'}><section class="settings-block user-appearance"><label class="settings-block-title" for="user-theme">Appearance</label><select id="user-theme" value={props.settings.dashboardTheme} onChange={event => { const value = event.currentTarget.value as DashboardSettings['dashboardTheme']; props.onPatchSettings({dashboardTheme:value});props.onSendSetting('dashboardTheme',value); }}><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></section>{props.open ? <BrowserNotifications workspace /> : null}</div>
             {props.open && userTab === 'general' ? <EmailSettings /> : null}
             {props.open && userTab === 'general' ? <UserWorkspaceClear connected={props.connected !== false} files={props.office.features.includes('files')} onFeedback={notice => props.onUserFeedback?.(notice)} /> : null}
             <div hidden={userTab !== 'account'}><UserWorkspaceAccount open={props.open} owner={props.office.id} /></div>
+            {props.open && userTab === 'proxy' ? <UserWorkspaceProxy key={props.office.id} connected={props.connected !== false} /> : null}
             <UserWorkspaceInstructions open={props.open} owner={props.office.id} view={userTab} />
             <div hidden={userTab !== 'personalization'}><UserWorkspaceMemory open={props.open} owner={props.office.id} /></div>
             {props.open&&userTab==='scheduled'&&props.office.features.includes('tasks')?<UserWorkspaceScheduled connected={props.connected!==false} onFeedback={notice=>props.onUserFeedback?.(notice)} onPrompt={(text,project)=>props.onUserWorkspaceNavigate?.({id:crypto.randomUUID(),kind:'prompt',text,project})} onOpen={task=>props.onUserWorkspaceNavigate?.({id:crypto.randomUUID(),kind:'schedule',task})}/>:null}
