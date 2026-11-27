@@ -450,8 +450,8 @@ export function WorkspaceGitHub(props: {
             disabled={busy || !props.connected}
             onClick={() => void load({ operation: "connect" })}
             class="workspace-icon-action"
-            title="Connect GitHub in VS Code"
-            aria-label="Connect GitHub in VS Code"
+            title="Connect GitHub"
+            aria-label="Connect GitHub"
           >
             <ToolIcon kind="github" />
           </button>

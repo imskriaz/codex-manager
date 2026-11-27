@@ -6,6 +6,7 @@ import { workspaceGitCommand } from "./workspaceGit";
 import { runCrossWindowExclusive, runCrossWindowOnce, sharedResourceKey } from "../utils/crossWindowOperations";
 import { waitWithin } from "../utils/concurrency";
 import { readGitHubCredential } from "./workspaceGitAuth";
+import { connectGitHubDevice } from "./githubDeviceAuth";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>
@@ -305,16 +306,35 @@ export async function workspaceGitHub(
   let token: string | undefined;
   if (request.operation === "connect") {
     if (vscode.env?.appHost === "node") {
-      throw new Error("Use Authorize GitHub HTTPS in Repository actions to sign in on this system.");
-    }
-    const session = await waitWithin(
-      Promise.resolve(vscode.authentication.getSession("github", ["repo"], { createIfNone: true })),
-      90_000,
-      "GitHub sign-in was not completed. Finish it in VS Code on the selected system, then retry."
-    );
-    token = session?.accessToken;
-    if (!token) {
-      throw new Error("GitHub sign-in was cancelled.");
+      const warning = await connectGitHubDevice(cwd);
+      if (warning) {
+        return {
+          repository,
+          url: "https://github.com/" + repository,
+          authenticated: false,
+          canWrite: false,
+          items: [],
+          page: 1,
+          hasMore: false,
+          warning
+        };
+      }
+      token = await readGitHubCredential(cwd, remotePath ?? repository);
+      if (!token) {
+        throw new Error(
+          "GitHub signed in, but Git could not read the credential. Check GitHub CLI on the selected system."
+        );
+      }
+    } else {
+      const session = await waitWithin(
+        Promise.resolve(vscode.authentication.getSession("github", ["repo"], { createIfNone: true })),
+        90_000,
+        "GitHub sign-in was not completed. Finish it in VS Code on the selected system, then retry."
+      );
+      token = session?.accessToken;
+      if (!token) {
+        throw new Error("GitHub sign-in was cancelled.");
+      }
     }
   } else {
     token = await credential(cwd, remotePath ?? repository);

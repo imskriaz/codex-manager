@@ -3,9 +3,18 @@ import { randomUUID } from "node:crypto";
 import { parseGitHubRemote, workspaceGitHub } from "../src/services/workspaceGitHub";
 import type { WorkspaceGitHubRequest } from "../src/domain/dashboard/types";
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), auth: vi.fn(), remote: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  auth: vi.fn(),
+  remote: vi.fn(),
+  device: vi.fn(),
+  credential: vi.fn(),
+  env: { appHost: "desktop" }
+}));
 vi.mock("undici", () => ({ fetch: mocks.fetch }));
-vi.mock("vscode", () => ({ authentication: { getSession: mocks.auth }, env: {}, workspace: {} }));
+vi.mock("vscode", () => ({ authentication: { getSession: mocks.auth }, workspace: {}, env: mocks.env }));
+vi.mock("../src/services/githubDeviceAuth", () => ({ connectGitHubDevice: mocks.device }));
+vi.mock("../src/services/workspaceGitAuth", () => ({ readGitHubCredential: mocks.credential }));
 vi.mock("../src/services/workspaceTools", () => ({ resolveWorkspaceProjectPathAsync: vi.fn(async (value) => value) }));
 vi.mock("../src/services/workspaceGit", () => ({ workspaceGitCommand: mocks.remote }));
 const secret = "private-token-never-sent-to-browser";
@@ -42,6 +51,7 @@ const execute = (input: WorkspaceGitHubRequest, confirmed = true) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.env.appHost = "desktop";
   mocks.auth.mockResolvedValue({ accessToken: secret });
   mocks.remote.mockResolvedValue("git@github.com:example/project.git");
   mocks.fetch.mockImplementation(async (url: string, options: { method: string }) => {
@@ -84,6 +94,28 @@ beforeEach(() => {
 });
 
 describe("GitHub workspace tools", () => {
+  it("shows a standalone device prompt before attempting private repository reads", async () => {
+    mocks.env.appHost = "node";
+    mocks.device.mockResolvedValueOnce("Open https://github.com/login/device and enter ABCD-1234.");
+    const result = await execute({ section: "pulls", operation: "connect" });
+    expect(result).toMatchObject({ authenticated: false, warning: expect.stringContaining("ABCD-1234") });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.auth).not.toHaveBeenCalled();
+  });
+  it("loads repository data after standalone device approval and preserves approval failures", async () => {
+    mocks.env.appHost = "node";
+    mocks.device.mockResolvedValueOnce(undefined);
+    mocks.credential.mockResolvedValueOnce(secret);
+    expect(await execute({ section: "pulls", operation: "connect" })).toMatchObject({ authenticated: true });
+    mocks.device.mockRejectedValueOnce(new Error("GitHub sign-in expired"));
+    await expect(execute({ section: "pulls", operation: "connect" })).rejects.toThrow("expired");
+  });
+  it("checks repository ownership before starting standalone device sign-in", async () => {
+    mocks.env.appHost = "node";
+    mocks.remote.mockRejectedValueOnce(new Error("fatal: detected dubious ownership"));
+    await expect(execute({ section: "pulls", operation: "connect" })).rejects.toThrow("dubious ownership");
+    expect(mocks.device).not.toHaveBeenCalled();
+  });
   it("accepts canonical GitHub remotes and rejects injected hosts, paths and embedded credentials", () => {
     for (const remote of [
       "https://github.com/example/project.git",
