@@ -358,10 +358,10 @@ describe("manual Codex navigation and recovery", () => {
   it("resumes standalone goals privately without requiring the official extension",async()=>{
     enableSessions();Object.defineProperty(vscode.env,'appHost',{configurable:true,value:'node'});
     readCodexCliSessionSummaryMock.mockResolvedValue({id,title:'Goal',status:'idle',goal:{objective:'Finish',status:'paused'}});
-    vi.spyOn(sessionEditors,'setCodexSessionGoalStatus').mockResolvedValue(undefined);
+    const update=vi.spyOn(sessionEditors,'setCodexSessionGoalStatus').mockResolvedValue(undefined);
     const open=vi.spyOn(sessionEditors,'openCodexSessionInVsCode').mockRejectedValue(new Error('Official extension unavailable'));
     const resume=vi.spyOn(sessionEditors,'resumeCodexSessionGoal').mockResolvedValue('started');
-    try {const result=await executeDashboardActionMessage({...createContext(),hostKind:'browser'},{type:'dashboard:action',requestId:'node-goal',action:'setCodexSessionGoalStatus',payload:{sessionId:id,goalStatus:'active'}});expect(result.payload?.notice?.level).toBe('info');expect(open).not.toHaveBeenCalled();expect(resume).toHaveBeenCalledWith(expect.objectContaining({id}),expect.any(AbortSignal),'user',true);}
+    try {const result=await executeDashboardActionMessage({...createContext(),hostKind:'browser'},{type:'dashboard:action',requestId:'node-goal',action:'setCodexSessionGoalStatus',payload:{sessionId:id,goalStatus:'active'}});expect(result.payload?.notice?.level).toBe('info');expect(open).not.toHaveBeenCalled();expect(update).not.toHaveBeenCalled();expect(resume).toHaveBeenCalledWith(expect.objectContaining({id,goal:expect.objectContaining({status:'paused'})}),expect.any(AbortSignal),'user',true);}
     finally {Reflect.deleteProperty(vscode.env,'appHost');}
   });
   it("reports a confirmed goal activation separately when continuation is unavailable", async () => {

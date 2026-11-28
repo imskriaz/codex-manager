@@ -2432,7 +2432,12 @@ async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload)
   if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "blocked", "usageLimited", "usage_limited"].includes(session.goal.status))
     throw new Error("This goal cannot be paused or resumed here. Refresh its current state in Codex.");
   const changed = session.goal.status !== status;
-  if (changed) await setCodexSessionGoalStatus(session.id, status);
+  const standaloneResume = vscode.env.appHost === 'node' && status === "active" && session.status !== "running";
+  let confirmedStatus = session.goal.status;
+  if (changed && !standaloneResume) {
+    await setCodexSessionGoalStatus(session.id, status);
+    confirmedStatus = status;
+  }
   let notice = { level: "info" as "info" | "warning", message: session.status === "running" ? "Goal paused. The current turn can finish." : "Goal paused." };
   let continuation: Awaited<ReturnType<typeof resumeCodexSessionGoal>> | undefined;
   if (status === "active") {
@@ -2441,8 +2446,9 @@ async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload)
       if (session.status === "running") continuation = "running";
       else {
         if (vscode.env.appHost !== 'node') await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), 45_000, "Opening this goal timed out.", controller.signal);
-        continuation = await resumeCodexSessionGoal({ ...session, goal: { ...session.goal, status } }, controller.signal, "user", ...(vscode.env.appHost === 'node' ? [true] as const : []));
+        continuation = await resumeCodexSessionGoal({ ...session, goal: { ...session.goal, status: confirmedStatus } }, controller.signal, "user", ...(standaloneResume ? [true] as const : []));
       }
+      confirmedStatus = status;
       notice = continuation === "started" ? { level: "info", message: "Goal resumed and continuation started." }
         : continuation === "running" ? { level: "info", message: "The goal is active and a turn is already running." }
         : { level: "warning", message: "The goal is active. Codex did not confirm starting a turn. Check the conversation before retrying." };
@@ -2451,7 +2457,7 @@ async function handleSetCodexSessionGoalStatus(payload?: DashboardActionPayload)
     } finally { controller.abort(); }
   }
   return {
-    cliSession: { ...session, ...(continuation === "started" || continuation === "running" ? { stopped: false, interrupted: false } : {}), goal: { ...session.goal, status } },
+    cliSession: { ...session, ...(continuation === "started" || continuation === "running" ? { stopped: false, interrupted: false } : {}), goal: { ...session.goal, status: confirmedStatus } },
     ...(status === "active" ? { cliSessionLive: getCodexSessionLiveState(session.id) } : {}),
     notice
   };

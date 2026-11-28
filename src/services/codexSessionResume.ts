@@ -1391,6 +1391,7 @@ async function sendAppServerSessionMessage(options: {
   interruptedOnly?: boolean;
   preferPrivate?: boolean;
   goalContinuation?: boolean;
+  nativeGoalResume?: { status: string; origin: "user" | "automatic" };
   claimGoalContinuation?: (turnId: string) => boolean;
   onGoalAlreadyRunning?: () => void;
   clearManualStop?: boolean;
@@ -1475,7 +1476,8 @@ async function sendAppServerSessionMessage(options: {
       const goals = await readCodexSessionGoals(home, [options.sessionId]);
       const goal = goals?.get(options.sessionId);
       if (options.claimGoalContinuation && goal?.status !== 'active') return false;
-      if (!goals || !goal || !['active','usage_limited'].includes(goal.status)) throw new Error('The goal changed or was paused. Private recovery was not started.');
+      if (!goals || !goal || (options.nativeGoalResume ? goal.status !== options.nativeGoalResume.status : !['active','usage_limited'].includes(goal.status)))
+        throw new Error('The goal changed or was paused. Private recovery was not started.');
     }
     if (!options.interruptedOnly) return true;
     const state = await readRecentTranscriptTurnState(transcript);
@@ -1501,12 +1503,12 @@ async function sendAppServerSessionMessage(options: {
       throw error;
     }
   };
-  if (!options.claimGoalContinuation && !activeApiAccount('openai') && (getOwnerBridgeState(home, options.sessionId) || !options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase()))) && await startNative()) {
+  if (!options.nativeGoalResume && !options.claimGoalContinuation && !activeApiAccount('openai') && (getOwnerBridgeState(home, options.sessionId) || !options.preferPrivate && (getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase()))) && await startNative()) {
     options.onStarted?.();
     await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
     return;
   }
-  const live = reserveCodexSessionLive();
+  let live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
   let detachPrompts: () => void = () => undefined;
   const abort = () => { void rpc?.close(); };
@@ -1519,13 +1521,51 @@ async function sendAppServerSessionMessage(options: {
     rpc = await openCodexAppServer(executable, cwd, options.signal);
     options.signal?.throwIfAborted();
     detachPrompts = attachSessionSettingsAndPrompts(rpc, home, options.sessionId);
-    activeAppServerTurns.set(options.sessionId, { home: path.resolve(home), rpc });
+    const owner: NonNullable<ReturnType<typeof activeAppServerTurns.get>> = { home: path.resolve(home), rpc };
+    activeAppServerTurns.set(options.sessionId, owner);
+    const resumeStandalone = async () => {
+      const settings = { permissions: ':danger-full-access', approvalPolicy: standaloneApproval };
+      const current = await owner.rpc.request('thread/resume', { threadId: options.sessionId, cwd, excludeTurns: true, ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}), ...settings });
+      const applied = await syncCodexSessionAccess(owner.rpc, options.sessionId, settings, current);
+      if (!rememberSessionAccess(home, options.sessionId, applied.access, applied.settings)) throw new Error('Codex applied Full access, but recovery storage could not save it.');
+    };
+    if (options.nativeGoalResume) {
+      if (!await needsContinuation() || !await claimContinuation()) return;
+      options.signal?.throwIfAborted();
+      if (resolveCodexHome() !== home || readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
+        throw new Error("The session was stopped or its Codex home changed before the goal could resume.");
+      const { status, origin } = options.nativeGoalResume;
+      onAttempt?.(true);
+      let started = false;
+      const lastCompleted = await rpc.followGoalTurns(options.sessionId, resumeStandalone,
+        status !== "active" || origin === "user" ? async stillWaitingForStart => {
+          if (!await needsContinuation() || !stillWaitingForStart()) return;
+          const result = await owner.rpc.request<{ goal?: { status?: string } }>("thread/goal/set", { threadId: options.sessionId, status: "active", origin }, 10_000);
+          if (result.goal?.status !== "active") throw new Error("Codex did not confirm goal activation. Refresh before retrying.");
+        } : undefined, CLI_TURN_TIMEOUT_MS,
+        turnId => {
+          if (started) {
+            live.dispose();
+            live = reserveCodexSessionLive();
+          }
+          live.attach(options.sessionId, owner.rpc, parseCodexAppServerThreadItems, () => isAppServerTurnCancelled(options.sessionId));
+          owner.turnId = turnId;
+          live.started(turnId);
+          if (!started) {
+            started = true;
+            options.signal?.removeEventListener("abort", abort);
+            options.onStarted?.();
+          }
+        },
+        () => { live.finish("completed"); });
+      if (lastCompleted)
+        getSqliteStateStore()?.set(GOAL_CONTINUATION_TURN_NAMESPACE, goalResumeKey(home, options.sessionId), lastCompleted);
+      if (!started) onAttempt?.(false);
+      return;
+    }
     try {
       if (standalone) {
-        const settings = { permissions: ':danger-full-access', approvalPolicy: standaloneApproval };
-        const current = await rpc.request('thread/resume', { threadId: options.sessionId, cwd, excludeTurns: true, ...(activeApiAccount('openai') ? { modelProvider: 'manager_api' } : {}), ...settings });
-        const applied = await syncCodexSessionAccess(rpc, options.sessionId, settings, current);
-        if (!rememberSessionAccess(home, options.sessionId, applied.access, applied.settings)) throw new Error('Codex applied Full access, but recovery storage could not save it. No continuation was sent.');
+        await resumeStandalone();
       } else {
       const stored = (await readStateSessionRecords(home, options.sessionId))[0];
       const savedAccess = readSavedCodexSessionAccess(home,options.sessionId);
@@ -1592,9 +1632,10 @@ async function sendAppServerSessionMessage(options: {
 export class CodexNativeOwnerUnavailableError extends Error {}
 
 export type CodexGoalResumeOutcome = "started" | "running" | "idle";
+export const GOAL_CONTINUATION_TURN_NAMESPACE = "goal-continuation-turn";
 const goalResumeKey = (home: string, sessionId: string) => `${getCodexHomeStateKey(home)}:${sessionId.toLowerCase()}`;
 
-/** Start a normal input turn in the same conversation and keep the existing goal. */
+/** Resume the existing goal in its saved conversation. */
 export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary, signal?: AbortSignal, origin: "user" | "automatic" = "automatic", preferPrivate = false, claimContinuation?: (turnId: string) => boolean): Promise<CodexGoalResumeOutcome> {
   assertRuntimeModuleEnabled('codex');
   validateSessionId(session.id);
@@ -1626,7 +1667,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
   const clearAttempt = () => store?.set("goal-resume-unconfirmed", key, undefined);
   const handleFailedAttempt = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (attempted && !accepted && (error instanceof CodexNativeOwnerUnavailableError ||
+      if (attempted && !accepted && (error instanceof CodexNativeOwnerUnavailableError || /already has an active writer/i.test(message) ||
         isCodexQuotaInterruption(message) || isCodexCapacityInterruption(message) || isCodexPermissionInterruption(message)))
       clearAttempt();
   };
@@ -1646,11 +1687,15 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       if (!goals || !goal) throw new Error('Goal storage is unavailable. Private recovery was not started.');
       signal?.throwIfAborted();
       if (resolveCodexHome() !== home) throw new Error('The Codex home changed. Private recovery was not started.');
+      const native = vscode.env.appHost === "node";
       if (goal.status === 'paused') {
         if (origin !== 'user' && (!session.interrupted || isExplicitSessionGoalPause(home, session.id))) throw new Error('This goal was paused. It was left paused.');
-        const result = await runCodexAppServerRequest<{ goal?: { status?: string } }>('thread/goal/set', { threadId: session.id, status: 'active', origin }, 10_000, signal);
-        if (result.goal?.status !== 'active') throw new Error('Goal reactivation was not confirmed. Check Codex before retrying.');
-      } else if (!['active','usage_limited'].includes(goal.status)) throw new Error('This goal is no longer eligible for private recovery.');
+        if (!native) {
+          const result = await runCodexAppServerRequest<{ goal?: { status?: string } }>('thread/goal/set', { threadId: session.id, status: 'active', origin }, 10_000, signal);
+          if (result.goal?.status !== 'active') throw new Error('Goal reactivation was not confirmed. Check Codex before retrying.');
+        }
+      } else if (!['active','usage_limited'].includes(goal.status) && !(native && origin === "user" && goal.status === "blocked"))
+        throw new Error('This goal is no longer eligible for private recovery.');
       const transcript = await findCliSessionTranscript(home, session.id, signal);
       await readRecentTranscriptTurnState(transcript);
       const afterTurn = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
@@ -1658,8 +1703,9 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       let confirm!: () => void;
       const started = new Promise<void>(resolve => { confirm = resolve; });
       const turn = sendAppServerSessionMessage({
-        sessionId: session.id, text: CODEX_GOAL_CONTINUE_PROMPT, projectPath: cwd, signal,
+        sessionId: session.id, text: native ? "" : CODEX_GOAL_CONTINUE_PROMPT, projectPath: cwd, signal,
         preferPrivate: true, goalContinuation: true, claimGoalContinuation: claimContinuation,
+        ...(native ? { nativeGoalResume: { status: goal.status, origin } } : {}),
         onGoalAlreadyRunning: () => { alreadyRunning = true; },
         onStarted: () => { accepted = true; confirm(); }
       }, cwd, attempt => { if (attempt) markAttempt(afterTurn); else { attempted = false; clearAttempt(); } }, home);

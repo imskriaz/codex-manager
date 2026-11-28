@@ -306,6 +306,91 @@ export class CodexAppServerRpc {
     }
   }
 
+  /** A reopened goal can start before the resume reply and continue through several turns. */
+  async followGoalTurns(
+    threadId: string,
+    resume: () => Promise<void>,
+    reactivate: ((stillWaitingForStart: () => boolean) => Promise<void>) | undefined,
+    timeoutMs: number,
+    onStarted: (turnId: string) => void,
+    onCompleted: (turnId: string) => void
+  ): Promise<string | undefined> {
+    const idleWaitMs = 1_500;
+    let turnId: string | undefined;
+    let lastCompleted: string | undefined;
+    let failure: Error | undefined;
+    let wake: (() => void) | undefined;
+    const waitForNotification = (ms: number) => new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => { wake = undefined; resolve(false); }, ms);
+      wake = () => { clearTimeout(timer); wake = undefined; resolve(true); };
+    });
+    const fail = (error: Error) => {
+      failure = error;
+      wake?.();
+    };
+    const finish = (turn: { id?: string; status?: string; error?: { message?: string } }) => {
+      if (!turnId || turn.id !== turnId) return;
+      if (turn.status === "interrupted") return fail(new CodexAppServerTurnInterruptedError());
+      if (turn.status !== "completed") return fail(new Error(turn.error?.message ?? "Codex did not complete the goal turn."));
+      lastCompleted = turnId;
+      turnId = undefined;
+      onCompleted(lastCompleted);
+    };
+    const offDisconnect = this.onDisconnect(fail);
+    const stillWaitingForStart = () => !turnId && !lastCompleted && !failure;
+    const off = this.onNotification((method, raw) => {
+      if (!raw || typeof raw !== "object" || failure) return;
+      const payload = raw as { threadId?: string; turnId?: string; turn?: { id?: string; status?: string; error?: { message?: string } } };
+      if (payload.threadId !== threadId || payload.turnId && payload.turnId !== turnId) return;
+      try {
+        if (method === "turn/started" && payload.turn?.id && !turnId && payload.turn.id !== lastCompleted) {
+          turnId = payload.turn.id;
+          onStarted(turnId);
+          wake?.();
+        } else if (method === "turn/completed" && payload.turn?.id && payload.turn.id === turnId) {
+          finish(payload.turn);
+          wake?.();
+        } else if (turnId) wake?.();
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    try {
+      if (failure) throw failure;
+      await resume();
+      if (reactivate && stillWaitingForStart()) {
+        await waitForNotification(idleWaitMs);
+        if (stillWaitingForStart()) await reactivate(stillWaitingForStart);
+      }
+      while (!failure) {
+        const current = turnId;
+        if (await waitForNotification(current ? timeoutMs : idleWaitMs)) continue;
+        if (!current) return lastCompleted;
+        let turns;
+        try {
+          turns = (await this.request<{ data?: Array<{ id?: string; status?: string; error?: { message?: string } }> }>(
+            "thread/turns/list", { threadId, limit: 1, sortDirection: "desc" }
+          )).data;
+        } catch (error) {
+          if (turnId !== current) continue;
+          throw new CodexAppServerDisconnectedError(`The goal turn status could not be verified: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (turnId !== current) continue;
+        const turn = turns?.find(candidate => candidate.id === current);
+        if (turn && ["inProgress", "running"].includes(turn.status ?? "")) continue;
+        if (!turn || !["completed", "failed", "interrupted"].includes(turn.status ?? ""))
+          throw new CodexAppServerDisconnectedError("The goal turn status could not be verified after the connection stopped responding.");
+        finish(turn);
+      }
+      const finalError: Error = failure || new Error("Codex goal recovery ended unexpectedly.");
+      throw finalError;
+    } finally {
+      wake?.();
+      off();
+      offDisconnect();
+    }
+  }
+
   close(): Promise<void> {
     if (!this.closed) this.fail(new Error("Codex app-server connection closed."));
     return this.teardown ?? Promise.resolve();

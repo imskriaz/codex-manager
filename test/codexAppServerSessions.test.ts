@@ -47,6 +47,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   Reflect.deleteProperty(vscode.env, 'appHost');
+  vi.unstubAllEnvs();
   if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
   vi.clearAllMocks();
@@ -408,6 +409,42 @@ describe("native App Server new sessions", () => {
     expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
     if (scenario !== 'writer-conflict') expect(mocks.open).not.toHaveBeenCalled();
     else expect(rpc.close).toHaveBeenCalled();
+  });
+
+  it.each(["active", "paused", "blocked", "usage_limited", "idle"])("uses the same standalone connection for native goal recovery (%s)", async status => {
+    Object.defineProperty(vscode.env, "appHost", { configurable: true, value: "node" });
+    vi.stubEnv("CODEX_CLI_PATH", process.execPath);
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
+    seedGoal(status === "idle" ? "active" : status);
+    const request = vi.fn(async (method: string) => method === "thread/resume" ?
+      { sandbox: { type: "dangerFullAccess" }, activePermissionProfile: { id: ":danger-full-access" }, approvalPolicy: "never" } : { goal: { status: "active" } });
+    const rpc = {
+      request,
+      onServerRequest: () => () => undefined,
+      onNotification: () => () => undefined,
+      close: vi.fn(),
+      startAndWaitForTurn: vi.fn(),
+      followGoalTurns: vi.fn(async (_id: string, resume: () => Promise<void>, activate: ((stillWaitingForStart: () => boolean) => Promise<void>) | undefined, _timeout: number, started: (id: string) => void, completed: (id: string) => void) => {
+        await resume();
+        if (status === "idle") return undefined;
+        if (status !== "active") await activate?.(() => true);
+        started("first-native-goal-turn");
+        completed("first-native-goal-turn");
+        started("next-native-goal-turn");
+        completed("next-native-goal-turn");
+        return "next-native-goal-turn";
+      })
+    };
+    mocks.open.mockResolvedValue(rpc);
+    await expect(resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: root }, undefined, "user", true))
+      .resolves.toBe(status === "idle" ? "idle" : "started");
+    expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+    expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(status === "active" || status === "idle" ?
+      ["thread/resume"] : ["thread/resume", "thread/goal/set"]);
+    await vi.waitFor(() => expect(rpc.close).toHaveBeenCalledOnce());
+    if (status !== "idle") expect(getCodexSessionLiveState(id)).toMatchObject({ turnId: "next-native-goal-turn", status: "completed" });
   });
 
   it('preserves the previous mode when storage fails or the queue is full', () => {

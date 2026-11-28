@@ -10,10 +10,9 @@ import { readAutoResumeGoalCandidateIds } from "./codexSessionAutoResumeSelectio
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { availableCodexSessionLiveSlots } from "./codexSessionLive";
 import { readCodexSessionPreferences } from "./codexSessionPreferences";
-import { CodexNativeOwnerUnavailableError, readCodexCliSessionSummary, readCompletedCodexSessionTurns, resolveCodexHome, resumeCodexSessionGoal } from "./codexSessionResume";
+import { CodexNativeOwnerUnavailableError, GOAL_CONTINUATION_TURN_NAMESPACE, readCodexCliSessionSummary, readCompletedCodexSessionTurns, resolveCodexHome, resumeCodexSessionGoal } from "./codexSessionResume";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 
-const NAMESPACE = "goal-continuation-turn";
 const SCAN_INTERVAL_MS = 15_000;
 const MAX_STARTS_PER_SCAN = 4;
 
@@ -51,7 +50,7 @@ export function registerCodexGoalContinuation(
       for (const [id, turnId] of completed) {
         if (!isCurrent() || !remaining || availableCodexSessionLiveSlots() === 0) break;
         const key = prefix + id;
-        if (store.get(NAMESPACE, key) === turnId || failed.get(key) === turnId) continue;
+        if (store.get(GOAL_CONTINUATION_TURN_NAMESPACE, key) === turnId || failed.get(key) === turnId) continue;
         const account = (await waitWithin(repo.listAccounts(), 5_000, "Goal account inspection timed out.", controller.signal)).find(item => item.isActive);
         if (!account || account.enabled === false || account.resetCreditAttempt || !canUseAccount(account.id) || accountQuotaAvailability(account) === "exhausted") break;
         const privateHost = vscode.env.appHost === "node";
@@ -65,8 +64,8 @@ export function registerCodexGoalContinuation(
         const claim = (latestTurnId: string) => {
           if (!isCurrent() || latestTurnId !== turnId || !canUseAccount(account.id) || !eligible(id)) return false;
           claimed = store.transaction(() => {
-            if (store.get(NAMESPACE, key) === turnId) return false;
-            store.set(NAMESPACE, key, turnId);
+            if (store.get(GOAL_CONTINUATION_TURN_NAMESPACE, key) === turnId) return false;
+            store.set(GOAL_CONTINUATION_TURN_NAMESPACE, key, turnId);
             return true;
           });
           return claimed;

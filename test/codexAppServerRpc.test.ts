@@ -21,6 +21,61 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it("follows an early goal start and its next turn without reactivating or submitting input", async () => {
+    vi.useFakeTimers();
+    const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const emit = (event: unknown) => processChild.stdout.write(JSON.stringify(event) + "\n");
+    emit({ id: 1, result: {} });
+    const rpc = await opening;
+    const started = vi.fn(), completed = vi.fn(), reactivate = vi.fn();
+    const request = vi.spyOn(rpc, "request");
+    const follow = rpc.followGoalTurns("thread", async () => {
+      await rpc.request("thread/resume", { threadId: "thread" });
+    }, reactivate, 10_000, started, completed);
+    const turnEvent = (method: string, id: string, status?: string) => emit({ method, params: { threadId: "thread", turn: { id, status } } });
+    turnEvent("turn/started", "first");
+    emit({ id: 2, result: {} });
+    turnEvent("turn/completed", "first", "completed");
+    await vi.advanceTimersByTimeAsync(400);
+    turnEvent("turn/started", "second");
+    turnEvent("turn/completed", "first", "failed");
+    turnEvent("turn/completed", "second", "completed");
+    await vi.advanceTimersByTimeAsync(1_500);
+    await expect(follow).resolves.toBe("second");
+    expect(started.mock.calls).toEqual([["first"], ["second"]]);
+    expect(completed.mock.calls).toEqual([["first"], ["second"]]);
+    expect(reactivate).not.toHaveBeenCalled();
+    expect(request.mock.calls).toEqual([["thread/resume", { threadId: "thread" }]]);
+    await rpc.close();
+  });
+
+  it.each(["idle", "failed", "disconnected"])("reports native goal recovery that ends %s", async outcome => {
+    vi.useFakeTimers();
+    const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const emit = (event: unknown) => processChild.stdout.write(JSON.stringify(event) + "\n");
+    emit({ id: 1, result: {} });
+    const rpc = await opening;
+    const resume = vi.fn(async () => {});
+    const reactivate = vi.fn(async () => {
+      if (outcome === "disconnected") await rpc.close();
+      if (outcome === "failed") {
+        emit({ method: "turn/started", params: { threadId: "thread", turn: { id: "goal-turn" } } });
+        emit({ method: "turn/completed", params: { threadId: "thread", turn: { id: "goal-turn", status: "failed", error: { message: "Provider error" } } } });
+      }
+    });
+    const started = vi.fn();
+    const follow = rpc.followGoalTurns("thread", resume, reactivate, 10_000, started, vi.fn());
+    const result = outcome === "idle" ? expect(follow).resolves.toBeUndefined() :
+      expect(follow).rejects.toThrow(outcome === "failed" ? "Provider error" : "connection closed");
+    await vi.advanceTimersByTimeAsync(3_000);
+    await result;
+    expect(resume.mock.invocationCallOrder[0]).toBeLessThan(reactivate.mock.invocationCallOrder[0]!);
+    expect(started).toHaveBeenCalledTimes(outcome === "failed" ? 1 : 0);
+    await rpc.close();
+  });
+
   it('uses a private API-key process with the provider override and no key in arguments', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'manager-api-rpc-'));
     const store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
