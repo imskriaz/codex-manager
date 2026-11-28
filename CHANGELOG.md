@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1-pre.37
+
+- Bound automatic quota recovery when a resumed turn fails after its start was accepted. Retain saved work and show when recovery needs review.
+- Validate email settings and save confirmations, preserve edits on incomplete responses, and report session notification failures.
+- Allow eligible sessions to be dragged from the compact sidebar to task boards.
+- Keep private app-server connections open until owned process cleanup completes to avoid a Windows shutdown race.
+- Correct shutdown diagnostics and refresh goal, document, task-board, and startup regression checks.
+
 ## 3.0.0
 
 - Share selected files, HTML previews, existing URLs, and running local apps from session Artifacts. Each link has a unique path on the existing dashboard hostname, expires after 24 hours, and can be revoked individually.

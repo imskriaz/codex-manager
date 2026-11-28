@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { listConversationFiles, readConversationAttachment, safeConversationImage } from '../src/domain/conversationFiles';
-import { prepareChatInput, readChatTextAttachments, withoutChatTextAttachments } from '../src/domain/chatAttachments';
+import { MAX_CHAT_ATTACHMENT_BYTES, prepareChatInput, readChatTextAttachments, withoutChatTextAttachments } from '../src/domain/chatAttachments';
 import type { DashboardCliSessionMessage } from '../src/domain/dashboard/types';
 
 const image = 'data:image/png;base64,iVBORw0KGgo=';
@@ -38,10 +38,10 @@ it('lists uploads, images and recorded changes without duplicating payloads or t
 });
 
 it('keeps unavailable image metadata but never exposes local paths, credential URLs, active data types or oversized payloads as previews', () => {
-  const sources = ['file:///private/photo.png', 'C:\\private\\photo.png', 'javascript:alert(1)', 'https://user:password@example.com/image', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,bad', 'data:image/png;base64,' + 'A'.repeat(68 * 1024 * 1024)];
+  const sources = ['file:///private/photo.png', 'C:\\private\\photo.png', 'javascript:alert(1)', 'https://user:password@example.com/image', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,bad', 'data:image/png;base64,' + 'A'.repeat(Math.ceil(MAX_CHAT_ATTACHMENT_BYTES / 3) * 4 + 4)];
   const messages: DashboardCliSessionMessage[] = [{ id: 'missing', text: '', images: sources.map(src => ({ src, alt: 'Unavailable image' })) }];
   expect(listConversationFiles(messages)).toHaveLength(sources.length);
-  for (const file of listConversationFiles(messages)) expect(readConversationAttachment(messages, file.path)).toBeUndefined();
+  for (const file of listConversationFiles(messages)) expect(readConversationAttachment(messages, file.path) === undefined).toBe(true);
   for (const src of sources) expect(safeConversationImage(src)).toBe(false);
   expect(safeConversationImage(image)).toBe(true); expect(safeConversationImage('https://example.com/image.png')).toBe(true);
 });

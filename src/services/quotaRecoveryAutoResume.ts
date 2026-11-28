@@ -177,7 +177,8 @@ export function registerQuotaRecoveryAutoResume(
           5_000,
           "Quota recovery completion could not be saved."
         );
-        resetRetry();
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = undefined;
       }
     } catch (error) {
       if (attempts < MAX_RECOVERY_ATTEMPTS && Date.now() >= retryAt) {
@@ -197,8 +198,12 @@ export function registerQuotaRecoveryAutoResume(
   });
   const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
   const stopLive = subscribeDashboardRealtime(message => {
-    if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId || message.state.provider === 'claude' ||
-        !['failed', 'disconnected'].includes(message.state.status) || (!isAutoResumeAvailable() && !selectAfterRejection)) return;
+    if (message.type !== 'dashboard:codex-session-live' || message.state.deviceId || message.state.provider === 'claude') return;
+    if (message.state.status === 'completed') {
+      if (observedAccountId && readRecordedSessionAccount(message.state.streamId) === observedAccountId) resetRetry();
+      return;
+    }
+    if (!['failed', 'disconnected'].includes(message.state.status) || (!isAutoResumeAvailable() && !selectAfterRejection)) return;
     const detail = JSON.stringify([message.state.error, message.state.messages?.filter(item => item.kind === 'error')]);
     if (!isCodexQuotaInterruption(detail) && getQuotaIssueKind({ message: detail, timestamp: Date.now() }) !== 'auth') return;
     if (observedFailures.has(message.state.streamId)) return;
@@ -206,10 +211,12 @@ export function registerQuotaRecoveryAutoResume(
     if (observedFailures.size > 256) observedFailures.delete(observedFailures.values().next().value!);
     if (interrupted.size >= 200) { recordPersistentEvent('warning', 'auto-resume', 'Session recovery queue is full; automatic recovery retained'); return; }
     if (isAutoResumeAvailable()) interrupted.add(message.state.sessionId);
-    // A failure produced by our own recovery must not reopen its retry allowance.
-    if (!running) resetRetry();
+    // A turn can fail after recovery has already acknowledged its start.
     lastFailureAt = Date.now();
     lastFailureAccountId = readRecordedSessionAccount(message.state.streamId) ?? observedAccountId;
+    if (attempts > 0 && attempts < MAX_RECOVERY_ATTEMPTS && !retryTimer) scheduleRetry();
+    if (attempts >= MAX_RECOVERY_ATTEMPTS && lastFailureAccountId === observedAccountId)
+      publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: `Automatic quota recovery paused after ${attempts} attempts. Saved work was kept. Review the conversation before resuming.` });
     if (!quotaRefresh || quotaRefresh.accountId !== observedAccountId) {
       const rejectedAccountId = lastFailureAccountId;
       const refresh = { accountId: rejectedAccountId };

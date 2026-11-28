@@ -5,6 +5,28 @@ import { request } from './teamSettingsRequest';
 type EmailState = { preferences: EmailPreferences; watches: string[]; available: boolean; status?: { state: string; at: number; error?: string } };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Email settings could not be confirmed. Refresh and retry.';
 
+export async function requestEmailPreferences(method = 'GET', body?: unknown): Promise<EmailState & { message?: string }> {
+  const value = await request<EmailState & { message?: string }>('/api/email/preferences', method, body);
+  const preferences = value?.preferences;
+  if (!preferences || typeof preferences.address !== 'string' || typeof preferences.revision !== 'string' ||
+      !['enabled', 'ready', 'needsAnswer', 'failed', 'includeResult'].every(key => typeof preferences[key as keyof EmailPreferences] === 'boolean') ||
+      !Array.isArray(value.watches) || !value.watches.every(key => typeof key === 'string') || typeof value.available !== 'boolean' ||
+      method !== 'GET' && typeof value.message !== 'string')
+    throw new Error('The host returned incomplete email settings. Refresh before retrying. Your changes were kept.');
+  return value;
+}
+
+export async function requestEmailSmtp(method = 'GET', body?: unknown): Promise<{ config: PublicSmtpConfig; message?: string }> {
+  const value = await request<{ config: PublicSmtpConfig; message?: string }>('/api/email/smtp', method, body);
+  const config = value?.config;
+  if (!config || !['revision', 'host', 'user', 'from', 'baseUrl'].every(key => typeof config[key as keyof PublicSmtpConfig] === 'string') ||
+      typeof config.enabled !== 'boolean' || typeof config.hasPassword !== 'boolean' || !Number.isInteger(config.port) ||
+      config.port < 1 || config.port > 65535 || !['starttls', 'tls'].includes(config.security) ||
+      method !== 'GET' && typeof value.message !== 'string')
+    throw new Error('The host returned incomplete SMTP settings. Refresh before retrying. Your changes were kept.');
+  return value;
+}
+
 export function EmailSettings({ master = false }: { master?: boolean }) {
   const [state, setState] = useState<EmailState>();
   const [config, setConfig] = useState<PublicSmtpConfig>();
@@ -16,7 +38,7 @@ export function EmailSettings({ master = false }: { master?: boolean }) {
   const load = async () => {
     setBusy(true); setFailed(false); setFeedback('Loading email settings…');
     try {
-      const [value, smtp] = await Promise.all([request<EmailState>('/api/email/preferences'), master ? request<{ config: PublicSmtpConfig }>('/api/email/smtp') : undefined]);
+      const [value, smtp] = await Promise.all([requestEmailPreferences(), master ? requestEmailSmtp() : undefined]);
       setState(value); setConfig(smtp?.config); setFeedback('');
     } catch (error) { setFeedback(errorText(error)); setFailed(true); }
     finally { setBusy(false); }
@@ -27,13 +49,15 @@ export function EmailSettings({ master = false }: { master?: boolean }) {
     setBusy(true); setFailed(false); setFeedback(kind === 'test' ? 'Sending test email…' : 'Saving email settings…');
     try {
       if (kind === 'smtp' && config) {
-        const result = await request<{ config: PublicSmtpConfig; message: string }>('/api/email/smtp', 'PUT', { ...config, password, clearPassword });
-        setConfig(result.config); setPassword(''); setClearPassword(false); setState(value => value ? { ...value, available: result.config.enabled } : value); setFeedback(result.message);
+        const result = await requestEmailSmtp('PUT', { ...config, password, clearPassword });
+        setConfig(result.config); setPassword(''); setClearPassword(false); setState(value => value ? { ...value, available: result.config.enabled } : value); setFeedback(result.message!);
       } else if (kind === 'preferences' && state) {
-        const result = await request<EmailState & { message: string }>('/api/email/preferences', 'PUT', state.preferences); setState(result); setFeedback(result.message);
+        const result = await requestEmailPreferences('PUT', state.preferences); setState(result); setFeedback(result.message!);
       } else {
-        if (state) { const saved = await request<EmailState>('/api/email/preferences', 'PUT', state.preferences); setState(saved); }
-        const result = await request<{ message: string }>('/api/email/test', 'POST', {}); setFeedback(result.message);
+        if (state) { const saved = await requestEmailPreferences('PUT', state.preferences); setState(saved); }
+        const result = await request<{ message: string }>('/api/email/test', 'POST', {});
+        if (!result || typeof result.message !== 'string') throw new Error('Test email acceptance was not confirmed. Refresh before retrying.');
+        setFeedback(result.message);
       }
     } catch (error) { setFeedback(errorText(error)); setFailed(true); }
     finally { setBusy(false); }
@@ -77,14 +101,14 @@ export function useSessionEmailWatch(sessionKey?: string, onToggle?: () => void)
   useEffect(() => {
     let active = true; setReady(false); setFeedback(''); setEnabled(false);
     if (!sessionKey) return;
-    void request<EmailState>('/api/email/preferences').then(value => { if (active) { setEnabled(value.watches.includes(sessionKey)); setReady(true); } }, () => { if (active) setReady(true); });
+    void requestEmailPreferences().then(value => { if (active) { setEnabled(value.watches.includes(sessionKey)); setReady(true); } }).catch(error => { if (active) { setReady(true); setFailed(true); setFeedback(errorText(error)); } });
     return () => { active = false; };
   }, [sessionKey]);
   const toggle = async () => {
     if (!sessionKey || busy) return;
     onToggle?.();
     setBusy(true); setFailed(false); setFeedback('Saving email preference…');
-    try { const value = await request<EmailState>('/api/email/preferences', 'POST', { sessionKey, enabled: !enabled }); setEnabled(value.watches.includes(sessionKey)); setFeedback(value.available ? enabled ? 'Session email turned off.' : 'You’ll receive an email when this session is ready.' : 'Preference saved. Email delivery is off; ask the administrator to enable SMTP.'); }
+    try { const value = await requestEmailPreferences('POST', { sessionKey, enabled: !enabled }); setEnabled(value.watches.includes(sessionKey)); setFeedback(value.available ? enabled ? 'Session email turned off.' : 'You’ll receive an email when this session is ready.' : 'Preference saved. Email delivery is off; ask the administrator to enable SMTP.'); }
     catch (error) { setFailed(true); setFeedback(errorText(error)); }
     finally { setBusy(false); }
   };

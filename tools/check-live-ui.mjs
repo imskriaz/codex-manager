@@ -70,7 +70,8 @@ try {
       await accounts.locator('.hero').waitFor({state:'attached'});
       assert.equal(await page.locator('.hero').count(), 1, 'Dashboard content mounts once across the page and workspace tool');
       assert.ok(await accounts.locator('#settingsOpenButton').count(), 'Full dashboard settings are available in the tool');
-      assert.ok(await accounts.getByRole('group', { name: 'Saved Accounts', exact: true }).count(), 'The tool reuses the full saved accounts section');
+      await accounts.locator('.dashboard-account-toolbar').waitFor();
+      assert.ok(await accounts.getByRole('searchbox', { name: /^Search accounts/ }).count(), 'The tool reuses the full saved accounts section');
       assert.equal(await accounts.locator('.cli-account-dashboard').count(), 0, 'Dashboard tool has no compact account-only override');
       assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab][aria-selected=true]').innerText(), 'Dashboard', 'Account footer selects the workspace Dashboard tab without a conversation');
       assert.equal(await page.getByRole('dialog', { name: 'Account center', exact: true }).count(), 0, 'Account footer uses the workspace panel');

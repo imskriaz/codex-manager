@@ -464,3 +464,33 @@ it('backs off repeated rejection, stops after three attempts, and retries with a
   expect(mocks.resume).toHaveBeenCalledTimes(4);
   expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
 });
+
+it('bounds quota failures arriving after accepted recovery and resets after confirmed progress', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  start(); await flush(); recover();
+  recordAccountQuotaCheck(account); await flush();
+  expect(mocks.resume).toHaveBeenCalledTimes(1);
+  vi.mocked(readRecordedSessionAccount).mockReturnValue(account.id);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await vi.advanceTimersByTimeAsync(1000);
+    mocks.liveListener!({ type: 'dashboard:codex-session-live', state: {
+      sessionId: 'goal', streamId: `accepted-${attempt}`, status: 'failed', error: 'usage limit reached'
+    } });
+    await flush();
+    account.lastQuotaAt = Date.now();
+    recordAccountQuotaCheck(account); await flush();
+    expect(mocks.resume).toHaveBeenCalledTimes(attempt);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(mocks.resume).toHaveBeenCalledTimes(Math.min(attempt + 1, 3));
+  }
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+  expect(mocks.notice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('paused after 3 attempts') }));
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(mocks.resume).toHaveBeenCalledTimes(3);
+  vi.mocked(readRecordedSessionAccount).mockReturnValue('older-account');
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { streamId: 'other', status: 'completed' } });
+  await tick(); expect(mocks.resume).toHaveBeenCalledTimes(3);
+  vi.mocked(readRecordedSessionAccount).mockReturnValue(account.id);
+  mocks.liveListener!({ type: 'dashboard:codex-session-live', state: { streamId: 'progress', status: 'completed' } });
+  await tick(); expect(mocks.resume).toHaveBeenCalledTimes(4);
+});

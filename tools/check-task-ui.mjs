@@ -151,11 +151,12 @@ export async function checkTaskUi(page, { origin, width, height, output, session
   await task.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor();
   await task.getByRole('button', { name: 'Message settings', exact: true }).click();
   const approval = task.getByRole('checkbox', { name: 'Auto approve', exact: true });
+  const enableApproval = !await approval.isChecked();
   await approval.click();
-  await page.waitForFunction(() => document.querySelector('.task-session-conversation .cli-approval-control input')?.checked);
-  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'setCodexSessionAccess').at(-1).payload.autoApprove), true, 'Task conversation sends approval policy to its owner');
+  await page.waitForFunction(enabled => document.querySelector('.task-session-conversation input[aria-label="Auto approve"]')?.checked === enabled, enableApproval);
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'setCodexSessionAccess').at(-1).payload.autoApprove), enableApproval, 'Task conversation sends approval policy to its owner');
   await approval.click();
-  await page.waitForFunction(() => !document.querySelector('.task-session-conversation .cli-approval-control input')?.checked);
+  await page.waitForFunction(enabled => document.querySelector('.task-session-conversation input[aria-label="Auto approve"]')?.checked === !enabled, enableApproval);
   await page.keyboard.press('Escape');
   const taskContext = task.locator('.cli-turn-context');
   const taskSessionState = await page.evaluate(() => {
@@ -170,9 +171,8 @@ export async function checkTaskUi(page, { origin, width, height, output, session
   await task.locator('.cli-send-button').click();
   await page.waitForFunction(() => !!window.__heldSendResult);
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { ...window.__heldSendResult, payload: undefined, status: 'failed', error: 'Task owner could not be verified. Your message was kept.' } })));
-  await task.locator('.cli-local-queue-summary').getByRole('alert').waitFor({ state: 'visible' });
-  await task.locator('.cli-local-queue-summary').click();
-  await page.getByRole('dialog', { name: '1 queued message', exact: true }).getByRole('button', { name: 'Delete queued message', exact: true }).click();
+  await task.locator('.cli-local-queue').getByRole('alert').waitFor({ state: 'visible' });
+  await task.locator('.cli-local-queue').getByRole('button', { name: 'Delete queued message', exact: true }).click();
   await task.locator('.cli-local-queue').waitFor({ state: 'hidden' });
   await page.evaluate(saved => {
     Object.assign(window.__uiSessions.find(item => item.id === saved.id), saved);
@@ -235,12 +235,12 @@ export async function checkTaskUi(page, { origin, width, height, output, session
   const timeline=task.getByRole('region',{name:'Activity timeline',exact:true});
   await timeline.getByText('Timeline review comment',{exact:true}).waitFor();
   assert.equal(await timeline.getByText('Hidden private thinking',{exact:true}).count(),0,'The activity timeline omits private thinking');
-  assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).count(),1,'Failed activity is preserved like session history');
+  assert.equal(await timeline.getByText('Hidden failed attempt',{exact:true}).filter({visible:true}).count(),1,'Failed activity is preserved like session history');
   assert.equal(await timeline.locator('.task-timeline-meta').count(),0,'Messages use shared session metadata');
   assert.ok(await timeline.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Timeline fits narrow panels');
   assert.equal(await timeline.locator('.cli-session-message.is-user').count(),1,'Activity uses the session user bubble');
   await page.screenshot({path:path.join(output,`task-activity-${width}x${height}.png`)});
-  assert.equal(await timeline.locator('.cli-activity.is-tool-call, .cli-activity.is-command').count(),0,'The timeline has no routine tool-call disclosures');
+  assert.equal(await timeline.locator('.cli-activity.is-tool-call:not(.is-failed), .cli-activity.is-command:not(.is-failed)').count(),0,'The timeline has no routine tool-call disclosures');
   await task.getByRole('tab', { name: 'Files', exact: true }).click();
   await task.locator('.task-file-row').first().waitFor();
   await page.screenshot({path:path.join(output,`task-files-${width}x${height}.png`)});
@@ -475,25 +475,18 @@ export async function checkTaskUi(page, { origin, width, height, output, session
   }
   await page.screenshot({ path: path.join(output, `project-board-${width}x${height}.png`) });
 
-  if (width > 760) {
-    await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
-    await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
-    await page.locator('#apiOpenButton').click();
-  } else {
+  if (width <= 760) {
     await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
     await page.evaluate(() => { const offer = document.createElement('aside'); offer.className = 'browser-notification-offer'; offer.id = 'notification-overlap-check'; offer.textContent = 'Optional notification offer'; document.body.append(offer); });
     assert.equal(await page.locator('#notification-overlap-check').isVisible(), false, 'Optional notification offers cannot cover the active sidebar');
     await page.evaluate(() => document.getElementById('notification-overlap-check').remove());
-    await page.getByRole('button',{name:'Open account center',exact:true}).click();
-    await page.locator('.cli-account-center').getByRole('button',{name:'API',exact:true}).click();
   }
-    let api = page.getByRole('dialog',{name:'API access',exact:true});
-    await api.getByRole('button',{name:'Manage API keys',exact:true}).click();
-    api=page.getByRole('dialog',{name:'API keys',exact:true});
+    await page.goto(`${origin}/api/keys`);
+    const api = page.getByRole('region',{name:'API access',exact:true});
     await api.getByText('Project reader', { exact: true }).waitFor();
     assert.equal(await api.locator('tbody tr').count(), 2, 'Named tokens are displayed in a table');
-    await api.getByRole('button', { name: '+ Create token', exact: true }).click();
-    const tokenForm = page.getByRole('dialog',{name:'Create API token',exact:true});
+    await api.getByRole('button', { name: 'Create API key', exact: true }).click();
+    const tokenForm = page.getByRole('dialog',{name:'Create API key',exact:true});
     const identity=await tokenForm.locator('.api-token-identity').boundingBox(), permissionColumn=await tokenForm.locator('.api-token-permission-column').boundingBox();
     assert.ok(width>650 ? permissionColumn.x>=identity.x+identity.width && Math.abs(identity.y-permissionColumn.y)<=2 : permissionColumn.y>=identity.y+identity.height,'Token form uses aligned columns or a narrow-screen stack');
     assert.ok(await tokenForm.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Token form has no horizontal overflow');
@@ -514,18 +507,20 @@ export async function checkTaskUi(page, { origin, width, height, output, session
     await tokenForm.getByRole('button', { name: 'Copy token', exact: true }).click();
     await tokenForm.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__savedClipboard }));
-    await tokenForm.getByRole('button', { name: 'Close token form', exact: true }).click();
+    await tokenForm.getByRole('button', { name: 'Done', exact: true }).click();
     await page.route('**/api/schema', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: ['getProjectBoard'], token: { name: 'Scoped automation', projectPaths: ['C:/host-project'] } }) }));
-    await api.getByRole('button',{name:'Close key management',exact:true}).click();
-    api=page.getByRole('dialog',{name:'API access',exact:true});
+    const apiView = api.getByRole('combobox', { name: 'API view', exact: true });
+    if (await apiView.isVisible()) await apiView.selectOption({ label: 'API Explorer' });
+    else await api.getByRole('tab', { name: 'API Explorer', exact: true }).click();
     await api.getByLabel('Endpoint',{exact:true}).waitFor();
     const permissionCheck = api.locator('.api-access-check small');
     await Promise.race([permissionCheck.waitFor(), api.getByText(/^Token check failed:/).waitFor()]);
     if (!await permissionCheck.count()) await api.getByRole('button', { name: 'Recheck token', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'getProjectBoard' && ![...document.querySelectorAll('.api-test-form button')].find(button => button.textContent === 'Send request once')?.disabled).catch(async error => { console.error('API tester state:', await api.locator('.api-test-form').innerText()); throw error; });
+    assert.match(await api.getByLabel('Operation', { exact: true }).innerText(), /getProjectBoard/);
+    await page.waitForFunction(() => document.querySelector('.api-test-form button[aria-label="Send request once"]')?.disabled === false);
     assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), false, 'API tester can use the newly created token');
     await page.screenshot({ path: path.join(output, `api-access-${width}x${height}.png`) });
-    await api.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.goto(`${origin}/`);
     if (width <= 760) await page.keyboard.press('Escape');
     if (width<=760 && await page.locator('.cli-rail-toggle').getAttribute('aria-expanded')==='true') await page.locator('.cli-rail-toggle').click();
 }

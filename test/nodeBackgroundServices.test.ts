@@ -11,6 +11,7 @@ vi.mock("../src/presentation/workbench/schedulerRegistration", () => ({
 }));
 vi.mock("../src/services/sessionRecording", () => ({ registerSessionRecording: () => disposable("recording") }));
 vi.mock("../src/services/codexSessionQueue", () => ({ registerCodexSessionQueue: () => disposable("queue") }));
+vi.mock("../src/services/codexGoalContinuation", () => ({ registerCodexGoalContinuation: () => disposable("goals") }));
 vi.mock('../src/services/completedGoalCleanup', () => ({ registerCompletedGoalCleanup: () => disposable('completed-goals') }));
 vi.mock('../src/services/storageMaintenance', () => ({ registerStorageMaintenance: () => disposable('storage-maintenance') }));
 vi.mock('../src/services/standaloneCapacityRetry', () => ({ registerStandaloneCapacityRetry: () => disposable('capacity-retry') }));
@@ -41,7 +42,7 @@ it("registers the existing queue, recording, recovery, quota and token services"
   const context = { subscriptions: [], workspaceState: { update: vi.fn().mockResolvedValue(undefined) } };
   const listAccounts = vi.fn(async () => [{ id: "active", isActive: true, lastQuotaAt: Date.now(), quotaSummary: { hourlyPercentage: 50, hourlyWindowPresent: true, hourlyWindowMinutes: 300 } }]);
   registerNodeBackgroundServices(context as never, { listAccounts } as never, { publishLocalStateChange: vi.fn() } as never);
-  expect(fixture.registrations).toEqual(["locks", "terminals", "recording", "queue", 'completed-goals', 'storage-maintenance', 'capacity-retry', "tracking", "capacity", "quota-recovery", "quota", "tokens", "recovery"]);
+  expect(fixture.registrations).toEqual(["locks", "terminals", "recording", "queue", "goals", 'completed-goals', 'storage-maintenance', 'capacity-retry', "tracking", "capacity", "quota-recovery", "quota", "tokens", "recovery"]);
   expect(context.subscriptions).toHaveLength(8);
   fixture.resume.mockResolvedValue({ failed: [] });
   await expect(fixture.recovery!()).resolves.toBe(false);

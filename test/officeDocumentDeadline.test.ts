@@ -2,7 +2,10 @@ import { EventEmitter } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const worker = vi.hoisted(() => ({ fork: vi.fn() }));
-vi.mock('node:child_process', () => ({ fork: worker.fork }));
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  fork: worker.fork
+}));
 import { extractOfficeDocument } from '../src/services/officeDocuments';
 
 afterEach(() => vi.useRealTimers());

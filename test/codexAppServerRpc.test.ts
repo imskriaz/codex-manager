@@ -161,10 +161,18 @@ describe("app-server initialization recovery", () => {
       const opening = CodexAppServerRpc.open({ command: "node", prefixArgs: ["codex.js"] }, process.cwd());
       processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
       const rpc = await opening;
+      const closeSocket = vi.fn();
+      Object.defineProperty(rpc, 'socket', { value: { readyState: 1, close: closeSocket } });
+      const timers = vi.spyOn(globalThis, 'setTimeout');
       const closing = rpc.close();
+      const cleanupDeadline = timers.mock.results[0]!.value as NodeJS.Timeout;
+      timers.mockRestore();
+      expect(cleanupDeadline.hasRef()).toBe(true);
       expect(mocks.spawn).toHaveBeenLastCalledWith(expect.stringMatching(/[\\/]System32[\\/]taskkill\.exe$/i), ["/PID", "12345", "/T", "/F"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       expect(processChild.kill).not.toHaveBeenCalled();
+      expect(closeSocket).not.toHaveBeenCalled();
       processChild.emit("exit", 0); killer.emit("exit", 0); await closing;
+      expect(closeSocket).toHaveBeenCalledOnce();
       await rpc.close(); expect(mocks.spawn).toHaveBeenCalledTimes(2);
       expect(processChild.stdin.destroyed).toBe(true);
     } finally { Object.defineProperty(process, "platform", platform); }
@@ -200,15 +208,17 @@ describe("app-server initialization recovery", () => {
       expect(processChild.kill).not.toHaveBeenCalled();
     } finally { Object.defineProperty(process, "platform", platform); }
   });
-  it.each(['gone', 'alive', 'unverifiable', 'truncated', 'missing-root'])("verifies every reported Windows target after taskkill races a natural exit: %s", async mode => {
+  it.each(['gone', 'exiting', 'alive', 'unverifiable', 'truncated', 'missing-root'])("verifies every reported Windows target after taskkill races a natural exit: %s", async mode => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const processChild = Object.assign(child(), { pid: 12345 });
     const killer = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), unref: vi.fn() });
     mocks.spawn.mockReturnValueOnce(processChild).mockReturnValueOnce(killer);
+    let exiting = true;
     const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
       expect(signal).toBe(0);
       if (mode === 'alive' && pid === 54321) return true;
+      if (mode === 'exiting' && pid === 54321 && exiting) { exiting = false; return true; }
       throw Object.assign(new Error('Process check'), { code: mode === 'unverifiable' && pid === 54321 ? 'EPERM' : 'ESRCH' });
     });
     try {
@@ -221,7 +231,7 @@ describe("app-server initialization recovery", () => {
       if (mode === 'truncated') killer.stderr.write('x'.repeat(65537));
       processChild.emit('exit', 0);
       killer.emit('exit', 128);
-      if (mode === 'gone') {
+      if (mode === 'gone' || mode === 'exiting') {
         await expect(closing).resolves.toBeUndefined();
         expect(probe).toHaveBeenCalledWith(54321, 0);
         expect(probe).toHaveBeenCalledWith(12345, 0);

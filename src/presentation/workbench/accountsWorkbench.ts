@@ -326,7 +326,7 @@ export class AccountsWorkbench {
     try { this.alwaysOnlineServer.dispose(); }
     catch (error) { console.error("[codexManager] background handoff failed during disposal", error); }
     this.webDashboard.dispose();
-    cancelCodexSessionAutoResume();
+    cancelCodexSessionAutoResume("Auto Resume was cancelled because Codex Manager is shutting down.");
     this.autoResumeTracking?.dispose();
     if (this.alwaysOnlinePreparationTimer) {
       clearTimeout(this.alwaysOnlinePreparationTimer);

@@ -1,4 +1,4 @@
-import { MAX_CHAT_WIRE_BYTES, prepareChatInput } from "../src/domain/chatAttachments";
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_WIRE_BYTES, prepareChatInput } from "../src/domain/chatAttachments";
 import { isCliSubmissionEcho } from "../webview-src/dashboard/cliSessionComposerState";
 import { mkdtemp, mkdir, open, readFile, readdir, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -177,7 +177,7 @@ describe("Codex session integration", () => {
     try {
       await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), Array.from({length:8}, (_, index) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Image ' + index }, { type: 'input_image', image_url: image }] } })).join('\n') + '\n');
       expect((await readCodexCliSessionMessagePage(sessionId, undefined, root)).messages).toHaveLength(8);
-      expect(reads).toBe(2);
+      expect(reads).toBe(Math.ceil(MAX_CHAT_ATTACHMENT_BYTES / (25 * 1024 * 1024)));
     } finally { spy.mockRestore(); }
   });
   it("pages saved history across oversized records without gaps or a stuck cursor", async () => {

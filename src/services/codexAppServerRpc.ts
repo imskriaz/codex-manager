@@ -465,9 +465,11 @@ export class CodexAppServerRpc {
     }
     this.pending.clear();
     this.lineBuffer = "";
-    if (this.socket?.readyState === WebSocket.CONNECTING) this.socket.terminate();
-    else this.socket?.close();
-    this.teardown = this.terminateOwnedChild();
+    // Closing the socket first can make the server exit before Windows inspects its tree.
+    this.teardown = this.terminateOwnedChild().finally(() => {
+      if (this.socket?.readyState === WebSocket.CONNECTING) this.socket.terminate();
+      else this.socket?.close();
+    });
     void this.teardown.catch(() => undefined);
   }
 
@@ -480,18 +482,19 @@ export class CodexAppServerRpc {
     return new Promise((resolve, reject) => {
       let treeStopped = process.platform !== "win32" || !child.pid;
       let failure: Error | undefined;
+      let verification: NodeJS.Timeout | undefined;
       const finish = () => {
         if (!this.childExited || !treeStopped) return;
-        clearTimeout(timer); child.off("exit", finish);
+        clearTimeout(timer); clearTimeout(verification); child.off("exit", finish);
         child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
         if (failure) reject(failure); else resolve();
       };
       const kill = () => { if (this.childExited) return; try { child.kill("SIGKILL"); } catch { /* Already exited. */ } };
       const timer = setTimeout(() => {
-        failure = new Error("Codex Manager could not confirm its private app-server process stopped. Refresh before starting another writer.");
+        failure ??= new Error("Codex Manager could not confirm its private app-server process stopped. Refresh before starting another writer.");
         treeStopped = true; kill(); this.childExited = true; finish();
       }, 3_000);
-      timer.unref(); child.once("exit", finish);
+      child.once("exit", finish);
       // A Node or shell shim can own a Codex grandchild holding the writer handle.
       if (!treeStopped) {
         let cleanupOutput = '', outputTruncated = false;
@@ -509,23 +512,24 @@ export class CodexAppServerRpc {
             catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
           });
         };
-        const failed = () => {
+        const failed = (error?: unknown) => {
           // A wrapper exit alone cannot confirm that its descendants released the writer.
-          setTimeout(() => {
-            treeStopped = true;
-            if (!confirmedGone()) failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.");
-            if (!this.childExited) {
-              kill();
+          failure = new Error("Codex Manager could not stop its private app-server process tree. Refresh before starting another writer.", { cause: { error, output: cleanupOutput, outputTruncated } });
+          const verify = () => {
+            if (confirmedGone()) {
+              failure = undefined; treeStopped = true; finish();
+            } else {
+              verification = setTimeout(verify, 50);
             }
-            finish();
-          }, 50).unref();
+          };
+          verify();
         };
         try {
           const killer = spawn(path.join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
           killer.stdout?.on('data', capture);
           killer.stderr?.on('data', capture);
           killer.once("error", failed);
-          killer.once("exit", code => { if (code !== 0) failed(); else { treeStopped = true; kill(); finish(); } });
+          killer.once("exit", code => { if (code !== 0) failed(new Error(`Windows process cleanup exited with code ${code}.`)); else { treeStopped = true; kill(); finish(); } });
           killer.unref();
         } catch { failed(); }
       } else {

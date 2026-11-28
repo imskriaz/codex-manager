@@ -22,6 +22,7 @@ vi.mock("../src/infrastructure/config/extensionSettings", () => ({
   getCodexManagerConfiguration: () => ({ get: () => true })
 }));
 vi.mock("../src/services/codexSessionResume", () => ({
+  GOAL_CONTINUATION_TURN_NAMESPACE: "goal-continuation-turn",
   readCodexCliSessionSummary: mocks.summary,
   readCompletedCodexSessionTurns: mocks.completed,
   resumeCodexSessionGoal: mocks.resume,
