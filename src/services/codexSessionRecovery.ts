@@ -57,7 +57,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     }
     if (privateFallback && session.locked) throw new Error('Another Codex writer still owns this session. Private recovery was not started.');
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
-    const stopped = origin === 'automatic' ? await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal) : [];
+    const stopped = origin !== 'user' ? await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal) : [];
     if (origin === "user") clearCodexSessionManualStop(home, sessionId);
     else if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop ||
       stopped.length) {
@@ -70,14 +70,16 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     if (eligibleGoal) {
       phase = "goal-continuation";
       recordPersistentEvent("info", "session-resume", "Goal recovery requested", { ...identity, origin, goalStatus, explicitPause, interrupted: session.interrupted === true, reason: recoverablePausedGoal && goalStatus === "paused" ? "interrupted-paused-goal" : "unfinished-goal", promptKind: "none", transport: "official-native" });
+      let outcome: Awaited<ReturnType<typeof resumeCodexSessionGoal>>;
       try {
-        await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic", ...(privateFallback ? [true] as const : [])), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
+        outcome = await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic", ...(privateFallback ? [true] as const : [])), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
       } catch (error) {
         if (privateFallback || controller.signal.aborted || !(error instanceof CodexNativeOwnerUnavailableError)) throw error;
         const verified = await readCodexCliSessionSummary(sessionId, home, false);
         if (!verified || verified.status !== 'idle' || verified.locked) throw error;
-        await waitWithin(resumeCodexSessionGoal(verified, controller.signal, origin === 'user' ? 'user' : 'automatic', true), 25_000, 'Private goal resume was not confirmed. Check Codex before retrying.', controller.signal);
+        outcome = await waitWithin(resumeCodexSessionGoal(verified, controller.signal, origin === 'user' ? 'user' : 'automatic', true), 25_000, 'Private goal resume was not confirmed. Check Codex before retrying.', controller.signal);
       }
+      if (outcome !== "started") return outcome;
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;
     }

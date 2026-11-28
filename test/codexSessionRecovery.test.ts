@@ -13,7 +13,7 @@ beforeEach(() => {
   mocks.summary.mockResolvedValue({ id: "session", title: "Pending task", status: "idle", interrupted: true, goal: null, projectPath: "project" });
   mocks.files.mockResolvedValue([]);
   mocks.stopped.mockResolvedValue([]);
-  mocks.goal.mockResolvedValue(undefined);
+  mocks.goal.mockResolvedValue("started");
   mocks.send.mockImplementation(async options => { options.onStarted(); });
 });
 afterEach(() => vi.useRealTimers());
@@ -79,10 +79,16 @@ describe("post-load session recovery", () => {
     expect(await resumeCodexSessionWork("session")).toBe("idle");
     expect(mocks.log).not.toHaveBeenCalledWith("info", "session-resume", "Continue accepted", expect.anything());
   });
-  it("resumes an eligible native goal without a prompt", async () => {
+  it("resumes an eligible native goal through goal recovery", async () => {
     mocks.summary.mockResolvedValue({ id: "session", title: "Goal task", status: "idle", goal: { status: "usage_limited" } });
     expect(await resumeCodexSessionWork("session")).toBe("goal");
     expect(mocks.goal).toHaveBeenCalledOnce(); expect(mocks.send).not.toHaveBeenCalled();
+  });
+  it.each(["running", "idle"] as const)("reports %s when goal recovery did not start another turn", async outcome => {
+    mocks.summary.mockResolvedValue({ id: "session", title: "Goal task", status: "idle", goal: { status: "active" } });
+    mocks.goal.mockResolvedValue(outcome);
+    expect(await resumeCodexSessionWork("session")).toBe(outcome);
+    expect(mocks.send).not.toHaveBeenCalled();
   });
   it.each(["automatic", "queue"] as const)("resumes an interrupted paused goal during %s recovery", async origin => {
     mocks.summary.mockResolvedValue({ id: "session", title: "Interrupted goal", status: "idle", interrupted: true, goal: { status: "paused" } });
@@ -180,14 +186,14 @@ describe("post-load session recovery", () => {
     mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', interrupted: true, goal: { status: 'paused' } }); markExplicitSessionGoalPause('recovery-test', 'session');
     expect(await resumeCodexSessionWork('session', undefined, 'automatic', 'private')).toBe('idle'); expect(mocks.goal).not.toHaveBeenCalled(); clearExplicitSessionGoalPause('recovery-test', 'session');
   });
-  it('resumes an eligible goal through the private connection without adding a user message', async () => {
+  it('resumes an eligible goal through the private connection through goal recovery', async () => {
     mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', goal: { status: 'active' } });
     expect(await resumeCodexSessionWork('session', undefined, 'automatic', 'private')).toBe('goal'); expect(mocks.goal).toHaveBeenCalledWith(expect.objectContaining({ id: 'session' }), expect.any(AbortSignal), 'automatic', true); expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('uses a private goal fallback after a confirmed unavailable owner without replaying an uncertain start', async () => {
     mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', goal: { status: 'active' } });
-    mocks.goal.mockRejectedValueOnce(new CodexNativeOwnerUnavailableError('Owner unavailable')).mockResolvedValueOnce(undefined);
+    mocks.goal.mockRejectedValueOnce(new CodexNativeOwnerUnavailableError('Owner unavailable')).mockResolvedValueOnce('started');
     expect(await resumeCodexSessionWork('session')).toBe('goal'); expect(mocks.goal).toHaveBeenCalledTimes(2); expect(mocks.goal.mock.calls[1]![3]).toBe(true);
     mocks.goal.mockReset().mockRejectedValue(new Error('Goal resume was not confirmed'));
     await expect(resumeCodexSessionWork('session')).rejects.toThrow(/not confirmed/); expect(mocks.goal).toHaveBeenCalledOnce();

@@ -267,10 +267,14 @@ export class CodexAppServerRpc {
       if (event.threadId === threadId && (!event.turnId || event.turnId === turnId)) resetDeadline?.();
     });
     try {
-      const started = await this.request<{ turn?: { id?: unknown } }>("turn/start", params);
+      const started = await this.request<{ turn?: { id?: unknown; status?: unknown; error?: { message?: unknown } } }>("turn/start", params);
       turnId = typeof started.turn?.id === "string" ? started.turn.id : undefined;
       if (!turnId) throw new Error("Codex started a turn without returning its ID. Refresh the session before retrying.");
+      if (started.turn?.status === "failed")
+        throw new Error(typeof started.turn.error?.message === "string" ? started.turn.error.message : "Codex rejected the turn before it could start.");
+      if (started.turn?.status === "interrupted") throw new CodexAppServerTurnInterruptedError();
       onTurnStarted?.(turnId);
+      if (started.turn?.status === "completed") return;
       const earlyCompletion = earlyCompletions.get(turnId);
       earlyCompletions.clear();
       if (earlyCompletion) settle(earlyCompletion);

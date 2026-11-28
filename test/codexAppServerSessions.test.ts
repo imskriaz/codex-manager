@@ -1,3 +1,4 @@
+import { CODEX_GOAL_CONTINUE_PROMPT } from "../src/domain/codexSessionState";
 import { mkdtemp, mkdir, rm, writeFile, appendFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -333,14 +334,14 @@ describe("native App Server new sessions", () => {
     expect(JSON.stringify(rpc.startAndWaitForTurn.mock.calls)).not.toContain('JVBERi0=');
   });
 
-  it('continues an active goal privately with empty input and never contacts the native owner', async () => {
+  it('continues an active goal privately with a goal-preserving message and never contacts the native owner', async () => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
     seedGoal('active');
     const rpc = { request: vi.fn(async () => ({})), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('private-goal-turn'); }) };
     mocks.open.mockResolvedValue(rpc);
     await resumeCodexSessionGoal({ id, title: 'Goal', status: 'idle', projectPath: root, goal: { objective: 'Finish', status: 'active' } }, undefined, 'automatic', true);
-    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ input: [] }), expect.any(Number), expect.any(Function));
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ input: [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }] }), expect.any(Number), expect.any(Function));
   });
 
   it.each([false, true])('fences automatic goal continuation to the completed turn after thread resume (changed: %s)', async changed => {
@@ -367,9 +368,32 @@ describe("native App Server new sessions", () => {
       expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled();
     } else {
       expect(claim).toHaveBeenCalledExactlyOnceWith('completed-turn');
-      expect(rpc.startAndWaitForTurn).toHaveBeenCalledExactlyOnceWith(id, expect.objectContaining({ input: [] }), expect.any(Number), expect.any(Function));
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledExactlyOnceWith(id, expect.objectContaining({ input: [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }] }), expect.any(Number), expect.any(Function));
     }
     await vi.waitFor(() => expect(rpc.close).toHaveBeenCalledOnce());
+  });
+
+  it("holds an unconfirmed goal start across automatic recovery and accepts an explicit resume", async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    seedGoal('active');
+    const rpc = {
+      request: vi.fn(async () => ({})),
+      onServerRequest: () => () => undefined,
+      onNotification: () => () => undefined,
+      close: vi.fn(),
+      startAndWaitForTurn: vi.fn<(id: string, params: unknown, timeout: number, started: (turn: string) => void) => Promise<void>>()
+        .mockRejectedValueOnce(new Error("Connection lost before the start reply."))
+        .mockImplementationOnce(async (_id, _params, _timeout, started) => started("confirmed"))
+    };
+    mocks.open.mockResolvedValue(rpc);
+    const session = { id, title: 'Goal', status: 'idle' as const, projectPath: root };
+    await expect(resumeCodexSessionGoal(session, undefined, "automatic", true)).rejects.toThrow("Connection lost");
+    await expect(resumeCodexSessionGoal(session, undefined, "automatic", true)).rejects.toThrow("An earlier goal start was not confirmed");
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce();
+    await expect(resumeCodexSessionGoal(session, undefined, "user", true)).resolves.toBe("started");
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(rpc.close).toHaveBeenCalledTimes(2));
   });
 
   it.each(['manual-stop', 'paused', 'writer-conflict'])('keeps private goal recovery safe when %s', async scenario => {
@@ -702,8 +726,8 @@ describe("native App Server new sessions", () => {
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
     const rpc = { request: vi.fn(async (_method: string, params: { status: string }) => ({ goal: { status: params.status } })), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
     await setCodexSessionGoalStatus(id, "paused"); await setCodexSessionGoalStatus(id, "active");
-    expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "paused", origin: "automatic" }, expect.any(Number));
-    expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "active", origin: "automatic" }, expect.any(Number));
+    expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "paused", origin: "user" }, expect.any(Number));
+    expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "active", origin: "user" }, expect.any(Number));
     expect(mocks.open.mock.calls.every(([, cwd]) => cwd === root)).toBe(true);
     rpc.request.mockResolvedValueOnce({ goal: { status: "active" } });
     await expect(setCodexSessionGoalStatus(id, "paused")).rejects.toThrow("did not confirm");
@@ -943,7 +967,7 @@ describe("native App Server new sessions", () => {
         expect(rpc.request.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(startNativeCodexSessionTurn).mock.invocationCallOrder[0]!);
         expect(rpc.close).toHaveBeenCalledOnce();
       } else expect(mocks.open).not.toHaveBeenCalled();
-      expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(root, id, { threadId: id, input: [], cwd: root }, expect.any(AbortSignal), expect.any(Function));
+      expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(root, id, { threadId: id, input: [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }], cwd: root }, expect.any(AbortSignal), expect.any(Function));
       await vi.waitFor(() => expect(completed).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, status: "completed" })));
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
@@ -1014,7 +1038,7 @@ describe("native App Server new sessions", () => {
       onStarted?.("closed-project-goal"); return true;
     });
     await resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: project });
-    expect(startNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, { threadId: id, input: [], cwd: project }, expect.any(AbortSignal), expect.any(Function));
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, { threadId: id, input: [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }], cwd: project }, expect.any(AbortSignal), expect.any(Function));
     expect(mocks.open).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(getCodexSessionLiveState(id)?.status).toBe("completed"));

@@ -1,4 +1,5 @@
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { normalizeCodexGoalStatus } from "../domain/codexSessionState";
 import * as fs from "fs/promises";
 import * as path from "path";
 import {
@@ -49,7 +50,9 @@ export async function filterAutoResumeGoalSessionIds(
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
     return ids.filter((id) => {
       signal?.throwIfAborted();
-      const status = statement.get(id)?.["status"];
+      const raw = statement.get(id)?.["status"];
+      const status = normalizeCodexGoalStatus(raw);
+      if (raw !== undefined && !status) return false;
       const eligible = status === "active" || status === "usage_limited" || (status === "paused" && interruptedPaused.has(id) && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
       return eligible;
     });
@@ -79,7 +82,7 @@ export async function readAutoResumeGoalCandidateIds(home = resolveCodexHome(), 
   const db = await openGoalDatabase(home);
   if (!db) return [];
   try {
-    const rows = db.prepare("SELECT thread_id FROM thread_goals WHERE status IN ('active','usage_limited') LIMIT 10001").all();
+    const rows = db.prepare("SELECT thread_id FROM thread_goals WHERE status IN ('active','usage_limited','usageLimited','usage_limit') LIMIT 10001").all();
     signal?.throwIfAborted();
     if (rows.length > 10000) throw new Error("Goal recovery exceeded its safe discovery limit. Saved recovery was retained.");
     return rows.map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && SESSION_ID_PATTERN.test(id));
@@ -122,7 +125,7 @@ export async function readAutoResumeCodexSessionIds(
     const goals = previouslyRunningSessionIds.length ? await openMetadataDatabase(home, "goals") : undefined;
     let pendingGoals: string[] = [];
     try {
-      pendingGoals = goals?.prepare("SELECT thread_id, status FROM thread_goals WHERE status IN ('active','usage_limited','paused') LIMIT 10001").all()
+      pendingGoals = goals?.prepare("SELECT thread_id, status FROM thread_goals WHERE status IN ('active','usage_limited','usageLimited','usage_limit','paused') LIMIT 10001").all()
         .filter(row => row["status"] !== "paused" || !isExplicitSessionGoalPause(home, String(row["thread_id"])))
         .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && previouslyRunningSessionIds.includes(id)) ?? [];
     } catch { /* Optional goal metadata; transcript evidence remains available. */ }
@@ -145,8 +148,8 @@ export async function readAutoResumeCodexSessionIds(
       running = running.filter(id => {
         if (!completed.has(id)) return true;
         const rawStatus = status?.get(id)?.["status"];
-        const goalStatus = typeof rawStatus === "string" ? rawStatus : "";
-        return ["active", "usage_limited"].includes(goalStatus) || (goalStatus === "paused" && !isExplicitSessionGoalPause(home, id));
+        const goalStatus = normalizeCodexGoalStatus(rawStatus);
+        return goalStatus === "active" || goalStatus === "usage_limited" || (goalStatus === "paused" && !isExplicitSessionGoalPause(home, id));
       });
     } finally { goals?.close(); }
     if (!running.length) return [];

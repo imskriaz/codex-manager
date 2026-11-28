@@ -437,3 +437,30 @@ it.each(['missing', 'disabled', 'ownership'])('durably captures interruption bef
   expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
   expect(mocks.resume).not.toHaveBeenCalled();
 });
+
+it('backs off repeated rejection, stops after three attempts, and retries with a replacement account', async () => {
+  Object.defineProperty(vscode.env, 'appHost', { configurable: true, value: 'node' });
+  start();
+  await flush();
+  recover();
+  mocks.resume.mockResolvedValue({ attempted: 1, opened: 0, failed: [{ sessionId: 'goal', message: 'Provider rejected the start.' }] });
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed();
+  await flush();
+  expect(mocks.resume).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(mocks.resume).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.resume).toHaveBeenCalledTimes(3);
+  expect(mocks.notice).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('paused after 3 attempts') }));
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(mocks.resume).toHaveBeenCalledTimes(3);
+  recover();
+  account.id = 'replacement';
+  mocks.resume.mockResolvedValueOnce({ attempted: 1, opened: 1, failed: [] });
+  changed();
+  await flush();
+  expect(mocks.resume).toHaveBeenCalledTimes(4);
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBeUndefined();
+});

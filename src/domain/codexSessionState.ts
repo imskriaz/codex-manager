@@ -30,14 +30,31 @@ export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefine
   return state?.status === "starting" || state?.status === "running";
 }
 
+export const CODEX_GOAL_CONTINUE_PROMPT = "Continue working on the existing goal if it is unfinished. Keep the same goal and finish the remaining work.";
+
+export function normalizeCodexGoalStatus(value: unknown): string | undefined {
+  if (value === "usageLimited" || value === "usage_limit") return "usage_limited";
+  if (value === "budgetLimited" || value === "budget_limit") return "budget_limited";
+  return typeof value === "string" && /^[a-z_]{1,40}$/.test(value) ? value : undefined;
+}
+
 export function normalizeCodexSessionGoal(value: unknown): DashboardCodexSessionGoal | null | undefined {
   if (value === null) return null;
   if (!value || typeof value !== "object") return undefined;
   const goal = value as Partial<DashboardCodexSessionGoal>;
+  const status = normalizeCodexGoalStatus(goal.status);
   if (typeof goal.objective !== "string" || !goal.objective.trim() || goal.objective.length > 4096 ||
-      typeof goal.status !== "string" || !/^[a-z_]{1,40}$/.test(goal.status) ||
+      !status ||
       (goal.elapsedMs !== undefined && (!Number.isFinite(goal.elapsedMs) || goal.elapsedMs < 0 || goal.elapsedMs > Number.MAX_SAFE_INTEGER))) return undefined;
-  return { objective: goal.objective.trim(), status: goal.status, elapsedMs: goal.elapsedMs };
+  return { objective: goal.objective.trim(), status, elapsedMs: goal.elapsedMs };
+}
+
+export function codexGoalActivityLabel(status: string, running: boolean, session?: Pick<DashboardCliSessionSummary, "status" | "stopped">): string {
+  if (status === "complete") return "Goal completed";
+  if (status !== "active") return "Goal " + status.replaceAll("_", " ");
+  if (running) return "Pursuing goal";
+  if (session?.status !== "idle") return "Goal active · Activity unverified";
+  return session.stopped ? "Goal active · Turn stopped" : "Goal active · Idle";
 }
 
 export function isCodexSessionRunning(
@@ -64,7 +81,7 @@ export function canConfigureCodexSessionAutoResume(session: Pick<DashboardCliSes
 
 export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "provider" | "status" | "archived" | "interrupted" | "queueEnabled" | "queueError" | "goal" | "subAgent" | "parentSessionId">): boolean {
   return canConfigureCodexSessionAutoResume(session) && session.goal?.status !== 'complete' && session.goal?.status !== 'paused' && (session.status === "running" ||
-    (session.status === "idle" && session.interrupted === true && !session.queueEnabled && !session.queueError));
+    (session.status === "idle" && (session.interrupted === true || session.goal?.status === 'active') && !session.queueEnabled && !session.queueError));
 }
 
 export function filterCliSessionsBySection(

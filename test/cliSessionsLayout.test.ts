@@ -24,7 +24,7 @@ import {
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
-import { canConfigureCodexSessionAutoResume, isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
+import { canConfigureCodexSessionAutoResume, codexGoalActivityLabel, isCodexSessionRunning, isCodexSessionRunningForDisplay, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
   it("uses the compact browser toolbar and anchored three-dot menu", () => {
@@ -985,8 +985,16 @@ describe("sessions sidebar layout", () => {
     expect(getSessionGoal([goal])).toMatchObject({ objective: "Build editor", status: "active" });
     expect(getSessionGoal([goal, { ...goal, id: "failed", title: "update_goal failed", status: "failed", arguments: '{"status":"complete"}' }])).toMatchObject({ status: "active" });
     expect(getSessionGoal([goal, { ...goal, id: "get", title: "Used get_goal", result: '{"goal":{"objective":"Build editor","status":"paused","elapsed_ms":1200}}' }])).toMatchObject({ status: "paused", elapsedMs: 1200 });
+    expect(getSessionGoal([goal, { ...goal, id: "budget", title: "Used get_goal", result: '{"goal":{"objective":"Build editor","status":"budgetLimited"}}' }])).toMatchObject({ status: "budget_limited" });
     expect(getSessionGoal([{ ...goal, arguments: "{partial" }])).toBeUndefined();
     expect(getSessionGoal([{ id: "plan", kind: "plan", text: "Ordinary plan" }])).toBeUndefined();
+  });
+  it("identifies stopped, idle, unverified and running active goals independently of goal status", () => {
+    expect(codexGoalActivityLabel("active", false, { status: "idle", stopped: true })).toBe("Goal active · Turn stopped");
+    expect(codexGoalActivityLabel("active", false, { status: "idle" })).toBe("Goal active · Idle");
+    expect(codexGoalActivityLabel("active", false, { status: "unknown" })).toContain("unverified");
+    expect(codexGoalActivityLabel("active", true, { status: "running" })).toBe("Pursuing goal");
+    expect(codexGoalActivityLabel("complete", true, { status: "running" })).toBe("Goal completed");
   });
 
   it("keeps Env fixed and makes the header toggle control the workspace inspector", () => {

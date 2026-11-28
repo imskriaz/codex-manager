@@ -60,6 +60,21 @@ describe("app-server initialization recovery", () => {
     expect(request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
     await rpc.close();
   });
+  it("preserves a failed start reply without reporting turn acceptance", async () => {
+    const processChild = child(); processChild.stdin.resume();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n');
+    const rpc = await opening;
+    const started = vi.fn();
+    const turn = rpc.startAndWaitForTurn("thread", {}, 1000, started);
+    const failed = expect(turn).rejects.toThrow("Provider rejected the input.");
+    processChild.stdout.write(JSON.stringify({
+      id: 2, result: { turn: { id: "rejected", status: "failed", error: { message: "Provider rejected the input." } } }
+    }) + '\n');
+    await failed;
+    expect(started).not.toHaveBeenCalled();
+    await rpc.close();
+  });
   it.each(['completed', 'missing', 'offline'])('recovers a silent %s turn without resending its prompt', async state => {
     vi.useFakeTimers(); const processChild = child(); processChild.stdin.resume();
     const opening = CodexAppServerRpc.open({ command: 'codex', prefixArgs: [] }, process.cwd());

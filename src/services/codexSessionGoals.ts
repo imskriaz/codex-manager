@@ -5,6 +5,7 @@ import { getCodexHomeStateKey } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { createHash } from "node:crypto";
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { normalizeCodexGoalStatus } from "../domain/codexSessionState";
 
 const EXPLICIT_PAUSE_NAMESPACE = "session-goal-explicit-pause";
 const explicitPauseFallback = new Set<string>();
@@ -66,9 +67,9 @@ export async function readCodexSessionGoals(home: string, sessionIds?: readonly 
       const rows = batch ? db.prepare(`${columns} WHERE thread_id IN (${batch.map(() => "?").join(",")})`).all(...batch)
         : db.prepare(`${columns} LIMIT ${Math.max(1, Math.min(10001, Math.floor(limit)))}`).all();
       for (const row of rows) {
-        const id = row["thread_id"], objective = row["objective"], status = row["status"], seconds = row["time_used_seconds"];
+        const id = row["thread_id"], objective = row["objective"], status = normalizeCodexGoalStatus(row["status"]), seconds = row["time_used_seconds"];
         if (typeof id === "string") { presentIds.add(id); }
-        if (typeof id !== "string" || typeof objective !== "string" || !objective.trim() || typeof status !== "string" || !/^[a-z_]{1,40}$/.test(status)) continue;
+        if (typeof id !== "string" || typeof objective !== "string" || !objective.trim() || !status) continue;
         goals.set(id, { objective: objective.trim(), status,
           elapsedMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined });
       }

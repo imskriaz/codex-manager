@@ -339,14 +339,14 @@ describe("manual Codex navigation and recovery", () => {
     expect(open).toHaveBeenCalledWith(id, undefined, true);
     expect(result.payload?.cliSessionMessages).toBeUndefined();
   });
-  it.each(['paused', 'blocked'])("explicitly resumes a %s goal without sending a continuation prompt", async initialStatus => {
+  it.each(['paused', 'blocked'])("explicitly resumes a %s goal without using the non-goal recovery path", async initialStatus => {
     enableSessions();
     const goal = { objective: "Finish work", status: initialStatus };
     readCodexCliSessionSummaryMock.mockImplementation(async () => ({ id, title: "Goal task", status: "idle", goal }));
     readCodexCliSessionsMock.mockReset().mockImplementation(() => new Promise(() => undefined));
     vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockImplementation(async (_id, status) => { goal.status = status; });
     const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
-    const resume = vi.spyOn(sessionEditors, "resumeCodexSessionGoal").mockResolvedValue(undefined);
+    const resume = vi.spyOn(sessionEditors, "resumeCodexSessionGoal").mockResolvedValue("started");
     const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "explicit-resume-goal", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" } });
     expect(result.status).toBe("completed"); expect(result.payload?.cliSession?.goal?.status).toBe("active");
     expect(open).toHaveBeenCalledOnce(); expect(resume).toHaveBeenCalledOnce();
@@ -360,7 +360,7 @@ describe("manual Codex navigation and recovery", () => {
     readCodexCliSessionSummaryMock.mockResolvedValue({id,title:'Goal',status:'idle',goal:{objective:'Finish',status:'paused'}});
     vi.spyOn(sessionEditors,'setCodexSessionGoalStatus').mockResolvedValue(undefined);
     const open=vi.spyOn(sessionEditors,'openCodexSessionInVsCode').mockRejectedValue(new Error('Official extension unavailable'));
-    const resume=vi.spyOn(sessionEditors,'resumeCodexSessionGoal').mockResolvedValue(undefined);
+    const resume=vi.spyOn(sessionEditors,'resumeCodexSessionGoal').mockResolvedValue('started');
     try {const result=await executeDashboardActionMessage({...createContext(),hostKind:'browser'},{type:'dashboard:action',requestId:'node-goal',action:'setCodexSessionGoalStatus',payload:{sessionId:id,goalStatus:'active'}});expect(result.payload?.notice?.level).toBe('info');expect(open).not.toHaveBeenCalled();expect(resume).toHaveBeenCalledWith(expect.objectContaining({id}),expect.any(AbortSignal),'user',true);}
     finally {Reflect.deleteProperty(vscode.env,'appHost');}
   });
@@ -373,6 +373,23 @@ describe("manual Codex navigation and recovery", () => {
     const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "goal-partial", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" } });
     expect(result).toMatchObject({ status: "completed", payload: { cliSession: { goal: { status: "active" } }, notice: { level: "warning", message: expect.stringContaining("Owner disconnected") } } });
     expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+  });
+  it.each(["started", "idle"] as const)("lets an active stopped goal resume and reports %s accurately", async outcome => {
+    enableSessions();
+    const goal = { objective: "Finish", status: "active" };
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Stopped goal", status: "idle", stopped: true, interrupted: true, goal });
+    const update = vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockResolvedValue(undefined);
+    vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    const resume = vi.spyOn(sessionEditors, "resumeCodexSessionGoal").mockResolvedValue(outcome);
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, {
+      type: "dashboard:action", requestId: "resume-active-goal", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" }
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: "completed", payload: {
+      cliSession: { goal, stopped: outcome === "idle" },
+      notice: { level: outcome === "started" ? "info" : "warning" }
+    } });
   });
   it("reopens running and interrupted parents without closing existing tabs and acknowledges duplicate requests", async () => {
     enableSessions();

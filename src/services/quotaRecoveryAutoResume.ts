@@ -22,6 +22,8 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import { readRecordedSessionAccount } from './sessionRecording';
 
+const MAX_RECOVERY_ATTEMPTS = 3;
+
 /** Remember exhaustion across restarts; resume through the existing verified native recovery path. */
 export function registerQuotaRecoveryAutoResume(
   context: vscode.ExtensionContext,
@@ -40,11 +42,21 @@ export function registerQuotaRecoveryAutoResume(
   let quotaRefresh: { accountId?: string } | undefined, lastFailureAt = 0;
   let lastFailureAccountId: string | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  const scheduleRetry = () => {
-    retryAt = Date.now() + (vscode.env.appHost === 'node' ? 5_000 : 60_000);
+  let attempts = 0;
+  let retryHome: string | undefined;
+  const resetRetry = () => {
+    attempts = 0;
+    retryAt = 0;
     if (retryTimer) clearTimeout(retryTimer);
-    if (disposed) return;
-    retryTimer = setTimeout(() => { retryTimer = undefined; void check(); }, vscode.env.appHost === 'node' ? 5_000 : 60_000);
+    retryTimer = undefined;
+  };
+  const scheduleRetry = () => {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = undefined;
+    if (disposed || attempts >= MAX_RECOVERY_ATTEMPTS) return;
+    const delay = (vscode.env.appHost === 'node' ? 5_000 : 60_000) * 2 ** Math.max(0, attempts - 1);
+    retryAt = Date.now() + delay;
+    retryTimer = setTimeout(() => { retryTimer = undefined; void check(); }, delay);
     retryTimer.unref?.();
   };
   const check = async () => {
@@ -55,8 +67,10 @@ export function registerQuotaRecoveryAutoResume(
     try {
       const home = resolveCodexHome(),
         key = `codexManager.quotaRecovery:${home}`;
+      if (retryHome !== home) { retryHome = home; observedAccountId = undefined; resetRetry(); }
       let pending = context.workspaceState.get<boolean>(key) === true;
       if (!isAutoResumeAvailable()) {
+        resetRetry();
         exhaustionHome = undefined;
         interrupted.clear();
         if (pending)
@@ -91,11 +105,7 @@ export function registerQuotaRecoveryAutoResume(
       observedAccountId = active.id;
       // A replacement account must not inherit the failed account's retry delay.
       if (Date.now() < retryAt && !switched) return;
-      if (switched) {
-        retryAt = 0;
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = undefined;
-      }
+      if (switched) resetRetry();
       if (switched) {
         await waitWithin(Promise.resolve(context.workspaceState.update(key, true)), 5_000, 'Account switch recovery could not be saved.');
         pending = true;
@@ -115,6 +125,7 @@ export function registerQuotaRecoveryAutoResume(
       }
       if (
         !pending ||
+        attempts >= MAX_RECOVERY_ATTEMPTS ||
         (quotaRefresh && (!quotaRefresh.accountId || quotaRefresh.accountId === active.id)) ||
         (lastFailureAt > 0 && (!lastFailureAccountId || lastFailureAccountId === active.id) && (active.lastQuotaAt ?? 0) < lastFailureAt) ||
         availability !== "available" ||
@@ -123,6 +134,7 @@ export function registerQuotaRecoveryAutoResume(
         !isAutoQueueSnapshotFresh(activeQueue, activePolicy)
       )
         return;
+      attempts++;
       scheduleRetry();
       await persistRunningCodexSessions(context);
       const latest = (
@@ -147,9 +159,13 @@ export function registerQuotaRecoveryAutoResume(
       )
         return;
       const result = await resumePersistedCodexSessions(context);
-      const message = formatAutoResumeResult(result);
+      const message = result.failed.length && attempts >= MAX_RECOVERY_ATTEMPTS
+        ? `Automatic quota recovery paused after ${attempts} attempts. Saved work was kept. Review the conversation before resuming. ${result.failed[0]!.message}`
+        : formatAutoResumeResult(result);
       if (vscode.env.appHost === 'node') {
         if (message) recordPersistentEvent(result.failed.length ? 'warning' : 'info', 'auto-resume', message);
+        if (message && result.failed.length && attempts >= MAX_RECOVERY_ATTEMPTS)
+          publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message });
       } else if (message) {
         publishDashboardRealtime({ type: 'dashboard:notice', level: result.failed.length ? 'warning' : 'info', message });
         if (result.failed.length) void vscode.window.showWarningMessage(message);
@@ -161,12 +177,10 @@ export function registerQuotaRecoveryAutoResume(
           5_000,
           "Quota recovery completion could not be saved."
         );
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = undefined;
-        retryAt = 0;
+        resetRetry();
       }
     } catch (error) {
-      if (Date.now() >= retryAt) {
+      if (attempts < MAX_RECOVERY_ATTEMPTS && Date.now() >= retryAt) {
         scheduleRetry();
         console.warn("[codexManager] quota recovery deferred; saved work retained", error);
       }
@@ -192,7 +206,8 @@ export function registerQuotaRecoveryAutoResume(
     if (observedFailures.size > 256) observedFailures.delete(observedFailures.values().next().value!);
     if (interrupted.size >= 200) { recordPersistentEvent('warning', 'auto-resume', 'Session recovery queue is full; automatic recovery retained'); return; }
     if (isAutoResumeAvailable()) interrupted.add(message.state.sessionId);
-    retryAt = 0;
+    // A failure produced by our own recovery must not reopen its retry allowance.
+    if (!running) resetRetry();
     lastFailureAt = Date.now();
     lastFailureAccountId = readRecordedSessionAccount(message.state.streamId) ?? observedAccountId;
     if (!quotaRefresh || quotaRefresh.accountId !== observedAccountId) {

@@ -110,7 +110,7 @@ type BrowserWorkspacePage = { id: string; url: string; title: string; revision: 
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; browserPages?: BrowserWorkspacePage[]; browserClosePageId?: string; browserPreviewPath?: string; browserUrl?: string; browserDownloadUrl?: string; browserActionNonce?: number; browserOpenNonce?: number; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
-import { isCodexQuotaInterruption, canConfigureCodexSessionAutoResume, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, isCodexSessionRunningForDisplay, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
+import { isCodexQuotaInterruption, canConfigureCodexSessionAutoResume, canResumeCodexSession, filterCliSessionsBySection, isCodexSessionInspectionNotice, isCodexCapacityInterruption, isCodexSessionRunning, isCodexSessionRunningForDisplay, codexGoalActivityLabel, normalizeCodexGoalStatus, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 const CLI_DUPLICATE_SUBMISSION_WINDOW_MS = 15_000;
@@ -156,8 +156,8 @@ export function getSessionGoal(messages: DashboardCliSessionMessage[]) {
     const data = nested && typeof nested === "object" && !Array.isArray(nested) ? nested as Record<string, unknown> : result;
     const objective = data?.["objective"] ?? (operation === "create_goal" ? args?.["objective"] : goal?.objective);
     if (typeof objective !== "string" || !objective.trim()) continue;
-    const status = data?.["status"] ?? (operation === "update_goal" ? args?.["status"] : operation === "create_goal" ? "active" : goal?.status);
-    if (typeof status !== "string" || !["active", "complete", "paused", "blocked", "cancelled", "budget_limit", "usage_limit"].includes(status)) continue;
+    const status = normalizeCodexGoalStatus(data?.["status"] ?? (operation === "update_goal" ? args?.["status"] : operation === "create_goal" ? "active" : goal?.status));
+    if (!status) continue;
     const elapsed = data?.["elapsed_ms"] ?? data?.["elapsedMs"];
     goal = { objective: objective.trim(), status, elapsedMs: typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : goal?.elapsedMs, detail: message.result };
   }
@@ -1003,6 +1003,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [props.messages, props.liveState, props.selectedSession, props.officeUser, composerProjects, currentTurnRunning]);
   const turnChanges = useMemo(() => activitySummary(props.messages), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
+  const goalTurnRunning = Boolean((props.connected !== false) && (ownedLiveTurn && props.liveState?.status === "running" || isCodexSessionRunningForDisplay(props.selectedSession)));
+  const canManageGoal = Boolean(props.onGoalStatus && props.selectedSession?.goal && !selectedArchived &&
+    !props.selectedSession.subAgent && !props.selectedSession.parentSessionId);
+  const goalControlDisabled = props.goalUpdating || props.connected === false || props.selectedSession?.status === "unknown";
   const showWorking = transcriptRunning && !hasInProgressActivity;
   const quotaWaiting = sessionQuotaWaitingMessage(props.selectedSession, props.messages, props.liveState, props.selectedSession?.remote ? props.peerAccounts?.[props.selectedSession.deviceId ?? ''] ?? [] : props.localAccounts ?? [], props.standalone === true && props.autoResumeEnabled, props.connected !== false, currentTurnRunning);
   const quotaError = quotaWaiting ? [...props.messages].reverse().find(message => message.kind === 'error' && isCodexQuotaInterruption(message.text)) : undefined;
@@ -1846,7 +1850,34 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {props.requestPanel}
               {props.officeUser ? <TurnUsageStrip privacyMode={props.privacyMode} status={officeOffline ? quotaOfflineMessage(props.officeUser.availability!) : props.selectedSession?.queueRetryAt ? officeCapacityMessage(props.selectedSession.queueRetryAt)+(props.selectedSession.queuePosition?` Queue position ${props.selectedSession.queuePosition}.`:'') : props.selectedSession?.queueError || (currentTurnRunning ? "Working on your request…" : undefined)} changedFiles={officeFeatures?.has('files') ? turnChanges?.files : undefined} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => { if (hasUserProjectContext) openContextTab('files'); else setUserView('library'); }} /> : <TurnUsageStrip nativeSession={props.selectedSession?.provider === 'claude' ? props.selectedSession : undefined} nativeLive={props.liveState} account={props.selectedSession?.provider === 'claude' ? undefined : props.account} quotaWarningSettings={props.quotaWarningSettings} privacyMode={props.privacyMode} saved={props.connected === false} changedFiles={turnChanges?.files} additions={turnChanges?.additions} deletions={turnChanges?.deletions} onOpenChanges={() => openContextTab('reviews')} onOpenAccountCenter={() => openContextTab("accounts")} />}
 
-              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span><span title={goal.objective}>{goal.status === "active" ? (currentTurnRunning ? "Pursuing goal" : props.selectedSession?.status === "idle" ? "Goal active · Idle" : "Goal active") : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatUsageDuration(goal.elapsedMs).toUpperCase() : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Delete goal" title={currentTurnRunning ? 'Stop the session before deleting its goal' : 'Delete goal'} disabled={props.goalUpdating || props.connected === false || props.selectedSession.status !== 'idle' || currentTurnRunning} onClick={event => { event.preventDefault(); event.stopPropagation(); setGoalDeleteTarget(props.selectedSession?.id); }}><TrashIcon /></button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
+              {goal ? <details class={"cli-goal-strip is-" + goal.status}>
+                <summary>
+                  <span class="cli-goal-mark" aria-hidden="true" title="Goal status"><GoalIcon /></span>
+                  <span title={goal.objective}>{codexGoalActivityLabel(goal.status, goalTurnRunning, props.connected === false ? undefined : props.selectedSession)} <strong>{goal.objective}</strong></span>
+                  <small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatUsageDuration(goal.elapsedMs).toUpperCase() : ""}</small>
+                  {canManageGoal && (["paused", "blocked", "usage_limited"].includes(goal.status) ||
+                    goal.status === "active" && props.selectedSession?.status === "idle" && !currentTurnRunning) ?
+                    <button type="button" class="cli-icon-button cli-goal-control" disabled={goalControlDisabled}
+                      aria-busy={props.goalUpdating} aria-label="Resume goal" title="Resume this goal in Codex"
+                      onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.("active"); }}>
+                      <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>
+                    </button> : null}
+                  {canManageGoal && goal.status === "active" ?
+                    <button type="button" class="cli-icon-button cli-goal-control" disabled={goalControlDisabled}
+                      aria-busy={props.goalUpdating} aria-label="Pause goal" title="Pause automatic goal continuation"
+                      onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.("paused"); }}>
+                      <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon>
+                    </button> : null}
+                  {canManageGoal ? <button type="button" class="cli-icon-button cli-goal-control" aria-label="Delete goal"
+                    title={currentTurnRunning ? 'Stop the session before deleting its goal' : 'Delete goal'}
+                    disabled={goalControlDisabled || props.selectedSession?.status !== 'idle' || currentTurnRunning}
+                    onClick={event => { event.preventDefault(); event.stopPropagation(); setGoalDeleteTarget(props.selectedSession?.id); }}>
+                    <TrashIcon />
+                  </button> : null}
+                  <ChevronIcon />
+                </summary>
+                <div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div>
+              </details> : null}
               <ModalShell open={!!goalDeleteTarget && goalDeleteTarget === props.selectedSession?.id} title="Delete goal?" closeLabel="Cancel goal deletion" className="dashboard-modal-compact" onClose={() => { setGoalDeleteTarget(undefined); reportLocalFeedback({ level: 'info', message: 'Goal deletion cancelled.' }); }}>
                 <p>Delete this goal from Codex? The conversation and its messages will be kept.</p>
                 <div class="dialog-actions"><button type="button" onClick={() => { setGoalDeleteTarget(undefined); reportLocalFeedback({ level: 'info', message: 'Goal deletion cancelled.' }); }}>Cancel</button><button type="button" disabled={props.goalUpdating || props.connected === false || currentTurnRunning || props.selectedSession?.status !== 'idle'} onClick={() => { setGoalDeleteTarget(undefined); props.onGoalStatus?.('clear'); }}>Delete goal</button></div>

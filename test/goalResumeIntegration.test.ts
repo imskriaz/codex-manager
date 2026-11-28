@@ -1,3 +1,4 @@
+import { CODEX_GOAL_CONTINUE_PROMPT } from "../src/domain/codexSessionState";
 import * as vscode from "vscode";
 import { appendFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -114,7 +115,7 @@ it.each(["active", "none"])("recovers %s work despite a recent writer lock and o
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
   });
   vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, turn, _signal, onStarted) => {
-    expect(turn.input).toEqual(status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : []);
+    expect(turn.input).toEqual(status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }]);
     await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "official-recovered" } })).join("\n") + "\n");
     onStarted?.("official-recovered");return true;
   });
@@ -185,7 +186,7 @@ it.each(["active", "usage_limited", "paused", "none"])("opens the official tab a
     expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
     expect(tabs).toHaveLength(1);
     expect(waitForNativeCodexSessionReady).toHaveBeenCalledWith(home, id, expect.any(AbortSignal), 40_000);
-    expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : [{ type: "text", text: CODEX_GOAL_CONTINUE_PROMPT, text_elements: [] }], cwd: home }, expect.any(AbortSignal), expect.any(Function));
     if (status === "paused") expect(db.prepare("SELECT status FROM thread_goals WHERE thread_id=?").get(id)?.status).toBe("active");
     else expect(mocks.open).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
