@@ -52,7 +52,7 @@ export function normalizeCodexSessionGoal(value: unknown): DashboardCodexSession
 export function codexGoalActivityLabel(status: string, running: boolean, session?: Pick<DashboardCliSessionSummary, "status" | "stopped">): string {
   if (status === "complete") return "Goal completed";
   if (status !== "active") return "Goal " + status.replaceAll("_", " ");
-  if (running) return "Pursuing goal";
+  if (running) return "Goal active · Turn running";
   if (session?.status !== "idle") return "Goal active · Activity unverified";
   return session.stopped ? "Goal active · Turn stopped" : "Goal active · Idle";
 }

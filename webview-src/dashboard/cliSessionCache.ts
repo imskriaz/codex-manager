@@ -63,6 +63,11 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
 
 const SESSION_METADATA = ["provider","nativeQuota","model","reasoningEffort","sandboxMode","access","tokenUsage","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
 
+function sessionRuntime(session: DashboardCliSessionSummary) {
+  const { status, statusCheckedAt, locked, canStop, steerTurnId, statusError, runningBy, runningSince, interrupted, stopped } = session;
+  return { status, statusCheckedAt, locked, canStop, steerTurnId, statusError, runningBy, runningSince, interrupted, stopped };
+}
+
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
   incoming: DashboardCliSessionSummary[],
@@ -86,12 +91,15 @@ export function mergeCachedCliSession(
   incoming: DashboardCliSessionSummary,
   previous?: DashboardCliSessionSummary
 ): DashboardCliSessionSummary {
-  if (previous && sameCliSessionTarget(incoming, previous) && (previous.access?.updatedAt ?? 0) > (incoming.access?.updatedAt ?? 0)) incoming = { ...incoming, access: previous.access, sandboxMode: previous.access?.mode };
+  if (previous && sameCliSessionTarget(incoming, previous)) {
+    if ((previous.access?.updatedAt ?? 0) > (incoming.access?.updatedAt ?? 0))
+      incoming = { ...incoming, access: previous.access, sandboxMode: previous.access?.mode };
+    if (incoming.statusCheckedAt !== undefined && (previous.statusCheckedAt ?? 0) > incoming.statusCheckedAt)
+      incoming = { ...incoming, ...sessionRuntime(previous) };
+  }
   // Transcript timestamps do not version current runtime ownership or capability.
   if (previous && sameCliSessionTarget(incoming,previous) && Date.parse(incoming.updatedAt ?? '') < Date.parse(previous.updatedAt ?? '')) return {
-    ...previous, status: incoming.status, statusCheckedAt: incoming.statusCheckedAt, locked: incoming.locked, canStop: incoming.canStop,
-    steerTurnId: incoming.steerTurnId, statusError: incoming.statusError,
-    runningBy: incoming.runningBy, runningSince: incoming.runningSince,
+    ...previous, ...sessionRuntime(incoming),
     access: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.access : previous.access,
     sandboxMode: (incoming.access?.updatedAt ?? 0) >= (previous.access?.updatedAt ?? 0) ? incoming.sandboxMode : previous.sandboxMode
   };

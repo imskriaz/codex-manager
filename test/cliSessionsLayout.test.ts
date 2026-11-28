@@ -993,7 +993,7 @@ describe("sessions sidebar layout", () => {
     expect(codexGoalActivityLabel("active", false, { status: "idle", stopped: true })).toBe("Goal active · Turn stopped");
     expect(codexGoalActivityLabel("active", false, { status: "idle" })).toBe("Goal active · Idle");
     expect(codexGoalActivityLabel("active", false, { status: "unknown" })).toContain("unverified");
-    expect(codexGoalActivityLabel("active", true, { status: "running" })).toBe("Pursuing goal");
+    expect(codexGoalActivityLabel("active", true, { status: "running" })).toBe("Goal active · Turn running");
     expect(codexGoalActivityLabel("complete", true, { status: "running" })).toBe("Goal completed");
   });
 

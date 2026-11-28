@@ -18,7 +18,7 @@ export function hasCurrentCliLiveHistory(session: DashboardCliSessionSummary, li
 
 export function isCliLiveStateCurrent(session: DashboardCliSessionSummary | undefined, live: DashboardCodexSessionLiveState | undefined): boolean {
   if (session && live && (session.statusCheckedAt ?? 0) > live.updatedAt &&
-      (session.status === 'unknown' || (session.status === 'running') !== isCliTurnActive(live))) return false;
+      (session.status === 'unknown' || live.status === 'disconnected' || (session.status === 'running') !== isCliTurnActive(live))) return false;
   return Boolean(session && live && sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId }) &&
     (session.status === "running" || !isCliTurnActive(live) || Date.now() - live.updatedAt < 30_000) &&
     (!session.steerTurnId || session.steerTurnId === live.turnId) &&
@@ -41,8 +41,13 @@ export function reconcileCliSessionStatus(
   const live = liveStates[cliSessionTargetKey(session)];
   // A later index update can describe a new turn started outside this host.
   if (!live || !isCliLiveStateCurrent(session, live)) return session;
+  const newerCheck = (session.statusCheckedAt ?? 0) > live.updatedAt;
   const patch: Partial<DashboardCliSessionSummary> = isCliTurnActive(live) ? { status: "running", interrupted: false, stopped: false }
-    : ["completed", "cancelled", "failed"].includes(live.status) ? { status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed", stopped: live.status === 'cancelled' }
+    : ["completed", "cancelled", "failed"].includes(live.status) ? {
+      status: "idle", locked: false, canStop: false, steerTurnId: undefined, runningBy: undefined, runningSince: undefined,
+      interrupted: newerCheck ? session.interrupted ?? (live.status === "failed") : live.status === "failed",
+      stopped: newerCheck ? session.stopped ?? (live.status === "cancelled") : live.status === "cancelled"
+    }
     : live.status === 'disconnected' ? { status: 'unknown', canStop: false, steerTurnId: undefined, interrupted: true } : {};
   if (patch.status && patch.status !== session.status) patch.statusCheckedAt = live.updatedAt;
   return Object.keys(patch).some(key => session[key as keyof DashboardCliSessionSummary] !== patch[key as keyof DashboardCliSessionSummary]) ? { ...session, ...patch } : session;

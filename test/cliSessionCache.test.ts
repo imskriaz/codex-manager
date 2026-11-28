@@ -21,6 +21,13 @@ describe("CLI session cache merging", () => {
     const incoming = { ...previous, status: 'idle' as const, statusCheckedAt: 200, updatedAt: '2026-11-03T09:00:00Z' };
     expect(mergeCachedCliSession(incoming, previous)).toMatchObject({ status: 'idle', statusCheckedAt: 200, updatedAt: previous.updatedAt });
   });
+  it('keeps the latest Stop and idle runtime across out-of-order history and session list responses', () => {
+    const running = { id: 's', title: 'Task', status: 'running' as const, statusCheckedAt: 100, stopped: false, updatedAt: '2026-11-03T10:00:00Z' };
+    const stopped = { ...running, status: 'idle' as const, stopped: true, interrupted: true, statusCheckedAt: 200, updatedAt: '2026-11-03T09:00:00Z' };
+    const merged = mergeCachedCliSession(stopped, running);
+    expect(merged).toMatchObject({ status: 'idle', stopped: true, interrupted: true });
+    expect(mergeCachedCliSession(running, merged)).toMatchObject({ status: 'idle', stopped: true, statusCheckedAt: 200 });
+  });
   it('applies confirmed preferences, renames and goal changes independently of a newer transcript timestamp', () => {
     const previous = { id: 'session', title: 'Old title', status: 'running' as const, canStop: true, updatedAt: '2026-11-01T12:00:00Z', autoResumeEnabled: true, queueEnabled: true, queuePriority: 2 as const, queueError: 'Old failure', goal: { objective: 'Work', status: 'active' as const } };
     const incoming = { ...previous, status: 'idle' as const, canStop: false, updatedAt: '2026-11-01T11:00:00Z', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined, title: 'Confirmed title', goal: null };

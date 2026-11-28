@@ -1003,7 +1003,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [props.messages, props.liveState, props.selectedSession, props.officeUser, composerProjects, currentTurnRunning]);
   const turnChanges = useMemo(() => activitySummary(props.messages), [props.messages, props.liveState, props.selectedSession, steeringTurnId]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
-  const goalTurnRunning = Boolean((props.connected !== false) && (ownedLiveTurn && props.liveState?.status === "running" || isCodexSessionRunningForDisplay(props.selectedSession)));
+  const goalTurnRunning = props.connected !== false && (isCliLiveStateCurrent(props.selectedSession, props.liveState)
+    ? props.liveState?.status === "running"
+    : isCodexSessionRunningForDisplay(props.selectedSession));
   const canManageGoal = Boolean(props.onGoalStatus && props.selectedSession?.goal && !selectedArchived &&
     !props.selectedSession.subAgent && !props.selectedSession.parentSessionId);
   const goalControlDisabled = props.goalUpdating || props.connected === false || props.selectedSession?.status === "unknown";

@@ -9,6 +9,20 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1000); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it("keeps a freshly verified stopped goal idle despite a historical disconnection", () => {
+    const goal = { objective: "Deliver the roadmap", status: "active" };
+    const row = { id: "chat", title: "Task", status: "idle" as const, stopped: true, interrupted: true, statusCheckedAt: 2000, goal };
+    const state = snapshot({ status: "disconnected", updatedAt: 1000 });
+    expect(isCliLiveStateCurrent(row, state)).toBe(false);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: state })).toBe(row);
+    const fresh = { ...state, updatedAt: 3000 };
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: fresh })).toMatchObject({ status: "unknown", goal });
+  });
+  it("retains a newer Stop record when previous live work ended", () => {
+    const row = { id: "chat", title: "Task", status: "idle" as const, stopped: true, statusCheckedAt: 2000 };
+    const state = snapshot({ status: "completed", updatedAt: 1000 });
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: state }).stopped).toBe(true);
+  });
   it.each(['idle', 'unknown'] as const)('keeps a newer %s check despite unchanged transcript time and a recent running event', status => {
     const row = { id: 'chat', title: 'Task', status, statusCheckedAt: 2000, updatedAt: new Date(100).toISOString() };
     const states = { [cliSessionTargetKey(row)]: snapshot({ updatedAt: 1000 }) };
