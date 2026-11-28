@@ -6,14 +6,14 @@ import { removeTestDirectory } from './testFilesystem';
 import * as vscode from 'vscode';
 
 const host = vi.hoisted(() => ({
-  start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
+  start: vi.fn(), listening: vi.fn(), stop: vi.fn(), dispose: vi.fn(), repoInit: vi.fn(), repoDispose: vi.fn(),
   readPid: vi.fn(), writePid: vi.fn(), deletePid: vi.fn(), close: vi.fn(), coordinate: vi.fn(), registerLogs: vi.fn(), closeLogs: vi.fn(), log: vi.fn(), background: vi.fn(), cancelRecovery: vi.fn(), captureRecovery: vi.fn(), flushSessions: vi.fn(), syncStart: vi.fn()
 }));
 vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context, sqliteConfiguration: (configuration: unknown) => configuration }));
 vi.mock("../src/storage", () => ({ AccountsRepository: class { init = host.repoInit; dispose = host.repoDispose; setAccountSwitchCoordinator() {} } }));
 vi.mock("../src/services/encryptedSync", () => ({ EncryptedSyncManager: class { start = host.syncStart; canAutomateAccount() { return true; } dispose() {} } }));
 vi.mock("../src/infrastructure/config/proxyEnvironment", () => ({ initializeCodexProxyEnvironment: async () => undefined, disposeCodexProxyEnvironment: vi.fn() }));
-vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; stop = host.stop; dispose = host.dispose; prepareForShutdown() {} publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
+vi.mock("../src/services/webDashboardServer", () => ({ WebDashboardServer: class { start = host.start; isListening = host.listening; stop = host.stop; dispose = host.dispose; prepareForShutdown() {} publishLocalStateChange() {} getUrl() { return "http://127.0.0.1:39875"; } } }));
 vi.mock("../src/storage/sqliteState", () => ({
   getSqliteStateStore: () => ({ close: host.close }), readSqliteStateFile: host.readPid,
   writeSqliteStateFile: host.writePid, deleteSqliteStateFile: host.deletePid
@@ -29,6 +29,7 @@ let signals: Set<(...args: any[]) => void>;
 let storageRoot: string;
 beforeEach(async () => {
   vi.resetAllMocks();
+  host.listening.mockReturnValue(true);
   host.syncStart.mockResolvedValue(undefined);
   storageRoot = await mkdtemp(join(tmpdir(), 'manager-node-host-'));
   vi.stubEnv('CODEX_MANAGER_STORAGE_ROOT', storageRoot);
@@ -99,6 +100,16 @@ it("refuses a competing direct launch and leaves the active owner's PID intact",
   expect(host.deletePid).not.toHaveBeenCalled();
   expect(host.repoDispose).toHaveBeenCalledOnce();
   expect(host.close).toHaveBeenCalledOnce();
+});
+
+it("reports an inactive dashboard as a startup failure before saving its PID or starting recovery", async () => {
+  host.listening.mockReturnValue(false);
+  await expect(startNodeHost()).rejects.toThrow("Enable Web Dashboard");
+  expect(host.writePid).not.toHaveBeenCalled();
+  expect(host.background).not.toHaveBeenCalled();
+  expect(host.captureRecovery).not.toHaveBeenCalled();
+  expect(host.log).not.toHaveBeenCalledWith("info", "node-host", "Standalone ready", expect.anything());
+  expect(host.stop).toHaveBeenCalledOnce();
 });
 
 it("bounds handoff retries and immediately preserves non-port startup errors", async () => {

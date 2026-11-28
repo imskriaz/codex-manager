@@ -50,7 +50,9 @@ const pidPath = path.join(root, "always-online-relay.pid");
 const configPath = path.join(root, "always-online-relay.json");
 const adminToken = randomBytes(32).toString("hex");
 writeSqliteStateFile(configPath, JSON.stringify({ mode: "node", port, pidPath, adminToken, workspaceStoragePath: root }));
-store.set(`settings:${createHash("sha256").update(root).digest("hex")}`, "cloudflaredDomain", "https://dashboard.example");
+const settingsNamespace = `settings:${createHash("sha256").update(root).digest("hex")}`;
+store.set(settingsNamespace, "webDashboardEnabled", true);
+store.set(settingsNamespace, "cloudflaredDomain", "https://dashboard.example");
 const children = new Set();
 function launch(args, script = 'start-node.cjs') {
   const child = spawn(process.execPath, [path.join(project, "tools", script), ...args], {
@@ -69,7 +71,7 @@ function launch(args, script = 'start-node.cjs') {
 async function ready() {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    try { if ((await fetch(`${origin}/login`, { signal: AbortSignal.timeout(1_000) })).status === 200) return; }
+    try { if ((await fetch(`${origin}/login`, { redirect: "manual", signal: AbortSignal.timeout(1_000), headers: { host: "dashboard.example", "x-forwarded-proto": "https" } })).status === 200) return; }
     catch { /* Port handoff is expected until the owner releases it. */ }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -153,6 +155,11 @@ try {
   assert.ok(!JSON.parse(await auth.readSessions()).some(session => session.fingerprint === createHash("sha256").update(cookie.split("=")[1]).digest("hex")), "VS Code must see Node logout");
   assert.equal((await remote("/api/state", { headers: { cookie } })).status, 401);
   await stop();
+  store.set(settingsNamespace, "webDashboardEnabled", false);
+  const disabled = await launch(["--background", "--config", configPath]).done;
+  assert.equal(disabled.code, 1, disabled.output);
+  assert.match(disabled.output, /Enable Web Dashboard/, "Disabled dashboards report startup failure instead of readiness");
+  assert.doesNotMatch(disabled.output, /running in background/);
   const logs = await SqliteStateStore.open(path.join(root, "manager_logs.sqlite"));
   try {
     const records = logs.keys("logs").map(key => logs.get("logs", key)).filter(record => record.scope === "node-host");
@@ -161,7 +168,7 @@ try {
       assert.ok(messages.includes(message), `Shared system log must retain: ${message}`);
     assert.ok(records.some(record => record.message === 'Authenticated standalone shutdown requested' && record.details?.reason === 'standalone-restart'), 'System log identifies a standalone restart request');
   } finally { logs.close(); }
-  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "independent-standalone-restart", "shutdown-reason", "shared-logout", "shared-diagnostics"], timings }));
+  console.log(JSON.stringify({ passed: true, checks: ["handoff", "same-device-id", "same-password", "existing-cookie", "fresh-login", "wrong-password", "exclusive-port-owner", "sqlite-pid", "hidden-background", "restart-cookie", "independent-standalone-restart", "shutdown-reason", "shared-logout", "shared-diagnostics", "disabled-startup-error"], timings }));
 } catch (error) {
   console.error(first?.output ?? 'Worker output unavailable.');
   console.error(await readFile(path.join(root, 'always-online-relay-startup.log'), 'utf8').catch(() => 'Startup log unavailable.'));

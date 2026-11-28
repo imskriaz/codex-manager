@@ -104,7 +104,12 @@ export async function startNodeHost(): Promise<void> {
     const deadline = Date.now() + (process.env["CODEX_MANAGER_HANDOFF"] === "1" ? 8_000 : 0);
     let waitingForPort = false;
     for (;;) {
-      try { await dashboard.start(); ownsDashboard = true; break; }
+      try {
+        await dashboard.start();
+        if (!dashboard.isListening()) throw new Error("The standalone dashboard did not open its listening port. Enable Web Dashboard and retry startup.");
+        ownsDashboard = true;
+        break;
+      }
       catch (error) {
         if (closing || Date.now() >= deadline || !(error instanceof Error) || !error.message.includes("already owned by another host")) throw error;
         if (!waitingForPort) recordPersistentEvent("info", "node-host", "Waiting for the current dashboard host to release the port", { pid: process.pid });

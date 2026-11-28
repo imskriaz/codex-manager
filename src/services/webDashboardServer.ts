@@ -1062,6 +1062,10 @@ export class WebDashboardServer implements vscode.Disposable {
     finally { clearTimeout(timer); }
   }
 
+  public isListening(): boolean {
+    return this.server?.listening === true;
+  }
+
   public getUrl(pathname = "/"): string {
     return `http://127.0.0.1:${WEB_DASHBOARD_PORT}${pathname}`;
   }
